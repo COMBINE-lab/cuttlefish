@@ -1,0 +1,53 @@
+
+#ifndef GLOBALS_HPP
+#define GLOBALS_HPP
+
+
+#include <string>
+#include <iostream>
+
+
+namespace cuttlefish
+{
+    typedef bool kmer_dir_t;
+    typedef char nucleotide_t;
+    typedef std::string kmer_t;
+    typedef uint8_t state_t;
+
+
+    constexpr nucleotide_t PLACEHOLDER_NUCLEOTIDE = 'N';
+
+    constexpr kmer_dir_t FWD = true;
+    constexpr kmer_dir_t BWD = false;
+
+    constexpr uint8_t SINGLE_IN_SINGLE_OUT = 0;
+    constexpr uint8_t MULTI_IN_SINGLE_OUT = 1;
+    constexpr uint8_t SINGLE_IN_MULTI_OUT = 2;
+    constexpr uint8_t MULTI_IN_MULTI_OUT = 3;
+}
+
+
+inline cuttlefish::nucleotide_t complement(const cuttlefish::nucleotide_t nucleotide)
+{
+    switch (nucleotide)
+    {
+    case 'A':
+        return 'T';
+
+    case 'C':
+        return 'G';
+
+    case 'G':
+        return 'C';
+
+    case 'T':
+        return 'A';
+    
+    default:
+        std::cerr << "Invalid nucleotide " << nucleotide << " encountered. Aborting.";
+        std::exit(EXIT_FAILURE);
+    }
+}
+
+
+#endif

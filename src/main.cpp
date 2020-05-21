@@ -20,11 +20,16 @@ int main(int argc, const char** argv)
 
     std::cout << "Constructing compacted de Bruijn graph for references at " << argv[1] << ", with k = " << k << "\n";
 
-    // Compaction and output
+
     CdBG cdbg(refs, k);
+
+    // Classify the vertices.
     cdbg.construct();
 
+    // For debugging.
     cdbg.print_vertices();
+
+    // Output the maximal unitigs.
     cdbg.output_maximal_unitigs(output_file);
 
 

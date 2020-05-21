@@ -8,16 +8,16 @@
 #include <cassert>
 
 
-bool CdBG::is_self_loop(const std::string &ref, const Kmer& kmer, const uint32_t kmer_idx)
+bool CdBG::is_self_loop(const std::string &ref, const cuttlefish::kmer_t& kmer, const uint32_t kmer_idx)
 {
-    return kmer.is_same_kmer(Kmer(ref.substr(kmer_idx + 1, k)));
+    return kmer.is_same_kmer(cuttlefish::kmer_t(ref.substr(kmer_idx + 1, k)));
 }
 
 
 void CdBG::process_first_kmer(const std::string& ref)
 {
-    Kmer kmer(ref.substr(0, k));
-    Kmer kmer_hat = kmer.canonical();
+    cuttlefish::kmer_t kmer(ref.substr(0, k));
+    cuttlefish::kmer_t kmer_hat = kmer.canonical();
     cuttlefish::kmer_dir_t dir = kmer.direction(kmer_hat);
     cuttlefish::nucleotide_t next_nucl = ref[k];
 
@@ -85,8 +85,8 @@ void CdBG::process_first_kmer(const std::string& ref)
 
 void CdBG::process_last_kmer(const std::string& ref)
 {
-    Kmer kmer(ref.substr(ref.length() - k, k));
-    Kmer kmer_hat = kmer.canonical();
+    cuttlefish::kmer_t kmer(ref.substr(ref.length() - k, k));
+    cuttlefish::kmer_t kmer_hat = kmer.canonical();
     cuttlefish::kmer_dir_t dir = kmer.direction(kmer_hat);
     cuttlefish::nucleotide_t prev_nucl = ref[ref.length() - k - 1];
 
@@ -148,8 +148,8 @@ void CdBG::process_last_kmer(const std::string& ref)
 
 void CdBG::process_internal_kmer(const std::string& ref, const uint32_t kmer_idx)
 {
-    Kmer kmer(ref.substr(kmer_idx, k));
-    Kmer kmer_hat = kmer.canonical();
+    cuttlefish::kmer_t kmer(ref.substr(kmer_idx, k));
+    cuttlefish::kmer_t kmer_hat = kmer.canonical();
     cuttlefish::kmer_dir_t dir = kmer.direction(kmer_hat);
     cuttlefish::nucleotide_t prev_nucl = ref[kmer_idx - 1];
     cuttlefish::nucleotide_t next_nucl = ref[kmer_idx + k];
@@ -259,8 +259,8 @@ void CdBG::construct()
 
 bool CdBG::is_unipath_start(const std::string& ref, const uint32_t kmer_idx) const
 {
-    const Kmer kmer(ref.substr(kmer_idx, k));
-    const Kmer kmer_hat = kmer.canonical();
+    const cuttlefish::kmer_t kmer(ref.substr(kmer_idx, k));
+    const cuttlefish::kmer_t kmer_hat = kmer.canonical();
     const cuttlefish::nucleotide_t kmer_dir = kmer.direction(kmer_hat);
     const cuttlefish::state_t state = (Vertices.find(kmer_hat) -> second).state;
 
@@ -276,8 +276,8 @@ bool CdBG::is_unipath_start(const std::string& ref, const uint32_t kmer_idx) con
 
     assert(kmer_idx > 0);
 
-    const Kmer prev_kmer(ref.substr(kmer_idx - 1, k));
-    const Kmer prev_kmer_hat = prev_kmer.canonical();
+    const cuttlefish::kmer_t prev_kmer(ref.substr(kmer_idx - 1, k));
+    const cuttlefish::kmer_t prev_kmer_hat = prev_kmer.canonical();
     const cuttlefish::nucleotide_t prev_kmer_dir = prev_kmer.direction(prev_kmer_hat);
     const cuttlefish::state_t prev_state = (Vertices.find(prev_kmer_hat) -> second).state;
 
@@ -297,8 +297,8 @@ bool CdBG::is_unipath_start(const std::string& ref, const uint32_t kmer_idx) con
 
 bool CdBG::is_unipath_end(const std::string& ref, const uint32_t kmer_idx) const
 {
-    const Kmer kmer(ref.substr(kmer_idx, k));
-    const Kmer kmer_hat = kmer.canonical();
+    const cuttlefish::kmer_t kmer(ref.substr(kmer_idx, k));
+    const cuttlefish::kmer_t kmer_hat = kmer.canonical();
     const cuttlefish::nucleotide_t kmer_dir = kmer.direction(kmer_hat);
     const cuttlefish::state_t state = (Vertices.find(kmer_hat) -> second).state;
 
@@ -314,8 +314,8 @@ bool CdBG::is_unipath_end(const std::string& ref, const uint32_t kmer_idx) const
 
     assert(kmer_idx < ref.length() - k);
 
-    const Kmer next_kmer(ref.substr(kmer_idx + 1, k));
-    const Kmer next_kmer_hat = next_kmer.canonical();
+    const cuttlefish::kmer_t next_kmer(ref.substr(kmer_idx + 1, k));
+    const cuttlefish::kmer_t next_kmer_hat = next_kmer.canonical();
     const cuttlefish::kmer_dir_t next_kmer_dir = next_kmer.direction(next_kmer_hat);
     const cuttlefish::state_t next_state = (Vertices.find(next_kmer_hat) -> second).state;
 
@@ -376,10 +376,10 @@ void CdBG::output_maximal_unitigs(const std::string& output_file)
 
 void CdBG::output_unipath(const std::string& ref, std::ofstream &output, const uint32_t start_idx, const uint32_t end_idx)
 {
-    const Kmer u(ref.substr(start_idx, k));
-    const Kmer v(ref.substr(end_idx, k));
-    const Kmer u_hat = u.canonical();
-    const Kmer v_hat = v.canonical();
+    const cuttlefish::kmer_t u(ref.substr(start_idx, k));
+    const cuttlefish::kmer_t v(ref.substr(end_idx, k));
+    const cuttlefish::kmer_t u_hat = u.canonical();
+    const cuttlefish::kmer_t v_hat = v.canonical();
 
     if(Vertices[u_hat].outputted)   // or Vertices[v_hat].outputted
         return;
@@ -394,7 +394,7 @@ void CdBG::output_unipath(const std::string& ref, std::ofstream &output, const u
     if(u < v.reverse_complement())
         output << unipath << "\n";
     else
-        output << Kmer(unipath).reverse_complement() << "\n";
+        output << cuttlefish::kmer_t(unipath).reverse_complement() << "\n";
 }
 
 

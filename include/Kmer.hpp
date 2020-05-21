@@ -40,11 +40,4 @@ public:
 };
 
 
-// std::string reverse_complement(const cuttlefish::kmer_t& kmer);
-
-// std::string canonical(const cuttlefish::kmer_t& kmer);
-
-// cuttlefish::kmer_dir_t kmer_direction(const cuttlefish::kmer_t& kmer, const cuttlefish::kmer_t& kmer_hat);
-
-
 #endif

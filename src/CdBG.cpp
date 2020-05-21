@@ -1,7 +1,6 @@
 
 #include "CdBG.hpp"
 #include "globals.hpp"
-#include "Kmer.hpp"
 
 #include <fstream>
 #include <iostream>

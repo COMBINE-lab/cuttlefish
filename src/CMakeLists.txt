@@ -1,7 +1,7 @@
 
 # Bundle the core source files into a variable.
 set(PROJECT_SRC
-    Kmer.cpp
+    Kmer_Str.cpp
     CdBG.cpp
     )
 

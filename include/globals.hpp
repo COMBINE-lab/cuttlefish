@@ -7,11 +7,11 @@
 #include <iostream>
 
 
-class Kmer;
+class Kmer_Str;
 
 namespace cuttlefish
 {
-    typedef Kmer kmer_t;
+    typedef Kmer_Str kmer_t;
     typedef bool kmer_dir_t;
     typedef char nucleotide_t;
     typedef uint8_t state_t;

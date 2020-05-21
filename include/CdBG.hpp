@@ -9,7 +9,7 @@
 #include <iostream>
 
 #include "globals.hpp"
-#include "Kmer.hpp"
+#include "Kmer_Str.hpp"
 #include "Vertex.hpp"
 
 

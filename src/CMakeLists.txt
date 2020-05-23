@@ -3,6 +3,8 @@
 set(PROJECT_SRC
     Kmer_Str.cpp
     Kmer.cpp
+    Vertex.cpp
+    Vertex_Encoding.cpp
     CdBG.cpp
     CdBG_Builder.cpp
     )

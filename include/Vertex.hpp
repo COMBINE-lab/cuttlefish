@@ -3,93 +3,37 @@
 #define VERTEX_HPP
 
 
+#include "globals.hpp"
+
 #include <cstdint>
 #include <cstdlib>
 #include <iostream>
-
-#include "globals.hpp"
 
 
 class Vertex
 {
 public:
-    uint8_t state;
+    cuttlefish::state_t state;
     cuttlefish::nucleotide_t enter, exit;
+    bool visited;
     bool outputted;
 
 
-    Vertex()
+    // Constructs an unvisited vertex.
+    Vertex(): visited(false)
     {}
 
+    // Constructs a vertex of type SINGLE_IN_SINGLE_OUT.
+    Vertex(const cuttlefish::state_t state, const cuttlefish::nucleotide_t enter, const cuttlefish::nucleotide_t exit);
 
-    Vertex(const cuttlefish::state_t state, const cuttlefish::nucleotide_t enter, const cuttlefish::nucleotide_t exit):
-            state(state), enter(enter), exit(exit), outputted(false)
-    {}
+    // Constructs a vertex of type MULTI_IN_SINGLE_OUT or SINGLE_IN_MULTI_OUT.
+    Vertex(const cuttlefish::state_t state, const cuttlefish::nucleotide_t nucl);
 
+    // Constructs a vertex of type `state`, with the provided outputted status.
+    Vertex(const cuttlefish::state_t state, const bool outputted = false);
 
-    Vertex(const cuttlefish::state_t state, const cuttlefish::nucleotide_t nucl):
-            state(state), outputted(false)
-    {
-        if(state == cuttlefish::MULTI_IN_SINGLE_OUT)
-        {
-            enter = cuttlefish::PLACEHOLDER_NUCLEOTIDE;
-            exit = nucl;
-        }
-        else if(state == cuttlefish::SINGLE_IN_MULTI_OUT)
-        {
-            enter = nucl;
-            exit = cuttlefish::PLACEHOLDER_NUCLEOTIDE;
-        }
-        else
-        {
-            std::cerr << "Invalid construction of a vertex. Aborting.\n";
-            std::exit(EXIT_FAILURE);
-        }
-    }
-
-
-    Vertex(const cuttlefish::state_t state):
-            state(state), outputted(false)
-    {
-        if(state == cuttlefish::MULTI_IN_MULTI_OUT)
-        {
-            enter = cuttlefish::PLACEHOLDER_NUCLEOTIDE;
-            exit = cuttlefish::PLACEHOLDER_NUCLEOTIDE;
-        }
-    }
-
-
-    friend std::ostream& operator <<(std::ostream& out, const Vertex& vertex)
-    {
-        std::string label;
-
-        switch (vertex.state)
-        {
-        case cuttlefish::SINGLE_IN_SINGLE_OUT:
-            label = "Single_In_Single_Out";
-            break;
-        
-        case cuttlefish::MULTI_IN_SINGLE_OUT:
-            label = "Multi_In_Single_Out";
-            break;
-
-        case cuttlefish::SINGLE_IN_MULTI_OUT:
-            label = "Single_In_Multi_Out";
-            break;
-        
-        case cuttlefish::MULTI_IN_MULTI_OUT:
-            label = "Multi_In_Multi_Out";
-            break;
-        
-        default:
-            std::cerr << "Invalid state encountered for vertices.\n";
-            break;
-        }
-
-
-        out << label;
-        return out;
-    }
+    // For debugging purposes: prints the vertex information.
+    friend std::ostream& operator <<(std::ostream& out, const Vertex& vertex);
 };
 
 

@@ -8,6 +8,7 @@
 
 
 class Kmer_Str;
+// class Kmer;
 
 namespace cuttlefish
 {

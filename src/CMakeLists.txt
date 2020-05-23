@@ -2,7 +2,9 @@
 # Bundle the core source files into a variable.
 set(PROJECT_SRC
     Kmer_Str.cpp
+    # Kmer.cpp
     CdBG.cpp
+    # CdBG_Builder.cpp
     )
 
 
@@ -44,3 +46,7 @@ target_compile_options(${PROJECT_NAME} PRIVATE ${WARNING_FLAGS})
 install(TARGETS ${PROJECT_NAME}
         DESTINATION ${CMAKE_SOURCE_DIR}/bin
         )
+
+
+# add_executable(test test.cpp)
+# target_link_libraries(test PRIVATE core)

@@ -24,13 +24,10 @@ int main(int argc, const char** argv)
     CdBG cdbg(refs, k);
 
     // Classify the vertices.
-    cdbg.construct();
+    cdbg.construct(output_file);
 
     // For debugging.
     cdbg.print_vertices();
-
-    // Output the maximal unitigs.
-    cdbg.output_maximal_unitigs(output_file);
 
 
     return EXIT_SUCCESS;

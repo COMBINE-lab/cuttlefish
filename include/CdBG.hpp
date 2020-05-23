@@ -19,7 +19,7 @@ class CdBG
 private:
     std::string ref_file;               // Name of the file containing all the input references.
     uint16_t k;                         // The `k` value.
-    std::map<cuttlefish::kmer_t, Vertex> Vertices;    // The set of vertices of the dBG.
+    std::map<Kmer_Str, Vertex> Vertices;    // The set of vertices of the dBG.
 
 
     // Classifies the vertices into different types.
@@ -29,7 +29,7 @@ private:
     // reference `ref` forms a self loop with its next k-mer in the reference
     // (i.e. k-mer at idx `kmer_idx` + 1). Expects that `kmer` is not the last
     // k-mer of 'ref`.
-    bool is_self_loop(const std::string &ref, const cuttlefish::kmer_t& kmer, const uint32_t kmer_idx) const;
+    bool is_self_loop(const std::string &ref, const Kmer_Str& kmer, const uint32_t kmer_idx) const;
 
     // Processes classification (partially) for the first k-mer of reference `ref`.
     void process_first_kmer(const std::string& ref);

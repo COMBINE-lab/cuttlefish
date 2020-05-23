@@ -11,7 +11,7 @@
 #include "globals.hpp"
 #include "Kmer_Str.hpp"
 #include "Vertex.hpp"
-// #include "Kmer.hpp"
+#include "Kmer.hpp"
 
 
 class CdBG

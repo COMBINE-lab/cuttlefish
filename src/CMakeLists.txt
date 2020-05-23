@@ -2,9 +2,9 @@
 # Bundle the core source files into a variable.
 set(PROJECT_SRC
     Kmer_Str.cpp
-    # Kmer.cpp
+    Kmer.cpp
     CdBG.cpp
-    # CdBG_Builder.cpp
+    CdBG_Builder.cpp
     )
 
 
@@ -48,5 +48,5 @@ install(TARGETS ${PROJECT_NAME}
         )
 
 
-# add_executable(test test.cpp)
-# target_link_libraries(test PRIVATE core)
+add_executable(test test.cpp)
+target_link_libraries(test PRIVATE core)

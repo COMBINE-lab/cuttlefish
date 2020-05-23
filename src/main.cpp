@@ -1,9 +1,10 @@
 
+#include "CdBG.hpp"
+#include "CdBG_Builder.hpp"
+
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
-
-#include "CdBG.hpp"
 
 int main(int argc, const char** argv)
 {
@@ -21,7 +22,7 @@ int main(int argc, const char** argv)
     std::cout << "Constructing compacted de Bruijn graph for references at " << argv[1] << ", with k = " << k << "\n";
 
 
-    CdBG cdbg(refs, k);
+    CdBG_Builder cdbg(refs, k);
 
     // Classify the vertices.
     cdbg.construct(output_file);

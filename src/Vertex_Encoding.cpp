@@ -94,8 +94,12 @@ inline void Vertex_Encoding::set_nibble_lower_half(const cuttlefish::nucleotide_
         break;
 
     default:
-        std::cerr << "Invalid nucelotide " << nucl << " encountered. Aborting.\n";
-        std::exit(EXIT_FAILURE);
+        // Placeholder rule to handle `N` nucleotides.
+        // TODO: Need to make an informed rule for this.
+        break;
+        
+        // std::cerr << "Invalid nucelotide " << nucl << " encountered. Aborting.\n";
+        // std::exit(EXIT_FAILURE);
     }
 }
 
@@ -120,8 +124,12 @@ inline void Vertex_Encoding::set_nibble_upper_half(const cuttlefish::nucleotide_
         break;
 
     default:
-        std::cerr << "Invalid nucelotide " << nucl << " encountered. Aborting.\n";
-        std::exit(EXIT_FAILURE);
+        // Placeholder rule to handle `N` nucleotides.
+        // TODO: Need to make an informed rule for this.
+        break;
+
+        // std::cerr << "Invalid nucelotide " << nucl << " encountered. Aborting.\n";
+        // std::exit(EXIT_FAILURE);
     }
 }
 

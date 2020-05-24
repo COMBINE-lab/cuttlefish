@@ -48,8 +48,12 @@ inline cuttlefish::nucleotide_t complement(const cuttlefish::nucleotide_t nucleo
         return 'A';
     
     default:
-        std::cerr << "Invalid nucleotide " << nucleotide << " encountered. Aborting.";
-        std::exit(EXIT_FAILURE);
+        // Placeholder rule to handle `N` nucleotides.
+        // TODO: Need to make an informed rule for this.
+        return 'A';
+        
+        // std::cerr << "Invalid nucleotide " << nucleotide << " encountered. Aborting.";
+        // std::exit(EXIT_FAILURE);
     }
 }
 

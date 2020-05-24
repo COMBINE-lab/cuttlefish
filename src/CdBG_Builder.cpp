@@ -50,10 +50,13 @@ void CdBG_Builder::classify_vertices()
 
 
     // Parse sequences one-by-one.
+    uint32_t seqCount = 0;
     while(kseq_read(parser) >= 0)
     {
         const char* seq = parser->seq.s;
         const size_t seq_len = parser->seq.l;
+
+        std::cout << "Processing sequence " << ++seqCount << ", with length " << seq_len << ".\n";
 
         process_first_kmer(seq);
 

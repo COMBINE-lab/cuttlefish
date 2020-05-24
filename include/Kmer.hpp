@@ -45,6 +45,10 @@ public:
     // Constructs a k-mer from the provided string `label`.
     Kmer(const std::string& label);
 
+    // Constructs a k-mer from the provided characters at
+    // `label[kmer_idx,...,kmer_idx + k - 1]`.
+    Kmer(const char* label, const uint32_t kmer_idx);
+
     // Set the value of the `k` parameter across the `Kmer` class.
     static void set_k(const uint16_t k);
 

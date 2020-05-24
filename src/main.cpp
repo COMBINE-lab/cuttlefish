@@ -21,14 +21,15 @@ int main(int argc, const char** argv)
 
     std::cout << "Constructing compacted de Bruijn graph for references at " << argv[1] << ", with k = " << k << "\n";
 
-
     CdBG_Builder cdbg(refs, k);
 
     // Classify the vertices.
     cdbg.construct(output_file);
 
+    std::cout << "Constucted the compacted de Bruijn graph.\n";
+
     // For debugging.
-    cdbg.print_vertices();
+    // cdbg.print_vertices();
 
 
     return EXIT_SUCCESS;

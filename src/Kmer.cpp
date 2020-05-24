@@ -69,6 +69,24 @@ Kmer::Kmer(const std::string& label)
 }
 
 
+Kmer::Kmer(const char* label, const uint32_t kmer_idx)
+{
+    kmer = 0;
+
+    for(uint32_t idx = kmer_idx; idx < kmer_idx + k; ++idx)
+    {
+        uint8_t nucleotide = map_nucleotide(label[idx]);
+
+        // Placeholder rule to handle `N` nucleotides.
+        // TODO: Need to make an informed rule for this.
+        if(nucleotide == DNA::N)
+            nucleotide = DNA::A;
+
+        kmer = (kmer << 2) | nucleotide;
+    }
+}
+
+
 Kmer::Kmer(const uint64_t kmer): kmer(kmer)
 {}
 

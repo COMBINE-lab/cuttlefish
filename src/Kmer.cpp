@@ -55,11 +55,7 @@ inline uint8_t Kmer::complement_nucleotide(const uint8_t nucleotide)
 
 Kmer::Kmer(const std::string& label)
 {
-    if(label.length() != k)
-    {
-        std::cerr << "k-mer label length does not match the value of k. Aborting.\n";
-        std::exit(EXIT_FAILURE);
-    }
+    assert(label.length() == k);
 
     kmer = 0;
 

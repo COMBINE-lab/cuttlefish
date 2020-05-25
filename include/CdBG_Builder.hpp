@@ -19,41 +19,50 @@ class CdBG_Builder
 private:
     std::string ref_file;   // Name of the file containing all the newline-separated references.
     uint16_t k; // The k parameter for the edge-centric de Bruijn graph to be compacted.
-    // std::map<cuttlefish::kmer_t, Vertex_Encoding> Vertices; // The set of vertices of the dBG.
     Kmer_HashTable Vertices;
-
 
 
     // Classifies the vertices into different types.
     void classify_vertices();
 
-    // Processes classification (partially) for the first k-mer of the sequence `seq`.
-    void process_first_kmer(const char* seq);
+    // Processes classification (partially) for the canonical version `kmer_hat` of
+    // the first k-mer of some sequence, where the k-mer is encountered in the
+    // direction `dir`, `next_kmer_hat` is the canoninal version of the next k-mer
+    // in the sequence, and `next_nucl` is the nucletiode succeeding the first k-mer.
+    void process_first_kmer(const cuttlefish::kmer_t& kmer_hat, const cuttlefish::kmer_dir_t dir, const cuttlefish::kmer_t& next_kmer_hat, const cuttlefish::nucleotide_t next_nucl);
 
-    // Processes classification (partially) for the last k-mer of the sequence `seq`.
-    void process_last_kmer(const char* seq, const uint32_t seq_len);
+    // Processes classification (partially) for the canonical version `kmer_hat` of
+    // the last k-mer of some sequence, where the k-mer is encountered in the
+    // direction `dir`, and `next_nucl` is the nucletiode preceding the last k-mer.
+    void process_last_kmer(const cuttlefish::kmer_t& kmer_hat, const cuttlefish::kmer_dir_t dir, const cuttlefish::nucleotide_t prev_nucl);
 
-    // Processes classification (partially) for an internal k-mer of the sequence
-    // `seq`, at index `kmer_idx`.
-    void process_internal_kmer(const char* seq, const uint32_t kmer_idx);
+    // Processes classification (partially) for the canonical version `kmer_hat` of
+    // some k-mer of some sequence, where the k-mer is encountered in the direction
+    // `dir`, `next_kmer_hat` is the canoninal version of the next k-mer in the
+    // sequence, `prev_nucl` is the nucletiode preceding the k-mer, and `next_nucl`
+    // is the nucletiode succeeding the k-mer.
+    void process_internal_kmer(const cuttlefish::kmer_t& kmer_hat, const cuttlefish::kmer_dir_t& dir, const cuttlefish::kmer_t& next_kmer_hat, const cuttlefish::nucleotide_t prev_nucl, const cuttlefish::nucleotide_t next_nucl);
 
-    // Returns a Boolean denoting whether the k-mer `kmer` at index `kmer_idx` of
-    // the sequence `seq` forms a self loop with its next k-mer in the sequence
-    // (i.e. the k-mer at idx `kmer_idx` + 1). Expects that `kmer` is not the
-    // last k-mer of `seq`.
-    bool is_self_loop(const char* seq, const cuttlefish::kmer_t& kmer, const uint32_t kmer_idx) const;
+    // Returns a Boolean denoting whether the canonical k-mer `kmer_hat` forms a
+    // self loop with the canonical k-mer `next_kmer_hat` in the sequence. This
+    // should only be used with the canonical versions of two adjacent k-mers.
+    bool is_self_loop(const cuttlefish::kmer_t& kmer_hat, const cuttlefish::kmer_t& next_kmer_hat) const;
 
     // Outputs all the distinct maximal unitigs of the compacted de Bruijn graph
     // (in canonical form) to a file named `output_file`.
     void output_maximal_unitigs(const std::string& output_file);
 
-    // Returns a Boolean denoting whether the k-mer at index `kmer_idx` of
-    // the sequence `seq` starts a maximal unitig.
-    bool is_unipath_start(const char* seq, const uint32_t kmer_idx) const;
+    // Returns a Boolean denoting whether the canonical k-mer `kmer_hat` traversed
+    // in the direction `dir` starts a maximal unitig, where `prev_kmer_hat` and
+    // `prev_kmer_dir` are the canonical version and the direction of the previous
+    // k-mer in the sequence, respectively.
+    bool is_unipath_start(const cuttlefish::kmer_t& kmer_hat, const cuttlefish::kmer_dir_t dir, const cuttlefish::kmer_t& prev_kmer_hat, const cuttlefish::kmer_dir_t prev_kmer_dir) const;
 
-    // Returns a Boolean denoting whether the k-mer at index `kmer_idx` of
-    // the sequence `seq` ends a maximal unitig.
-    bool is_unipath_end(const char* seq, const uint32_t kmer_idx) const;
+    // Returns a Boolean denoting whether the canonical k-mer `kmer_hat` traversed
+    // in the direction `dir` starts a maximal unitig, where `next_kmer_hat` and
+    // `next_kmer_dir` are the canonical version and the direction of the next
+    // k-mer in the sequence, respectively.
+    bool is_unipath_end(const cuttlefish::kmer_t& kmer_hat, const cuttlefish::kmer_dir_t dir, const cuttlefish::kmer_t& next_kmer_hat, const cuttlefish::kmer_dir_t next_kmer_dir) const;
 
     // Outputs the unitig at the index range [`start_idx`, `end_idx`] of the sequence
     // `seq` (if the unitig had not been output already), to the stream `output`.

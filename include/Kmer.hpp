@@ -13,27 +13,26 @@
 class Kmer
 {
 private:
-    static uint16_t k;
+    static uint16_t k;  // The k-parameter.
+    uint64_t kmer = 0;  // The 64-bit encoding of the underlying k-mer.
+    static uint64_t bitmask_MSN;    // Bitmask to clear the most significant nucleotide character,
+                                    // i.e. the first nucleotide of the k-mer.
 
     // A = 0, C = 1, G = 2, T = 3
-    enum DNA
+    enum DNA_Base
     {
         A = 0b00, C = 0b01, G = 0b10, T = 0b11, N = 0b100
     };
-
-    uint64_t kmer = 0;
 
 
     // Constructs a k-mer with the provided encoded value `kmer`.
     Kmer(const uint64_t kmer);
 
     // Returns the mapping integer value of the given character `nucleotide`.
-    static uint8_t map_nucleotide(const char nucleotide);
+    static DNA_Base map_nucleotide(const char nucleotide);
 
-    // Returns the complement of `nucleotide`.
-    static uint8_t complement_nucleotide(const uint8_t nucleotide);
-
-    bool operator ==(const Kmer& rhs) const;
+    // Returns the mapping integer value of the complement of `nucleotide`.
+    static DNA_Base complement_nucleotide(const DNA_Base nucleotide);
 
     static Kmer min(const Kmer& lhs, const Kmer& rhs);
 
@@ -57,6 +56,8 @@ public:
 
     bool operator <(const Kmer& rhs) const;
 
+    bool operator ==(const Kmer& rhs) const;
+
     // Returns the canonical version of the k-mer.
     Kmer canonical() const;
 
@@ -67,6 +68,16 @@ public:
     // the same k-mer irrespective of the strands they originate from, i.e.
     // their canonical versions are the same.
     bool is_same_kmer(const Kmer& rhs) const;
+
+    // Transforms this k-mer by chopping off the first nucleotide and
+    // appending the next nucleotide to the end, i.e. rolls the k-mer
+    // by one nucleotide. Also sets the passed reverse complement of
+    // the k-mer accordingly.
+    void roll_to_next_kmer(const cuttlefish::nucleotide_t next_nucl, cuttlefish::kmer_t& rev_compl);
+
+    // Returns the canonical version of the k-mer, comparing it to its
+    // reverse complement `rev_compl`.
+    Kmer canonical(const Kmer& rev_compl) const;
 
     // Returns the string label of the k-mer.
     std::string string_label() const;
@@ -79,4 +90,64 @@ public:
 };
 
 
-#endif 
+
+inline Kmer::DNA_Base Kmer::map_nucleotide(const char nucleotide)
+{
+    switch(nucleotide)
+    {
+    case 'A':
+        return DNA_Base::A;
+    
+    case 'C':
+        return DNA_Base::C;
+
+    case 'G':
+        return DNA_Base::G;
+
+    case 'T':
+        return DNA_Base::T;
+
+    default:
+        return DNA_Base::N;
+    }
+}
+
+
+inline Kmer::DNA_Base Kmer::complement_nucleotide(const DNA_Base nucleotide)
+{
+    switch(nucleotide)
+    {
+    case DNA_Base::A:
+        return DNA_Base::T;
+
+    case DNA_Base::C:
+        return DNA_Base::G;
+
+    case DNA_Base::G:
+        return DNA_Base::C;
+
+    case DNA_Base::T:
+        return DNA_Base::A;
+
+    default:
+        return DNA_Base::N;
+    }
+}
+
+
+inline void Kmer::roll_to_next_kmer(const cuttlefish::nucleotide_t next_nucl, cuttlefish::kmer_t& rev_compl)
+{
+    const DNA_Base mapped_nucl = map_nucleotide(next_nucl);
+
+    kmer = ((kmer & bitmask_MSN) << 2) | mapped_nucl;
+    rev_compl.kmer = (rev_compl.kmer >> 2) | (uint64_t(complement_nucleotide(mapped_nucl)) << (2 * (k - 1)));
+}
+
+
+inline Kmer Kmer::canonical(const Kmer& rev_compl) const
+{
+    return std::min(*this, rev_compl);
+}
+
+
+#endif

@@ -31,6 +31,7 @@ namespace cuttlefish
 }
 
 
+// Returns the plain DNA-complement character of the provided `nucleotide` character.
 inline cuttlefish::nucleotide_t complement(const cuttlefish::nucleotide_t nucleotide)
 {
     switch (nucleotide)

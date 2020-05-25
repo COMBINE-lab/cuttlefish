@@ -6,51 +6,9 @@
 #include <algorithm>
 
 
+// Static fields initialization.
 uint16_t Kmer::k = 0;
-
-
-inline uint8_t Kmer::map_nucleotide(const char nucleotide)
-{
-    switch(nucleotide)
-    {
-    case 'A':
-        return DNA::A;
-    
-    case 'C':
-        return DNA::C;
-
-    case 'G':
-        return DNA::G;
-
-    case 'T':
-        return DNA::T;
-
-    default:
-        return DNA::N;
-    }
-}
-
-
-inline uint8_t Kmer::complement_nucleotide(const uint8_t nucleotide)
-{
-    switch(nucleotide)
-    {
-    case DNA::A:
-        return DNA::T;
-
-    case DNA::C:
-        return DNA::G;
-
-    case DNA::G:
-        return DNA::C;
-
-    case DNA::T:
-        return DNA::A;
-
-    default:
-        return DNA::N;
-    }
-}
+uint64_t Kmer::bitmask_MSN = 0;
 
 
 Kmer::Kmer(const std::string& label)
@@ -62,7 +20,7 @@ Kmer::Kmer(const std::string& label)
     for(const char p: label)
     {
         uint8_t nucleotide = map_nucleotide(p);
-        assert(nucleotide < DNA::N);
+        assert(nucleotide < DNA_Base::N);
 
         kmer = (kmer << 2) | nucleotide;
     }
@@ -79,8 +37,8 @@ Kmer::Kmer(const char* label, const uint32_t kmer_idx)
 
         // Placeholder rule to handle `N` nucleotides.
         // TODO: Need to make an informed rule for this.
-        if(nucleotide == DNA::N)
-            nucleotide = DNA::A;
+        if(nucleotide == DNA_Base::N)
+            nucleotide = DNA_Base::A;
 
         kmer = (kmer << 2) | nucleotide;
     }
@@ -94,6 +52,7 @@ Kmer::Kmer(const uint64_t kmer): kmer(kmer)
 void Kmer::set_k(uint16_t k)
 {
     Kmer::k = k;
+    Kmer::bitmask_MSN = ~(uint64_t(0b11) << (2 * (k - 1)));
 }
 
 
@@ -104,7 +63,7 @@ Kmer Kmer::reverse_complement() const
 
     for(uint16_t idx = 0; idx < k; ++idx)
     {
-        rev_comp = ((rev_comp << 2) | complement_nucleotide(kmer & 0b11));
+        rev_comp = ((rev_comp << 2) | complement_nucleotide(DNA_Base(kmer & 0b11)));
 
         kmer >>= 2;
     }
@@ -152,19 +111,19 @@ std::string Kmer::string_label() const
     {
         switch(kmer & 0b11)
         {
-        case DNA::A:
+        case DNA_Base::A:
             label[idx] = 'A';
             break;
 
-        case DNA::C:
+        case DNA_Base::C:
             label[idx] = 'C';
             break;
 
-        case DNA::G:
+        case DNA_Base::G:
             label[idx] = 'G';
             break;
 
-        case DNA::T:
+        case DNA_Base::T:
             label[idx] = 'T';
             break;
 

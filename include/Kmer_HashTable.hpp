@@ -36,7 +36,10 @@ public:
     void print_hash_table() const;
 
     // For debugging purposes.
-    void print_stats() const;
+    std::map<cuttlefish::kmer_t, Vertex_Encoding>& get_hash_table()
+    {
+        return hash;
+    }
 };
 
 

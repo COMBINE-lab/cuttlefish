@@ -49,7 +49,14 @@ public:
     // Returns the output status of the encoded vertex.
     bool is_outputted() const;
 
+    // For debugging.
     friend std::ostream& operator <<(std::ostream& out, const Vertex_Encoding& vertex_encoding);
+
+    // For debugging.
+    uint64_t get_vertex_code()
+    {
+        return vertex_code;
+    }
 
 
 private:

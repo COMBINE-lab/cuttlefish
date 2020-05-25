@@ -6,6 +6,8 @@
 #include <cstdlib>
 #include <cassert>
 #include <vector>
+#include <ctime>
+#include <chrono>
 #include "zlib.h"
 
 
@@ -33,6 +35,9 @@ void CdBG_Builder::construct(const std::string& output_file)
 
 void CdBG_Builder::classify_vertices()
 {
+    std::chrono::high_resolution_clock::time_point t_start = std::chrono::high_resolution_clock::now();
+
+
     // Open the file handler for the FASTA file containing the reference.
     FILE* input = fopen(ref_file.c_str(), "r");
     if(input == NULL)
@@ -70,6 +75,11 @@ void CdBG_Builder::classify_vertices()
     // Close the parser and the input file.
     kseq_destroy(parser);
     fclose(input);
+
+
+    std::chrono::high_resolution_clock::time_point t_end = std::chrono::high_resolution_clock::now();
+    double elapsed_seconds = std::chrono::duration_cast<std::chrono::duration<double>>(t_end - t_start).count();
+    std::cout << "Done classifying the vertices. Time taken = " << elapsed_seconds << " seconds.\n";
 }
 
 
@@ -88,7 +98,7 @@ void CdBG_Builder::process_first_kmer(const char* seq)
 
 
     // The k-mer is already classified as a complex node.
-    if(Vertices.find(kmer_hat) != Vertices.end() && Vertices[kmer_hat].state() == cuttlefish::MULTI_IN_MULTI_OUT)
+    if(Vertices.is_present(kmer_hat) && Vertices[kmer_hat].state() == cuttlefish::MULTI_IN_MULTI_OUT)
         return;
 
     
@@ -103,7 +113,7 @@ void CdBG_Builder::process_first_kmer(const char* seq)
     if(dir == cuttlefish::FWD)
     {
         // The sentinel k-mer is encountered for the first time, and in the forward direction.
-        if(Vertices.find(kmer_hat) == Vertices.end())
+        if(!Vertices.is_present(kmer_hat))
             Vertices[kmer_hat] = Vertex_Encoding(Vertex(cuttlefish::MULTI_IN_SINGLE_OUT, next_nucl));
         else    // The sentinel k-mer has been visited earlier and has some state; modify it accordingly.
         {
@@ -138,7 +148,7 @@ void CdBG_Builder::process_first_kmer(const char* seq)
     else
     {
         // The sentinel k-mer is encountered for the first time, and in the backward direction.
-        if(Vertices.find(kmer_hat) == Vertices.end())
+        if(!Vertices.is_present(kmer_hat))
             Vertices[kmer_hat] = Vertex_Encoding(Vertex(cuttlefish::SINGLE_IN_MULTI_OUT, complement(next_nucl)));
         else    // The sentinel k-mer has been visited earlier and has some state; modify it accordingly.
         {
@@ -183,14 +193,14 @@ void CdBG_Builder::process_last_kmer(const char* seq, const uint32_t seq_len)
 
 
     // The k-mer is already classified as a complex node.
-    if(Vertices.find(kmer_hat) != Vertices.end() && Vertices[kmer_hat].state() == cuttlefish::MULTI_IN_MULTI_OUT)
+    if(Vertices.is_present(kmer_hat) && Vertices[kmer_hat].state() == cuttlefish::MULTI_IN_MULTI_OUT)
         return;
 
 
     if(dir == cuttlefish::FWD)
     {
         // The sentinel k-mer is encountered for the first time, and in the forward direction.
-        if(Vertices.find(kmer_hat) == Vertices.end())
+        if(!Vertices.is_present(kmer_hat))
             Vertices[kmer_hat] = Vertex_Encoding(Vertex(cuttlefish::SINGLE_IN_MULTI_OUT, prev_nucl));
         else    // The sentinel k-mer has been visited earlier and has some state; modify it accordingly.
         {
@@ -225,7 +235,7 @@ void CdBG_Builder::process_last_kmer(const char* seq, const uint32_t seq_len)
     else
     {
         // The sentinel k-mer is encountered for the first time, and in the backward direction.
-        if(Vertices.find(kmer_hat) == Vertices.end())
+        if(!Vertices.is_present(kmer_hat))
             Vertices[kmer_hat] = Vertex_Encoding(Vertex(cuttlefish::MULTI_IN_SINGLE_OUT, complement(prev_nucl)));
         else    // The sentinel k-mer had been visited earlier and has some state; modify it accordingly.
         {
@@ -270,7 +280,7 @@ void CdBG_Builder::process_internal_kmer(const char* seq, const uint32_t kmer_id
 
 
     // The k-mer is already classified as a complex node.
-    if(Vertices.find(kmer_hat) != Vertices.end() && Vertices[kmer_hat].state() == cuttlefish::MULTI_IN_MULTI_OUT)
+    if(Vertices.is_present(kmer_hat) && Vertices[kmer_hat].state() == cuttlefish::MULTI_IN_MULTI_OUT)
         return;
 
     
@@ -285,7 +295,7 @@ void CdBG_Builder::process_internal_kmer(const char* seq, const uint32_t kmer_id
     if(dir == cuttlefish::FWD)
     {
         // The k-mer is encountered for the first time, and in the forward direction.
-        if(Vertices.find(kmer_hat) == Vertices.end())
+        if(!Vertices.is_present(kmer_hat))
             Vertices[kmer_hat] = Vertex_Encoding(Vertex(cuttlefish::SINGLE_IN_SINGLE_OUT, prev_nucl, next_nucl));
         else    // The k-mer has been visited earlier and has some state; modify it accordingly.
         {
@@ -328,7 +338,7 @@ void CdBG_Builder::process_internal_kmer(const char* seq, const uint32_t kmer_id
     else
     {
         // The k-mer is encountered for the first time, and in the backward direction.
-        if(Vertices.find(kmer_hat) == Vertices.end())
+        if(!Vertices.is_present(kmer_hat))
             Vertices[kmer_hat] = Vertex_Encoding(Vertex(cuttlefish::SINGLE_IN_SINGLE_OUT, complement(next_nucl), complement(prev_nucl)));
         else    // The k-mer has been visited earlier and has some state; modify it accordingly.
         {
@@ -373,6 +383,9 @@ void CdBG_Builder::process_internal_kmer(const char* seq, const uint32_t kmer_id
 
 void CdBG_Builder::output_maximal_unitigs(const std::string& output_file)
 {
+    std::chrono::high_resolution_clock::time_point t_start = std::chrono::high_resolution_clock::now();
+
+
     // Open the file handler for the FASTA file containing the reference.
     FILE* input = fopen(ref_file.c_str(), "r");
     if(input == NULL)
@@ -401,6 +414,7 @@ void CdBG_Builder::output_maximal_unitigs(const std::string& output_file)
         const size_t seq_len = parser->seq.l;
 
 
+
         uint32_t unipath_start_idx, unipath_end_idx;
 
         for(uint32_t kmer_idx = 0; kmer_idx <= seq_len - k; ++kmer_idx)
@@ -422,6 +436,11 @@ void CdBG_Builder::output_maximal_unitigs(const std::string& output_file)
     // Close the parser and the input file.
     kseq_destroy(parser);
     fclose(input);
+
+
+    std::chrono::high_resolution_clock::time_point t_end = std::chrono::high_resolution_clock::now();
+    double elapsed_seconds = std::chrono::duration_cast<std::chrono::duration<double>>(t_end - t_start).count();
+    std::cout << "Done classifying the vertices. Time taken = " << elapsed_seconds << " seconds.\n";
 }
 
 
@@ -430,7 +449,7 @@ bool CdBG_Builder::is_unipath_start(const char* seq, const uint32_t kmer_idx) co
     const cuttlefish::kmer_t kmer(seq, kmer_idx);
     const cuttlefish::kmer_t kmer_hat = kmer.canonical();
     const cuttlefish::kmer_dir_t dir = kmer.direction(kmer_hat);
-    const cuttlefish::state_t state = (Vertices.find(kmer_hat) -> second).state();
+    const cuttlefish::state_t state = Vertices[kmer_hat].state();
 
     if(state == cuttlefish::MULTI_IN_MULTI_OUT)
         return true;
@@ -448,7 +467,7 @@ bool CdBG_Builder::is_unipath_start(const char* seq, const uint32_t kmer_idx) co
     cuttlefish::kmer_t prev_kmer(seq, kmer_idx - 1);
     cuttlefish::kmer_t prev_kmer_hat = prev_kmer.canonical();
     cuttlefish::kmer_dir_t prev_kmer_dir = prev_kmer.direction(prev_kmer_hat);
-    cuttlefish::state_t prev_state = (Vertices.find(prev_kmer_hat) -> second).state();
+    cuttlefish::state_t prev_state = Vertices[prev_kmer_hat].state();
 
     if(prev_state == cuttlefish::MULTI_IN_MULTI_OUT)
         return true;
@@ -469,7 +488,7 @@ bool CdBG_Builder::is_unipath_end(const char* seq, const uint32_t kmer_idx) cons
     cuttlefish::kmer_t kmer(seq, kmer_idx);
     cuttlefish::kmer_t kmer_hat = kmer.canonical();
     cuttlefish::kmer_dir_t dir = kmer.direction(kmer_hat);
-    cuttlefish::state_t state = (Vertices.find(kmer_hat) -> second).state();
+    cuttlefish::state_t state = Vertices[kmer_hat].state();
 
     if(state == cuttlefish::MULTI_IN_MULTI_OUT)
         return true;
@@ -486,7 +505,7 @@ bool CdBG_Builder::is_unipath_end(const char* seq, const uint32_t kmer_idx) cons
     cuttlefish::kmer_t next_kmer(seq, kmer_idx + 1);
     cuttlefish::kmer_t next_kmer_hat = next_kmer.canonical();
     cuttlefish::kmer_dir_t next_kmer_dir = next_kmer.direction(next_kmer_hat);
-    cuttlefish::state_t next_state = (Vertices.find(next_kmer_hat) -> second).state();
+    cuttlefish::state_t next_state = Vertices[next_kmer_hat].state();
 
     if(next_state == cuttlefish::MULTI_IN_MULTI_OUT)
         return true;
@@ -536,8 +555,9 @@ void CdBG_Builder::output_unitig(const char* seq, const uint32_t start_idx, cons
 
 void CdBG_Builder::print_vertices() const
 {
-    for(auto vertex: Vertices)
-        std::cout << vertex.first << " : " << vertex.second.decode() << "\n";
+    Vertices.print_hash_table();
+    // for(auto vertex: Vertices)
+    //     std::cout << vertex.first << " : " << vertex.second.decode() << "\n";
 }
 
 

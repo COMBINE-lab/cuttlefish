@@ -8,6 +8,7 @@
 #include "Vertex_Encoding.hpp"
 #include "Kmer_Str.hpp"
 #include "Kmer.hpp"
+#include "Kmer_HashTable.hpp"
 
 #include <string>
 #include <map>
@@ -18,8 +19,9 @@ class CdBG_Builder
 private:
     std::string ref_file;   // Name of the file containing all the newline-separated references.
     uint16_t k; // The k parameter for the edge-centric de Bruijn graph to be compacted.
-    // std::map<cuttlefish::kmer_t, Vertex> Vertices;  // The set of vertices of the dBG.
-    std::map<cuttlefish::kmer_t, Vertex_Encoding> Vertices; // The set of vertices of the dBG.
+    // std::map<cuttlefish::kmer_t, Vertex_Encoding> Vertices; // The set of vertices of the dBG.
+    Kmer_HashTable Vertices;
+
 
 
     // Classifies the vertices into different types.

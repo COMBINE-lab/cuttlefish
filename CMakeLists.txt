@@ -22,6 +22,12 @@ set(CMAKE_CXX_STANDARD 11)
 set(WARNING_FLAGS -Wall -Wextra)
 
 
+# Search the file system for the appropriate threads package for this platform, and then set
+# the `CMAKE_THREAD_LIBS_INIT` variable (and some other variables as well).
+find_package(Threads REQUIRED)  # The threads package is required for the BBHash library used in the project.
+set(THREADS_PREFER_PTHREAD_FLAG TRUE)   # The BBHash library uses `pthread`.
+
+
 # The `Debug` configuration optimizes the program for debugging and enables full debug information.
 # The `Release` configuration enables most compiler optimizations for speed and defines `NDEBUG`
 # (No Debug) which will remove all traces of the standard library assert calls.

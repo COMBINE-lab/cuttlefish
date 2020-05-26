@@ -136,6 +136,9 @@ inline void Vertex_Encoding::set_nibble_upper_half(const cuttlefish::nucleotide_
 
 Vertex Vertex_Encoding::decode() const
 {
+    // TODO: Define a class member const static array and return elements from those,
+    // instead of constructing values everytime.
+
     switch(vertex_code)
     {
     case 0b00000:   // 0
@@ -232,6 +235,56 @@ Vertex Vertex_Encoding::decode() const
 
     case 0b11111:   // 31
         return Vertex(cuttlefish::SINGLE_IN_SINGLE_OUT, 'T', 'T');
+
+    default:
+        std::cerr << "Invalid vertex encoding " << vertex_code << " encountered. Aborting.\n";
+        std::exit(EXIT_FAILURE);
+    }
+}
+
+
+bool Vertex_Encoding::is_visited() const
+{
+    switch(vertex_code)
+    {
+    case 0b00000:   // 0
+        return false;
+
+    case 0b00001:   // 1
+    case 0b00010:   // 2
+        std::cerr << "Invalid vertex encoding " << vertex_code << " encountered. Aborting.\n";
+        std::exit(EXIT_FAILURE);
+
+    case 0b00011:   // 3
+    case 0b00100:   // 4
+    case 0b00101:   // 5
+    case 0b00110:   // 6
+    case 0b00111:   // 7
+    case 0b01000:   // 8
+    case 0b01001:   // 9
+    case 0b01010:   // 10
+    case 0b01011:   // 11
+    case 0b01100:   // 12
+    case 0b01101:   // 13
+    case 0b01110:   // 14
+    case 0b01111:   // 15
+    case 0b10000:   // 16
+    case 0b10001:   // 17
+    case 0b10010:   // 18
+    case 0b10011:   // 19
+    case 0b10100:   // 20
+    case 0b10101:   // 21
+    case 0b10110:   // 22
+    case 0b10111:   // 23
+    case 0b11000:   // 24
+    case 0b11001:   // 25
+    case 0b11010:   // 26
+    case 0b11011:   // 27
+    case 0b11100:   // 28
+    case 0b11101:   // 29
+    case 0b11110:   // 30
+    case 0b11111:   // 31
+        return true;
 
     default:
         std::cerr << "Invalid vertex encoding " << vertex_code << " encountered. Aborting.\n";

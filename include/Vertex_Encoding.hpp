@@ -40,6 +40,10 @@ public:
     // Returns a vertex by decoding the encoded information.
     Vertex decode() const;
 
+    // Returns a Boolean denoting whether the underlying vertex has been
+    // visited.
+    bool is_visited() const;
+
     // Returns an encoding of the underlying vertex if it had been outputted.
     Vertex_Encoding outputted() const;
 

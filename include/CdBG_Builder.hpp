@@ -78,7 +78,7 @@ public:
 
     // Construct the compacted de Bruijn graph, and output the maximal unitigs
     // into the file named `output_file`.
-    void construct(const std::string& output_file);
+    void construct(const std::string& kmers_file, const uint64_t kmer_count, const std::string& output_file);
 
     // For debugging.
     void print_vertices() const;

@@ -108,7 +108,11 @@ inline Kmer::DNA_Base Kmer::map_nucleotide(const char nucleotide)
         return DNA_Base::T;
 
     default:
-        return DNA_Base::N;
+        // Placeholder rule to handle `N` nucleotides.
+        // TODO: Need to make an informed rule for this.
+        
+        // return DNA_Base::N;
+        return DNA_Base::A;
     }
 }
 
@@ -132,6 +136,12 @@ inline Kmer::DNA_Base Kmer::complement_nucleotide(const DNA_Base nucleotide)
     default:
         return DNA_Base::N;
     }
+}
+
+
+inline uint64_t Kmer::int_label() const
+{
+    return kmer;
 }
 
 

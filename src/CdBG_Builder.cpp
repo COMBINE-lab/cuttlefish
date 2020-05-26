@@ -24,13 +24,18 @@ CdBG_Builder::CdBG_Builder(const std::string& ref_file, const uint16_t k):
 }
 
 
-void CdBG_Builder::construct(const std::string& output_file)
+void CdBG_Builder::construct(const std::string& kmers_file, const uint64_t kmer_count, const std::string& output_file)
 {
+    std::cout << "Constructing the minimal perfect hash table.\n";
+    Vertices.construct(kmers_file, kmer_count);
+
     std::cout << "Classifying the vertices.\n";
     classify_vertices();
 
     std::cout << "Classification of the vertices complete. Now outputting the maximal unitigs.\n";
     output_maximal_unitigs(output_file);
+
+    Vertices.clear();
 }
 
 
@@ -52,7 +57,7 @@ void CdBG_Builder::classify_vertices()
 
 
     // Mark all the k-mers as unvisited.
-    Vertices.clear();
+    // Vertices.clear();
 
 
     // Parse sequences one-by-one.
@@ -100,15 +105,20 @@ bool CdBG_Builder::is_self_loop(const cuttlefish::kmer_t& kmer_hat, const cuttle
 
 void CdBG_Builder::process_first_kmer(const cuttlefish::kmer_t& kmer_hat, const cuttlefish::kmer_dir_t dir, const cuttlefish::kmer_t& next_kmer_hat, const cuttlefish::nucleotide_t next_nucl)
 {
+    Vertex_Encoding& vertex_encoding = Vertices[kmer_hat];
+
+
     // The k-mer is already classified as a complex node.
-    if(Vertices.is_present(kmer_hat) && Vertices[kmer_hat].state() == cuttlefish::MULTI_IN_MULTI_OUT)
+    // if(Vertices.is_visited(kmer_hat) && Vertices[kmer_hat].state() == cuttlefish::MULTI_IN_MULTI_OUT)
+    if(vertex_encoding.is_visited() && vertex_encoding.state() == cuttlefish::MULTI_IN_MULTI_OUT)
         return;
 
     
     // The k-mer forms a self-loop with the next k-mer.
     if(is_self_loop(kmer_hat, next_kmer_hat))
     {
-        Vertices[kmer_hat] = Vertex_Encoding(Vertex(cuttlefish::MULTI_IN_MULTI_OUT));
+        // Vertices[kmer_hat] = Vertex_Encoding(Vertex(cuttlefish::MULTI_IN_MULTI_OUT));
+        vertex_encoding = Vertex_Encoding(Vertex(cuttlefish::MULTI_IN_MULTI_OUT));
         return;
     }
 
@@ -116,11 +126,14 @@ void CdBG_Builder::process_first_kmer(const cuttlefish::kmer_t& kmer_hat, const 
     if(dir == cuttlefish::FWD)
     {
         // The sentinel k-mer is encountered for the first time, and in the forward direction.
-        if(!Vertices.is_present(kmer_hat))
-            Vertices[kmer_hat] = Vertex_Encoding(Vertex(cuttlefish::MULTI_IN_SINGLE_OUT, next_nucl));
+        // if(!Vertices.is_visited(kmer_hat))
+        if(!vertex_encoding.is_visited())
+            // Vertices[kmer_hat] = Vertex_Encoding(Vertex(cuttlefish::MULTI_IN_SINGLE_OUT, next_nucl));
+            vertex_encoding = Vertex_Encoding(Vertex(cuttlefish::MULTI_IN_SINGLE_OUT, next_nucl));
         else    // The sentinel k-mer has been visited earlier and has some state; modify it accordingly.
         {
-            Vertex vertex = Vertices[kmer_hat].decode();
+            // Vertex vertex = Vertices[kmer_hat].decode();
+            Vertex vertex = vertex_encoding.decode();
 
             if(vertex.state == cuttlefish::SINGLE_IN_SINGLE_OUT)
             {
@@ -129,7 +142,8 @@ void CdBG_Builder::process_first_kmer(const cuttlefish::kmer_t& kmer_hat, const 
                 else
                     vertex.state = cuttlefish::MULTI_IN_MULTI_OUT;
 
-                Vertices[kmer_hat] = Vertex_Encoding(vertex);
+                // Vertices[kmer_hat] = Vertex_Encoding(vertex);
+                vertex_encoding = Vertex_Encoding(vertex);
             }
             else if(vertex.state == cuttlefish::MULTI_IN_SINGLE_OUT)
             {
@@ -137,25 +151,30 @@ void CdBG_Builder::process_first_kmer(const cuttlefish::kmer_t& kmer_hat, const 
                 {
                     vertex.state = cuttlefish::MULTI_IN_MULTI_OUT;
 
-                    Vertices[kmer_hat] = Vertex_Encoding(vertex);
+                    // Vertices[kmer_hat] = Vertex_Encoding(vertex);
+                    vertex_encoding = Vertex_Encoding(vertex);
                 }
             }
             else    // vertex.state == cuttlefish::SINGLE_IN_MULTI_OUT
             {
                 vertex.state = cuttlefish::MULTI_IN_MULTI_OUT;
 
-                Vertices[kmer_hat] = Vertex_Encoding(vertex);
+                // Vertices[kmer_hat] = Vertex_Encoding(vertex);
+                vertex_encoding = Vertex_Encoding(vertex);
             }
         }
     }
     else
     {
         // The sentinel k-mer is encountered for the first time, and in the backward direction.
-        if(!Vertices.is_present(kmer_hat))
-            Vertices[kmer_hat] = Vertex_Encoding(Vertex(cuttlefish::SINGLE_IN_MULTI_OUT, complement(next_nucl)));
+        // if(!Vertices.is_visited(kmer_hat))
+        if(!vertex_encoding.is_visited())
+            // Vertices[kmer_hat] = Vertex_Encoding(Vertex(cuttlefish::SINGLE_IN_MULTI_OUT, complement(next_nucl)));
+            vertex_encoding = Vertex_Encoding(Vertex(cuttlefish::SINGLE_IN_MULTI_OUT, complement(next_nucl)));
         else    // The sentinel k-mer has been visited earlier and has some state; modify it accordingly.
         {
-            Vertex vertex = Vertices[kmer_hat].decode();
+            // Vertex vertex = Vertices[kmer_hat].decode();
+            Vertex vertex = vertex_encoding.decode();
 
             if(vertex.state == cuttlefish::SINGLE_IN_SINGLE_OUT)
             {
@@ -164,13 +183,15 @@ void CdBG_Builder::process_first_kmer(const cuttlefish::kmer_t& kmer_hat, const 
                 else
                     vertex.state = cuttlefish::MULTI_IN_MULTI_OUT;
 
-                Vertices[kmer_hat] = Vertex_Encoding(vertex);
+                // Vertices[kmer_hat] = Vertex_Encoding(vertex);
+                vertex_encoding = Vertex_Encoding(vertex);
             }
             else if(vertex.state == cuttlefish::MULTI_IN_SINGLE_OUT)
             {
                 vertex.state = cuttlefish::MULTI_IN_MULTI_OUT;
 
-                Vertices[kmer_hat] = Vertex_Encoding(vertex);
+                // Vertices[kmer_hat] = Vertex_Encoding(vertex);
+                vertex_encoding = Vertex_Encoding(vertex);
             }
             else    // vertex.state == cuttlefish::SINGLE_IN_MULTI_OUT
             {
@@ -178,7 +199,8 @@ void CdBG_Builder::process_first_kmer(const cuttlefish::kmer_t& kmer_hat, const 
                 {
                     vertex.state = cuttlefish::MULTI_IN_MULTI_OUT;
 
-                    Vertices[kmer_hat] = Vertex_Encoding(vertex);
+                    // Vertices[kmer_hat] = Vertex_Encoding(vertex);
+                    vertex_encoding = Vertex_Encoding(vertex);
                 }
             }
         }
@@ -189,19 +211,26 @@ void CdBG_Builder::process_first_kmer(const cuttlefish::kmer_t& kmer_hat, const 
 
 void CdBG_Builder::process_last_kmer(const cuttlefish::kmer_t& kmer_hat, const cuttlefish::kmer_dir_t dir, const cuttlefish::nucleotide_t prev_nucl)
 {
+    Vertex_Encoding& vertex_encoding = Vertices[kmer_hat];
+
+
     // The k-mer is already classified as a complex node.
-    if(Vertices.is_present(kmer_hat) && Vertices[kmer_hat].state() == cuttlefish::MULTI_IN_MULTI_OUT)
+    // if(Vertices.is_visited(kmer_hat) && Vertices[kmer_hat].state() == cuttlefish::MULTI_IN_MULTI_OUT)
+    if(vertex_encoding.is_visited() && vertex_encoding.state() == cuttlefish::MULTI_IN_MULTI_OUT)
         return;
 
 
     if(dir == cuttlefish::FWD)
     {
         // The sentinel k-mer is encountered for the first time, and in the forward direction.
-        if(!Vertices.is_present(kmer_hat))
-            Vertices[kmer_hat] = Vertex_Encoding(Vertex(cuttlefish::SINGLE_IN_MULTI_OUT, prev_nucl));
+        // if(!Vertices.is_visited(kmer_hat))
+        if(!vertex_encoding.is_visited())
+            // Vertices[kmer_hat] = Vertex_Encoding(Vertex(cuttlefish::SINGLE_IN_MULTI_OUT, prev_nucl));
+            vertex_encoding = Vertex_Encoding(Vertex(cuttlefish::SINGLE_IN_MULTI_OUT, prev_nucl));
         else    // The sentinel k-mer has been visited earlier and has some state; modify it accordingly.
         {
-            Vertex vertex = Vertices[kmer_hat].decode();
+            // Vertex vertex = Vertices[kmer_hat].decode();
+            Vertex vertex = vertex_encoding.decode();
 
             if(vertex.state == cuttlefish::SINGLE_IN_SINGLE_OUT)
             {
@@ -210,13 +239,15 @@ void CdBG_Builder::process_last_kmer(const cuttlefish::kmer_t& kmer_hat, const c
                 else
                     vertex.state = cuttlefish::MULTI_IN_MULTI_OUT;
 
-                Vertices[kmer_hat] = Vertex_Encoding(vertex);
+                // Vertices[kmer_hat] = Vertex_Encoding(vertex);
+                vertex_encoding = Vertex_Encoding(vertex);
             }
             else if(vertex.state == cuttlefish::MULTI_IN_SINGLE_OUT)
             {
                 vertex.state = cuttlefish::MULTI_IN_MULTI_OUT;
                 
-                Vertices[kmer_hat] = Vertex_Encoding(vertex);
+                // Vertices[kmer_hat] = Vertex_Encoding(vertex);
+                vertex_encoding = Vertex_Encoding(vertex);
             }
             else    // vertex.state == cuttlefish::SINGLE_IN_MULTI_OUT
             {
@@ -224,7 +255,8 @@ void CdBG_Builder::process_last_kmer(const cuttlefish::kmer_t& kmer_hat, const c
                 {
                     vertex.state = cuttlefish::MULTI_IN_MULTI_OUT;
 
-                    Vertices[kmer_hat] = Vertex_Encoding(vertex);
+                    // Vertices[kmer_hat] = Vertex_Encoding(vertex);
+                    vertex_encoding = Vertex_Encoding(vertex);
                 }
             }
         }
@@ -232,11 +264,14 @@ void CdBG_Builder::process_last_kmer(const cuttlefish::kmer_t& kmer_hat, const c
     else
     {
         // The sentinel k-mer is encountered for the first time, and in the backward direction.
-        if(!Vertices.is_present(kmer_hat))
-            Vertices[kmer_hat] = Vertex_Encoding(Vertex(cuttlefish::MULTI_IN_SINGLE_OUT, complement(prev_nucl)));
+        // if(!Vertices.is_visited(kmer_hat))
+        if(!vertex_encoding.is_visited())
+            // Vertices[kmer_hat] = Vertex_Encoding(Vertex(cuttlefish::MULTI_IN_SINGLE_OUT, complement(prev_nucl)));
+            vertex_encoding = Vertex_Encoding(Vertex(cuttlefish::MULTI_IN_SINGLE_OUT, complement(prev_nucl)));
         else    // The sentinel k-mer had been visited earlier and has some state; modify it accordingly.
         {
-            Vertex vertex = Vertices[kmer_hat].decode();
+            // Vertex vertex = Vertices[kmer_hat].decode();
+            Vertex vertex = vertex_encoding.decode();
 
             if(vertex.state == cuttlefish::SINGLE_IN_SINGLE_OUT)
             {
@@ -245,7 +280,8 @@ void CdBG_Builder::process_last_kmer(const cuttlefish::kmer_t& kmer_hat, const c
                 else
                     vertex.state = cuttlefish::MULTI_IN_MULTI_OUT;
 
-                Vertices[kmer_hat] = Vertex_Encoding(vertex);
+                // Vertices[kmer_hat] = Vertex_Encoding(vertex);
+                vertex_encoding= Vertex_Encoding(vertex);
             }
             else if(vertex.state == cuttlefish::MULTI_IN_SINGLE_OUT)
             {
@@ -253,14 +289,16 @@ void CdBG_Builder::process_last_kmer(const cuttlefish::kmer_t& kmer_hat, const c
                 {
                     vertex.state = cuttlefish::MULTI_IN_MULTI_OUT;
 
-                    Vertices[kmer_hat] = Vertex_Encoding(vertex);
+                    // Vertices[kmer_hat] = Vertex_Encoding(vertex);
+                    vertex_encoding = Vertex_Encoding(vertex);
                 }
             }
             else    // vertex.state == cuttlefish::SINGLE_IN_MULTI_OUT
             {
                 vertex.state = cuttlefish::MULTI_IN_MULTI_OUT;
 
-                Vertices[kmer_hat] = Vertex_Encoding(vertex);
+                // Vertices[kmer_hat] = Vertex_Encoding(vertex);
+                vertex_encoding = Vertex_Encoding(vertex);
             }
         }
     }
@@ -269,15 +307,20 @@ void CdBG_Builder::process_last_kmer(const cuttlefish::kmer_t& kmer_hat, const c
 
 void CdBG_Builder::process_internal_kmer(const cuttlefish::kmer_t& kmer_hat, const cuttlefish::kmer_dir_t& dir, const cuttlefish::kmer_t& next_kmer_hat, const cuttlefish::nucleotide_t prev_nucl, const cuttlefish::nucleotide_t next_nucl)
 {
+    Vertex_Encoding& vertex_encoding = Vertices[kmer_hat];
+
+
     // The k-mer is already classified as a complex node.
-    if(Vertices.is_present(kmer_hat) && Vertices[kmer_hat].state() == cuttlefish::MULTI_IN_MULTI_OUT)
+    // if(Vertices.is_visited(kmer_hat) && Vertices[kmer_hat].state() == cuttlefish::MULTI_IN_MULTI_OUT)
+    if(vertex_encoding.is_visited() && vertex_encoding.state() == cuttlefish::MULTI_IN_MULTI_OUT)
         return;
 
     
     // The k-mer forms a self-loop with the next k-mer.
     if(is_self_loop(kmer_hat, next_kmer_hat))
     { 
-        Vertices[kmer_hat] = Vertex_Encoding(Vertex(cuttlefish::MULTI_IN_MULTI_OUT));
+        // Vertices[kmer_hat] = Vertex_Encoding(Vertex(cuttlefish::MULTI_IN_MULTI_OUT));
+        vertex_encoding = Vertex_Encoding(Vertex(cuttlefish::MULTI_IN_MULTI_OUT));
         return;
     }
 
@@ -285,11 +328,14 @@ void CdBG_Builder::process_internal_kmer(const cuttlefish::kmer_t& kmer_hat, con
     if(dir == cuttlefish::FWD)
     {
         // The k-mer is encountered for the first time, and in the forward direction.
-        if(!Vertices.is_present(kmer_hat))
-            Vertices[kmer_hat] = Vertex_Encoding(Vertex(cuttlefish::SINGLE_IN_SINGLE_OUT, prev_nucl, next_nucl));
+        // if(!Vertices.is_visited(kmer_hat))
+        if(!vertex_encoding.is_visited())
+            // Vertices[kmer_hat] = Vertex_Encoding(Vertex(cuttlefish::SINGLE_IN_SINGLE_OUT, prev_nucl, next_nucl));
+            vertex_encoding = Vertex_Encoding(Vertex(cuttlefish::SINGLE_IN_SINGLE_OUT, prev_nucl, next_nucl));
         else    // The k-mer has been visited earlier and has some state; modify it accordingly.
         {
-            Vertex vertex = Vertices[kmer_hat].decode();
+            // Vertex vertex = Vertices[kmer_hat].decode();
+            Vertex vertex = vertex_encoding.decode();
 
             if(vertex.state == cuttlefish::SINGLE_IN_SINGLE_OUT)
             {
@@ -303,7 +349,8 @@ void CdBG_Builder::process_internal_kmer(const cuttlefish::kmer_t& kmer_hat, con
                 else    // vertex.exit != next_nucl
                     vertex.state = cuttlefish::SINGLE_IN_MULTI_OUT;
 
-                Vertices[kmer_hat] = Vertex_Encoding(vertex);
+                // Vertices[kmer_hat] = Vertex_Encoding(vertex);
+                vertex_encoding = Vertex_Encoding(vertex);
             }
             else if(vertex.state == cuttlefish::MULTI_IN_SINGLE_OUT)
             {
@@ -311,7 +358,8 @@ void CdBG_Builder::process_internal_kmer(const cuttlefish::kmer_t& kmer_hat, con
                 {
                     vertex.state = cuttlefish::MULTI_IN_MULTI_OUT;
 
-                    Vertices[kmer_hat] = Vertex_Encoding(vertex);
+                    // Vertices[kmer_hat] = Vertex_Encoding(vertex);
+                    vertex_encoding = Vertex_Encoding(vertex);
                 }
             }
             else    // vertex.state == cuttlefish::SINGLE_IN_MULTI_OUT
@@ -320,7 +368,8 @@ void CdBG_Builder::process_internal_kmer(const cuttlefish::kmer_t& kmer_hat, con
                 {
                     vertex.state = cuttlefish::MULTI_IN_MULTI_OUT;
 
-                    Vertices[kmer_hat] = Vertex_Encoding(vertex);
+                    // Vertices[kmer_hat] = Vertex_Encoding(vertex);
+                    vertex_encoding = Vertex_Encoding(vertex);
                 }
             }
         }
@@ -328,11 +377,14 @@ void CdBG_Builder::process_internal_kmer(const cuttlefish::kmer_t& kmer_hat, con
     else
     {
         // The k-mer is encountered for the first time, and in the backward direction.
-        if(!Vertices.is_present(kmer_hat))
-            Vertices[kmer_hat] = Vertex_Encoding(Vertex(cuttlefish::SINGLE_IN_SINGLE_OUT, complement(next_nucl), complement(prev_nucl)));
+        // if(!Vertices.is_visited(kmer_hat))
+        if(!vertex_encoding.is_visited())
+            // Vertices[kmer_hat] = Vertex_Encoding(Vertex(cuttlefish::SINGLE_IN_SINGLE_OUT, complement(next_nucl), complement(prev_nucl)));
+            vertex_encoding = Vertex_Encoding(Vertex(cuttlefish::SINGLE_IN_SINGLE_OUT, complement(next_nucl), complement(prev_nucl)));
         else    // The k-mer has been visited earlier and has some state; modify it accordingly.
         {
-            Vertex vertex = Vertices[kmer_hat].decode();
+            // Vertex vertex = Vertices[kmer_hat].decode();
+            Vertex vertex = vertex_encoding.decode();
 
             if(vertex.state == cuttlefish::SINGLE_IN_SINGLE_OUT)
             {
@@ -346,7 +398,8 @@ void CdBG_Builder::process_internal_kmer(const cuttlefish::kmer_t& kmer_hat, con
                 else if(vertex.exit != complement(prev_nucl))
                     vertex.state = cuttlefish::SINGLE_IN_MULTI_OUT;
 
-                Vertices[kmer_hat] = Vertex_Encoding(vertex);
+                // Vertices[kmer_hat] = Vertex_Encoding(vertex);
+                vertex_encoding = Vertex_Encoding(vertex);
             }
             else if(vertex.state == cuttlefish::MULTI_IN_SINGLE_OUT)
             {
@@ -354,7 +407,8 @@ void CdBG_Builder::process_internal_kmer(const cuttlefish::kmer_t& kmer_hat, con
                 {
                     vertex.state = cuttlefish::MULTI_IN_MULTI_OUT;
 
-                    Vertices[kmer_hat] = Vertex_Encoding(vertex);
+                    // Vertices[kmer_hat] = Vertex_Encoding(vertex);
+                    vertex_encoding = Vertex_Encoding(vertex);
                 }
             }
             else    // vertex.state == cuttlefish::SINGLE_IN_MULTI_OUT
@@ -363,7 +417,8 @@ void CdBG_Builder::process_internal_kmer(const cuttlefish::kmer_t& kmer_hat, con
                 {
                     vertex.state = cuttlefish::MULTI_IN_MULTI_OUT;
 
-                    Vertices[kmer_hat] = Vertex_Encoding(vertex);
+                    // Vertices[kmer_hat] = Vertex_Encoding(vertex);
+                    vertex_encoding = Vertex_Encoding(vertex);
                 }
             }
         }
@@ -530,12 +585,24 @@ void CdBG_Builder::output_unitig(const char* seq, const uint32_t start_idx, cons
     cuttlefish::kmer_t v_hat = v.canonical();
 
 
-    if(Vertices[u_hat].is_outputted())   // or Vertices[v_hat].is_outputted()
-        return;
+    Vertex_Encoding& vertex_encoding_u = Vertices[u_hat];
+    Vertex_Encoding& vertex_encoding_v = Vertices[v_hat];
 
+    // if(Vertices[u_hat].is_outputted())   // or Vertices[v_hat].is_outputted()
+    // if(vertex_encoding_u.is_outputted())   // or Vertices[v_hat].is_outputted()
+    //     return;
+
+    // This is to avoid race conditions that may arise while multi-threading.
+    // If two threads try to output the same unitig at the same tine but
+    // encounter it in the opposite orientations, then data races may arise.
+    Vertex_Encoding& vertex_encoding = (u_hat < v_hat ? vertex_encoding_u : vertex_encoding_v);
+    if(vertex_encoding.is_outputted())
+        return;
     
-    Vertices[u_hat] = Vertices[u_hat].outputted();
-    Vertices[v_hat] = Vertices[v_hat].outputted();
+    // Vertices[u_hat] = Vertices[u_hat].outputted();
+    // Vertices[v_hat] = Vertices[v_hat].outputted();
+    vertex_encoding_u = vertex_encoding_u.outputted();
+    vertex_encoding_v = vertex_encoding_v.outputted();
 
     const uint32_t unipath_len = end_idx - start_idx + 1 + k - 1;
     std::vector<char> unipath;
@@ -551,10 +618,4 @@ void CdBG_Builder::output_unitig(const char* seq, const uint32_t start_idx, cons
 
     
     output << std::string(unipath.begin(), unipath.end()) << "\n";
-}
-
-
-void CdBG_Builder::print_vertices() const
-{
-    Vertices.print_hash_table();
 }

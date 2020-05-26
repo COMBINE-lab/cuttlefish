@@ -147,12 +147,6 @@ std::string Kmer::string_label() const
 }
 
 
-uint64_t Kmer::int_label() const
-{
-    return kmer;
-}
-
-
 std::ostream& operator <<(std::ostream& out, const Kmer& kmer)
 {
     out << kmer.string_label();

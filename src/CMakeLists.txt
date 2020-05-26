@@ -33,6 +33,10 @@ target_compile_options(core PRIVATE ${WARNING_FLAGS})
 add_executable(${PROJECT_NAME} main.cpp)
 
 
+# Link the core library to the threads package in the platform.
+target_link_libraries(core PRIVATE ${CMAKE_THREAD_LIBS_INIT})
+
+
 # Link the executable to the required libraries.
 target_link_libraries(${PROJECT_NAME} PRIVATE core)
 

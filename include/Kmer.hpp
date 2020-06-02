@@ -15,13 +15,16 @@ class Kmer
 private:
     static uint16_t k;  // The k-parameter.
     uint64_t kmer = 0;  // The 64-bit encoding of the underlying k-mer.
-    static uint64_t bitmask_MSN;    // Bitmask to clear the most significant nucleotide character,
-                                    // i.e. the first nucleotide of the k-mer.
+    static uint64_t bitmask_MSN;    // Bitmask used to clear the most significant nucleotide character, i.e. the first nucleotide of the k-mer which is at the bits `2k-1 : 2k-2`.
 
     // A = 0, C = 1, G = 2, T = 3
     enum DNA_Base
     {
-        A = 0b00, C = 0b01, G = 0b10, T = 0b11, N = 0b100
+        A = 0b00,   // 0b00
+        C = 0b01,   // 0b01
+        G = 0b10,   // 0b11
+        T = 0b11,   // 0b11
+        N = 0b100   // 0b100
     };
 
 
@@ -70,9 +73,9 @@ public:
     bool is_same_kmer(const Kmer& rhs) const;
 
     // Transforms this k-mer by chopping off the first nucleotide and
-    // appending the next nucleotide to the end, i.e. rolls the k-mer
-    // by one nucleotide. Also sets the passed reverse complement of
-    // the k-mer accordingly.
+    // appending the next nucleotide `next_nucl` to the end, i.e.
+    // rolls the k-mer by one nucleotide. Also sets the passed reverse
+    // complement `rev_compl` of the k-mer accordingly.
     void roll_to_next_kmer(const cuttlefish::nucleotide_t next_nucl, cuttlefish::kmer_t& rev_compl);
 
     // Returns the canonical version of the k-mer, comparing it to its

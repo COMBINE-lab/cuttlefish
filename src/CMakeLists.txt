@@ -5,7 +5,7 @@ set(PROJECT_SRC
     Kmer.cpp
     Vertex.cpp
     Vertex_Encoding.cpp
-    Kmer_HashTable.cpp
+    Kmer_Hash_Table.cpp
     CdBG.cpp
     CdBG_Builder.cpp
     )

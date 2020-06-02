@@ -41,7 +41,7 @@ private:
     // direction `dir`, the canoninal version of the next k-mer in the sequence is
     // `next_kmer_hat`, the nucletiode preceding the k-mer is `prev_nucl`, and the
     // nucletiode succeeding the k-mer is `next_nucl`.
-    void process_internal_kmer(const cuttlefish::kmer_t& kmer_hat, const cuttlefish::kmer_dir_t& dir, const cuttlefish::kmer_t& next_kmer_hat, const cuttlefish::nucleotide_t prev_nucl, const cuttlefish::nucleotide_t next_nucl);
+    void process_internal_kmer(const cuttlefish::kmer_t& kmer_hat, const cuttlefish::kmer_dir_t dir, const cuttlefish::kmer_t& next_kmer_hat, const cuttlefish::nucleotide_t prev_nucl, const cuttlefish::nucleotide_t next_nucl);
 
     // Returns a Boolean denoting whether the canonical k-mer `kmer_hat` forms a
     // self loop with the canonical k-mer `next_kmer_hat` in the sequence. This

@@ -113,9 +113,10 @@ inline Kmer::DNA_Base Kmer::map_nucleotide(const char nucleotide)
     default:
         // Placeholder rule to handle `N` nucleotides.
         // TODO: Need to make an informed rule for this.
+        // Current: As per the rule used by the KMC tool.
         
-        // return DNA_Base::N;
-        return DNA_Base::A;
+        std::cerr << "Encountered invalid nucleotide " << nucleotide << ". Aborting.\n";
+        std::exit(EXIT_FAILURE);
     }
 }
 
@@ -137,7 +138,12 @@ inline Kmer::DNA_Base Kmer::complement_nucleotide(const DNA_Base nucleotide)
         return DNA_Base::A;
 
     default:
-        return DNA_Base::N;
+        // Placeholder rule to handle `N` nucleotides.
+        // TODO: Need to make an informed rule for this.
+        // Current: As per the rule used by the KMC tool.
+        
+        std::cerr << "Encountered invalid DNA_Base. Aborting.\n";
+        std::exit(EXIT_FAILURE);
     }
 }
 

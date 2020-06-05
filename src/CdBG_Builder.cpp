@@ -99,17 +99,17 @@ void CdBG_Builder::classify_vertices()
 
 size_t CdBG_Builder::search_valid_kmer(const char* seq, const size_t seq_len, const size_t start_idx)
 {
-    uint32_t valid_start_idx;
-    uint32_t nucl_count;
+    size_t valid_start_idx;
+    uint16_t nucl_count;
     
 
-    uint32_t idx = start_idx;
+    size_t idx = start_idx;
     while(idx <= seq_len - k)
     {
-        // Go over the stretch of 'N's.
+        // Go over the contiguous subsequence of 'N's.
         for(; idx <= seq_len - k && seq[idx] == 'N'; idx++);
 
-        // Go over the stretch of non-'N's.
+        // Go over the contiguous subsequence of non-'N's.
         if(idx <= seq_len - k)
         {
             valid_start_idx = idx;
@@ -130,12 +130,15 @@ size_t CdBG_Builder::process_contiguous_subseq(const char* seq, const size_t seq
 {
     size_t kmer_idx = start_idx;
 
+    // assert(kmer_idx <= seq_len - k);
+
+    Directed_Kmer curr_kmer(cuttlefish::kmer_t(seq, kmer_idx));
+
     // The subsequence contains only an isolated k-mer.
     if(kmer_idx + k == seq_len || seq[kmer_idx + k] == 'N')
-        process_isolated_kmer(cuttlefish::kmer_t(seq, kmer_idx));
+        process_isolated_kmer(curr_kmer.canonical);
     else    // At least two adjacent k-mers are present from the index `kmer_idx`.
     {
-        Directed_Kmer curr_kmer(cuttlefish::kmer_t(seq, kmer_idx));
         Directed_Kmer next_kmer = curr_kmer;
         next_kmer.roll_to_next_kmer(seq[kmer_idx + k]);
         
@@ -491,10 +494,13 @@ void CdBG_Builder::output_maximal_unitigs(const std::string& output_file)
 
 
     // Parse sequences one-by-one, and output each unique maximal unitig encountered through them.
+    uint32_t seqCount = 0;
     while(kseq_read(parser) >= 0)
     {
         const char* seq = parser->seq.s;
         const size_t seq_len = parser->seq.l;
+
+        std::cout << "Processing sequence " << ++seqCount << ", with length " << seq_len << ".\n";
 
         // Nothing to process for sequences with length shorter than `k`.
         if(seq_len < k)
@@ -539,6 +545,8 @@ size_t CdBG_Builder::output_maximal_unitigs(const char* seq, const size_t seq_le
 {
     size_t kmer_idx = start_idx;
 
+    // assert(kmer_idx <= seq_len - k);
+
     Annotated_Kmer curr_annot_kmer(cuttlefish::kmer_t(seq, kmer_idx), kmer_idx, Vertices);
 
     // The k-mer is an isolated one, so is a maximal unitig by itself.
@@ -562,7 +570,6 @@ size_t CdBG_Builder::output_maximal_unitigs(const char* seq, const size_t seq_le
 
 
         // Process the internal k-mers of this subsequence.
-
         for(kmer_idx++; kmer_idx < seq_len - k && seq[kmer_idx + k] != 'N'; ++kmer_idx)
         {
             prev_annot_kmer = curr_annot_kmer;

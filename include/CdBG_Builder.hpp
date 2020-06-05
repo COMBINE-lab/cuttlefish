@@ -25,6 +25,24 @@ private:
     // Classifies the vertices into different types.
     void classify_vertices();
 
+    // Returns the index of the first valid k-mer, i.e. the first k-mer without
+    // the placeholder nucleotide 'N', starting from the index `start_idx` of
+    // the sequence `seq` that has length `seq_len`. If no such k-mer is found,
+    // `seq_len` is returned.
+    size_t search_valid_kmer(const char* seq, const size_t seq_len, const size_t start_idx);
+
+    // Processes classification for the canonical versions of the k-mers of the
+    // sequence `seq` (of length `seq_len`) that are present at its contiguous
+    // subsequence starting from the index `start_idx`, going up-to either the
+    // ending of the sequence itself, or up-to the first encountered placeholder
+    // nucleotide 'N'. Also, returns the non-inclusive point of termination of
+    // the processed subsequence, i.e. the index following the end of it.
+    size_t process_contiguous_subseq(const char* seq, const size_t seq_len, const size_t start_idx);
+
+    // Process classification for the canonical version `kmer_hat` of some k-mer
+    // in the sequence that is isolated, i.e. does not have any adjacent k-mers.
+    void process_isolated_kmer(const cuttlefish::kmer_t& kmer_hat);
+
     // Processes classification (partially) for the canonical version `kmer_hat` of
     // the first k-mer of some sequence, where the k-mer is encountered in the
     // direction `dir`, the canonical version of the next k-mer in the sequence is
@@ -51,6 +69,15 @@ private:
     // Outputs all the distinct maximal unitigs of the compacted de Bruijn graph
     // (in canonical form) to a file named `output_file`.
     void output_maximal_unitigs(const std::string& output_file);
+
+    // Outputs the distinct maximal unitigs of the sequence `seq` (of length
+    // `seq_len`) to the stream `output`, that are present at its contiguous
+    // subsequence starting from the index `start_idx`, going up-to either
+    // the ending of the sequence itself, or up-to the first encountered
+    // placeholder nucleotide 'N'. Also, returns the non-inclusive point of
+    // termination of the processed subsequence, i.e. the index following the
+    // end of it.
+    size_t output_maximal_unitigs(const char* seq, const size_t seq_len, const size_t start_idx, std::ofstream& output);
 
     // Returns a Boolean denoting whether a k-mer with state `state` traversed in
     // the direction `dir` starts a maximal unitig, where `prev_kmer_state` and

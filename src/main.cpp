@@ -25,13 +25,9 @@ int main(int argc, const char** argv)
 
     CdBG_Builder cdbg(refs, k);
 
-    // Classify the vertices.
     cdbg.construct(kmers_file, kmer_count, output_file);
 
     std::cout << "Constucted the compacted de Bruijn graph.\n";
-
-    // For debugging.
-    // cdbg.print_vertices();
 
 
     return EXIT_SUCCESS;

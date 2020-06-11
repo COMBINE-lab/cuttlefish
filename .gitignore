@@ -32,8 +32,8 @@
 *.app
 
 # Build and binary files
-build/*
-bin/*
+build/
+bin/
 
 # Miscellaneous
-.vscode/*
+.vscode/

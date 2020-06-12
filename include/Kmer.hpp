@@ -4,6 +4,7 @@
 
 
 #include "globals.hpp"
+#include "kmc_api/kmc_file.h"
 
 #include <cstdint>
 #include <string>
@@ -51,6 +52,9 @@ public:
     // `label[kmer_idx,...,kmer_idx + k - 1]`.
     Kmer(const char* label, const uint32_t kmer_idx);
 
+    // Constructs a k-mer from `kmer_api` which is a k-mer object built from KMC.
+    Kmer(const CKmerAPI& kmer_api);
+
     // Set the value of the `k` parameter across the `Kmer` class.
     static void set_k(const uint16_t k);
 
@@ -91,6 +95,25 @@ public:
     // For debugging purposes.
     friend std::ostream& operator <<(std::ostream& out, const Kmer& kmer);
 };
+
+
+
+inline Kmer::Kmer(const CKmerAPI& kmer_api)
+{
+    kmer = 0;
+
+    for(uint32_t idx = 0; idx < k; ++idx)
+    {
+        uint8_t nucleotide = map_nucleotide(kmer_api.get_asci_symbol(idx));
+
+        // Placeholder rule to handle `N` nucleotides.
+        // TODO: Need to make an informed rule for this.
+        // if(nucleotide == DNA_Base::N)
+        //     nucleotide = DNA_Base::A;
+
+        kmer = (kmer << 2) | nucleotide;
+    }
+}
 
 
 

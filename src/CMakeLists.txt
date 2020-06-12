@@ -1,10 +1,14 @@
 
 # Bundle the core source files into a variable.
 set(PROJECT_SRC
+        kmc_api/kmc_file.cpp
+        kmc_api/kmer_api.cpp
+        kmc_api/mmer.cpp
         # Kmer_Str.cpp
         Kmer.cpp
         Vertex.cpp
         Vertex_Encoding.cpp
+        Kmer_Container.cpp
         Kmer_Hash_Table.cpp
         # CdBG.cpp
         CdBG_Builder.cpp

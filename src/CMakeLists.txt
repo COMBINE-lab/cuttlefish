@@ -1,13 +1,13 @@
 
 # Bundle the core source files into a variable.
 set(PROJECT_SRC
-    Kmer_Str.cpp
-    Kmer.cpp
-    Vertex.cpp
-    Vertex_Encoding.cpp
-    Kmer_Hash_Table.cpp
-    CdBG.cpp
-    CdBG_Builder.cpp
+        # Kmer_Str.cpp
+        Kmer.cpp
+        Vertex.cpp
+        Vertex_Encoding.cpp
+        Kmer_Hash_Table.cpp
+        # CdBG.cpp
+        CdBG_Builder.cpp
     )
 
 
@@ -50,10 +50,14 @@ target_compile_options(${PROJECT_NAME} PRIVATE ${WARNING_FLAGS})
 # those are automatically available to users. You may need root access (use `sudo`) for such.
 # To specify a different parent installation directory, pass the directory as the value of the
 # `-DCMAKE_INSTALL_PREFIX` with the `cmake` command.
+
+# TODO: Employ a better design choice regarding `INSTALL_DIR` (by relating it to `CMAKE_INSTALL_PREFIX`)
+set(INSTALL_DIR ${CMAKE_SOURCE_DIR}/bin)
 install(TARGETS ${PROJECT_NAME}
-        DESTINATION ${CMAKE_SOURCE_DIR}/bin
+        DESTINATION ${INSTALL_DIR}
         )
 
 
 add_executable(test test.cpp)
 target_link_libraries(test PRIVATE core)
+target_compile_options(test PRIVATE ${WARNING_FLAGS})

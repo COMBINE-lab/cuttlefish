@@ -7,21 +7,18 @@
 #include "Kmer.hpp"
 #include "Vertex_Encoding.hpp"
 #include "BBHash/BooPHF.h"
+#include "Kmer_Hasher.hpp"
 
-#include <map>
 #include <vector>
-
-
-// Tells BBHash to use included hash function working on u_int64_t input keys. 
-typedef boomphf::SingleHashFunctor<u_int64_t> hasher_t;
-
-// Bloom-filter based minimal perfect hash function type.
-typedef boomphf::mphf<u_int64_t, hasher_t> boophf_t;
 
 
 class Kmer_Hash_Table
 {
+    // Tells BBHash to use the custom hash functor `Kmer_Hasher` for the input keys (`kmer_t`). 
+    typedef boomphf::mphf<cuttlefish::kmer_t, Kmer_Hasher> boophf_t;    // The MPH function type.
+
 private:
+
     // Lowest bits/elem is achieved with gamma = 1, higher values lead to larger mphf but faster construction/query.
     constexpr static double gamma_factor = 1.0;
     
@@ -37,10 +34,9 @@ public:
     Kmer_Hash_Table()
     {}
 
-    // Constructs a minimal perfect hash function for the collection of k-mers
-    // (in 64-bits format) present in the file named `kmers_file`, that has
-    // `kmer_count` number of k-mers.
-    void construct(const std::string& kmers_file, const uint64_t kmer_count);
+    // Constructs a minimal perfect hash function (specifically, the BBHash) for
+    // the collection of k-mers present at the KMC database named `kmc_file_name`.
+    void construct(const std::string& kmc_file_name, const uint16_t thread_count);
 
     // Returns a mutable reference to the value (in the hash-table) for the
     // key `kmer`.
@@ -57,13 +53,13 @@ public:
 
 inline Vertex_Encoding& Kmer_Hash_Table::operator [](const cuttlefish::kmer_t& kmer)
 {
-    return hash_table[mph->lookup(kmer.int_label())];
+    return hash_table[mph->lookup(kmer)];
 }
 
 
 inline const Vertex_Encoding Kmer_Hash_Table::operator [](const cuttlefish::kmer_t& kmer) const
 {
-    return hash_table[mph->lookup(kmer.int_label())];
+    return hash_table[mph->lookup(kmer)];
 }
 
 

@@ -31,12 +31,17 @@ public:
 private:
 
     Kmer_Container* kmer_container; // The associated k-mer container on which to iterate on.
+    CKMCFile kmer_database_input;   // The input reader object (from KMC databases).
     CKmerAPI kmer_object;   // Current KMC k-mer object that this iterator is holding.
+    bool at_begin;  // Whether this iterator points to the beginning of the KMC database or not.
 
 
     // Constructs an iterator for the provided container `kmer_container`, on either
     // its beginning or its ending position based on the value of `at_begin`.
     Kmer_Iterator(Kmer_Container* const kmer_container, const bool at_begin = true);
+
+    // Opens the KMC database (internally buffered) to read k-mers.
+    void open_kmer_database();
 
     // Advances the iterator forward by offset one.
     void advance();
@@ -48,6 +53,9 @@ public:
     // Copy constructs an iterator from the another one `other`.
     Kmer_Iterator(const iterator& other);
 
+    // Assigns the iterator `rhs` to this one, and returns the new iterator.
+    const iterator& operator=(const iterator& rhs);
+
     // Returns a `Kmer` object corresponding to the current iterator position.
     value_type operator*() const;
 
@@ -56,9 +64,6 @@ public:
 
     // Advances the iterator by offset one, and returns the old iterator.
     iterator operator++(int);
-
-    // Assigns the iterator `rhs` to this one, and returns the new iterator.
-    const iterator& operator=(const iterator& rhs);
 
     // Returns true iff this and `rhs` -- both the iterators refer to the same
     // container and have the same KMC k-mer object.
@@ -72,12 +77,23 @@ public:
 
 
 inline Kmer_Iterator::Kmer_Iterator(Kmer_Container* const kmer_container, const bool at_begin):
-    kmer_container(kmer_container), kmer_object()
+    kmer_container(kmer_container), kmer_object(), at_begin(at_begin)
 {
     if(at_begin)
     {
+        open_kmer_database();
         kmer_object = CKmerAPI(kmer_container->kmer_length());
         advance();
+    }
+}
+
+
+inline void Kmer_Iterator::open_kmer_database()
+{
+    if(!kmer_database_input.OpenForListing(kmer_container->kmc_file_name))
+    {
+        std::cerr << "Error opening KMC database with prefix " << kmer_container->kmc_file_name << ". Aborting.\n";
+        std::exit(EXIT_FAILURE);
     }
 }
 
@@ -85,14 +101,40 @@ inline Kmer_Iterator::Kmer_Iterator(Kmer_Container* const kmer_container, const 
 inline void Kmer_Iterator::advance()
 {
     uint32_t dummy;
-    if(!kmer_container->kmer_database.ReadNextKmer(kmer_object, dummy))
+    if(!kmer_database_input.ReadNextKmer(kmer_object, dummy))
+    {
         kmer_object = CKmerAPI();
+        kmer_database_input.Close();
+    }
 }
 
 
 inline Kmer_Iterator::Kmer_Iterator(const iterator& other):
-    kmer_container(other.kmer_container), kmer_object(other.kmer_object)
-{}
+    kmer_container(other.kmer_container), kmer_object(other.kmer_object), at_begin(other.at_begin)
+{
+    if(at_begin)
+    {
+        open_kmer_database();
+        advance();
+    }
+}
+
+
+inline const Kmer_Iterator& Kmer_Iterator::operator=(const iterator& rhs)
+{
+    kmer_container = rhs.kmer_container;
+    kmer_object = rhs.kmer_object;
+    at_begin = rhs.at_begin;
+
+    if(at_begin)
+    {
+        open_kmer_database();
+        advance();
+    }
+    
+
+    return *this;
+}
 
 
 inline Kmer_Iterator::value_type Kmer_Iterator::operator*() const
@@ -104,24 +146,8 @@ inline Kmer_Iterator::value_type Kmer_Iterator::operator*() const
 inline const Kmer_Iterator& Kmer_Iterator::operator++()
 {
     advance();
-
-    return *this;
-}
-
-
-inline Kmer_Iterator Kmer_Iterator::operator++(int)
-{
-    Kmer_Iterator clone(*this);
-    advance();
-
-    return clone;
-}
-
-
-inline const Kmer_Iterator& Kmer_Iterator::operator=(const iterator& rhs)
-{
-    kmer_container = rhs.kmer_container;
-    kmer_object = rhs.kmer_object;
+    if(at_begin)
+        at_begin = false;
 
     return *this;
 }

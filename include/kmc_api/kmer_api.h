@@ -391,19 +391,20 @@ public:
 // IN	: pos - a position of a symbol
 // RET	: symbol - a symbol placed on a position pos
 //-----------------------------------------------------------------------
-	inline char get_asci_symbol(unsigned int pos) const
-	{
-		if(pos >= kmer_length)
-			return 0;
+	char get_asci_symbol(unsigned int pos) const;
+	// char get_asci_symbol(unsigned int pos) const
+	// {
+	// 	if(pos >= kmer_length)
+	// 		return 0;
 		
-		uint32 current_row = (pos + byte_alignment) / 32;
-		uint32 current_pos = ((pos + byte_alignment) % 32) * 2;
-		uint64 mask = 0xc000000000000000 >> current_pos;
-		uint64 symbol = kmer_data[current_row] & mask;
-		symbol = symbol >> (64 - current_pos - 2);
-		return char_codes[symbol];
+	// 	uint32 current_row = (pos + byte_alignment) / 32;
+	// 	uint32 current_pos = ((pos + byte_alignment) % 32) * 2;
+	// 	uint64 mask = 0xc000000000000000 >> current_pos;
+	// 	uint64 symbol = kmer_data[current_row] & mask;
+	// 	symbol = symbol >> (64 - current_pos - 2);
+	// 	return char_codes[symbol];
 	
-	};
+	// };
 
 	//-----------------------------------------------------------------------
 	// Return a symbol of a kmer from an indicated position (numbered form 0)
@@ -411,20 +412,21 @@ public:
 	// IN	: pos - a position of a symbol
 	// RET	: symbol - a symbol placed on a position pos
 	//-----------------------------------------------------------------------
-	inline uchar get_num_symbol(unsigned int pos)
-	{
-		if (pos >= kmer_length)
-			return 0;
+	uchar get_num_symbol(unsigned int pos) const;
+	// inline uchar get_num_symbol(unsigned int pos)
+	// {
+	// 	if (pos >= kmer_length)
+	// 		return 0;
 
-		uint32 current_row = (pos + byte_alignment) / 32;
-		uint32 current_pos = ((pos + byte_alignment) % 32) * 2;
-		uint64 mask = 0xc000000000000000 >> current_pos;
-		uint64 symbol = kmer_data[current_row] & mask;
-		symbol = symbol >> (64 - current_pos - 2);
-		uchar* byte_ptr = reinterpret_cast<uchar*>(&symbol);
-		return *byte_ptr;
+	// 	uint32 current_row = (pos + byte_alignment) / 32;
+	// 	uint32 current_pos = ((pos + byte_alignment) % 32) * 2;
+	// 	uint64 mask = 0xc000000000000000 >> current_pos;
+	// 	uint64 symbol = kmer_data[current_row] & mask;
+	// 	symbol = symbol >> (64 - current_pos - 2);
+	// 	uchar* byte_ptr = reinterpret_cast<uchar*>(&symbol);
+	// 	return *byte_ptr;
 
-	};
+	// };
 
 	//-----------------------------------------------------------------------
 	// Convert kmer into string (an alphabet ACGT)

@@ -9,6 +9,7 @@ set(PROJECT_SRC
         Vertex.cpp
         Vertex_Encoding.cpp
         Kmer_Container.cpp
+        Kmer_Iterator.cpp
         Kmer_Hash_Table.cpp
         # CdBG.cpp
         CdBG_Builder.cpp

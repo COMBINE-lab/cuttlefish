@@ -33,6 +33,7 @@ private:
     Kmer_Container* kmer_container; // The associated k-mer container on which to iterate on.
     CKMCFile kmer_database_input;   // The input reader object (from KMC databases).
     CKmerAPI kmer_object;   // Current KMC k-mer object that this iterator is holding.
+    cuttlefish::kmer_t kmer;    // K-mer present inside the `kmer_object` api.
     bool at_begin;  // Whether this iterator points to the beginning of the KMC database or not.
 
 
@@ -76,93 +77,96 @@ public:
 
 
 
-inline Kmer_Iterator::Kmer_Iterator(Kmer_Container* const kmer_container, const bool at_begin):
-    kmer_container(kmer_container), kmer_object(), at_begin(at_begin)
-{
-    if(at_begin)
-    {
-        open_kmer_database();
-        kmer_object = CKmerAPI(kmer_container->kmer_length());
-        advance();
-    }
-}
+// inline Kmer_Iterator::Kmer_Iterator(Kmer_Container* const kmer_container, const bool at_begin):
+//     kmer_container(kmer_container), kmer_object(), at_begin(at_begin)
+// {
+//     if(at_begin)
+//     {
+//         open_kmer_database();
+//         kmer_object = CKmerAPI(kmer_container->kmer_length());
+//         advance();
+//     }
+// }
 
 
-inline void Kmer_Iterator::open_kmer_database()
-{
-    if(!kmer_database_input.OpenForListing(kmer_container->kmc_file_name))
-    {
-        std::cerr << "Error opening KMC database with prefix " << kmer_container->kmc_file_name << ". Aborting.\n";
-        std::exit(EXIT_FAILURE);
-    }
-}
+// inline void Kmer_Iterator::open_kmer_database()
+// {
+//     if(!kmer_database_input.OpenForListing(kmer_container->kmc_file_name))
+//     {
+//         std::cerr << "Error opening KMC database with prefix " << kmer_container->kmc_file_name << ". Aborting.\n";
+//         std::exit(EXIT_FAILURE);
+//     }
+// }
 
 
-inline void Kmer_Iterator::advance()
-{
-    uint32_t dummy;
-    if(!kmer_database_input.ReadNextKmer(kmer_object, dummy))
-    {
-        kmer_object = CKmerAPI();
-        kmer_database_input.Close();
-    }
-}
+// inline void Kmer_Iterator::advance()
+// {
+//     uint32_t dummy;
+//     if(!kmer_database_input.ReadNextKmer(kmer_object, dummy))
+//     {
+//         kmer_object = CKmerAPI();
+//         kmer_database_input.Close();
+//     }
+//     else
+//         kmer = cuttlefish::kmer_t(kmer_object);
+// }
 
 
-inline Kmer_Iterator::Kmer_Iterator(const iterator& other):
-    kmer_container(other.kmer_container), kmer_object(other.kmer_object), at_begin(other.at_begin)
-{
-    if(at_begin)
-    {
-        open_kmer_database();
-        advance();
-    }
-}
+// inline Kmer_Iterator::Kmer_Iterator(const iterator& other):
+//     kmer_container(other.kmer_container), kmer_object(other.kmer_object), at_begin(other.at_begin)
+// {
+//     if(at_begin)
+//     {
+//         open_kmer_database();
+//         advance();
+//     }
+// }
 
 
-inline const Kmer_Iterator& Kmer_Iterator::operator=(const iterator& rhs)
-{
-    kmer_container = rhs.kmer_container;
-    kmer_object = rhs.kmer_object;
-    at_begin = rhs.at_begin;
+// inline const Kmer_Iterator& Kmer_Iterator::operator=(const iterator& rhs)
+// {
+//     kmer_container = rhs.kmer_container;
+//     kmer_object = rhs.kmer_object;
+//     at_begin = rhs.at_begin;
 
-    if(at_begin)
-    {
-        open_kmer_database();
-        advance();
-    }
+//     if(at_begin)
+//     {
+//         open_kmer_database();
+//         advance();
+//     }
     
 
-    return *this;
-}
+//     return *this;
+// }
 
 
-inline Kmer_Iterator::value_type Kmer_Iterator::operator*() const
-{
-    return cuttlefish::kmer_t(kmer_object);
-}
+// inline Kmer_Iterator::value_type Kmer_Iterator::operator*() const
+// {
+//     return kmer;
+//     // return cuttlefish::kmer_t(kmer_object);
+// }
 
 
-inline const Kmer_Iterator& Kmer_Iterator::operator++()
-{
-    advance();
-    if(at_begin)
-        at_begin = false;
+// inline const Kmer_Iterator& Kmer_Iterator::operator++()
+// {
+//     advance();
+//     if(at_begin)
+//         at_begin = false;
 
-    return *this;
-}
-
-
-inline bool Kmer_Iterator::operator==(const iterator& rhs) const
-{
-    return kmer_container == rhs.kmer_container && kmer_object == rhs.kmer_object;
-}
+//     return *this;
+// }
 
 
-inline bool Kmer_Iterator::operator!=(const iterator& rhs) const
-{
-    return !(this->operator==(rhs));
-}
+// inline bool Kmer_Iterator::operator==(const iterator& rhs) const
+// {
+//     return kmer_container == rhs.kmer_container && kmer_object == rhs.kmer_object;
+// }
+
+
+// inline bool Kmer_Iterator::operator!=(const iterator& rhs) const
+// {
+//     return !(this->operator==(rhs));
+// }
 
 
 

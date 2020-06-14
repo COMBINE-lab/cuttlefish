@@ -98,50 +98,50 @@ public:
 
 
 
-inline Kmer::Kmer(const CKmerAPI& kmer_api)
-{
-    kmer = 0;
+// inline Kmer::Kmer(const CKmerAPI& kmer_api)
+// {
+//     kmer = 0;
 
-    for(uint32_t idx = 0; idx < k; ++idx)
-    {
-        uint8_t nucleotide = map_nucleotide(kmer_api.get_asci_symbol(idx));
+//     for(uint32_t idx = 0; idx < k; ++idx)
+//     {
+//         uint8_t nucleotide = map_nucleotide(kmer_api.get_asci_symbol(idx));
 
-        // Placeholder rule to handle `N` nucleotides.
-        // TODO: Need to make an informed rule for this.
-        // if(nucleotide == DNA_Base::N)
-        //     nucleotide = DNA_Base::A;
+//         // Placeholder rule to handle `N` nucleotides.
+//         // TODO: Need to make an informed rule for this.
+//         // if(nucleotide == DNA_Base::N)
+//         //     nucleotide = DNA_Base::A;
 
-        kmer = (kmer << 2) | nucleotide;
-    }
-}
+//         kmer = (kmer << 2) | nucleotide;
+//     }
+// }
 
 
 
-inline Kmer::DNA_Base Kmer::map_nucleotide(const char nucleotide)
-{
-    switch(nucleotide)
-    {
-    case 'A':
-        return DNA_Base::A;
+// inline Kmer::DNA_Base Kmer::map_nucleotide(const char nucleotide)
+// {
+//     switch(nucleotide)
+//     {
+//     case 'A':
+//         return DNA_Base::A;
     
-    case 'C':
-        return DNA_Base::C;
+//     case 'C':
+//         return DNA_Base::C;
 
-    case 'G':
-        return DNA_Base::G;
+//     case 'G':
+//         return DNA_Base::G;
 
-    case 'T':
-        return DNA_Base::T;
+//     case 'T':
+//         return DNA_Base::T;
 
-    default:
-        // Placeholder rule to handle `N` nucleotides.
-        // TODO: Need to make an informed rule for this.
-        // Current: As per the rule used by the KMC tool.
+//     default:
+//         // Placeholder rule to handle `N` nucleotides.
+//         // TODO: Need to make an informed rule for this.
+//         // Current: As per the rule used by the KMC tool.
         
-        std::cerr << "Encountered invalid nucleotide " << nucleotide << ". Aborting.\n";
-        std::exit(EXIT_FAILURE);
-    }
-}
+//         std::cerr << "Encountered invalid nucleotide " << nucleotide << ". Aborting.\n";
+//         std::exit(EXIT_FAILURE);
+//     }
+// }
 
 
 inline Kmer::DNA_Base Kmer::complement_nucleotide(const DNA_Base nucleotide)

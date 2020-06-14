@@ -45,4 +45,39 @@ uint64 CKmerAPI::alignment_mask[] = {
     0x00FFFFFFFFFFFFFFULL
 };
 
+
+// Code temporarily ported out of the header to not to get inlined, to facilitate code profiling.
+// TODO: Move it back to the header.
+char CKmerAPI::get_asci_symbol(unsigned int pos) const
+{
+  if(pos >= kmer_length)
+    return 0;
+  
+  uint32 current_row = (pos + byte_alignment) / 32;
+  uint32 current_pos = ((pos + byte_alignment) % 32) * 2;
+  uint64 mask = 0xc000000000000000 >> current_pos;
+  uint64 symbol = kmer_data[current_row] & mask;
+  symbol = symbol >> (64 - current_pos - 2);
+  return char_codes[symbol];
+
+}
+
+
+// Code temporarily ported out of the header to not to get inlined, to facilitate code profiling.
+// TODO: Move it back to the header.
+uchar CKmerAPI::get_num_symbol(unsigned int pos) const
+	{
+		if (pos >= kmer_length)
+			return 0;
+
+		uint32 current_row = (pos + byte_alignment) / 32;
+		uint32 current_pos = ((pos + byte_alignment) % 32) * 2;
+		uint64 mask = 0xc000000000000000 >> current_pos;
+		uint64 symbol = kmer_data[current_row] & mask;
+		symbol = symbol >> (64 - current_pos - 2);
+		uchar* byte_ptr = reinterpret_cast<uchar*>(&symbol);
+		return *byte_ptr;
+
+	};
+
 // ***** EOF

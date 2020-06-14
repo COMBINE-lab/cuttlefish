@@ -21,12 +21,23 @@ void Kmer_Hash_Table::construct(const std::string& kmc_file_name, const uint16_t
     auto data_iterator = boomphf::range(kmer_container.begin(), kmer_container.end());
     mph = new boomphf::mphf<cuttlefish::kmer_t, Kmer_Hasher> (kmer_count, data_iterator, thread_count, gamma_factor);
 
+    
+    // Tester code that loads all k-mers into memory and then builds the BBHash.
+    // uint64_t kmer_count = kmer_container.size();
+    // std::vector<cuttlefish::kmer_t> keys;
+    // keys.reserve(kmer_count);
+    // for(auto it = kmer_container.begin(); it != kmer_container.end(); ++it)
+    //     keys.push_back(*it);
+    // auto data_iterator = boomphf::range(keys.begin(), keys.end());
+    // mph = new boomphf::mphf<cuttlefish::kmer_t, Kmer_Hasher> (kmer_count, data_iterator, thread_count, gamma_factor);
+
+
     const uint64_t total_bits = mph->totalBitSize();
     std::cout << "Total MPH size (in MB): " << total_bits / (8 * 1024 * 1024) << "\n";
     std::cout << "MPH table size in bits / elem: " << (float)(total_bits) / kmer_count << "\n";
 
     // Allocate the hash table.
-    hash_table.resize(kmer_count);
+    // hash_table.resize(kmer_count);
 
 
     std::chrono::high_resolution_clock::time_point t_end = std::chrono::high_resolution_clock::now();

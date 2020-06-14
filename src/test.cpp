@@ -371,7 +371,7 @@ void test_kmer_iterator(const char* file_name)
 
     // Iterating over the k-mers on the database from disk.
 
-    std::cout << "\nPerforming some non-tribial task with dereferenced iterators.\n";
+    std::cout << "\nPerforming some non-trivial task with dereferenced iterators.\n";
     auto it_beg = kmers.begin();
     auto it_end = kmers.end();
     uint64_t count = 0;

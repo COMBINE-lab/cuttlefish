@@ -188,8 +188,8 @@ Kmer::Kmer(const CKmerAPI& kmer_api)
 
     for(uint32_t idx = 0; idx < k; ++idx)
     {
-        uint8_t nucleotide = map_nucleotide(kmer_api.get_asci_symbol(idx));
-        // uint8_t nucleotide = kmer_api.get_num_symbol(idx);
+        // uint8_t nucleotide = map_nucleotide(kmer_api.get_asci_symbol(idx));
+        uint8_t nucleotide = kmer_api.get_num_symbol(idx);
 
         // Placeholder rule to handle `N` nucleotides.
         // TODO: Need to make an informed rule for this.

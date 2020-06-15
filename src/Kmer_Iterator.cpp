@@ -29,11 +29,12 @@ void Kmer_Iterator::advance()
     uint32_t dummy;
     if(!kmer_database_input.ReadNextKmer(kmer_object, dummy))
     {
+        std::cerr << "\n\nHERE\n\n";
         kmer_object = CKmerAPI();
         kmer_database_input.Close();
     }
     else
-        kmer = cuttlefish::kmer_t(kmer_object);
+        kmer.from_CKmerAPI(kmer_object);// = cuttlefish::kmer_t(kmer_object);
 }
 
 
@@ -59,7 +60,7 @@ const Kmer_Iterator& Kmer_Iterator::operator=(const iterator& rhs)
         open_kmer_database();
         advance();
     }
-    
+    std::cerr << "\n\n\ncopied iterator\n\n\n"; 
 
     return *this;
 }

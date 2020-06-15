@@ -199,3 +199,22 @@ Kmer::Kmer(const CKmerAPI& kmer_api)
         kmer = (kmer << 2) | nucleotide;
     }
 }
+
+void Kmer::from_CKmerAPI(const CKmerAPI& kmer_api) {
+    kmer = 0;
+    kmer_api.to_u64(kmer);
+    /*
+    for(uint32_t idx = 0; idx < k; ++idx)
+    {
+        // uint8_t nucleotide = map_nucleotide(kmer_api.get_asci_symbol(idx));
+        uint8_t nucleotide = kmer_api.get_num_symbol(idx);
+
+        // Placeholder rule to handle `N` nucleotides.
+        // TODO: Need to make an informed rule for this.
+        // if(nucleotide == DNA_Base::N)
+        //     nucleotide = DNA_Base::A;
+
+        kmer = (kmer << 2) | nucleotide;
+    }
+    */
+}

@@ -450,6 +450,25 @@ public:
 	};
 
 
+	inline void to_u64(uint64_t& kmer_) const
+	{
+		uint32 offset = 62 - ((kmer_length - 1 + byte_alignment) & 31) * 2;
+		if (offset)
+		{
+			for (int32 i = no_of_rows - 1; i >= 1; --i)
+			{
+				kmer_ = kmer_data[i] >> offset;
+				kmer_ += kmer_data[i - 1] << (64 - offset);
+			}
+			kmer_ = kmer_data[0] >> offset;
+		}
+		else
+		{
+			for (int32 i = no_of_rows - 1; i >= 0; --i)			
+				kmer_ = kmer_data[i];						
+		}
+	}
+
 	inline void to_long(std::vector<uint64>& kmer)
 	{
 		kmer.resize(no_of_rows);

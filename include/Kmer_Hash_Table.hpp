@@ -20,7 +20,7 @@ class Kmer_Hash_Table
 private:
 
     // Lowest bits/elem is achieved with gamma = 1, higher values lead to larger mphf but faster construction/query.
-    constexpr static double gamma_factor = 1.0;
+    constexpr static double gamma_factor = 2.0;
     
     // The MPH function.
     boophf_t* mph = NULL;

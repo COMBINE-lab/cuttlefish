@@ -2,7 +2,7 @@
 #include "Kmer.hpp"
 #include "kseq/kseq.h"
 #include "Directed_Kmer.hpp"
-#include "Kmer_Set_Builder.hpp"
+//#include "Kmer_Set_Builder.hpp"
 #include "Kmer_Container.hpp"
 #include "Kmer_Iterator.hpp"
 #include "BBHash/BooPHF.h"
@@ -14,6 +14,7 @@
 #include <string>
 #include <zlib.h>
 #include <cstring>
+#include <set>
 #include <map>
 
 

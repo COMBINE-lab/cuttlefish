@@ -92,6 +92,8 @@ public:
     // Returns the 64-bit encoding of the k-mer.
     uint64_t int_label() const;
 
+    void from_CKmerAPI(const CKmerAPI& kmer_api);
+    
     // For debugging purposes.
     friend std::ostream& operator <<(std::ostream& out, const Kmer& kmer);
 };

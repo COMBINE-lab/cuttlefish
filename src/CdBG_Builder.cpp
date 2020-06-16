@@ -29,11 +29,11 @@ void CdBG_Builder::construct(const std::string& kmc_file_name, const uint16_t th
     std::cout << "Constructing the minimal perfect hash function.\n";
     Vertices.construct(kmc_file_name, thread_count);
 
-    // std::cout << "Classifying the vertices.\n";
-    // classify_vertices();
+    std::cout << "Classifying the vertices.\n";
+    classify_vertices();
 
-    // std::cout << "Outputting the maximal unitigs.\n";
-    // output_maximal_unitigs(output_file_name);
+    std::cout << "Outputting the maximal unitigs.\n";
+    output_maximal_unitigs(output_file_name);
 
     Vertices.clear();
 }

@@ -37,8 +37,8 @@ Kmer::Kmer(const char* label, const uint32_t kmer_idx)
 
         // Placeholder rule to handle `N` nucleotides.
         // TODO: Need to make an informed rule for this.
-        if(nucleotide == DNA_Base::N)
-            nucleotide = DNA_Base::A;
+        // if(nucleotide == DNA_Base::N)
+        //     nucleotide = DNA_Base::A;
 
         kmer = (kmer << 2) | nucleotide;
     }

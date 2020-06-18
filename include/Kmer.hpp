@@ -4,6 +4,7 @@
 
 
 #include "globals.hpp"
+#include "kmc_api/kmc_file.h"
 
 #include <cstdint>
 #include <string>
@@ -17,7 +18,10 @@ private:
     uint64_t kmer = 0;  // The 64-bit encoding of the underlying k-mer.
     static uint64_t bitmask_MSN;    // Bitmask used to clear the most significant nucleotide character, i.e. the first nucleotide of the k-mer which is at the bits `2k-1 : 2k-2`.
 
-    // A = 0, C = 1, G = 2, T = 3
+    // A = 0, C = 1, G = 2, T = 3.
+    // Note that, this is not possible to change this mapping w/o modifications to the
+    // interfacing of our code with the KMC api. This mapping is essential for some
+    // crucial performance hacks in the interfacing.
     enum DNA_Base
     {
         A = 0b00,   // 0b00
@@ -50,6 +54,9 @@ public:
     // Constructs a k-mer from the provided characters at
     // `label[kmer_idx,...,kmer_idx + k - 1]`.
     Kmer(const char* label, const uint32_t kmer_idx);
+
+    // Constructs a k-mer from `kmer_api` which is a k-mer object built from KMC.
+    Kmer(const CKmerAPI& kmer_api);
 
     // Set the value of the `k` parameter across the `Kmer` class.
     static void set_k(const uint16_t k);
@@ -88,10 +95,12 @@ public:
     // Returns the 64-bit encoding of the k-mer.
     uint64_t int_label() const;
 
+    // Get the k-mer from the KMC api object `kmer_api`.
+    void from_CKmerAPI(const CKmerAPI& kmer_api);
+    
     // For debugging purposes.
     friend std::ostream& operator <<(std::ostream& out, const Kmer& kmer);
 };
-
 
 
 inline Kmer::DNA_Base Kmer::map_nucleotide(const char nucleotide)
@@ -118,6 +127,32 @@ inline Kmer::DNA_Base Kmer::map_nucleotide(const char nucleotide)
         std::cerr << "Encountered invalid nucleotide " << nucleotide << ". Aborting.\n";
         std::exit(EXIT_FAILURE);
     }
+}
+
+
+inline Kmer::Kmer(const CKmerAPI& kmer_api)
+{
+    kmer = 0;
+
+    for(uint32_t idx = 0; idx < k; ++idx)
+    {
+        // uint8_t nucleotide = map_nucleotide(kmer_api.get_asci_symbol(idx));
+        uint8_t nucleotide = kmer_api.get_num_symbol(idx);
+
+        // Placeholder rule to handle `N` nucleotides.
+        // TODO: Need to make an informed rule for this.
+        // if(nucleotide == DNA_Base::N)
+        //     nucleotide = DNA_Base::A;
+
+        kmer = (kmer << 2) | nucleotide;
+    }
+}
+
+
+inline void Kmer::from_CKmerAPI(const CKmerAPI& kmer_api)
+{
+    kmer = 0;
+    kmer_api.to_u64(kmer);
 }
 
 

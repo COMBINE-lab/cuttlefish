@@ -27,6 +27,9 @@ void Kmer_Hash_Table::construct(const std::string& kmc_file_name, const uint16_t
 
     // Allocate the hash table.
     hash_table.resize(kmer_count);
+    hash_table.clear_mem();
+    std::cout << "Allocated hash table for " << kmer_count << " k-mers. Total memory taken (in MB): "
+                << hash_table.bytes() / (1024 * 1024) << "\n";
 
 
     std::chrono::high_resolution_clock::time_point t_end = std::chrono::high_resolution_clock::now();
@@ -39,6 +42,6 @@ void Kmer_Hash_Table::clear()
 {
     delete mph;
     
-    hash_table.clear();
-    hash_table.shrink_to_fit();
+    // hash_table.clear();
+    hash_table.resize(0);
 }

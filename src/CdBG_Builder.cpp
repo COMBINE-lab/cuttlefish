@@ -173,7 +173,10 @@ bool CdBG_Builder::is_self_loop(const cuttlefish::kmer_t& kmer_hat, const cuttle
 
 void CdBG_Builder::process_first_kmer(const cuttlefish::kmer_t& kmer_hat, const cuttlefish::kmer_dir_t dir, const cuttlefish::kmer_t& next_kmer_hat, const cuttlefish::nucleotide_t next_nucl)
 {
-    Vertex_Encoding& vertex_encoding = Vertices[kmer_hat];
+    // Fetch the entry for `kmer_hat`.
+    Kmer_Hash_Entry_API hash_table_entry = Vertices[kmer_hat];
+    Vertex_Encoding& vertex_encoding = hash_table_entry.get_vertex_encoding();
+    const Vertex_Encoding old_encoding = vertex_encoding;
 
 
     // The k-mer is already classified as a complex node.
@@ -183,13 +186,8 @@ void CdBG_Builder::process_first_kmer(const cuttlefish::kmer_t& kmer_hat, const 
     
     // The k-mer forms a self-loop with the next k-mer.
     if(is_self_loop(kmer_hat, next_kmer_hat))
-    {
         vertex_encoding = Vertex_Encoding(Vertex(cuttlefish::MULTI_IN_MULTI_OUT));
-        return;
-    }
-
-
-    if(dir == cuttlefish::FWD)
+    else if(dir == cuttlefish::FWD)
     {
         // The sentinel k-mer is encountered for the first time, and in the forward direction.
         if(!vertex_encoding.is_visited())
@@ -260,12 +258,19 @@ void CdBG_Builder::process_first_kmer(const cuttlefish::kmer_t& kmer_hat, const 
         }
         
     }
+
+
+    if(vertex_encoding != old_encoding)
+        Vertices.update(hash_table_entry);
 }
 
 
 void CdBG_Builder::process_last_kmer(const cuttlefish::kmer_t& kmer_hat, const cuttlefish::kmer_dir_t dir, const cuttlefish::nucleotide_t prev_nucl)
 {
-    Vertex_Encoding& vertex_encoding = Vertices[kmer_hat];
+    // Fetch the entry for `kmer_hat`.
+    Kmer_Hash_Entry_API hash_table_entry = Vertices[kmer_hat];
+    Vertex_Encoding& vertex_encoding = hash_table_entry.get_vertex_encoding();
+    const Vertex_Encoding old_encoding = vertex_encoding;
 
 
     // The k-mer is already classified as a complex node.
@@ -343,28 +348,30 @@ void CdBG_Builder::process_last_kmer(const cuttlefish::kmer_t& kmer_hat, const c
             }
         }
     }
+
+
+    if(vertex_encoding != old_encoding)
+        Vertices.update(hash_table_entry);
 }
 
 
 void CdBG_Builder::process_internal_kmer(const cuttlefish::kmer_t& kmer_hat, const cuttlefish::kmer_dir_t dir, const cuttlefish::kmer_t& next_kmer_hat, const cuttlefish::nucleotide_t prev_nucl, const cuttlefish::nucleotide_t next_nucl)
 {
-    Vertex_Encoding& vertex_encoding = Vertices[kmer_hat];
+    // Fetch the hash table entry for `kmer_hat`.
+    Kmer_Hash_Entry_API hash_table_entry = Vertices[kmer_hat];
+    Vertex_Encoding& vertex_encoding = hash_table_entry.get_vertex_encoding();
+    const Vertex_Encoding old_encoding = vertex_encoding;
 
 
     // The k-mer is already classified as a complex node.
     if(vertex_encoding.is_visited() && vertex_encoding.state() == cuttlefish::MULTI_IN_MULTI_OUT)
         return;
 
-    
+
     // The k-mer forms a self-loop with the next k-mer.
     if(is_self_loop(kmer_hat, next_kmer_hat))
-    { 
         vertex_encoding = Vertex_Encoding(Vertex(cuttlefish::MULTI_IN_MULTI_OUT));
-        return;
-    }
-
-
-    if(dir == cuttlefish::FWD)
+    else if(dir == cuttlefish::FWD)
     {
         // The k-mer is encountered for the first time, and in the forward direction.
         if(!vertex_encoding.is_visited())
@@ -450,20 +457,27 @@ void CdBG_Builder::process_internal_kmer(const cuttlefish::kmer_t& kmer_hat, con
             }
         }
     }
+
+
+    if(vertex_encoding != old_encoding)
+        Vertices.update(hash_table_entry);
 }
 
 
 void CdBG_Builder::process_isolated_kmer(const cuttlefish::kmer_t& kmer_hat)
 {
-    Vertex_Encoding& vertex_encoding = Vertices[kmer_hat];
+    // Fetch the hash table entry for `kmer_hat`.
+    Kmer_Hash_Entry_API hash_table_entry = Vertices[kmer_hat];
+    Vertex_Encoding& vertex_encoding = hash_table_entry.get_vertex_encoding();
 
 
     // The k-mer is already classified as a complex node.
     if(vertex_encoding.is_visited() && vertex_encoding.state() == cuttlefish::MULTI_IN_MULTI_OUT)
         return;
     
-    // Classify the isolated k-mer as complex nodes.
+    // Classify the isolated k-mer as a complex node.
     vertex_encoding = Vertex_Encoding(Vertex(cuttlefish::MULTI_IN_MULTI_OUT));
+    Vertices.update(hash_table_entry);
 }
 
 
@@ -675,23 +689,24 @@ bool CdBG_Builder::is_unipath_end(const cuttlefish::state_t state, const cuttlef
 
 void CdBG_Builder::output_unitig(const char* seq, const Annotated_Kmer& start_kmer, const Annotated_Kmer& end_kmer, std::ofstream& output)
 {
-    Vertex_Encoding& vertex_encoding_s = Vertices[start_kmer.canonical];
-    Vertex_Encoding& vertex_encoding_e = Vertices[end_kmer.canonical];
-
-
     // This is to avoid race conditions that may arise while multi-threading.
     // If two threads try to output the same unitig at the same time but
     // encounter it in the opposite orientations, then data races may arise.
-    Vertex_Encoding& vertex_encoding = (start_kmer.canonical < end_kmer.canonical ?
-                                        vertex_encoding_s : vertex_encoding_e);
+    // For a particular unitig, always query the same well-defined canonical flanking
+    // k-mer, irrespective of which direction the unitig may be traversed at.
+    const cuttlefish::kmer_t min_flanking_kmer = std::min(start_kmer.canonical, end_kmer.canonical);
+    Kmer_Hash_Entry_API hash_table_entry = Vertices[min_flanking_kmer];
+    Vertex_Encoding& vertex_encoding = hash_table_entry.get_vertex_encoding();
+
     if(vertex_encoding.is_outputted())
         return;
     
 
-    vertex_encoding_s = vertex_encoding_s.outputted();
-    vertex_encoding_e = vertex_encoding_e.outputted();
+    vertex_encoding = vertex_encoding.outputted();
 
-    write_path(seq, start_kmer.idx, end_kmer.idx, start_kmer.kmer < end_kmer.rev_compl, output);
+    // If the hash table update is successful, only then this thread may output this unitig.
+    if(Vertices.update(hash_table_entry))
+        write_path(seq, start_kmer.idx, end_kmer.idx, start_kmer.kmer < end_kmer.rev_compl, output);
 }
 
 

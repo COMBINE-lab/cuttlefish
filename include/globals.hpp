@@ -3,21 +3,33 @@
 #define GLOBALS_HPP
 
 
-#include <string>
+
+#include <memory>
 #include <iostream>
 
 
-class Kmer_Str;
+// Forward declaration of k-mer type.
 class Kmer;
+
+// Forward declarations of the type of the bitvector used and the type to access its entries (mutable).
+namespace compact
+{
+    template<typename IDX, unsigned BITS, typename W, typename Allocator> class cas_vector;
+
+    namespace iterator_imp
+    {
+        template<typename IDX, unsigned BITS, typename W, bool TS, unsigned UB> class lhs_setter;
+    }
+}
+
 
 namespace cuttlefish
 {
-    // typedef Kmer_Str kmer_t;
     typedef Kmer kmer_t;
     typedef bool kmer_dir_t;
     typedef char nucleotide_t;
     typedef uint8_t state_t;
-
+    typedef uint8_t vertex_code_t;
 
     constexpr nucleotide_t PLACEHOLDER_NUCLEOTIDE = 'N';
 
@@ -28,6 +40,10 @@ namespace cuttlefish
     constexpr uint8_t MULTI_IN_SINGLE_OUT = 1;
     constexpr uint8_t SINGLE_IN_MULTI_OUT = 2;
     constexpr uint8_t MULTI_IN_MULTI_OUT = 3;
+
+    constexpr uint8_t BITS_PER_KMER = 5;
+    typedef compact::cas_vector<uint8_t, BITS_PER_KMER, uint64_t, std::allocator<uint64_t>> bitvector_t;
+    typedef compact::iterator_imp::lhs_setter<uint8_t, BITS_PER_KMER, uint64_t, true, 63U> bitvector_entry_t;
 }
 
 
@@ -51,10 +67,9 @@ inline cuttlefish::nucleotide_t complement(const cuttlefish::nucleotide_t nucleo
     default:
         // Placeholder rule to handle `N` nucleotides.
         // TODO: Need to make an informed rule for this.
-        return 'A';
         
-        // std::cerr << "Invalid nucleotide " << nucleotide << " encountered. Aborting.";
-        // std::exit(EXIT_FAILURE);
+        std::cerr << "Invalid nucleotide " << nucleotide << " encountered. Aborting.";
+        std::exit(EXIT_FAILURE);
     }
 }
 

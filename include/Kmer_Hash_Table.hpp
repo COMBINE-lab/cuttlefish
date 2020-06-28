@@ -8,8 +8,8 @@
 #include "Vertex_Encoding.hpp"
 #include "BBHash/BooPHF.h"
 #include "Kmer_Hasher.hpp"
-
-#include <vector>
+#include "compact_vector/compact_vector.hpp"
+#include "Kmer_Hash_Entry_API.hpp"
 
 
 class Kmer_Hash_Table
@@ -27,7 +27,7 @@ private:
 
     // The values (`Vertex_Encoding`) collection for the hash table;
     // keys (`kmer_t`) are passed to the MPHF, and the resulting function-value is used as index in the values table.
-    std::vector<Vertex_Encoding> hash_table;
+    cuttlefish::bitvector_t hash_table;
 
 
 public:
@@ -38,12 +38,18 @@ public:
     // the collection of k-mers present at the KMC database named `kmc_file_name`.
     void construct(const std::string& kmc_file_name, const uint16_t thread_count);
 
-    // Returns a mutable reference to the value (in the hash-table) for the
-    // key `kmer`.
-    Vertex_Encoding& operator [](const cuttlefish::kmer_t& kmer);
+    // Returns an API to the entry (in the hash table) for the key `kmer`. The API
+    // wraps the hash table position and the vertex encoding value at that position.
+    Kmer_Hash_Entry_API operator[](const cuttlefish::kmer_t& kmer);
 
     // Returns the value (in the hash-table) for the key `kmer`.
-    const Vertex_Encoding operator [](const cuttlefish::kmer_t& kmer) const;
+    const Vertex_Encoding operator[](const cuttlefish::kmer_t& kmer) const;
+
+    // Attempts to update the entry (in the hash-table) for the API object according
+    // to its wrapped vertex encoding values, and returns true or false as per success
+    // status. If the corresponding hash table position now contains a different
+    // vertex encoding than the one that had been read earlier, then the update fails.
+    bool update(Kmer_Hash_Entry_API& api);
 
     // Clears the hash-table. Do not invoke on an unused object.
     void clear();
@@ -51,15 +57,21 @@ public:
 
 
 
-inline Vertex_Encoding& Kmer_Hash_Table::operator [](const cuttlefish::kmer_t& kmer)
+inline Kmer_Hash_Entry_API Kmer_Hash_Table::operator[](const cuttlefish::kmer_t& kmer)
 {
-    return hash_table[mph->lookup(kmer)];
+    return Kmer_Hash_Entry_API(hash_table[mph->lookup(kmer)]);
 }
 
 
-inline const Vertex_Encoding Kmer_Hash_Table::operator [](const cuttlefish::kmer_t& kmer) const
+inline const Vertex_Encoding Kmer_Hash_Table::operator[](const cuttlefish::kmer_t& kmer) const
 {
-    return hash_table[mph->lookup(kmer)];
+    return Vertex_Encoding(hash_table[mph->lookup(kmer)]);
+}
+
+
+inline bool Kmer_Hash_Table::update(Kmer_Hash_Entry_API& api)
+{
+    return api.bv_entry.cas(api.get_current_encoding(), api.get_read_encoding());
 }
 
 

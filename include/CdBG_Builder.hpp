@@ -66,6 +66,9 @@ private:
     // should only be used with the canonical versions of two adjacent k-mers.
     bool is_self_loop(const cuttlefish::kmer_t& kmer_hat, const cuttlefish::kmer_t& next_kmer_hat) const;
 
+    // Returns the plain DNA-complement character of the provided `nucleotide` character.
+    static cuttlefish::nucleotide_t complement(const cuttlefish::nucleotide_t nucleotide);
+
     // Outputs all the distinct maximal unitigs of the compacted de Bruijn graph
     // (in canonical form) to a file named `output_file`.
     void output_maximal_unitigs(const std::string& output_file);
@@ -118,6 +121,33 @@ public:
     // `output_file_name`.
     void construct(const std::string& kmc_file_name, const uint16_t thread_count, const std::string& output_file_name);
 };
+
+
+
+inline cuttlefish::nucleotide_t CdBG_Builder::complement(const cuttlefish::nucleotide_t nucleotide)
+{
+    switch (nucleotide)
+    {
+    case 'A':
+        return 'T';
+
+    case 'C':
+        return 'G';
+
+    case 'G':
+        return 'C';
+
+    case 'T':
+        return 'A';
+    
+    default:
+        // Placeholder rule to handle `N` nucleotides.
+        // TODO: Need to make an informed rule for this.
+        
+        std::cerr << "Invalid nucleotide " << nucleotide << " encountered. Aborting.";
+        std::exit(EXIT_FAILURE);
+    }
+}
 
 
 #endif

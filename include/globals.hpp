@@ -4,7 +4,7 @@
 
 
 
-#include <iostream>
+#include <memory>
 
 
 // Forward declaration of k-mer type.
@@ -47,33 +47,6 @@ namespace cuttlefish
     typedef compact::iterator_imp::lhs_setter<uint8_t, BITS_PER_KMER, uint64_t, true, 63U> bitvector_entry_t;
 }
 
-
-// Returns the plain DNA-complement character of the provided `nucleotide` character.
-// TODO: Move it to the consumer classes (only `CdBG_Builder`).
-inline cuttlefish::nucleotide_t complement(const cuttlefish::nucleotide_t nucleotide)
-{
-    switch (nucleotide)
-    {
-    case 'A':
-        return 'T';
-
-    case 'C':
-        return 'G';
-
-    case 'G':
-        return 'C';
-
-    case 'T':
-        return 'A';
-    
-    default:
-        // Placeholder rule to handle `N` nucleotides.
-        // TODO: Need to make an informed rule for this.
-        
-        std::cerr << "Invalid nucleotide " << nucleotide << " encountered. Aborting.";
-        std::exit(EXIT_FAILURE);
-    }
-}
 
 
 #endif

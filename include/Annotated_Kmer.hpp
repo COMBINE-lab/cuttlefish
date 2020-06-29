@@ -13,7 +13,7 @@ class Annotated_Kmer: public Directed_Kmer
 {
 public:
     uint32_t idx;
-    cuttlefish::state_t state;
+    cuttlefish::Vertex_Class vertex_class;
 
 
 
@@ -25,7 +25,7 @@ public:
     Annotated_Kmer(const cuttlefish::kmer_t& kmer, const uint32_t kmer_idx, const Kmer_Hash_Table& hash):
         Directed_Kmer(kmer), idx(kmer_idx)
     {
-        state = hash[canonical].state();
+        vertex_class = hash[canonical].vertex_class();
     }
 
 
@@ -38,7 +38,7 @@ public:
         Directed_Kmer::roll_to_next_kmer(next_nucl);
 
         idx++;
-        state = hash[canonical].state();
+        vertex_class = hash[canonical].vertex_class();
     }
 
 
@@ -50,7 +50,7 @@ public:
         dir = rhs.dir;
         
         idx = rhs.idx;
-        state = rhs.state;
+        vertex_class = rhs.vertex_class;
     }
 };
 

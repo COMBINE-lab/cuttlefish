@@ -83,13 +83,15 @@ private:
     // the direction `dir` starts a maximal unitig, where `prev_kmer_state` and
     // `prev_kmer_dir` are the state and the direction of the previous k-mer in
     // the sequence, respectively.
-    bool is_unipath_start(const cuttlefish::state_t state, const cuttlefish::kmer_dir_t dir, const cuttlefish::state_t prev_kmer_state, const cuttlefish::kmer_dir_t prev_kmer_dir) const;
+    // bool is_unipath_start(const cuttlefish::state_t state, const cuttlefish::kmer_dir_t dir, const cuttlefish::state_t prev_kmer_state, const cuttlefish::kmer_dir_t prev_kmer_dir) const;
+    bool is_unipath_start(const cuttlefish::Vertex_Class vertex_class, const cuttlefish::kmer_dir_t dir, const cuttlefish::Vertex_Class prev_kmer_class, const cuttlefish::kmer_dir_t prev_kmer_dir) const;
 
     // Returns a Boolean denoting whether a k-mer with state `state` traversed in
     // the direction `dir` ends a maximal unitig, where `next_kmer_state` and
     // `next_kmer_dir` are the state and the direction of the next k-mer in the
     // sequence, respectively.
-    bool is_unipath_end(const cuttlefish::state_t state, const cuttlefish::kmer_dir_t dir, const cuttlefish::state_t next_kmer_state, const cuttlefish::kmer_dir_t next_kmer_dir) const;
+    // bool is_unipath_end(const cuttlefish::state_t state, const cuttlefish::kmer_dir_t dir, const cuttlefish::state_t next_kmer_state, const cuttlefish::kmer_dir_t next_kmer_dir) const;
+    bool is_unipath_end(const cuttlefish::Vertex_Class vertex_class, const cuttlefish::kmer_dir_t dir, const cuttlefish::Vertex_Class next_kmer_class, const cuttlefish::kmer_dir_t next_kmer_dir) const;
 
     // Outputs the unitig at the k-mer range between the annotated k-mers
     // `start_kmer` and `end_kmer` of the sequence `seq` (if the unitig had not

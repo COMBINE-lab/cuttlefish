@@ -13,7 +13,7 @@
 class Vertex
 {
 public:
-    cuttlefish::state_t state;
+    cuttlefish::Vertex_Class vertex_class;
     cuttlefish::nucleotide_t enter, exit;
     bool visited;
     bool outputted;
@@ -23,14 +23,14 @@ public:
     Vertex(): visited(false)
     {}
 
-    // Constructs a vertex of type SINGLE_IN_SINGLE_OUT.
-    Vertex(const cuttlefish::state_t state, const cuttlefish::nucleotide_t enter, const cuttlefish::nucleotide_t exit);
+    // Constructs a vertex of class `single_in_single_out`.
+    Vertex(const cuttlefish::Vertex_Class vertex_class, const cuttlefish::nucleotide_t enter, const cuttlefish::nucleotide_t exit);
 
-    // Constructs a vertex of type MULTI_IN_SINGLE_OUT or SINGLE_IN_MULTI_OUT.
-    Vertex(const cuttlefish::state_t state, const cuttlefish::nucleotide_t nucl);
+    // Constructs a vertex of class either `multi_in_single_out` or `single_in_multi_out`.
+    Vertex(const cuttlefish::Vertex_Class vertex_class, const cuttlefish::nucleotide_t nucl);
 
-    // Constructs a vertex of type `state`, with the provided outputted status.
-    Vertex(const cuttlefish::state_t state, const bool outputted = false);
+    // Constructs a vertex of class `vertex_class`, with the provided outputted status.
+    Vertex(const cuttlefish::Vertex_Class vertex_class, const bool outputted = false);
 
     // For debugging purposes: prints the vertex information.
     friend std::ostream& operator <<(std::ostream& out, const Vertex& vertex);

@@ -65,10 +65,13 @@ public:
     Vertex_Encoding outputted() const;
 
     // Returns the state of the encoded vertex.
-    cuttlefish::state_t state() const;
+    cuttlefish::Vertex_Class vertex_class() const;
 
     // Returns the output status of the encoded vertex.
     bool is_outputted() const;
+
+    // TODO
+    bool is_dead_end() const;
 
     // Returns true iff the underlying codes are different.
     bool operator!=(const Vertex_Encoding& rhs) const
@@ -90,7 +93,7 @@ private:
 
     const static Vertex_Encoding encoded_outputted_vertex[32];
 
-    const static cuttlefish::state_t decoded_state[32];
+    const static cuttlefish::Vertex_Class decoded_vertex_class[32];
 
     const static bool decoded_output_status[32];
 };

@@ -4,7 +4,6 @@
 
 
 
-#include <memory>
 #include <iostream>
 
 
@@ -28,7 +27,6 @@ namespace cuttlefish
     typedef Kmer kmer_t;
     typedef bool kmer_dir_t;
     typedef char nucleotide_t;
-    typedef uint8_t state_t;
     typedef uint8_t vertex_code_t;
 
     constexpr nucleotide_t PLACEHOLDER_NUCLEOTIDE = 'N';
@@ -36,10 +34,13 @@ namespace cuttlefish
     constexpr kmer_dir_t FWD = true;
     constexpr kmer_dir_t BWD = false;
 
-    constexpr uint8_t SINGLE_IN_SINGLE_OUT = 0;
-    constexpr uint8_t MULTI_IN_SINGLE_OUT = 1;
-    constexpr uint8_t SINGLE_IN_MULTI_OUT = 2;
-    constexpr uint8_t MULTI_IN_MULTI_OUT = 3;
+    enum class Vertex_Class: uint8_t
+    {
+        single_in_single_out = 0,
+        multi_in_single_out = 1,
+        single_in_multi_out = 2,
+        multi_in_multi_out = 3
+    };
 
     constexpr uint8_t BITS_PER_KMER = 5;
     typedef compact::cas_vector<uint8_t, BITS_PER_KMER, uint64_t, std::allocator<uint64_t>> bitvector_t;
@@ -48,6 +49,7 @@ namespace cuttlefish
 
 
 // Returns the plain DNA-complement character of the provided `nucleotide` character.
+// TODO: Move it to the consumer classes (only `CdBG_Builder`).
 inline cuttlefish::nucleotide_t complement(const cuttlefish::nucleotide_t nucleotide)
 {
     switch (nucleotide)

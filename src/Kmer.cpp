@@ -2,8 +2,6 @@
 #include "Kmer.hpp"
 
 #include <cassert>
-#include <cstdlib>
-#include <algorithm>
 
 
 // Static fields initialization.
@@ -20,85 +18,17 @@ Kmer::Kmer(const std::string& label)
     for(const char p: label)
     {
         uint8_t nucleotide = map_nucleotide(p);
-        assert(nucleotide < DNA_Base::N);
+        // assert(nucleotide < DNA_Base::N);
 
         kmer = (kmer << 2) | nucleotide;
     }
 }
-
-
-Kmer::Kmer(const char* label, const uint32_t kmer_idx)
-{
-    kmer = 0;
-
-    for(uint32_t idx = kmer_idx; idx < kmer_idx + k; ++idx)
-    {
-        uint8_t nucleotide = map_nucleotide(label[idx]);
-
-        // Placeholder rule to handle `N` nucleotides.
-        // TODO: Need to make an informed rule for this.
-        // if(nucleotide == DNA_Base::N)
-        //     nucleotide = DNA_Base::A;
-
-        kmer = (kmer << 2) | nucleotide;
-    }
-}
-
-
-Kmer::Kmer(const uint64_t kmer): kmer(kmer)
-{}
 
 
 void Kmer::set_k(uint16_t k)
 {
     Kmer::k = k;
     Kmer::bitmask_MSN = ~(uint64_t(0b11) << (2 * (k - 1)));
-}
-
-
-Kmer Kmer::reverse_complement() const
-{
-    uint64_t kmer = this -> kmer;
-    uint64_t rev_comp = 0;
-
-    for(uint16_t idx = 0; idx < k; ++idx)
-    {
-        rev_comp = ((rev_comp << 2) | complement_nucleotide(DNA_Base(kmer & 0b11)));
-
-        kmer >>= 2;
-    }
-
-    return Kmer(rev_comp);
-}
-
-
-bool Kmer::operator <(const Kmer& rhs) const
-{
-    return kmer < rhs.kmer;
-}
-
-
-Kmer Kmer::canonical() const
-{
-    return std::min(*this, reverse_complement());
-}
-
-
-bool Kmer::operator ==(const Kmer& rhs) const
-{
-    return kmer == rhs.kmer;
-}
-
-
-cuttlefish::kmer_dir_t Kmer::direction(const Kmer& kmer_hat) const
-{
-    return *this == kmer_hat;
-}
-
-
-bool Kmer::is_same_kmer(const Kmer& rhs) const
-{
-    return canonical() == rhs.canonical();
 }
 
 
@@ -147,7 +77,7 @@ std::string Kmer::string_label() const
 }
 
 
-std::ostream& operator <<(std::ostream& out, const Kmer& kmer)
+std::ostream& operator<<(std::ostream& out, const Kmer& kmer)
 {
     out << kmer.string_label();
     

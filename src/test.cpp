@@ -72,21 +72,21 @@ void test_kseq(const char* fileName)
 
 bool check_kmer_equivalence(cuttlefish::kmer_t& kmer, Directed_Kmer& dir_kmer)
 {
-    if(kmer.int_label() != dir_kmer.kmer.int_label())
+    if(kmer.to_u64() != dir_kmer.kmer.to_u64())
     {
         std::cout << "k-mers don't match.\n";
         return false;
     }
 
     const cuttlefish::kmer_t rev_compl = kmer.reverse_complement();
-    if(rev_compl.int_label() != dir_kmer.rev_compl.int_label())
+    if(rev_compl.to_u64() != dir_kmer.rev_compl.to_u64())
     {
         std::cout << "Reverse complements don't match.\n";
         return false;
     }
 
     const cuttlefish::kmer_t canonical = kmer.canonical(rev_compl);
-    if(canonical.int_label() != dir_kmer.canonical.int_label())
+    if(canonical.to_u64() != dir_kmer.canonical.to_u64())
     {
         std::cout << "Canonicals don't match.\n";
         return false;
@@ -189,7 +189,7 @@ void convert_kmers_to_int(const char* file_name, uint16_t k, const char* output_
     uint64_t kmer_count = 0;
     while(input >> label >> count)
     {
-        output << cuttlefish::kmer_t(label).int_label() << "\n";
+        output << cuttlefish::kmer_t(label).to_u64() << "\n";
         kmer_count++;
 
         if(kmer_count % 10000000 == 0)

@@ -1,7 +1,5 @@
 
 #include "CdBG_Builder.hpp"
-#include "Directed_Kmer.hpp"
-#include "Annotated_Kmer.hpp"
 #include "kseq/kseq.h"
 
 #include <fstream>

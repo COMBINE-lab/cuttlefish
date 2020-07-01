@@ -27,7 +27,13 @@ private:
     // Constructs an encoding with the provided vertex code.
     Vertex_Encoding(const cuttlefish::vertex_code_t vertex_code):
         vertex_code(vertex_code)
-    {}
+    {
+        if(vertex_code == 0b00001 || vertex_code == 0b00010)
+        {
+            std::cerr << "Invalid vertex encoding " << (uint16_t)vertex_code << " encountered during construction from code. Aborting.\n";
+            std::exit(EXIT_FAILURE);
+        }
+    }
 
     // Sets the nucleotide 2-bit encoding at the bits b1 and b0 of `vertex_code`.
     // Requirement: the two bits must be zero before the call, for consistent

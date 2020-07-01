@@ -167,7 +167,7 @@ struct gs {
     res                      = x | ((*(p + 1) & nmask) << (BITS - over));
     if(std::is_signed<IDX>::value && res & ((IDX)1 << (BITS - 1)))
       res |= ~(IDX)0 << BITS;
-    mask_store<W, true>cas(p, mask, x, x | msb);
+    mask_store<W, true>::cas(p, mask, x, x | msb);
     return true;
   }
 };
@@ -302,6 +302,7 @@ struct mask_store<W, true> {
     W cval = *p, oval;
     val &= mask;
     exp &= mask;
+    // TODO: Decide whether getting rid of this `if` block entirely is a safer choice.
     if(val == exp)
       return (cval & mask) == exp;
     while((cval & mask) == exp) {
@@ -614,6 +615,11 @@ public:
   inline bool cas(const IDX x, const IDX exp) {
     Derived& self = *static_cast<Derived*>(this);
     return gs<IDX, BITS, W, UB>::cas(x, exp, ptr, self.bits(), offset);
+  }
+  // Added by ourselves.
+  inline void fetch_val(IDX& res) const
+  {
+    gs<IDX, BITS, W, UB>::fetch(res, ptr, offset);
   }
 };
 

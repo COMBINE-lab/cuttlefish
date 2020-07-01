@@ -23,7 +23,7 @@ private:
     cuttlefish::bitvector_entry_t bv_entry;
 
     // Value read from the bitvector entry when the object is constructed; is immutable.
-    const Vertex_Encoding vertex_encoding_read;
+    Vertex_Encoding vertex_encoding_read;
 
     // Value read from the bitvector entry when the object is constrcuted; is mutable.
     Vertex_Encoding vertex_encoding;
@@ -32,7 +32,14 @@ private:
     // Constructs an API to the bitvector entry `bv_entry`.
     Kmer_Hash_Entry_API(const cuttlefish::bitvector_entry_t& bv_entry):
         bv_entry(bv_entry), vertex_encoding_read(bv_entry), vertex_encoding(bv_entry)
-    {}
+    {
+        // CAS vector `fetch` does not work.
+
+        // uint8_t state;
+        // bv_entry.fetch_val(state);
+        // vertex_encoding_read = Vertex_Encoding(state);
+        // vertex_encoding = vertex_encoding_read;
+    }
 
 
     // Returns the vertex encoding value read when the object was constructed.

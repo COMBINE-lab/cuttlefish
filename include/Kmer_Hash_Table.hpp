@@ -31,6 +31,18 @@ private:
 
 
 public:
+
+    // Debug
+    void print_hash_table(const std::string& output_file_name) const
+    {
+        std::ofstream output(output_file_name.c_str());
+
+        for(size_t kmer_hash = 0; kmer_hash < hash_table.size(); ++kmer_hash)
+            output << (uint16_t)hash_table[kmer_hash] << "\n";
+
+        output.close();
+    }
+
     Kmer_Hash_Table()
     {}
 

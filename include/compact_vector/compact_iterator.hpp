@@ -167,7 +167,7 @@ struct gs {
     res                      = x | ((*(p + 1) & nmask) << (BITS - over));
     if(std::is_signed<IDX>::value && res & ((IDX)1 << (BITS - 1)))
       res |= ~(IDX)0 << BITS;
-    mask_store<W, true>cas(p, mask, x, x | msb);
+    mask_store<W, true>::cas(p, mask, x, x | msb);
     return true;
   }
 };
@@ -614,6 +614,12 @@ public:
   inline bool cas(const IDX x, const IDX exp) {
     Derived& self = *static_cast<Derived*>(this);
     return gs<IDX, BITS, W, UB>::cas(x, exp, ptr, self.bits(), offset);
+  }
+  // Added by self. Fetches the value stored at the location pointed by the setter
+  // (in a thread-safe manner) to the passed reference `res`.
+  inline void fetch_val(IDX& res) const
+  {
+    gs<IDX, BITS, W, UB>::fetch(res, ptr, offset);
   }
 };
 

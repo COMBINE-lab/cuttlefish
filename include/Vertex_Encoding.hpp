@@ -5,6 +5,7 @@
 
 
 #include "Vertex.hpp"
+#include "compact_vector/compact_iterator.hpp"
 
 #include <cstdint>
 
@@ -25,9 +26,10 @@ private:
 
 
     // Constructs an encoding with the provided vertex code.
-    Vertex_Encoding(const cuttlefish::vertex_code_t vertex_code):
-        vertex_code(vertex_code)
-    {}
+    Vertex_Encoding(const cuttlefish::vertex_code_t vertex_code);
+
+    // Constructs an encoding from the state stored at bitvector entry `bv_entry`.
+    Vertex_Encoding(const cuttlefish::bitvector_entry_t& bv_entry);
 
     // Sets the nucleotide 2-bit encoding at the bits b1 and b0 of `vertex_code`.
     // Requirement: the two bits must be zero before the call, for consistent
@@ -97,6 +99,26 @@ private:
 
     const static bool decoded_output_status[32];
 };
+
+
+inline Vertex_Encoding::Vertex_Encoding(const cuttlefish::vertex_code_t vertex_code):
+    vertex_code(vertex_code)
+{
+    if(vertex_code == 0b00001 || vertex_code == 0b00010)
+    {
+        std::cerr << "Invalid vertex encoding " << (uint16_t)vertex_code << " encountered during construction from code. Aborting.\n";
+        std::exit(EXIT_FAILURE);
+    }
+}
+
+
+inline Vertex_Encoding::Vertex_Encoding(const cuttlefish::bitvector_entry_t& bv_entry)
+{
+    // CAS vector `fetch` does not work yet.
+    // bv_entry.fetch_val(vertex_code);
+
+    vertex_code = bv_entry;
+}
 
 
 

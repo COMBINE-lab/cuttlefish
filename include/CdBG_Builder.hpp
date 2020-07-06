@@ -3,6 +3,7 @@
 #define CDBG_BUILDER_HPP
 
 
+
 #include "globals.hpp"
 #include "Vertex.hpp"
 #include "Vertex_Encoding.hpp"
@@ -10,56 +11,66 @@
 #include "Kmer_Hash_Table.hpp"
 #include "Annotated_Kmer.hpp"
 
-#include <string>
-#include <map>
-
 
 class CdBG_Builder
 {
 private:
+
     std::string ref_file;   // Name of the file containing the reference.
     uint16_t k; // The k parameter for the edge-centric de Bruijn graph to be compacted.
     Kmer_Hash_Table Vertices;   // The hash table for the vertices (canonical k-mers) of the de Bruijn graph.
 
 
-    // Classifies the vertices into different types.
-    void classify_vertices();
+    // Classifies the vertices into different types (or, classes), using up-to
+    // `thread_count` number of threads.
+    void classify_vertices(const uint16_t thread_count);
+
+    // Processes classification of the valid k-mers present at the sequence `seq`
+    // (of length `seq_len`) that have their starting indices between (inclusive)
+    // `left_end` and `right_end`.
+    void process_substring(const char* seq, const size_t seq_len, const size_t left_end, const size_t right_end);
 
     // Returns the index of the first valid k-mer, i.e. the first k-mer without
-    // the placeholder nucleotide 'N', starting from the index `start_idx` of
-    // the sequence `seq` that has length `seq_len`. If no such k-mer is found,
-    // `seq_len` is returned.
-    size_t search_valid_kmer(const char* seq, const size_t seq_len, const size_t start_idx);
+    // the placeholder nucleotide 'N', in the index range `[left_end, right_end]`
+    // of the sequence `seq`. If no such k-mer is found, returns the first invalid
+    // index after its assigned range, i.e. `right_end + 1`.
+    size_t search_valid_kmer(const char* seq, const size_t left_end, const size_t right_end);
 
-    // Processes classification for the canonical versions of the k-mers of the
-    // sequence `seq` (of length `seq_len`) that are present at its contiguous
-    // subsequence starting from the index `start_idx`, going up-to either the
-    // ending of the sequence itself, or up-to the first encountered placeholder
-    // nucleotide 'N'. Also, returns the non-inclusive point of termination of
-    // the processed subsequence, i.e. the index following the end of it.
-    size_t process_contiguous_subseq(const char* seq, const size_t seq_len, const size_t start_idx);
+    // Processes classification for the canonical versions of the valid k-mers of
+    // the sequence `seq` (of length `seq_len`) that are present at its contiguous
+    // subsequence starting from the index `start_idx` and have their starting
+    // indices at most up-to the index `right_end`. The processing goes up-to
+    // either the ending of the assigned range itself (i.e. `right_end`), or to the
+    // last k-mer before the first encountered placeholder nucleotide 'N', whichever
+    // comes first. Also, returns the non-inclusive point of termination of the
+    // processed subsequence, i.e. the index following the end of it.
+    size_t process_contiguous_subseq(const char* seq, const size_t seq_len, const size_t right_end, const size_t start_idx);
 
     // Process classification for the canonical version `kmer_hat` of some k-mer
     // in the sequence that is isolated, i.e. does not have any adjacent k-mers.
-    void process_isolated_kmer(const cuttlefish::kmer_t& kmer_hat);
+    // Returns `false` iff an attempted state transition for the k-mer failed.
+    bool process_isolated_kmer(const cuttlefish::kmer_t& kmer_hat);
 
     // Processes classification (partially) for the canonical version `kmer_hat` of
     // the first k-mer of some sequence, where the k-mer is encountered in the
     // direction `dir`, the canonical version of the next k-mer in the sequence is
     // `next_kmer_hat`, and the nucletiode succeeding the first k-mer is `next_nucl`.
-    void process_first_kmer(const cuttlefish::kmer_t& kmer_hat, const cuttlefish::kmer_dir_t dir, const cuttlefish::kmer_t& next_kmer_hat, const cuttlefish::nucleotide_t next_nucl);
+    // Returns `false` iff an attempted state transition for the k-mer failed.
+    bool process_leftmost_kmer(const cuttlefish::kmer_t& kmer_hat, const cuttlefish::kmer_dir_t dir, const cuttlefish::kmer_t& next_kmer_hat, const cuttlefish::nucleotide_t next_nucl);
 
     // Processes classification (partially) for the canonical version `kmer_hat` of
     // the last k-mer of some sequence, where the k-mer is encountered in the
     // direction `dir`, and the nucletiode preceding the last k-mer is `prev_nucl`.
-    void process_last_kmer(const cuttlefish::kmer_t& kmer_hat, const cuttlefish::kmer_dir_t dir, const cuttlefish::nucleotide_t prev_nucl);
+    // Returns `false` iff an attempted state transition for the k-mer failed.
+    bool process_rightmost_kmer(const cuttlefish::kmer_t& kmer_hat, const cuttlefish::kmer_dir_t dir, const cuttlefish::nucleotide_t prev_nucl);
 
     // Processes classification (partially) for the canonical version `kmer_hat` of
     // some internal k-mer of some sequence, where the k-mer is encountered in the
     // direction `dir`, the canoninal version of the next k-mer in the sequence is
     // `next_kmer_hat`, the nucletiode preceding the k-mer is `prev_nucl`, and the
     // nucletiode succeeding the k-mer is `next_nucl`.
-    void process_internal_kmer(const cuttlefish::kmer_t& kmer_hat, const cuttlefish::kmer_dir_t dir, const cuttlefish::kmer_t& next_kmer_hat, const cuttlefish::nucleotide_t prev_nucl, const cuttlefish::nucleotide_t next_nucl);
+    // Returns `false` iff an attempted state transition for the k-mer failed.
+    bool process_internal_kmer(const cuttlefish::kmer_t& kmer_hat, const cuttlefish::kmer_dir_t dir, const cuttlefish::kmer_t& next_kmer_hat, const cuttlefish::nucleotide_t prev_nucl, const cuttlefish::nucleotide_t next_nucl);
 
     // Returns a Boolean denoting whether the canonical k-mer `kmer_hat` forms a
     // self loop with the canonical k-mer `next_kmer_hat` in the sequence. This
@@ -108,8 +119,14 @@ private:
     // Note that, the output operation appends a newline at the end.
     void write_path(const char* seq, const uint32_t start_kmer_idx, const uint32_t end_kmer_idx, const bool in_forward, std::ofstream& output) const;
 
+    // Prints the distribution of the vertex classes for the canonical k-mers present
+    // at the database named `kmc_file_name`.
+    // For debugging purposes.
+    void print_vertex_class_dist(const std::string& kmc_file_name) const;
+
 
 public:
+
     CdBG_Builder()
     {}
 
@@ -119,6 +136,7 @@ public:
     // being present in the KMC database with prefix `kmc_file_name` using
     // `thread_count` threads, and outputs the maximal unitigs into the file named
     // `output_file_name`.
+    // TODO: Move `kmc_file_name` as one of the class fields.
     void construct(const std::string& kmc_file_name, const uint16_t thread_count, const std::string& output_file_name);
 };
 

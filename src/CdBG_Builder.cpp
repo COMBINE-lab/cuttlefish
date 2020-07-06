@@ -1,11 +1,12 @@
 
 #include "CdBG_Builder.hpp"
 #include "kseq/kseq.h"
+#include "Kmer_Iterator.hpp"
 
 #include <fstream>
+#include <thread>
 #include <cstdlib>
 #include <cassert>
-#include <vector>
 #include <chrono>
 #include "zlib.h"
 
@@ -28,7 +29,7 @@ void CdBG_Builder::construct(const std::string& kmc_file_name, const uint16_t th
     Vertices.construct(kmc_file_name, thread_count);
 
     std::cout << "Classifying the vertices.\n";
-    classify_vertices();
+    classify_vertices(thread_count);
 
     std::cout << "Outputting the maximal unitigs.\n";
     output_maximal_unitigs(output_file_name);
@@ -37,7 +38,7 @@ void CdBG_Builder::construct(const std::string& kmc_file_name, const uint16_t th
 }
 
 
-void CdBG_Builder::classify_vertices()
+void CdBG_Builder::classify_vertices(const uint16_t thread_count)
 {
     std::chrono::high_resolution_clock::time_point t_start = std::chrono::high_resolution_clock::now();
 
@@ -68,19 +69,36 @@ void CdBG_Builder::classify_vertices()
             break;
 
 
-        // Look for contiguous subsequences of k-mers without the placeholder nucleotide 'N'.
-        size_t kmer_idx = 0;
-        while(true)
+        // Single-threaded classification.
+        // process_substring(seq, seq_len, 0, seq_len - k);
+
+
+        // Multi-threaded classification.
+        size_t task_size = (seq_len - k + 1) / thread_count;
+        if(!task_size)
+            process_substring(seq, seq_len, 0, seq_len - k);
+        else
         {
-            kmer_idx = search_valid_kmer(seq, seq_len, kmer_idx);
+            std::vector<std::thread> task;
+            size_t left_end = 0;
+            size_t right_end;
 
-            // No valid k-mer remains in the sequence anymore.
-            if(kmer_idx > seq_len - k)
-                break;
+            for(uint16_t task_id = 0; task_id < thread_count; ++task_id)
+            {
+                right_end = (task_id == thread_count - 1 ? seq_len - k : left_end + task_size - 1);
+                task.emplace_back(&CdBG_Builder::process_substring, this, seq, seq_len, left_end, right_end);
+                left_end += task_size;
+            }
 
-            // Process a maximal valid contiguous subsequence, and advance to the index following it.
-            kmer_idx = process_contiguous_subseq(seq, seq_len, kmer_idx);
-        }
+            for(std::thread& t: task)
+                if(t.joinable())
+                    t.join();
+                else
+                {
+                    std::cerr << "Early termination of a worker thread encountered. Aborting.\n";
+                    std::exit(EXIT_FAILURE);
+                }
+        } 
     }
 
 
@@ -95,36 +113,53 @@ void CdBG_Builder::classify_vertices()
 }
 
 
-size_t CdBG_Builder::search_valid_kmer(const char* seq, const size_t seq_len, const size_t start_idx)
+void CdBG_Builder::process_substring(const char* seq, const size_t seq_len, const size_t left_end, const size_t right_end)
+{
+    size_t kmer_idx = left_end;
+    while(kmer_idx <= right_end)
+    {
+        kmer_idx = search_valid_kmer(seq, kmer_idx, right_end);
+
+        // No valid k-mer remains in the substring anymore.
+        if(kmer_idx > right_end)
+            break;
+
+        // Process a maximal valid contiguous subsequence, and advance to the index following it.
+        kmer_idx = process_contiguous_subseq(seq, seq_len, right_end, kmer_idx);
+    }
+}
+
+
+size_t CdBG_Builder::search_valid_kmer(const char* seq, const size_t left_end, const size_t right_end)
 {
     size_t valid_start_idx;
     uint16_t nucl_count;
     
 
-    size_t idx = start_idx;
-    while(idx <= seq_len - k)
+    size_t idx = left_end;
+    while(idx <= right_end)
     {
         // Go over the contiguous subsequence of 'N's.
-        for(; idx <= seq_len - k && seq[idx] == 'N'; idx++);
+        for(; idx <= right_end && seq[idx] == 'N'; idx++);
 
         // Go over the contiguous subsequence of non-'N's.
-        if(idx <= seq_len - k)
+        if(idx <= right_end)
         {
             valid_start_idx = idx;
             nucl_count = 0;
 
-            for(; idx <= seq_len - k && seq[idx] != 'N'; ++idx)
+            for(; idx <= right_end + k - 1 && seq[idx] != 'N'; ++idx)
                 if(++nucl_count == k)
                     return valid_start_idx;
         }
     }
 
 
-    return seq_len;
+    return right_end + 1;
 }
 
 
-size_t CdBG_Builder::process_contiguous_subseq(const char* seq, const size_t seq_len, const size_t start_idx)
+size_t CdBG_Builder::process_contiguous_subseq(const char* seq, const size_t seq_len, const size_t right_end, const size_t start_idx)
 {
     size_t kmer_idx = start_idx;
 
@@ -132,29 +167,67 @@ size_t CdBG_Builder::process_contiguous_subseq(const char* seq, const size_t seq
 
     Directed_Kmer curr_kmer(cuttlefish::kmer_t(seq, kmer_idx));
 
-    // The subsequence contains only an isolated k-mer.
-    if(kmer_idx + k == seq_len || seq[kmer_idx + k] == 'N')
-        process_isolated_kmer(curr_kmer.canonical);
-    else    // At least two adjacent k-mers are present from the index `kmer_idx`.
+    // The subsequence contains only an isolated k-mer,
+    // i.e. there's no valid left or right neighboring k-mer to this k-mer.
+    if((kmer_idx == 0 || seq[kmer_idx - 1] == cuttlefish::PLACEHOLDER_NUCLEOTIDE) &&
+        (kmer_idx + k == seq_len || seq[kmer_idx + k] == cuttlefish::PLACEHOLDER_NUCLEOTIDE))
+        while(!process_isolated_kmer(curr_kmer.canonical));
+    else    // At least one valid neighbor exists, either to the left or to the right, or on both sides.
     {
+        // Process the leftmost k-mer of this contiguous subsequence.
+
+        // No valid right neighbor exists for the k-mer.
+        if(kmer_idx + k == seq_len || seq[kmer_idx + k] == cuttlefish::PLACEHOLDER_NUCLEOTIDE)
+        {
+            // A valid left neighbor exists at it's not an isolated k-mer.
+            while(!process_rightmost_kmer(curr_kmer.canonical, curr_kmer.dir, seq[kmer_idx - 1]));
+
+            // The contiguous sequence ends at this k-mer.
+            return kmer_idx + k;
+        }
+
+        // A valid right neighbor exists for the k-mer.
         Directed_Kmer next_kmer = curr_kmer;
         next_kmer.roll_to_next_kmer(seq[kmer_idx + k]);
         
+        // No valid left neighbor exists for the k-mer.
+        if(kmer_idx == 0 || seq[kmer_idx - 1] == cuttlefish::PLACEHOLDER_NUCLEOTIDE)
+            while(!process_leftmost_kmer(curr_kmer.canonical, curr_kmer.dir, next_kmer.canonical, seq[kmer_idx + k]));
+        // Both left and right valid neighbors exist for this k-mer.
+        else
+            while(!process_internal_kmer(curr_kmer.canonical, curr_kmer.dir, next_kmer.canonical, seq[kmer_idx - 1], seq[kmer_idx + k]));
         
-        // Process the first k-mer of this contiguous subsequence.
-        process_first_kmer(curr_kmer.canonical, curr_kmer.dir, next_kmer.canonical, seq[kmer_idx + k]);
 
         // Process the internal k-mers of this contiguous subsequence.
-        for(kmer_idx++; kmer_idx < seq_len - k && seq[kmer_idx + k] != 'N'; ++kmer_idx)
+        // Each of these k-mers have valid neighbors to their left and right.
+        for(kmer_idx++; kmer_idx < right_end && seq[kmer_idx + k] != cuttlefish::PLACEHOLDER_NUCLEOTIDE; ++kmer_idx)
         {
             curr_kmer = next_kmer;
             next_kmer.roll_to_next_kmer(seq[kmer_idx + k]);
 
-            process_internal_kmer(curr_kmer.canonical, curr_kmer.dir, next_kmer.canonical, seq[kmer_idx - 1], seq[kmer_idx + k]);
+            while(!process_internal_kmer(curr_kmer.canonical, curr_kmer.dir, next_kmer.canonical, seq[kmer_idx - 1], seq[kmer_idx + k]));
         }
 
-        // Process the last k-mer of this contiguous subsequence.
-        process_last_kmer(next_kmer.canonical, next_kmer.dir, seq[kmer_idx - 1]);
+
+        // Process the rightmost k-mer of this contiguous subsequence. This does not coincide with the leftmost k-mer.
+
+        if(kmer_idx <= right_end)   // Required for the cases where the provided range has just length 1, so `start_idx = right_end`.
+        {
+            curr_kmer = next_kmer;
+        
+            // No valid right neighbor exists for the k-mer.
+            if(kmer_idx + k == seq_len || seq[kmer_idx + k] == cuttlefish::PLACEHOLDER_NUCLEOTIDE)
+                while(!process_rightmost_kmer(curr_kmer.canonical, curr_kmer.dir, seq[kmer_idx - 1]));
+            // A valid right neighbor exists for the k-mer.
+            else
+            {
+                next_kmer.roll_to_next_kmer(seq[kmer_idx + k]);
+
+                while(!process_internal_kmer(curr_kmer.canonical, curr_kmer.dir, next_kmer.canonical, seq[kmer_idx - 1], seq[kmer_idx + k]));
+            }
+        }
+        else
+            kmer_idx--; // `kmer_idx` has to be the index of the last valid k-mer encountered.
     }
 
 
@@ -169,17 +242,17 @@ bool CdBG_Builder::is_self_loop(const cuttlefish::kmer_t& kmer_hat, const cuttle
 }
 
 
-void CdBG_Builder::process_first_kmer(const cuttlefish::kmer_t& kmer_hat, const cuttlefish::kmer_dir_t dir, const cuttlefish::kmer_t& next_kmer_hat, const cuttlefish::nucleotide_t next_nucl)
+bool CdBG_Builder::process_leftmost_kmer(const cuttlefish::kmer_t& kmer_hat, const cuttlefish::kmer_dir_t dir, const cuttlefish::kmer_t& next_kmer_hat, const cuttlefish::nucleotide_t next_nucl)
 {
     // Fetch the entry for `kmer_hat`.
     Kmer_Hash_Entry_API hash_table_entry = Vertices[kmer_hat];
     Vertex_Encoding& vertex_encoding = hash_table_entry.get_vertex_encoding();
-    const Vertex_Encoding old_encoding = vertex_encoding;
+    // const Vertex_Encoding old_encoding = vertex_encoding;
 
 
     // The k-mer is already classified as a complex node.
     if(vertex_encoding.is_visited() && vertex_encoding.vertex_class() == cuttlefish::Vertex_Class::multi_in_multi_out)
-        return;
+        return true;    // Early return is safe from here as this vertex is a dead-end for state transitions.
 
     
     // The k-mer forms a self-loop with the next k-mer.
@@ -212,7 +285,7 @@ void CdBG_Builder::process_first_kmer(const cuttlefish::kmer_t& kmer_hat, const 
                     vertex_encoding = Vertex_Encoding(vertex);
                 }
             }
-            else    // vertex.state == cuttlefish::Vertex_Class::single_in_multi_out
+            else    // vertex.vertex_class == cuttlefish::Vertex_Class::single_in_multi_out
             {
                 vertex.vertex_class = cuttlefish::Vertex_Class::multi_in_multi_out;
 
@@ -244,7 +317,7 @@ void CdBG_Builder::process_first_kmer(const cuttlefish::kmer_t& kmer_hat, const 
 
                 vertex_encoding = Vertex_Encoding(vertex);
             }
-            else    // vertex.state == cuttlefish::Vertex_Class::single_in_multi_out
+            else    // vertex.vertex_class == cuttlefish::Vertex_Class::single_in_multi_out
             {
                 if(vertex.enter != complement(next_nucl))
                 {
@@ -254,26 +327,31 @@ void CdBG_Builder::process_first_kmer(const cuttlefish::kmer_t& kmer_hat, const 
                 }
             }
         }
-        
     }
 
 
-    if(vertex_encoding != old_encoding)
-        Vertices.update(hash_table_entry);
+    // Ideally, we can skip calling the `update` method when `vertex_encoding` has not changed here,
+    // i.e. `vertex_encoding` remains equal to the value with which it had been initialized. But in a
+    // multi-threaded environment, the actual location of `vertex_encoding` in the hash table could
+    // have been changed in between the initialization of the variable at the beginning and this exit
+    // point of the method. For such cases, the `update` would fail, signalling the caller of the event.
+    // TODO: We may also get away without updating the same value again, as the edge-ordering should not
+    // matter in the algorithm.
+    return Vertices.update(hash_table_entry);
 }
 
 
-void CdBG_Builder::process_last_kmer(const cuttlefish::kmer_t& kmer_hat, const cuttlefish::kmer_dir_t dir, const cuttlefish::nucleotide_t prev_nucl)
+bool CdBG_Builder::process_rightmost_kmer(const cuttlefish::kmer_t& kmer_hat, const cuttlefish::kmer_dir_t dir, const cuttlefish::nucleotide_t prev_nucl)
 {
     // Fetch the entry for `kmer_hat`.
     Kmer_Hash_Entry_API hash_table_entry = Vertices[kmer_hat];
     Vertex_Encoding& vertex_encoding = hash_table_entry.get_vertex_encoding();
-    const Vertex_Encoding old_encoding = vertex_encoding;
+    // const Vertex_Encoding old_encoding = vertex_encoding;
 
 
     // The k-mer is already classified as a complex node.
     if(vertex_encoding.is_visited() && vertex_encoding.vertex_class() == cuttlefish::Vertex_Class::multi_in_multi_out)
-        return;
+        return true;    // Early return is safe from here as this vertex is a dead-end for state transitions.
 
 
     if(dir == cuttlefish::FWD)
@@ -300,7 +378,7 @@ void CdBG_Builder::process_last_kmer(const cuttlefish::kmer_t& kmer_hat, const c
                 
                 vertex_encoding = Vertex_Encoding(vertex);
             }
-            else    // vertex.state == cuttlefish::Vertex_Class::single_in_multi_out
+            else    // vertex.vertex_class == cuttlefish::Vertex_Class::single_in_multi_out
             {
                 if(vertex.enter != prev_nucl)
                 {
@@ -316,7 +394,7 @@ void CdBG_Builder::process_last_kmer(const cuttlefish::kmer_t& kmer_hat, const c
         // The sentinel k-mer is encountered for the first time, and in the backward direction.
         if(!vertex_encoding.is_visited())
             vertex_encoding = Vertex_Encoding(Vertex(cuttlefish::Vertex_Class::multi_in_single_out, complement(prev_nucl)));
-        else    // The sentinel k-mer had been visited earlier and has some state; modify it accordingly.
+        else    // The sentinel k-mer has been visited earlier and has some state; modify it accordingly.
         {
             Vertex vertex = vertex_encoding.decode();
 
@@ -338,7 +416,7 @@ void CdBG_Builder::process_last_kmer(const cuttlefish::kmer_t& kmer_hat, const c
                     vertex_encoding = Vertex_Encoding(vertex);
                 }
             }
-            else    // vertex.state == cuttlefish::Vertex_Class::single_in_multi_out
+            else    // vertex.vertex_class == cuttlefish::Vertex_Class::single_in_multi_out
             {
                 vertex.vertex_class = cuttlefish::Vertex_Class::multi_in_multi_out;
 
@@ -348,22 +426,28 @@ void CdBG_Builder::process_last_kmer(const cuttlefish::kmer_t& kmer_hat, const c
     }
 
 
-    if(vertex_encoding != old_encoding)
-        Vertices.update(hash_table_entry);
+    // Ideally, we can skip calling the `update` method when `vertex_encoding` has not changed here,
+    // i.e. `vertex_encoding` remains equal to the value with which it had been initialized. But in a
+    // multi-threaded environment, the actual location of `vertex_encoding` in the hash table could
+    // have been changed in between the initialization of the variable at the beginning and this exit
+    // point of the method. For such cases, the `update` would fail, signalling the caller of the event.
+    // TODO: We may also get away without updating the same value again, as the edge-ordering should not
+    // matter in the algorithm.
+    return Vertices.update(hash_table_entry);
 }
 
 
-void CdBG_Builder::process_internal_kmer(const cuttlefish::kmer_t& kmer_hat, const cuttlefish::kmer_dir_t dir, const cuttlefish::kmer_t& next_kmer_hat, const cuttlefish::nucleotide_t prev_nucl, const cuttlefish::nucleotide_t next_nucl)
+bool CdBG_Builder::process_internal_kmer(const cuttlefish::kmer_t& kmer_hat, const cuttlefish::kmer_dir_t dir, const cuttlefish::kmer_t& next_kmer_hat, const cuttlefish::nucleotide_t prev_nucl, const cuttlefish::nucleotide_t next_nucl)
 {
     // Fetch the hash table entry for `kmer_hat`.
     Kmer_Hash_Entry_API hash_table_entry = Vertices[kmer_hat];
     Vertex_Encoding& vertex_encoding = hash_table_entry.get_vertex_encoding();
-    const Vertex_Encoding old_encoding = vertex_encoding;
+    // const Vertex_Encoding old_encoding = vertex_encoding;
 
 
     // The k-mer is already classified as a complex node.
     if(vertex_encoding.is_visited() && vertex_encoding.vertex_class() == cuttlefish::Vertex_Class::multi_in_multi_out)
-        return;
+        return true;    // Early return is safe from here as this vertex is a dead-end for state transitions.
 
 
     // The k-mer forms a self-loop with the next k-mer.
@@ -381,9 +465,10 @@ void CdBG_Builder::process_internal_kmer(const cuttlefish::kmer_t& kmer_hat, con
             if(vertex.vertex_class == cuttlefish::Vertex_Class::single_in_single_out)
             {
                 if(vertex.enter == prev_nucl && vertex.exit == next_nucl)
-                    return;
-
-                if(vertex.enter != prev_nucl && vertex.exit != next_nucl)
+                    ; // return true; // Probable race if returned early from here
+                    // TODO: Maybe not. May get away without updating the same value again,
+                    // as the edge-ordering should not matter in the algorithm.
+                else if(vertex.enter != prev_nucl && vertex.exit != next_nucl)
                     vertex.vertex_class = cuttlefish::Vertex_Class::multi_in_multi_out;
                 else if(vertex.enter != prev_nucl)
                     vertex.vertex_class = cuttlefish::Vertex_Class::multi_in_single_out;
@@ -401,7 +486,7 @@ void CdBG_Builder::process_internal_kmer(const cuttlefish::kmer_t& kmer_hat, con
                     vertex_encoding = Vertex_Encoding(vertex);
                 }
             }
-            else    // vertex.state == cuttlefish::Vertex_Class::single_in_multi_out
+            else    // vertex.vertex_class == cuttlefish::Vertex_Class::single_in_multi_out
             {
                 if(vertex.enter != prev_nucl)
                 {
@@ -424,13 +509,14 @@ void CdBG_Builder::process_internal_kmer(const cuttlefish::kmer_t& kmer_hat, con
             if(vertex.vertex_class == cuttlefish::Vertex_Class::single_in_single_out)
             {
                 if(vertex.enter == complement(next_nucl) && vertex.exit == complement(prev_nucl))
-                    return;
-
-                if(vertex.enter != complement(next_nucl) && vertex.exit != complement(prev_nucl))
+                    ; // return true; // Probable race if returned early from here
+                    // TODO: Maybe not. May get away without updating the same value again,
+                    // as the edge-ordering should not matter in the algorithm.
+                else if(vertex.enter != complement(next_nucl) && vertex.exit != complement(prev_nucl))
                     vertex.vertex_class = cuttlefish::Vertex_Class::multi_in_multi_out;
                 else if(vertex.enter != complement(next_nucl))
                     vertex.vertex_class = cuttlefish::Vertex_Class::multi_in_single_out;
-                else if(vertex.exit != complement(prev_nucl))
+                else    // vertex.exit != complement(prev_nucl)
                     vertex.vertex_class = cuttlefish::Vertex_Class::single_in_multi_out;
 
                 vertex_encoding = Vertex_Encoding(vertex);
@@ -444,9 +530,9 @@ void CdBG_Builder::process_internal_kmer(const cuttlefish::kmer_t& kmer_hat, con
                     vertex_encoding = Vertex_Encoding(vertex);
                 }
             }
-            else    // vertex.state == cuttlefish::Vertex_Class::single_in_multi_out
+            else    // vertex.vertex_class == cuttlefish::Vertex_Class::single_in_multi_out
             {
-                if(vertex.exit != complement(prev_nucl))
+                if(vertex.enter != complement(next_nucl))
                 {
                     vertex.vertex_class = cuttlefish::Vertex_Class::multi_in_multi_out;
 
@@ -457,12 +543,18 @@ void CdBG_Builder::process_internal_kmer(const cuttlefish::kmer_t& kmer_hat, con
     }
 
 
-    if(vertex_encoding != old_encoding)
-        Vertices.update(hash_table_entry);
+    // Ideally, we can skip calling the `update` method when `vertex_encoding` has not changed here,
+    // i.e. `vertex_encoding` remains equal to the value with which it had been initialized. But in a
+    // multi-threaded environment, the actual location of `vertex_encoding` in the hash table could
+    // have been changed in between the initialization of the variable at the beginning and this exit
+    // point of the method. For such cases, the `update` would fail, signalling the caller of the event.
+    // TODO: We may also get away without updating the same value again, as the edge-ordering should not
+    // matter in the algorithm.
+    return Vertices.update(hash_table_entry);
 }
 
 
-void CdBG_Builder::process_isolated_kmer(const cuttlefish::kmer_t& kmer_hat)
+bool CdBG_Builder::process_isolated_kmer(const cuttlefish::kmer_t& kmer_hat)
 {
     // Fetch the hash table entry for `kmer_hat`.
     Kmer_Hash_Entry_API hash_table_entry = Vertices[kmer_hat];
@@ -471,12 +563,16 @@ void CdBG_Builder::process_isolated_kmer(const cuttlefish::kmer_t& kmer_hat)
 
     // The k-mer is already classified as a complex node.
     if(vertex_encoding.is_visited() && vertex_encoding.vertex_class() == cuttlefish::Vertex_Class::multi_in_multi_out)
-        return;
+        return true;    // Early return is safe from here as this vertex is a dead-end for state transitions.
     
     // Classify the isolated k-mer as a complex node.
     vertex_encoding = Vertex_Encoding(Vertex(cuttlefish::Vertex_Class::multi_in_multi_out));
-    Vertices.update(hash_table_entry);
+    return Vertices.update(hash_table_entry);
 }
+
+
+// TODO: Separate the classification and the outputting task implementations into different source files.
+// Reason: This source file is getting too large.
 
 
 void CdBG_Builder::output_maximal_unitigs(const std::string& output_file)
@@ -521,9 +617,9 @@ void CdBG_Builder::output_maximal_unitigs(const std::string& output_file)
 
         // Look for contiguous subsequences of k-mers without the placeholder nucleotide 'N'.
         size_t kmer_idx = 0;
-        while(true)
+        while(kmer_idx <= seq_len - k)
         {
-            kmer_idx = search_valid_kmer(seq, seq_len, kmer_idx);
+            kmer_idx = search_valid_kmer(seq, kmer_idx, seq_len - k);
 
             // No valid k-mer remains in the sequence.
             if(kmer_idx > seq_len - k)
@@ -725,4 +821,22 @@ void CdBG_Builder::write_path(const char* seq, const uint32_t start_kmer_idx, co
     }
 
     output << "\n";
+}
+
+
+void CdBG_Builder::print_vertex_class_dist(const std::string& kmc_file_name) const
+{
+    Kmer_Container kmers(kmc_file_name);
+    auto it_beg = kmers.begin();
+    auto it_end = kmers.end();
+    size_t C[4] = {0, 0, 0, 0};
+
+    for(auto it = it_beg; it != it_end; ++it)
+        C[uint8_t(Vertices[*it].decode().vertex_class)]++;
+
+
+    std::cout << "Single-In-Single-Out:\t" << C[0] << "\n";
+    std::cout << "Multi-In-Single-Out:\t" << C[1] << "\n";
+    std::cout << "Single-In-Multi-Out:\t" << C[2] << "\n";
+    std::cout << "Multi-In-Multi-Out:\t" << C[3] << "\n";
 }

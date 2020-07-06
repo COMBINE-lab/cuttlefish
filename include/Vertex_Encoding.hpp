@@ -114,10 +114,16 @@ inline Vertex_Encoding::Vertex_Encoding(const cuttlefish::vertex_code_t vertex_c
 
 inline Vertex_Encoding::Vertex_Encoding(const cuttlefish::bitvector_entry_t& bv_entry)
 {
-    // CAS vector `fetch` does not work yet.
+    // CAS vector `fetch` does not work.
     // bv_entry.fetch_val(vertex_code);
 
     vertex_code = bv_entry;
+
+    if(vertex_code == 0b00001 || vertex_code == 0b00010)
+    {
+        std::cerr << "Invalid vertex encoding " << (uint16_t)vertex_code << " encountered during construction from bitvector entry. Aborting.\n";
+        std::exit(EXIT_FAILURE);
+    }
 }
 
 

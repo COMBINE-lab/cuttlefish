@@ -64,13 +64,25 @@ public:
 
 inline Kmer_Hash_Entry_API Kmer_Hash_Table::operator[](const cuttlefish::kmer_t& kmer)
 {
-    return Kmer_Hash_Entry_API(hash_table[mph->lookup(kmer)]);
+    auto v = mph->lookup(kmer);
+    uint64_t lidx = v / num_chunks; 
+    locks_[lidx].lock();
+    auto r = Kmer_Hash_Entry_API(hash_table[v]);
+    locks_[lidx].unlock();
+    return r;
 }
 
 
 inline const Vertex_Encoding Kmer_Hash_Table::operator[](const cuttlefish::kmer_t& kmer) const
 {
-    return Vertex_Encoding(hash_table[mph->lookup(kmer)]);
+    // NOTE: this makes the `const` a lie.  Should be a better solution here.
+    auto v = mph->lookup(kmer);
+    uint64_t lidx = v / num_chunks; 
+    auto* tp = const_cast<Kmer_Hash_Table*>(this);
+    const_cast<decltype(tp->locks_[lidx])>(tp->locks_[lidx]).lock();
+    auto ve = Vertex_Encoding(hash_table[v]);
+    const_cast<decltype(tp->locks_[lidx])>(tp->locks_[lidx]).unlock();
+    return ve;
 }
 
 
@@ -86,6 +98,7 @@ inline bool Kmer_Hash_Table::update(Kmer_Hash_Entry_API& api)
     locks_[lidx].unlock();
     return success;
 }
+
 
 
 #endif

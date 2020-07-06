@@ -7,13 +7,13 @@
 #include <memory>
 
 
-// Forward declaration of k-mer type.
+// Forward declaration of the k-mer type.
 class Kmer;
 
 // Forward declarations of the type of the bitvector used and the type to access its entries (mutable).
 namespace compact
 {
-    template<typename IDX, unsigned BITS, typename W, typename Allocator> class cas_vector;
+    template<typename IDX, unsigned BITS, typename W, typename Allocator> class ts_vector;
 
     namespace iterator_imp
     {
@@ -43,8 +43,8 @@ namespace cuttlefish
     };
 
     constexpr uint8_t BITS_PER_KMER = 5;
-    typedef compact::cas_vector<uint8_t, BITS_PER_KMER, uint64_t, std::allocator<uint64_t>> bitvector_t;
-    typedef compact::iterator_imp::lhs_setter<uint8_t, BITS_PER_KMER, uint64_t, true, 63U> bitvector_entry_t;
+    typedef compact::ts_vector<uint8_t, BITS_PER_KMER, uint64_t, std::allocator<uint64_t>> bitvector_t;
+    typedef compact::iterator_imp::lhs_setter<uint8_t, BITS_PER_KMER, uint64_t, true, 64U> bitvector_entry_t;
 }
 
 

@@ -3,6 +3,7 @@
 #define KMER_HASH_TABLE_HPP
 
 
+
 #include "globals.hpp"
 #include "Kmer.hpp"
 #include "Vertex_Encoding.hpp"
@@ -10,6 +11,7 @@
 #include "Kmer_Hasher.hpp"
 #include "compact_vector/compact_vector.hpp"
 #include "Kmer_Hash_Entry_API.hpp"
+#include "SpinLock/SpinLock.hpp"
 
 
 class Kmer_Hash_Table
@@ -21,7 +23,8 @@ private:
 
     // Lowest bits/elem is achieved with gamma = 1, higher values lead to larger mphf but faster construction/query.
     constexpr static double gamma_factor = 2.0;
-    
+    constexpr static const uint64_t num_chunks{65536};
+
     // The MPH function.
     boophf_t* mph = NULL;
 
@@ -29,8 +32,10 @@ private:
     // keys (`kmer_t`) are passed to the MPHF, and the resulting function-value is used as index in the values table.
     cuttlefish::bitvector_t hash_table;
 
+    std::array<SpinLock, num_chunks> locks_;
 
 public:
+
     Kmer_Hash_Table()
     {}
 
@@ -71,7 +76,15 @@ inline const Vertex_Encoding Kmer_Hash_Table::operator[](const cuttlefish::kmer_
 
 inline bool Kmer_Hash_Table::update(Kmer_Hash_Entry_API& api)
 {
-    return api.bv_entry.cas(api.get_current_encoding(), api.get_read_encoding());
+    auto it = &(api.bv_entry);
+    uint64_t lidx = (std::distance(hash_table.begin(), it)) / num_chunks;
+    locks_[lidx].lock();
+    bool success = (api.bv_entry == api.get_read_encoding());
+    if (success) {
+        api.bv_entry = api.get_current_encoding();
+    }
+    locks_[lidx].unlock();
+    return success;
 }
 
 

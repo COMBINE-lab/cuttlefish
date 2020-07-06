@@ -65,8 +65,8 @@ void CdBG_Builder::construct(const std::string& kmc_file_name, const uint16_t th
     // print_vertex_classes(kmc_file_name, output_file_name);
     // Vertices.print_hash_table(output_file_name);
 
-    // std::cout << "Outputting the maximal unitigs.\n";
-    // output_maximal_unitigs(output_file_name);
+     std::cout << "Outputting the maximal unitigs.\n";
+     output_maximal_unitigs(output_file_name);
 
     Vertices.clear();
 }

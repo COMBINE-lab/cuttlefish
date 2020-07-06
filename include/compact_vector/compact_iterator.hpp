@@ -645,6 +645,7 @@ public:
   }
 
   unsigned bits() const { return m_bits; }
+
 };
 
 template<typename IDX, unsigned BITS, typename W, bool TS, unsigned UB>
@@ -666,6 +667,7 @@ public:
   }
 
   constexpr unsigned bits() const { return BITS; }
+
 };
 
 template<typename I, unsigned BITS, typename W, bool TS, unsigned UB>

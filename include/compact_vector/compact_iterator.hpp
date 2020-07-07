@@ -656,6 +656,8 @@ class lhs_setter
 public:
   lhs_setter(W* p, int o) : super(p, o) { }
   lhs_setter(W* p, unsigned bits, int o) : super(p, o) { (void)(bits); }
+  lhs_setter(const lhs_setter& rhs) : super(rhs.super::ptr, rhs.super::offset) {}
+
   lhs_setter& operator=(const IDX x) {
     gs<IDX, BITS, W, UB>::template set<TS>(x, super::ptr, super::offset);
     return *this;
@@ -789,7 +791,7 @@ public:
   iterator(W* p, unsigned o)
     : m_ptr(p), m_offset(o) { }
   iterator(W* p, unsigned b, unsigned o)
-    : m_ptr(p), m_offset(o) { } // XXX Should we assert that BITS == b?
+    : m_ptr(p), m_offset(o) { (void)b; } // XXX Should we assert that BITS == b?
   template<bool TTS>
   iterator(const iterator<IDX, BITS, W, TTS>& rhs)
     : m_ptr(rhs.m_ptr), m_offset(rhs.m_offset) { }

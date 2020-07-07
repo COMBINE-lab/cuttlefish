@@ -30,6 +30,9 @@ public:
         dir = kmer.direction(canonical);
     }
 
+    Directed_Kmer(const Directed_Kmer& rhs) : 
+      kmer(rhs.kmer), canonical(rhs.canonical), dir(rhs.dir)
+    {}
 
     // Transforms this k-mer by chopping off the first nucleotide and
     // appending the next nucleotide `next_nucl` to the end, i.e.

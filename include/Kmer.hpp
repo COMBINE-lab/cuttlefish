@@ -61,6 +61,9 @@ public:
     // Copy constructs the k-mer from another k-mer `rhs`.
     Kmer(const Kmer& rhs);
 
+    // Copy assignment operator
+    Kmer& operator=(const Kmer& rhs);
+
     // Sets the value of the `k` parameter across the `Kmer` class.
     static void set_k(const uint16_t k);
 
@@ -156,6 +159,10 @@ inline Kmer::Kmer(const CKmerAPI& kmer_api)
 inline Kmer::Kmer(const Kmer& rhs): kmer(rhs.kmer)
 {}
 
+inline Kmer& Kmer::operator=(const Kmer& rhs) {
+    kmer = rhs.kmer;
+    return *this; 
+}
 
 inline Kmer Kmer::reverse_complement() const
 {

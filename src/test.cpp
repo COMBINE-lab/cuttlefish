@@ -34,7 +34,7 @@ void test_kseq(const char* fileName)
     // STEP 4: read sequence
     int c = 0;
     size_t max_len = 0, max_size = 0;
-    size_t len;
+    size_t len = 0;
     while(true)
     {
         if(kseq_read(parser) < 0)
@@ -412,6 +412,7 @@ void check_uint64_BBHash(const char* file_name, uint16_t thread_count)
 
 int main(int argc, char** argv)
 {
+    (void)argc;
     // const char* fileName = argv[1];
 
     // test_kseq(argv[1]);

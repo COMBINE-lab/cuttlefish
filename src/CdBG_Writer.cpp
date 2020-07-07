@@ -3,6 +3,7 @@
 #include "kseq/kseq.h"
 
 #include <chrono>
+#include <thread>
 #include "zlib.h"
 
 
@@ -11,7 +12,7 @@
 KSEQ_INIT(int, read);
 
 
-void CdBG::output_maximal_unitigs(const std::string& output_file)
+void CdBG::output_maximal_unitigs(const std::string& output_file, const uint16_t thread_count)
 {
     std::chrono::high_resolution_clock::time_point t_start = std::chrono::high_resolution_clock::now();
 
@@ -51,18 +52,35 @@ void CdBG::output_maximal_unitigs(const std::string& output_file)
             break;
 
 
-        // Look for contiguous subsequences of k-mers without the placeholder nucleotide 'N'.
-        size_t kmer_idx = 0;
-        while(kmer_idx <= seq_len - k)
+        // Single-threaded writing.
+        // output_off_substring(seq, seq_len, 0, seq_len - k, output);
+
+
+        // Multi-threaded writing.
+        size_t task_size = (seq_len - k + 1) / thread_count;
+        if(!task_size)
+            output_off_substring(seq, seq_len, 0, seq_len - k, output);
+        else
         {
-            kmer_idx = search_valid_kmer(seq, kmer_idx, seq_len - k);
+            std::vector<std::thread> task;
+            size_t left_end = 0;
+            size_t right_end;
 
-            // No valid k-mer remains in the sequence.
-            if(kmer_idx > seq_len - k)
-                break;
+            for(uint16_t task_id = 0; task_id < thread_count; ++task_id)
+            {
+                right_end = (task_id == thread_count - 1 ? seq_len - k : left_end + task_size - 1);
+                task.emplace_back(&CdBG::output_off_substring, this, seq, seq_len, left_end, right_end, std::ref(output));
+                left_end += task_size;
+            }
 
-            // Process a maximal valid contiguous subsequence, and advance to the index following it.
-            kmer_idx = output_maximal_unitigs(seq, seq_len, kmer_idx, output);
+            for(std::thread& t: task)
+                if(t.joinable())
+                    t.join();
+                else
+                {
+                    std::cerr << "Early termination of a worker thread encountered during writing of maximal unitigs. Aborting.\n";
+                    std::exit(EXIT_FAILURE);
+                }
         }
     }
 
@@ -85,63 +103,125 @@ void CdBG::output_maximal_unitigs(const std::string& output_file)
 }
 
 
-size_t CdBG::output_maximal_unitigs(const char* seq, const size_t seq_len, const size_t start_idx, std::ofstream& output)
+void CdBG::output_off_substring(const char* seq, const size_t seq_len, const size_t left_end, const size_t right_end, std::ofstream& output)
+{
+    size_t kmer_idx = left_end;
+    while(kmer_idx <= right_end)
+    {
+        kmer_idx = search_valid_kmer(seq, kmer_idx, right_end);
+
+        // No valid k-mer remains in the sequence.
+        if(kmer_idx > right_end)
+            break;
+
+        // Process a maximal valid contiguous subsequence, and advance to the index following it.
+        kmer_idx = output_maximal_unitigs(seq, seq_len, right_end, kmer_idx, output);
+    }
+}
+
+
+size_t CdBG::output_maximal_unitigs(const char* seq, const size_t seq_len, const size_t right_end, const size_t start_idx, std::ofstream& output)
 {
     size_t kmer_idx = start_idx;
 
     // assert(kmer_idx <= seq_len - k);
 
-    Annotated_Kmer curr_annot_kmer(cuttlefish::kmer_t(seq, kmer_idx), kmer_idx, Vertices);
+    Annotated_Kmer curr_kmer(cuttlefish::kmer_t(seq, kmer_idx), kmer_idx, Vertices);
 
-    // The k-mer is an isolated one, so is a maximal unitig by itself.
-    if(kmer_idx + k == seq_len || seq[kmer_idx + k] == 'N')
-        output_unitig(seq, curr_annot_kmer, curr_annot_kmer, output);
-    else    // At least two adjacent k-mers are present from the index `kmer_idx`.
+    // The subsequence contains only an isolated k-mer, i.e. there's no valid left or right
+    // neighboring k-mer to this k-mer. So it's a maximal unitig by itself.
+    if((kmer_idx == 0 || seq[kmer_idx - 1] == cuttlefish::PLACEHOLDER_NUCLEOTIDE) &&
+        (kmer_idx + k == seq_len || seq[kmer_idx + k] == cuttlefish::PLACEHOLDER_NUCLEOTIDE))
+        output_unitig(seq, curr_kmer, curr_kmer, output);
+    else    // At least one valid neighbor exists, either to the left or to the right, or on both sides.
     {
-        Annotated_Kmer prev_annot_kmer;
-        Annotated_Kmer next_annot_kmer = curr_annot_kmer;
-        next_annot_kmer.roll_to_next_kmer(seq[kmer_idx + k], Vertices);
-
-        Annotated_Kmer unipath_start_kmer;
-
-
-        // Process the first k-mer of this subsequence.
-
-        // A maximal unitig starts at the beginning of a maximal valid subsequence.
-        unipath_start_kmer = curr_annot_kmer;
-        if(is_unipath_end(curr_annot_kmer.vertex_class, curr_annot_kmer.dir, next_annot_kmer.vertex_class, next_annot_kmer.dir))
-            output_unitig(seq, unipath_start_kmer, curr_annot_kmer, output);
-
-
-        // Process the internal k-mers of this subsequence.
-        for(kmer_idx++; kmer_idx < seq_len - k && seq[kmer_idx + k] != 'N'; ++kmer_idx)
+        // No valid right neighbor exists for the k-mer.
+        if(kmer_idx + k == seq_len || seq[kmer_idx + k] == cuttlefish::PLACEHOLDER_NUCLEOTIDE)
         {
-            prev_annot_kmer = curr_annot_kmer;
-            curr_annot_kmer = next_annot_kmer;
-            next_annot_kmer.roll_to_next_kmer(seq[kmer_idx + k], Vertices);
+            // A valid left neighbor exists as it's not an isolated k-mer.
+            Annotated_Kmer prev_kmer(cuttlefish::kmer_t(seq, kmer_idx - 1), kmer_idx, Vertices);
+            
+            if(is_unipath_start(curr_kmer.vertex_class, curr_kmer.dir, prev_kmer.vertex_class, prev_kmer.dir))
+                // A maximal unitig ends at the ending of a maximal valid subsequence.
+                output_unitig(seq, curr_kmer, curr_kmer, output);
 
-
-            if(is_unipath_start(curr_annot_kmer.vertex_class, curr_annot_kmer.dir, prev_annot_kmer.vertex_class, prev_annot_kmer.dir))
-                unipath_start_kmer = curr_annot_kmer;
-
-            if(is_unipath_end(curr_annot_kmer.vertex_class, curr_annot_kmer.dir, next_annot_kmer.vertex_class, next_annot_kmer.dir))
-                output_unitig(seq, unipath_start_kmer, curr_annot_kmer, output);
+            // The contiguous sequence ends at this k-mer.
+            return kmer_idx + k;
         }
 
-        prev_annot_kmer = curr_annot_kmer;
-        curr_annot_kmer = next_annot_kmer;
+
+        // A valid right neighbor exists for the k-mer.
+        Annotated_Kmer next_kmer = curr_kmer;
+        next_kmer.roll_to_next_kmer(seq[kmer_idx + k], Vertices);
+
+        bool on_unipath = false;
+        Annotated_Kmer unipath_start_kmer;
+        Annotated_Kmer prev_kmer;
+
+        // No valid left neighbor exists for the k-mer.
+        if(kmer_idx == 0 || seq[kmer_idx - 1] == cuttlefish::PLACEHOLDER_NUCLEOTIDE)
+        {
+            // A maximal unitig starts at the beginning of a maximal valid subsequence.
+            on_unipath = true;
+            unipath_start_kmer = curr_kmer;
+        }
+        // Both left and right valid neighbors exist for this k-mer.
+        else
+        {
+            prev_kmer = Annotated_Kmer(cuttlefish::kmer_t(seq, kmer_idx - 1), kmer_idx, Vertices);
+            if(is_unipath_start(curr_kmer.vertex_class, curr_kmer.dir, prev_kmer.vertex_class, prev_kmer.dir))
+            {
+                on_unipath = true;
+                unipath_start_kmer = curr_kmer;
+            }
+        }
+
+        if(on_unipath && is_unipath_end(curr_kmer.vertex_class, curr_kmer.dir, next_kmer.vertex_class, next_kmer.dir))
+        {
+            output_unitig(seq, unipath_start_kmer, curr_kmer, output);
+            on_unipath = false;
+        }
 
 
-        // Process the last k-mer of this subsequence.
+        // Process the rest of the k-mers of this contiguous subsequence.
+        for(kmer_idx++; on_unipath || kmer_idx <= right_end; ++kmer_idx)
+        {
+            prev_kmer = curr_kmer;
+            curr_kmer = next_kmer;
 
-        if(is_unipath_start(curr_annot_kmer.vertex_class, curr_annot_kmer.dir, prev_annot_kmer.vertex_class, prev_annot_kmer.dir))
-            unipath_start_kmer = curr_annot_kmer;
+            if(is_unipath_start(curr_kmer.vertex_class, curr_kmer.dir, prev_kmer.vertex_class, prev_kmer.dir))
+            {
+                on_unipath = true;
+                unipath_start_kmer = curr_kmer;
+            }
 
-        // A maximal unitig ends at the ending of a maximal valid subsequence.
-        output_unitig(seq, unipath_start_kmer, curr_annot_kmer, output);
+
+            // No valid right neighbor exists for the k-mer.
+            if(kmer_idx + k == seq_len || seq[kmer_idx + k] == cuttlefish::PLACEHOLDER_NUCLEOTIDE)
+            {
+                // A maximal unitig ends at the ending of a maximal valid subsequence.
+                if(on_unipath)
+                {
+                    output_unitig(seq, unipath_start_kmer, curr_kmer, output);
+                    on_unipath = false;
+
+                    break;
+                }
+            }
+            else    // A valid right neighbor exists.
+            {
+                next_kmer.roll_to_next_kmer(seq[kmer_idx + k], Vertices);
+                
+                if(on_unipath && is_unipath_end(curr_kmer.vertex_class, curr_kmer.dir, next_kmer.vertex_class, next_kmer.dir))
+                {
+                    output_unitig(seq, unipath_start_kmer, curr_kmer, output);
+                    on_unipath = false;
+                }
+            }
+        }
     }
-
-
+    
+    
     // Return the non-inclusive ending index of the processed contiguous subsequence.
     return kmer_idx + k;
 }
@@ -236,7 +316,13 @@ void CdBG::output_unitig(const char* seq, const Annotated_Kmer& start_kmer, cons
 
     // If the hash table update is successful, only then this thread may output this unitig.
     if(Vertices.update(hash_table_entry))
+    {
+        write_lock.lock();
+
         write_path(seq, start_kmer.idx, end_kmer.idx, start_kmer.kmer < end_kmer.rev_compl, output);
+        
+        write_lock.unlock();
+    }
 }
 
 

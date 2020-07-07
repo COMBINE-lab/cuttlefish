@@ -1,11 +1,10 @@
 
-#include "CdBG_Builder.hpp"
+#include "CdBG.hpp"
 #include "kseq/kseq.h"
 #include "Kmer_Iterator.hpp"
 
 #include <fstream>
 #include <thread>
-#include <cstdlib>
 #include <cassert>
 #include <chrono>
 #include "zlib.h"
@@ -16,29 +15,7 @@
 KSEQ_INIT(int, read);
 
 
-CdBG_Builder::CdBG_Builder(const std::string& ref_file, const uint16_t k):
-    ref_file(ref_file), k(k)
-{
-    Kmer::set_k(k);
-}
-
-
-void CdBG_Builder::construct(const std::string& kmc_file_name, const std::string& bbhash_file_name, const uint16_t thread_count, const std::string& output_file_name)
-{
-    std::cout << "Constructing the minimal perfect hash function.\n";
-    Vertices.construct(kmc_file_name, bbhash_file_name, thread_count);
-
-    std::cout << "Classifying the vertices.\n";
-    classify_vertices(thread_count);
-
-    std::cout << "Outputting the maximal unitigs.\n";
-    output_maximal_unitigs(output_file_name);
-
-    Vertices.clear();
-}
-
-
-void CdBG_Builder::classify_vertices(const uint16_t thread_count)
+void CdBG::classify_vertices(const uint16_t thread_count)
 {
     std::chrono::high_resolution_clock::time_point t_start = std::chrono::high_resolution_clock::now();
 
@@ -86,7 +63,7 @@ void CdBG_Builder::classify_vertices(const uint16_t thread_count)
             for(uint16_t task_id = 0; task_id < thread_count; ++task_id)
             {
                 right_end = (task_id == thread_count - 1 ? seq_len - k : left_end + task_size - 1);
-                task.emplace_back(&CdBG_Builder::process_substring, this, seq, seq_len, left_end, right_end);
+                task.emplace_back(&CdBG::process_substring, this, seq, seq_len, left_end, right_end);
                 left_end += task_size;
             }
 
@@ -113,7 +90,7 @@ void CdBG_Builder::classify_vertices(const uint16_t thread_count)
 }
 
 
-void CdBG_Builder::process_substring(const char* seq, const size_t seq_len, const size_t left_end, const size_t right_end)
+void CdBG::process_substring(const char* seq, const size_t seq_len, const size_t left_end, const size_t right_end)
 {
     size_t kmer_idx = left_end;
     while(kmer_idx <= right_end)
@@ -130,36 +107,7 @@ void CdBG_Builder::process_substring(const char* seq, const size_t seq_len, cons
 }
 
 
-size_t CdBG_Builder::search_valid_kmer(const char* seq, const size_t left_end, const size_t right_end)
-{
-    size_t valid_start_idx;
-    uint16_t nucl_count;
-    
-
-    size_t idx = left_end;
-    while(idx <= right_end)
-    {
-        // Go over the contiguous subsequence of 'N's.
-        for(; idx <= right_end && seq[idx] == 'N'; idx++);
-
-        // Go over the contiguous subsequence of non-'N's.
-        if(idx <= right_end)
-        {
-            valid_start_idx = idx;
-            nucl_count = 0;
-
-            for(; idx <= right_end + k - 1 && seq[idx] != 'N'; ++idx)
-                if(++nucl_count == k)
-                    return valid_start_idx;
-        }
-    }
-
-
-    return right_end + 1;
-}
-
-
-size_t CdBG_Builder::process_contiguous_subseq(const char* seq, const size_t seq_len, const size_t right_end, const size_t start_idx)
+size_t CdBG::process_contiguous_subseq(const char* seq, const size_t seq_len, const size_t right_end, const size_t start_idx)
 {
     size_t kmer_idx = start_idx;
 
@@ -236,13 +184,13 @@ size_t CdBG_Builder::process_contiguous_subseq(const char* seq, const size_t seq
 }
 
 
-bool CdBG_Builder::is_self_loop(const cuttlefish::kmer_t& kmer_hat, const cuttlefish::kmer_t& next_kmer_hat) const
+bool CdBG::is_self_loop(const cuttlefish::kmer_t& kmer_hat, const cuttlefish::kmer_t& next_kmer_hat) const
 {
     return kmer_hat == next_kmer_hat;
 }
 
 
-bool CdBG_Builder::process_leftmost_kmer(const cuttlefish::kmer_t& kmer_hat, const cuttlefish::kmer_dir_t dir, const cuttlefish::kmer_t& next_kmer_hat, const cuttlefish::nucleotide_t next_nucl)
+bool CdBG::process_leftmost_kmer(const cuttlefish::kmer_t& kmer_hat, const cuttlefish::kmer_dir_t dir, const cuttlefish::kmer_t& next_kmer_hat, const cuttlefish::nucleotide_t next_nucl)
 {
     // Fetch the entry for `kmer_hat`.
     Kmer_Hash_Entry_API hash_table_entry = Vertices[kmer_hat];
@@ -341,7 +289,7 @@ bool CdBG_Builder::process_leftmost_kmer(const cuttlefish::kmer_t& kmer_hat, con
 }
 
 
-bool CdBG_Builder::process_rightmost_kmer(const cuttlefish::kmer_t& kmer_hat, const cuttlefish::kmer_dir_t dir, const cuttlefish::nucleotide_t prev_nucl)
+bool CdBG::process_rightmost_kmer(const cuttlefish::kmer_t& kmer_hat, const cuttlefish::kmer_dir_t dir, const cuttlefish::nucleotide_t prev_nucl)
 {
     // Fetch the entry for `kmer_hat`.
     Kmer_Hash_Entry_API hash_table_entry = Vertices[kmer_hat];
@@ -437,7 +385,7 @@ bool CdBG_Builder::process_rightmost_kmer(const cuttlefish::kmer_t& kmer_hat, co
 }
 
 
-bool CdBG_Builder::process_internal_kmer(const cuttlefish::kmer_t& kmer_hat, const cuttlefish::kmer_dir_t dir, const cuttlefish::kmer_t& next_kmer_hat, const cuttlefish::nucleotide_t prev_nucl, const cuttlefish::nucleotide_t next_nucl)
+bool CdBG::process_internal_kmer(const cuttlefish::kmer_t& kmer_hat, const cuttlefish::kmer_dir_t dir, const cuttlefish::kmer_t& next_kmer_hat, const cuttlefish::nucleotide_t prev_nucl, const cuttlefish::nucleotide_t next_nucl)
 {
     // Fetch the hash table entry for `kmer_hat`.
     Kmer_Hash_Entry_API hash_table_entry = Vertices[kmer_hat];
@@ -554,7 +502,7 @@ bool CdBG_Builder::process_internal_kmer(const cuttlefish::kmer_t& kmer_hat, con
 }
 
 
-bool CdBG_Builder::process_isolated_kmer(const cuttlefish::kmer_t& kmer_hat)
+bool CdBG::process_isolated_kmer(const cuttlefish::kmer_t& kmer_hat)
 {
     // Fetch the hash table entry for `kmer_hat`.
     Kmer_Hash_Entry_API hash_table_entry = Vertices[kmer_hat];
@@ -575,256 +523,7 @@ bool CdBG_Builder::process_isolated_kmer(const cuttlefish::kmer_t& kmer_hat)
 // Reason: This source file is getting too large.
 
 
-void CdBG_Builder::output_maximal_unitigs(const std::string& output_file)
-{
-    std::chrono::high_resolution_clock::time_point t_start = std::chrono::high_resolution_clock::now();
-
-
-    // Open the file handler for the FASTA / FASTQ file containing the reference.
-    FILE* input = fopen(ref_file.c_str(), "r");
-    if(input == NULL)
-    {
-        std::cerr << "Error opening input file " << ref_file << ". Aborting.\n";
-        std::exit(EXIT_FAILURE);
-    }
-
-    // Initialize the parser.
-    kseq_t* parser = kseq_init(fileno(input));
-
-
-    // Open the output file.
-    std::ofstream output(output_file.c_str(), std::ofstream::out);
-    if(!output)
-    {
-        std::cerr << "Error opening output file " << output_file << ". Aborting.\n";
-        std::exit(EXIT_FAILURE);
-    }
-
-
-    // Parse sequences one-by-one, and output each unique maximal unitig encountered through them.
-    uint32_t seqCount = 0;
-    while(kseq_read(parser) >= 0)
-    {
-        const char* seq = parser->seq.s;
-        const size_t seq_len = parser->seq.l;
-
-        std::cout << "Processing sequence " << ++seqCount << ", with length " << seq_len << ".\n";
-
-        // Nothing to process for sequences with length shorter than `k`.
-        if(seq_len < k)
-            break;
-
-
-        // Look for contiguous subsequences of k-mers without the placeholder nucleotide 'N'.
-        size_t kmer_idx = 0;
-        while(kmer_idx <= seq_len - k)
-        {
-            kmer_idx = search_valid_kmer(seq, kmer_idx, seq_len - k);
-
-            // No valid k-mer remains in the sequence.
-            if(kmer_idx > seq_len - k)
-                break;
-
-            // Process a maximal valid contiguous subsequence, and advance to the index following it.
-            kmer_idx = output_maximal_unitigs(seq, seq_len, kmer_idx, output);
-        }
-    }
-
-    
-    // Close the output file.
-    if(output.fail())
-        std::cerr << "Errors had been encountered for the output stream.\n";
-
-    output.close();
-
-
-    // Close the parser and the input file.
-    kseq_destroy(parser);
-    fclose(input);
-
-
-    std::chrono::high_resolution_clock::time_point t_end = std::chrono::high_resolution_clock::now();
-    double elapsed_seconds = std::chrono::duration_cast<std::chrono::duration<double>>(t_end - t_start).count();
-    std::cout << "Done outputting the maximal unitigs. Time taken = " << elapsed_seconds << " seconds.\n";
-}
-
-
-size_t CdBG_Builder::output_maximal_unitigs(const char* seq, const size_t seq_len, const size_t start_idx, std::ofstream& output)
-{
-    size_t kmer_idx = start_idx;
-
-    // assert(kmer_idx <= seq_len - k);
-
-    Annotated_Kmer curr_annot_kmer(cuttlefish::kmer_t(seq, kmer_idx), kmer_idx, Vertices);
-
-    // The k-mer is an isolated one, so is a maximal unitig by itself.
-    if(kmer_idx + k == seq_len || seq[kmer_idx + k] == 'N')
-        output_unitig(seq, curr_annot_kmer, curr_annot_kmer, output);
-    else    // At least two adjacent k-mers are present from the index `kmer_idx`.
-    {
-        Annotated_Kmer prev_annot_kmer;
-        Annotated_Kmer next_annot_kmer = curr_annot_kmer;
-        next_annot_kmer.roll_to_next_kmer(seq[kmer_idx + k], Vertices);
-
-        Annotated_Kmer unipath_start_kmer;
-
-
-        // Process the first k-mer of this subsequence.
-
-        // A maximal unitig starts at the beginning of a maximal valid subsequence.
-        unipath_start_kmer = curr_annot_kmer;
-        if(is_unipath_end(curr_annot_kmer.vertex_class, curr_annot_kmer.dir, next_annot_kmer.vertex_class, next_annot_kmer.dir))
-            output_unitig(seq, unipath_start_kmer, curr_annot_kmer, output);
-
-
-        // Process the internal k-mers of this subsequence.
-        for(kmer_idx++; kmer_idx < seq_len - k && seq[kmer_idx + k] != 'N'; ++kmer_idx)
-        {
-            prev_annot_kmer = curr_annot_kmer;
-            curr_annot_kmer = next_annot_kmer;
-            next_annot_kmer.roll_to_next_kmer(seq[kmer_idx + k], Vertices);
-
-
-            if(is_unipath_start(curr_annot_kmer.vertex_class, curr_annot_kmer.dir, prev_annot_kmer.vertex_class, prev_annot_kmer.dir))
-                unipath_start_kmer = curr_annot_kmer;
-
-            if(is_unipath_end(curr_annot_kmer.vertex_class, curr_annot_kmer.dir, next_annot_kmer.vertex_class, next_annot_kmer.dir))
-                output_unitig(seq, unipath_start_kmer, curr_annot_kmer, output);
-        }
-
-        prev_annot_kmer = curr_annot_kmer;
-        curr_annot_kmer = next_annot_kmer;
-
-
-        // Process the last k-mer of this subsequence.
-
-        if(is_unipath_start(curr_annot_kmer.vertex_class, curr_annot_kmer.dir, prev_annot_kmer.vertex_class, prev_annot_kmer.dir))
-            unipath_start_kmer = curr_annot_kmer;
-
-        // A maximal unitig ends at the ending of a maximal valid subsequence.
-        output_unitig(seq, unipath_start_kmer, curr_annot_kmer, output);
-    }
-
-
-    // Return the non-inclusive ending index of the processed contiguous subsequence.
-    return kmer_idx + k;
-}
-
-
-bool CdBG_Builder::is_unipath_start(const cuttlefish::Vertex_Class vertex_class, const cuttlefish::kmer_dir_t dir, const cuttlefish::Vertex_Class prev_kmer_class, const cuttlefish::kmer_dir_t prev_kmer_dir) const
-{
-    if(vertex_class == cuttlefish::Vertex_Class::multi_in_multi_out)
-        return true;
-
-    if(dir == cuttlefish::FWD)
-    {
-        if(vertex_class == cuttlefish::Vertex_Class::multi_in_single_out)
-            return true;
-    }
-    else    // dir == cuttlefish::BWD
-        if(vertex_class == cuttlefish::Vertex_Class::single_in_multi_out)
-            return true;
-
-
-    // assert(kmer_idx > 0);
-
-
-    if(prev_kmer_class == cuttlefish::Vertex_Class::multi_in_multi_out)
-        return true;
-
-    if(prev_kmer_dir == cuttlefish::FWD)
-    {
-        if(prev_kmer_class == cuttlefish::Vertex_Class::single_in_multi_out)
-            return true;
-    }
-    else    // prev_kmer_dir == cuttlefish::BWD
-        if(prev_kmer_class == cuttlefish::Vertex_Class::multi_in_single_out)
-            return true;
-
-    
-    return false;
-}
-
-
-bool CdBG_Builder::is_unipath_end(const cuttlefish::Vertex_Class vertex_class, const cuttlefish::kmer_dir_t dir, const cuttlefish::Vertex_Class next_kmer_class, const cuttlefish::kmer_dir_t next_kmer_dir) const
-{
-    if(vertex_class == cuttlefish::Vertex_Class::multi_in_multi_out)
-        return true;
-
-    if(dir == cuttlefish::FWD)
-    {
-        if(vertex_class == cuttlefish::Vertex_Class::single_in_multi_out)
-            return true;
-    }
-    else    // dir == cuttlefish::BWD
-        if(vertex_class == cuttlefish::Vertex_Class::multi_in_single_out)
-            return true;
-
-
-    // assert(kmer_idx < ref.length() - k);
-
-
-    if(next_kmer_class == cuttlefish::Vertex_Class::multi_in_multi_out)
-        return true;
-
-    if(next_kmer_dir == cuttlefish::FWD)
-    {
-        if(next_kmer_class == cuttlefish::Vertex_Class::multi_in_single_out)
-            return true;
-    }
-    else    // next_kmer_dir == cuttlefish::BWD
-        if(next_kmer_class == cuttlefish::Vertex_Class::single_in_multi_out)
-            return true;
-
-
-    return false;
-}
-
-
-void CdBG_Builder::output_unitig(const char* seq, const Annotated_Kmer& start_kmer, const Annotated_Kmer& end_kmer, std::ofstream& output)
-{
-    // This is to avoid race conditions that may arise while multi-threading.
-    // If two threads try to output the same unitig at the same time but
-    // encounter it in the opposite orientations, then data races may arise.
-    // For a particular unitig, always query the same well-defined canonical flanking
-    // k-mer, irrespective of which direction the unitig may be traversed at.
-    const cuttlefish::kmer_t min_flanking_kmer = std::min(start_kmer.canonical, end_kmer.canonical);
-    Kmer_Hash_Entry_API hash_table_entry = Vertices[min_flanking_kmer];
-    Vertex_Encoding& vertex_encoding = hash_table_entry.get_vertex_encoding();
-
-    if(vertex_encoding.is_outputted())
-        return;
-    
-
-    vertex_encoding = vertex_encoding.outputted();
-
-    // If the hash table update is successful, only then this thread may output this unitig.
-    if(Vertices.update(hash_table_entry))
-        write_path(seq, start_kmer.idx, end_kmer.idx, start_kmer.kmer < end_kmer.rev_compl, output);
-}
-
-
-void CdBG_Builder::write_path(const char* seq, const uint32_t start_kmer_idx, const uint32_t end_kmer_idx, const bool in_forward, std::ofstream& output) const
-{
-    if(in_forward)
-        for(uint32_t idx = start_kmer_idx; idx <= end_kmer_idx + k - 1; ++idx)
-            output << seq[idx];
-    else
-    {
-        // To avoid underflow of unsigned integers, the flanking indices are incremented by 1.
-        uint32_t idx = end_kmer_idx + k;
-        while(idx > start_kmer_idx)
-        {
-            idx--;
-            output << complement(seq[idx]);
-        }
-    }
-
-    output << "\n";
-}
-
-
-void CdBG_Builder::print_vertex_class_dist(const std::string& kmc_file_name) const
+void CdBG::print_vertex_class_dist(const std::string& kmc_file_name) const
 {
     Kmer_Container kmers(kmc_file_name);
     auto it_beg = kmers.begin();

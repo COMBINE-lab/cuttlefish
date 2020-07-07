@@ -1,6 +1,5 @@
 
 #include "CdBG.hpp"
-#include "CdBG_Builder.hpp"
 
 #include "cxxopts.hpp"
 
@@ -48,7 +47,7 @@ int main(int argc, char** argv)
 
         std::cout << "Constructing compacted de Bruijn graph for references at " << refs << ", with k = " << k << "\n";
 
-        CdBG_Builder cdbg(refs, k);
+        CdBG cdbg(refs, k);
 
         cdbg.construct(kmer_database, bbhash_file, thread_count, output_file);
 

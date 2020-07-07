@@ -1,6 +1,6 @@
 
-#ifndef CDBG_BUILDER_HPP
-#define CDBG_BUILDER_HPP
+#ifndef CDBG_HPP
+#define CDBG_HPP
 
 
 
@@ -12,7 +12,7 @@
 #include "Annotated_Kmer.hpp"
 
 
-class CdBG_Builder
+class CdBG
 {
 private:
 
@@ -127,10 +127,10 @@ private:
 
 public:
 
-    CdBG_Builder()
+    CdBG()
     {}
 
-    CdBG_Builder(const std::string& ref_file, const uint16_t k);
+    CdBG(const std::string& ref_file, const uint16_t k);
 
     // Constructs the compacted de Bruijn graph with its distinct k-mers collection
     // being present in the KMC database with prefix `kmc_file_name` using
@@ -142,7 +142,7 @@ public:
 
 
 
-inline cuttlefish::nucleotide_t CdBG_Builder::complement(const cuttlefish::nucleotide_t nucleotide)
+inline cuttlefish::nucleotide_t CdBG::complement(const cuttlefish::nucleotide_t nucleotide)
 {
     switch (nucleotide)
     {

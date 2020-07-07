@@ -17,6 +17,7 @@ int main(int argc, char** argv)
     ("d,database", "the KMC database", cxxopts::value<std::string>())
     ("t,threads", "the number of threads to use", cxxopts::value<uint16_t>())
     ("o,output", "the output file", cxxopts::value<std::string>())
+    ("b,bbhash", "the BBHash file", cxxopts::value<std::string>())
     ("h,help", "print usage");
 
     try {
@@ -36,6 +37,7 @@ int main(int argc, char** argv)
         auto kmer_database = result["database"].as<std::string>();
         auto thread_count = result["threads"].as<uint16_t>();
         auto output_file = result["output"].as<std::string>();
+        auto bbhash_file = result["bbhash"].as<std::string>();
         /*
     std::string refs(argv[1]);
     uint16_t k(std::atoi(argv[2]));
@@ -48,7 +50,7 @@ int main(int argc, char** argv)
 
         CdBG_Builder cdbg(refs, k);
 
-        cdbg.construct(kmer_database, thread_count, output_file);
+        cdbg.construct(kmer_database, bbhash_file, thread_count, output_file);
 
         std::cout << "Constructed the compacted de Bruijn graph.\n";
     } catch (std::exception &e) {

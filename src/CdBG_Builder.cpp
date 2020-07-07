@@ -23,10 +23,10 @@ CdBG_Builder::CdBG_Builder(const std::string& ref_file, const uint16_t k):
 }
 
 
-void CdBG_Builder::construct(const std::string& kmc_file_name, const uint16_t thread_count, const std::string& output_file_name)
+void CdBG_Builder::construct(const std::string& kmc_file_name, const std::string& bbhash_file_name, const uint16_t thread_count, const std::string& output_file_name)
 {
     std::cout << "Constructing the minimal perfect hash function.\n";
-    Vertices.construct(kmc_file_name, thread_count);
+    Vertices.construct(kmc_file_name, bbhash_file_name, thread_count);
 
     std::cout << "Classifying the vertices.\n";
     classify_vertices(thread_count);

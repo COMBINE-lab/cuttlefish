@@ -137,7 +137,7 @@ public:
     // `thread_count` threads, and outputs the maximal unitigs into the file named
     // `output_file_name`.
     // TODO: Move `kmc_file_name` as one of the class fields.
-    void construct(const std::string& kmc_file_name, const uint16_t thread_count, const std::string& output_file_name);
+    void construct(const std::string& kmc_file_name, const std::string& bbhash_file_name, const uint16_t thread_count, const std::string& output_file_name);
 };
 
 

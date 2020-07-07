@@ -41,7 +41,7 @@ public:
 
     // Constructs a minimal perfect hash function (specifically, the BBHash) for
     // the collection of k-mers present at the KMC database named `kmc_file_name`.
-    void construct(const std::string& kmc_file_name, const uint16_t thread_count);
+    void construct(const std::string& kmc_file_name, const std::string& bbhash_file_name, const uint16_t thread_count);
 
     // Returns an API to the entry (in the hash table) for the key `kmer`. The API
     // wraps the hash table position and the vertex encoding value at that position.

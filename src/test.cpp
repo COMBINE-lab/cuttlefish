@@ -8,6 +8,10 @@
 #include "BBHash/BooPHF.h"
 #include "Kmer_Hasher.hpp"
 
+#include "spdlog/spdlog.h"
+#include "spdlog/async.h"
+#include "spdlog/sinks/basic_file_sink.h"
+
 #include <iostream>
 #include <fstream>
 #include <cstdio>
@@ -410,6 +414,45 @@ void check_uint64_BBHash(const char* file_name, uint16_t thread_count)
 }
 
 
+void test_async_writer(const char* log_file_name)
+{
+    // Clear the log file first, as `spdlog` logger appends messages.
+    std::ofstream temp(log_file_name);
+    temp.close();
+
+
+    auto f = [](uint64_t thread_ID, std::shared_ptr<spdlog::logger> file_writer)
+    {
+        for(int i = 0; i < 100; ++i)
+            file_writer->info("Writing {} from thread {}", i, thread_ID);
+    };
+
+    try
+    {
+        auto async_file = spdlog::basic_logger_mt<spdlog::async_factory>("async_file_logger", log_file_name);
+
+        // Set log message pattern for the writer.
+        async_file->set_pattern("%v");
+
+
+        std::vector<std::thread> writer;
+        for(int i = 0; i < 5; ++i)
+            writer.emplace_back(f, i, async_file);
+
+        for(int i = 0; i < 5; ++i)
+            writer[i].join();
+
+
+        // Close the loggers?
+        spdlog::drop_all();
+    }
+    catch(const spdlog::spdlog_ex& ex)
+    {
+        std::cerr << "Logger initialization failed with: " << ex.what() << "\n";
+    }
+}
+
+
 int main(int argc, char** argv)
 {
     (void)argc;
@@ -433,7 +476,9 @@ int main(int argc, char** argv)
 
     // check_uint64_BBHash(argv[1], atoi(argv[2]));
 
-    test_kmer_iterator(argv[1]);
+    // test_kmer_iterator(argv[1]);
+
+    test_async_writer(argv[1]);
 
 
     return 0;

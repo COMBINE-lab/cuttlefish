@@ -10,6 +10,9 @@
 #include "Kmer.hpp"
 #include "Kmer_Hash_Table.hpp"
 #include "Annotated_Kmer.hpp"
+#include "spdlog/spdlog.h"
+#include "spdlog/async.h"
+#include "spdlog/sinks/basic_file_sink.h"
 
 #include <mutex>
 #include <sstream>
@@ -92,7 +95,7 @@ private:
     // Writes the maximal unitigs at the sequence `seq` (of length `seq_len`) that
     // have their starting indices between (inclusive) `left_end` and `right_end`,
     // to the stream `output`.
-    void output_off_substring(const uint64_t thread_id, const char* seq, const size_t seq_len, const size_t left_end, const size_t right_end, std::ofstream& output);
+    void output_off_substring(const uint64_t thread_id, const char* seq, const size_t seq_len, const size_t left_end, const size_t right_end, cuttlefish::logger_t output);
 
     // Outputs the distinct maximal unitigs of the sequence `seq` (of length
     // `seq_len`) to the stream `output`, that are present at its contiguous
@@ -101,7 +104,7 @@ private:
     // up-to the first encountered placeholder nucleotide 'N'. Also, returns
     // the non-inclusive point of termination of the processed subsequence,
     // i.e. the index following the end of it.
-    size_t output_maximal_unitigs(const uint64_t thread_id, const char* seq, const size_t seq_len, const size_t right_end, const size_t start_idx, std::ofstream& output);
+    size_t output_maximal_unitigs(const uint64_t thread_id, const char* seq, const size_t seq_len, const size_t right_end, const size_t start_idx, cuttlefish::logger_t output);
 
     // Returns a Boolean denoting whether a k-mer with state `state` traversed in
     // the direction `dir` starts a maximal unitig, where `prev_kmer_state` and
@@ -120,7 +123,7 @@ private:
     // Outputs the unitig at the k-mer range between the annotated k-mers
     // `start_kmer` and `end_kmer` of the sequence `seq` (if the unitig had not
     // been output already), to the stream `output`.
-    void output_unitig(const uint64_t thread_id, const char* ref, const Annotated_Kmer& start_kmer, const Annotated_Kmer& end_kmer, std::ofstream& output);
+    void output_unitig(const uint64_t thread_id, const char* ref, const Annotated_Kmer& start_kmer, const Annotated_Kmer& end_kmer, cuttlefish::logger_t output);
     
     // Writes the path in the sequence `seq` with its starting and ending k-mers
     // located at the indices `start_kmer_idx` and `end_kmer_idx` respectively,
@@ -128,6 +131,9 @@ private:
     // by the path is written; otherwise its reverse complement is written.
     // Note that, the output operation appends a newline at the end.
     void write_path(const uint64_t thread_id, const char* seq, const uint32_t start_kmer_idx, const uint32_t end_kmer_idx, const bool in_forward);
+
+    // Writes the string to the output object `output`.
+    static void write(cuttlefish::logger_t output, const std::string& str);
 
     // Prints the distribution of the vertex classes for the canonical k-mers present
     // at the database named `kmc_file_name`.

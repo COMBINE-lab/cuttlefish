@@ -21,6 +21,12 @@ namespace compact
     }
 }
 
+// Forward declaration of the output writer type.
+namespace spdlog
+{
+    class logger;
+}
+
 
 namespace cuttlefish
 {
@@ -45,6 +51,8 @@ namespace cuttlefish
     constexpr uint8_t BITS_PER_KMER = 5;
     typedef compact::ts_vector<uint8_t, BITS_PER_KMER, uint64_t, std::allocator<uint64_t>> bitvector_t;
     typedef compact::iterator_imp::lhs_setter<uint8_t, BITS_PER_KMER, uint64_t, true, 64U> bitvector_entry_t;
+
+    typedef std::shared_ptr<spdlog::logger> logger_t;
 }
 
 

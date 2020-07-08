@@ -29,20 +29,31 @@ void CdBG::output_maximal_unitigs(const std::string& output_file, const uint16_t
     kseq_t* parser = kseq_init(fileno(input));
 
 
-    // Open the output file.
-    std::ofstream output(output_file.c_str(), std::ofstream::out);
-    if(!output)
+    // Clear the output file.
+    std::ofstream op_stream(output_file.c_str(), std::ofstream::out);
+    if(!op_stream)
     {
         std::cerr << "Error opening output file " << output_file << ". Aborting.\n";
         std::exit(EXIT_FAILURE);
     }
+
+    op_stream.close();
+
+
+    // Open an asynchronous logger to write into the output file.
+    cuttlefish::logger_t output = spdlog::basic_logger_mt<spdlog::async_factory>("async_file_logger", output_file.c_str());
+
+    // Set the log message pattern for the writer.
+    output->set_pattern("%v");
+
 
     out_buffers_.resize(thread_count);
     contig_counts_.resize(thread_count);
 
     // Parse sequences one-by-one, and output each unique maximal unitig encountered through them.
     uint32_t seqCount = 0;
-    while(kseq_read(parser) >= 0) {
+    while(kseq_read(parser) >= 0)
+    {
         const char* seq = parser->seq.s;
         const size_t seq_len = parser->seq.l;
 
@@ -59,9 +70,10 @@ void CdBG::output_maximal_unitigs(const std::string& output_file, const uint16_t
 
         // Multi-threaded writing.
         size_t task_size = (seq_len - k + 1) / thread_count;
-        if(!task_size) {
+        if(!task_size)
             output_off_substring(0, seq, seq_len, 0, seq_len - k, output);
-        } else {
+        else
+        {
             std::vector<std::thread> task;
             size_t left_end = 0;
             size_t right_end;
@@ -85,23 +97,21 @@ void CdBG::output_maximal_unitigs(const std::string& output_file, const uint16_t
 
         }
 
-        for (size_t i = 0; i < thread_count; ++i) {
-            if (contig_counts_[i] > 0) {
-                output << out_buffers_[i].str();
-                out_buffers_[i].str("");
-                contig_counts_[i] = 0;
+
+        for (uint16_t task_id = 0; task_id < thread_count; ++task_id)
+            if (contig_counts_[task_id] > 0)
+            {
+                write(output, out_buffers_[task_id].str());
+                out_buffers_[task_id].str("");
+                contig_counts_[task_id] = 0;
             }
-        }
 
 
     }
 
     
-    // Close the output file.
-    if(output.fail())
-        std::cerr << "Errors had been encountered for the output stream.\n";
-
-    output.close();
+    // Close the loggers?
+    spdlog::drop_all();
 
 
     // Close the parser and the input file.
@@ -115,7 +125,7 @@ void CdBG::output_maximal_unitigs(const std::string& output_file, const uint16_t
 }
 
 
-void CdBG::output_off_substring(const uint64_t thread_id, const char* seq, const size_t seq_len, const size_t left_end, const size_t right_end, std::ofstream& output)
+void CdBG::output_off_substring(const uint64_t thread_id, const char* seq, const size_t seq_len, const size_t left_end, const size_t right_end, cuttlefish::logger_t output)
 {
     size_t kmer_idx = left_end;
     while(kmer_idx <= right_end)
@@ -132,7 +142,7 @@ void CdBG::output_off_substring(const uint64_t thread_id, const char* seq, const
 }
 
 
-size_t CdBG::output_maximal_unitigs(const uint64_t thread_id, const char* seq, const size_t seq_len, const size_t right_end, const size_t start_idx, std::ofstream& output)
+size_t CdBG::output_maximal_unitigs(const uint64_t thread_id, const char* seq, const size_t seq_len, const size_t right_end, const size_t start_idx, cuttlefish::logger_t output)
 {
     size_t kmer_idx = start_idx;
 
@@ -309,7 +319,7 @@ bool CdBG::is_unipath_end(const cuttlefish::Vertex_Class vertex_class, const cut
 }
 
 
-void CdBG::output_unitig(const uint64_t thread_id, const char* seq, const Annotated_Kmer& start_kmer, const Annotated_Kmer& end_kmer, std::ofstream& output)
+void CdBG::output_unitig(const uint64_t thread_id, const char* seq, const Annotated_Kmer& start_kmer, const Annotated_Kmer& end_kmer, cuttlefish::logger_t output)
 {
     // This is to avoid race conditions that may arise while multi-threading.
     // If two threads try to output the same unitig at the same time but
@@ -329,20 +339,14 @@ void CdBG::output_unitig(const uint64_t thread_id, const char* seq, const Annota
     // If the hash table update is successful, only then this thread may output this unitig.
     if(Vertices.update(hash_table_entry))
     {
-        //write_lock.lock();
-
         write_path(thread_id, seq, start_kmer.idx, end_kmer.idx, start_kmer.kmer < end_kmer.rev_compl);
         ++contig_counts_[thread_id];
-        //write_lock.unlock();
     }
 
-    if (contig_counts_[thread_id] > 128) {
-        {
-            std::string s(out_buffers_[thread_id].str());
-            write_lock.lock();
-            output << s;
-            write_lock.unlock();
-        }
+    if (contig_counts_[thread_id] > 128)
+    {
+        write(output, out_buffers_[thread_id].str());
+        
         out_buffers_[thread_id].str("");
         contig_counts_[thread_id] = 0;
     }
@@ -367,4 +371,10 @@ void CdBG::write_path(const uint64_t thread_id, const char* seq, const uint32_t 
     }
 
     output << "\n";
+}
+
+
+void CdBG::write(cuttlefish::logger_t output, const std::string& str)
+{
+    output->info("{}", str);
 }

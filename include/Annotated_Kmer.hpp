@@ -41,8 +41,7 @@ public:
         vertex_class = hash[canonical].vertex_class();
     }
 
-    Annotated_Kmer(const Annotated_Kmer& rhs) : Directed_Kmer(rhs), idx(rhs.idx), vertex_class(rhs.vertex_class)
-    {}
+    Annotated_Kmer(const Annotated_Kmer& rhs) = default;
 
     void operator =(const Annotated_Kmer& rhs)
     {

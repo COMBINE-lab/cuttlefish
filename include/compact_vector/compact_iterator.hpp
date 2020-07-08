@@ -656,7 +656,7 @@ class lhs_setter
 public:
   lhs_setter(W* p, int o) : super(p, o) { }
   lhs_setter(W* p, unsigned bits, int o) : super(p, o) { (void)(bits); }
-  lhs_setter(const lhs_setter& rhs) : super(rhs.super::ptr, rhs.super::offset) {}
+  lhs_setter(const lhs_setter& rhs) = default;//: super(rhs.super::ptr, rhs.o) {}
 
   lhs_setter& operator=(const IDX x) {
     gs<IDX, BITS, W, UB>::template set<TS>(x, super::ptr, super::offset);

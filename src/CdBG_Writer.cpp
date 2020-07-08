@@ -37,11 +37,12 @@ void CdBG::output_maximal_unitigs(const std::string& output_file, const uint16_t
         std::exit(EXIT_FAILURE);
     }
 
+    out_buffers_.resize(thread_count);
+    contig_counts_.resize(thread_count);
 
     // Parse sequences one-by-one, and output each unique maximal unitig encountered through them.
     uint32_t seqCount = 0;
-    while(kseq_read(parser) >= 0)
-    {
+    while(kseq_read(parser) >= 0) {
         const char* seq = parser->seq.s;
         const size_t seq_len = parser->seq.l;
 
@@ -58,10 +59,9 @@ void CdBG::output_maximal_unitigs(const std::string& output_file, const uint16_t
 
         // Multi-threaded writing.
         size_t task_size = (seq_len - k + 1) / thread_count;
-        if(!task_size)
-            output_off_substring(seq, seq_len, 0, seq_len - k, output);
-        else
-        {
+        if(!task_size) {
+            output_off_substring(0, seq, seq_len, 0, seq_len - k, output);
+        } else {
             std::vector<std::thread> task;
             size_t left_end = 0;
             size_t right_end;
@@ -69,11 +69,11 @@ void CdBG::output_maximal_unitigs(const std::string& output_file, const uint16_t
             for(uint16_t task_id = 0; task_id < thread_count; ++task_id)
             {
                 right_end = (task_id == thread_count - 1 ? seq_len - k : left_end + task_size - 1);
-                task.emplace_back(&CdBG::output_off_substring, this, seq, seq_len, left_end, right_end, std::ref(output));
+                task.emplace_back(&CdBG::output_off_substring, this, static_cast<uint64_t>(task_id), seq, seq_len, left_end, right_end, std::ref(output));
                 left_end += task_size;
             }
 
-            for(std::thread& t: task)
+            for(std::thread& t: task){
                 if(t.joinable())
                     t.join();
                 else
@@ -81,7 +81,19 @@ void CdBG::output_maximal_unitigs(const std::string& output_file, const uint16_t
                     std::cerr << "Early termination of a worker thread encountered during writing of maximal unitigs. Aborting.\n";
                     std::exit(EXIT_FAILURE);
                 }
+            }
+
         }
+
+        for (size_t i = 0; i < thread_count; ++i) {
+            if (contig_counts_[i] > 0) {
+                output << out_buffers_[i].str();
+                out_buffers_[i].str("");
+                contig_counts_[i] = 0;
+            }
+        }
+
+
     }
 
     
@@ -103,7 +115,7 @@ void CdBG::output_maximal_unitigs(const std::string& output_file, const uint16_t
 }
 
 
-void CdBG::output_off_substring(const char* seq, const size_t seq_len, const size_t left_end, const size_t right_end, std::ofstream& output)
+void CdBG::output_off_substring(const uint64_t thread_id, const char* seq, const size_t seq_len, const size_t left_end, const size_t right_end, std::ofstream& output)
 {
     size_t kmer_idx = left_end;
     while(kmer_idx <= right_end)
@@ -115,12 +127,12 @@ void CdBG::output_off_substring(const char* seq, const size_t seq_len, const siz
             break;
 
         // Process a maximal valid contiguous subsequence, and advance to the index following it.
-        kmer_idx = output_maximal_unitigs(seq, seq_len, right_end, kmer_idx, output);
+        kmer_idx = output_maximal_unitigs(thread_id, seq, seq_len, right_end, kmer_idx, output);
     }
 }
 
 
-size_t CdBG::output_maximal_unitigs(const char* seq, const size_t seq_len, const size_t right_end, const size_t start_idx, std::ofstream& output)
+size_t CdBG::output_maximal_unitigs(const uint64_t thread_id, const char* seq, const size_t seq_len, const size_t right_end, const size_t start_idx, std::ofstream& output)
 {
     size_t kmer_idx = start_idx;
 
@@ -132,7 +144,7 @@ size_t CdBG::output_maximal_unitigs(const char* seq, const size_t seq_len, const
     // neighboring k-mer to this k-mer. So it's a maximal unitig by itself.
     if((kmer_idx == 0 || seq[kmer_idx - 1] == cuttlefish::PLACEHOLDER_NUCLEOTIDE) &&
         (kmer_idx + k == seq_len || seq[kmer_idx + k] == cuttlefish::PLACEHOLDER_NUCLEOTIDE))
-        output_unitig(seq, curr_kmer, curr_kmer, output);
+        output_unitig(thread_id, seq, curr_kmer, curr_kmer, output);
     else    // At least one valid neighbor exists, either to the left or to the right, or on both sides.
     {
         // No valid right neighbor exists for the k-mer.
@@ -143,7 +155,7 @@ size_t CdBG::output_maximal_unitigs(const char* seq, const size_t seq_len, const
             
             if(is_unipath_start(curr_kmer.vertex_class, curr_kmer.dir, prev_kmer.vertex_class, prev_kmer.dir))
                 // A maximal unitig ends at the ending of a maximal valid subsequence.
-                output_unitig(seq, curr_kmer, curr_kmer, output);
+                output_unitig(thread_id, seq, curr_kmer, curr_kmer, output);
 
             // The contiguous sequence ends at this k-mer.
             return kmer_idx + k;
@@ -178,7 +190,7 @@ size_t CdBG::output_maximal_unitigs(const char* seq, const size_t seq_len, const
 
         if(on_unipath && is_unipath_end(curr_kmer.vertex_class, curr_kmer.dir, next_kmer.vertex_class, next_kmer.dir))
         {
-            output_unitig(seq, unipath_start_kmer, curr_kmer, output);
+            output_unitig(thread_id, seq, unipath_start_kmer, curr_kmer, output);
             on_unipath = false;
         }
 
@@ -202,7 +214,7 @@ size_t CdBG::output_maximal_unitigs(const char* seq, const size_t seq_len, const
                 // A maximal unitig ends at the ending of a maximal valid subsequence.
                 if(on_unipath)
                 {
-                    output_unitig(seq, unipath_start_kmer, curr_kmer, output);
+                    output_unitig(thread_id, seq, unipath_start_kmer, curr_kmer, output);
                     on_unipath = false;
 
                     break;
@@ -214,7 +226,7 @@ size_t CdBG::output_maximal_unitigs(const char* seq, const size_t seq_len, const
                 
                 if(on_unipath && is_unipath_end(curr_kmer.vertex_class, curr_kmer.dir, next_kmer.vertex_class, next_kmer.dir))
                 {
-                    output_unitig(seq, unipath_start_kmer, curr_kmer, output);
+                    output_unitig(thread_id, seq, unipath_start_kmer, curr_kmer, output);
                     on_unipath = false;
                 }
             }
@@ -297,7 +309,7 @@ bool CdBG::is_unipath_end(const cuttlefish::Vertex_Class vertex_class, const cut
 }
 
 
-void CdBG::output_unitig(const char* seq, const Annotated_Kmer& start_kmer, const Annotated_Kmer& end_kmer, std::ofstream& output)
+void CdBG::output_unitig(const uint64_t thread_id, const char* seq, const Annotated_Kmer& start_kmer, const Annotated_Kmer& end_kmer, std::ofstream& output)
 {
     // This is to avoid race conditions that may arise while multi-threading.
     // If two threads try to output the same unitig at the same time but
@@ -317,17 +329,29 @@ void CdBG::output_unitig(const char* seq, const Annotated_Kmer& start_kmer, cons
     // If the hash table update is successful, only then this thread may output this unitig.
     if(Vertices.update(hash_table_entry))
     {
-        write_lock.lock();
+        //write_lock.lock();
 
-        write_path(seq, start_kmer.idx, end_kmer.idx, start_kmer.kmer < end_kmer.rev_compl, output);
-        
-        write_lock.unlock();
+        write_path(thread_id, seq, start_kmer.idx, end_kmer.idx, start_kmer.kmer < end_kmer.rev_compl);
+        ++contig_counts_[thread_id];
+        //write_lock.unlock();
+    }
+
+    if (contig_counts_[thread_id] > 128) {
+        {
+            std::string s(out_buffers_[thread_id].str());
+            write_lock.lock();
+            output << s;
+            write_lock.unlock();
+        }
+        out_buffers_[thread_id].str("");
+        contig_counts_[thread_id] = 0;
     }
 }
 
 
-void CdBG::write_path(const char* seq, const uint32_t start_kmer_idx, const uint32_t end_kmer_idx, const bool in_forward, std::ofstream& output) const
+void CdBG::write_path(const uint64_t thread_id, const char* seq, const uint32_t start_kmer_idx, const uint32_t end_kmer_idx, const bool in_forward) 
 {
+    auto& output = out_buffers_[thread_id];
     if(in_forward)
         for(uint32_t idx = start_kmer_idx; idx <= end_kmer_idx + k - 1; ++idx)
             output << seq[idx];

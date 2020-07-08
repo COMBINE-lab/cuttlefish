@@ -14,7 +14,7 @@ $ make install
 ## Usage
 (from project directory)
 ```
-./bin/cuttlefish -r <reference-file> -k <k> -d <KMC-database-prefix> -t <thread-count> -o <output-file> -b bbhash-file
+./bin/cuttlefish -r <reference-file> -k <k> -d <KMC-database-prefix> -t <thread-count> -o <output-file> -b <bbhash-file>
 ```
 
 Options:

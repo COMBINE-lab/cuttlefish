@@ -55,6 +55,10 @@ public:
     // `label[kmer_idx,...,kmer_idx + k - 1]`.
     Kmer(const char* label, const size_t kmer_idx);
 
+    // Constructs a k-mer from the provided characters at
+    // `label[kmer_idx,...,kmer_idx + k - 1]`.
+    Kmer(const std::string& label, const size_t kmer_idx);
+
     // Constructs a k-mer from `kmer_api` which is a k-mer object built from KMC.
     Kmer(const CKmerAPI& kmer_api);
 

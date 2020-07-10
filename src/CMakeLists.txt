@@ -12,6 +12,7 @@ set(PROJECT_SRC
         CdBG.cpp
         CdBG_Builder.cpp
         CdBG_Writer.cpp
+        Validator.cpp
     )
 
 

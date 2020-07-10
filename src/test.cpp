@@ -2,12 +2,11 @@
 #include "Kmer.hpp"
 #include "kseq/kseq.h"
 #include "Directed_Kmer.hpp"
-//#include "Kmer_Set_Builder.hpp"
 #include "Kmer_Container.hpp"
 #include "Kmer_Iterator.hpp"
 #include "BBHash/BooPHF.h"
 #include "Kmer_Hasher.hpp"
-
+#include "Validator.hpp"
 #include "spdlog/spdlog.h"
 #include "spdlog/async.h"
 #include "spdlog/sinks/basic_file_sink.h"
@@ -20,6 +19,12 @@
 #include <cstring>
 #include <set>
 #include <map>
+
+#include "Temp-Validator.cpp"
+
+
+// Debug
+// #include "Validator.cpp"
 
 
 // STEP 1: declare the type of file handler and the read() function
@@ -453,6 +458,48 @@ void test_async_writer(const char* log_file_name)
 }
 
 
+void count_kmers_in_unitigs(const char* file_name, uint16_t k)
+{
+    std::ifstream input(file_name);
+    if(!input)
+    {
+        std::cerr << "Error opening file. Aborting.\n";
+        std::exit(EXIT_FAILURE);
+    }
+
+    
+    uint64_t kmer_count = 0;
+    std::string unitig;
+    while(input >> unitig)
+    {
+        if(unitig.length() < k)
+        {
+            std::cerr << "Unitig length " << unitig.length() << " found, < k-value.\n";
+            std::exit(EXIT_FAILURE);
+        }
+
+        kmer_count += unitig.length() - k + 1;
+    }
+
+
+    std::cout << "Total k-mers found: " << kmer_count << "\n";
+}
+
+
+void validate_result(char **argv)
+{
+    const std::string ref_file_name(argv[1]);
+    const uint16_t k(atoi(argv[2]));
+    const std::string kmc_db_name(argv[3]);
+    const std::string cdbg_file_name(argv[4]);
+    const std::string bbhash_file_name(argv[5]);
+    const uint16_t thread_count(atoi(argv[6]));
+    
+    Validator validator(ref_file_name, k, kmc_db_name, cdbg_file_name);
+    std::cout << "Validation " << (validator.validate(bbhash_file_name, thread_count) ? "successful" : "failed") << "\n";
+}
+
+
 int main(int argc, char** argv)
 {
     (void)argc;
@@ -478,7 +525,11 @@ int main(int argc, char** argv)
 
     // test_kmer_iterator(argv[1]);
 
-    test_async_writer(argv[1]);
+    // test_async_writer(argv[1]);
+
+    // count_kmers_in_unitigs(argv[1], atoi(argv[2]));
+
+    validate_result(argv);
 
 
     return 0;

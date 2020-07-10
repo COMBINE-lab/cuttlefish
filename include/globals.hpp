@@ -10,6 +10,15 @@
 // Forward declaration of the k-mer type.
 class Kmer;
 
+// Forward declaration of the k-mer hasher type.
+class Kmer_Hasher;
+
+// Forward declaration of the minimal perfect hash function type.
+namespace boomphf
+{
+    template<typename elem_t, typename Hasher_t> class mphf;
+}
+
 // Forward declarations of the type of the bitvector used and the type to access its entries (mutable).
 namespace compact
 {
@@ -47,6 +56,8 @@ namespace cuttlefish
         single_in_multi_out = 2,
         multi_in_multi_out = 3
     };
+
+    typedef boomphf::mphf<cuttlefish::kmer_t, Kmer_Hasher> mphf_t;    // The MPH function type.
 
     constexpr uint8_t BITS_PER_KMER = 5;
     typedef compact::ts_vector<uint8_t, BITS_PER_KMER, uint64_t, std::allocator<uint64_t>> bitvector_t;

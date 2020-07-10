@@ -7,6 +7,7 @@
 #include "globals.hpp"
 #include "Kmer.hpp"
 #include "Vertex_Encoding.hpp"
+#include "Kmer_Container.hpp"
 #include "BBHash/BooPHF.h"
 #include "Kmer_Hasher.hpp"
 #include "compact_vector/compact_vector.hpp"
@@ -16,26 +17,32 @@
 
 class Kmer_Hash_Table
 {
-    // Tells BBHash to use the custom hash functor `Kmer_Hasher` for the input keys (`kmer_t`). 
-    typedef boomphf::mphf<cuttlefish::kmer_t, Kmer_Hasher> boophf_t;    // The MPH function type.
-
 private:
 
     // Lowest bits/elem is achieved with gamma = 1, higher values lead to larger mphf but faster construction/query.
     constexpr static double gamma_factor = 2.0;
-    constexpr static const uint64_t num_chunks{65536};
-    uint64_t chunk_size;
+    constexpr static const uint64_t num_chunks{65536};  // TODO: Comment.
+    uint64_t chunk_size;    // TODO: Comment.
 
     // The MPH function.
-    boophf_t* mph = NULL;
+    cuttlefish::mphf_t* mph = NULL;
 
     // The values (`Vertex_Encoding`) collection for the hash table;
     // keys (`kmer_t`) are passed to the MPHF, and the resulting function-value is used as index in the values table.
     cuttlefish::bitvector_t hash_table;
 
-    std::array<SpinLock, num_chunks> locks_;
+    std::array<SpinLock, num_chunks> locks_;    // TODO: Comment.
+
+
+    // Builds the minimal perfect hash function `mph` over the set of
+    // k-mers present at the KMC database container `kmer_container`,
+    // with `bbhash_file_name` being the file to use for BBHash build
+    // using `thread_count` number of threads.
+    void build_mph_function(const Kmer_Container& kmer_container, const std::string& bbhash_file_name, const uint16_t thread_count);
 
 public:
+
+    // TODO: Make everything private and add `CdBG` as friend.
 
     Kmer_Hash_Table()
     {}

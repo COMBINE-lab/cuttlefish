@@ -1,7 +1,6 @@
 
 #include "CdBG.hpp"
-
-#include "cxxopts.hpp"
+#include "cxxopts/cxxopts.hpp"
 
 #include <cstdlib>
 #include <fstream>

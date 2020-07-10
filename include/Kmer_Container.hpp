@@ -20,7 +20,7 @@ class Kmer_Container
 
 private:
 
-    std::string kmc_file_name;  // Name of the KMC database.
+    const std::string kmc_file_name;  // Name of the KMC database.
     CKMCFileInfo kmer_database_info; // Meta-information of the database.
 
 
@@ -31,6 +31,9 @@ public:
     // `kmc_file_name`. Some metadata are loaded into memory.
     Kmer_Container(const std::string& kmc_file_name);
 
+    // Returns the path to the KMC database on disk.
+    std::string container_location() const;
+
     // Returns the length of the k-mers present in the underlying k-mer database.
     uint32_t kmer_length() const;
 
@@ -39,11 +42,11 @@ public:
 
     // Returns an iterator pointing to the beginning of the underlying k-mer
     // database.
-    iterator begin();
+    iterator begin() const;
 
     // Returns an iterator pointing to the ending (exclusive) of the underlying
     // k-mer database.
-    iterator end();
+    iterator end() const;
 };
 
 

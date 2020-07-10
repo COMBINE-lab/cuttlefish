@@ -14,7 +14,6 @@
 #include "spdlog/async.h"
 #include "spdlog/sinks/basic_file_sink.h"
 
-#include <mutex>
 #include <sstream>
 
 class CdBG
@@ -24,7 +23,6 @@ private:
     std::string ref_file;   // Name of the file containing the reference.
     uint16_t k; // The k parameter for the edge-centric de Bruijn graph to be compacted.
     Kmer_Hash_Table Vertices;   // The hash table for the vertices (canonical k-mers) of the de Bruijn graph.
-    std::mutex write_lock;  // Lock to safely access the output stream.
     std::vector<std::stringstream> out_buffers_;
     std::vector<uint64_t> contig_counts_;
 

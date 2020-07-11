@@ -44,6 +44,12 @@ void Kmer::set_k(uint16_t k)
 }
 
 
+Kmer Kmer::canonical() const
+{
+    return canonical(reverse_complement());
+}
+
+
 std::string Kmer::string_label() const
 {
     uint64_t kmer = this -> kmer;

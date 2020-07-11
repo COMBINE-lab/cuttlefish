@@ -71,6 +71,9 @@ public:
     // Sets the value of the `k` parameter across the `Kmer` class.
     static void set_k(const uint16_t k);
 
+    // Returns the DNA-complement character of the nucleotide character `nucl`.
+    static cuttlefish::nucleotide_t complement(const cuttlefish::nucleotide_t nucl);
+
     // Returns the reverese complement of the k-mer.
     Kmer reverse_complement() const;
 
@@ -94,6 +97,9 @@ public:
     // Returns the canonical version of the k-mer, comparing it to its
     // reverse complement `rev_compl`.
     Kmer canonical(const Kmer& rev_compl) const;
+
+    // Returns the canonical version of the k-mer.
+    Kmer canonical() const;
 
     // Returns the string label of the k-mer.
     std::string string_label() const;
@@ -212,6 +218,32 @@ inline Kmer::DNA_Base Kmer::complement_nucleotide(const DNA_Base nucleotide)
         // Placeholder rule to handle `N` nucleotides. Currently, as per the rule used by the KMC tool.
         
         std::cerr << "Encountered invalid DNA_Base. Aborting.\n";
+        std::exit(EXIT_FAILURE);
+    }
+}
+
+
+inline cuttlefish::nucleotide_t Kmer::complement(const cuttlefish::nucleotide_t nucl)
+{
+    switch (nucl)
+    {
+    case 'A':
+        return 'T';
+
+    case 'C':
+        return 'G';
+
+    case 'G':
+        return 'C';
+
+    case 'T':
+        return 'A';
+    
+    default:
+        // Placeholder rule to handle `N` nucleotides.
+        // TODO: Need to make an informed rule for this.
+        
+        std::cerr << "Invalid nucleotide " << nucl << " encountered. Aborting.";
         std::exit(EXIT_FAILURE);
     }
 }

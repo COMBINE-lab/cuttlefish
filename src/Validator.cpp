@@ -31,7 +31,7 @@ bool Validator::validate(const std::string& bbhash_file_name, const uint16_t thr
     std::cout << (valid_kmer_set ? "Passed" : "Failed") << " validation of the k-mer set.\n";
 
     bool valid_sequence = validate_sequence_completion();
-    std::cout << (valid_kmer_set ? "Passed" : "Failed") << " validation of complete coverage of the sequence"
+    std::cout << (valid_sequence ? "Passed" : "Failed") << " validation of complete coverage of the sequence"
                                                            " by the produced unitigs.\n";
 
     return valid_kmer_set && valid_sequence;

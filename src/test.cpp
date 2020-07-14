@@ -10,6 +10,7 @@
 #include "spdlog/spdlog.h"
 #include "spdlog/async.h"
 #include "spdlog/sinks/basic_file_sink.h"
+#include "spdlog/sinks/stdout_color_sinks.h"
 
 #include <iostream>
 #include <fstream>
@@ -494,8 +495,9 @@ void validate_result(char **argv)
     const std::string cdbg_file_name(argv[4]);
     const std::string bbhash_file_name(argv[5]);
     const uint16_t thread_count(atoi(argv[6]));
+    cuttlefish::logger_t console = spdlog::stdout_color_mt("Validator");
     
-    Validator validator(ref_file_name, k, kmc_db_name, cdbg_file_name);
+    Validator validator(ref_file_name, k, kmc_db_name, cdbg_file_name, console);
     std::cout << "Validation " << (validator.validate(bbhash_file_name, thread_count) ? "successful" : "failed") << "\n";
 }
 

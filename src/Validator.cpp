@@ -7,8 +7,11 @@
 #include "Directed_Kmer.hpp"
 #include "kseq/kseq.h"
 
+#include "spdlog/sinks/stdout_color_sinks.h"
+
 #include <fstream>
 #include <sys/stat.h>
+#include <thread>
 
 
 // Declare the type of file handler and the read() function.
@@ -16,8 +19,8 @@
 KSEQ_INIT(int, read);
 
 
-Validator::Validator(const std::string& ref_file_name, const uint16_t k, const std::string& kmc_db_name, const std::string& cdbg_file_name):
-    ref_file_name(ref_file_name), k(k), kmc_db_name(kmc_db_name), cdbg_file_name(cdbg_file_name), mph(NULL)
+Validator::Validator(const std::string& ref_file_name, const uint16_t k, const std::string& kmc_db_name, const std::string& cdbg_file_name, cuttlefish::logger_t console):
+    ref_file_name(ref_file_name), k(k), kmc_db_name(kmc_db_name), cdbg_file_name(cdbg_file_name), mph(NULL), console(console)
 {
     Kmer::set_k(k);
 }
@@ -27,14 +30,36 @@ bool Validator::validate(const std::string& bbhash_file_name, const uint16_t thr
 {
     build_mph_function(bbhash_file_name, thread_count);
 
-    const bool valid_kmer_set = validate_kmer_set();
-    std::cout << (valid_kmer_set ? "Passed" : "Failed") << " validation of the k-mer set.\n";
+    // const bool is_valid_kmer_set = validate_kmer_set();
+    bool is_valid_kmer_set;
+    std::thread kmer_set_validator(&Validator::validate_kmer_set, this, std::ref(is_valid_kmer_set));
 
-    const bool valid_sequence = validate_sequence_completion();
-    std::cout << (valid_sequence ? "Passed" : "Failed") << " validation of complete coverage of the sequence"
-                                                           " by the produced unitigs.\n";
+    // const bool is_valid_sequence = validate_sequence_completion();
+    bool is_valid_sequence;
+    std::thread sequence_validator(&Validator::validate_sequence_completion, this, thread_count, std::ref(is_valid_sequence));
 
-    return valid_kmer_set && valid_sequence;
+    
+    if(!kmer_set_validator.joinable())
+    {
+        console->error("Early termination faced for a worker thread. Aborting.\n");
+        std::exit(EXIT_FAILURE);
+    }
+
+    kmer_set_validator.join();
+    console->info("{} validation of the k-mer set.\n", is_valid_kmer_set ? "Passed" : "Failed");
+
+
+    if(!sequence_validator.joinable())
+    {
+        console->error("Early termination faced for a worker thread. Aborting.\n");
+        std::exit(EXIT_FAILURE);
+    }
+
+    sequence_validator.join();
+    console->info("{} validation of complete coverage of the sequence by the produced unitigs.\n",
+                    is_valid_sequence ? "Passed" : "Failed");
+
+    return is_valid_kmer_set && is_valid_sequence;
 }
 
 
@@ -46,46 +71,46 @@ void Validator::build_mph_function(const std::string& bbhash_file_name, const ui
     struct stat buffer;
     if(stat(bbhash_file_name.c_str(), &buffer) == 0)
     {
-        std::cout << "Loading the MPH function from file " << bbhash_file_name << "\n";
+        console->info("Loading the MPH function from file {}\n", bbhash_file_name);
         
         std::ifstream input(bbhash_file_name.c_str(), std::ifstream::in);
         mph = new boomphf::mphf<cuttlefish::kmer_t, Kmer_Hasher>();
         mph->load(input);
         input.close();
         
-        std::cout << "Loaded the MPH function into memory.\n";
+        console->info("Loaded the MPH function into memory.\n");
     }
     else    // No BBHash file exists. Build and save one now.
     {
         // Build the MPHF.
-        std::cout << "Building the MPH function from the k-mer database " << kmer_container.container_location() << "\n";
+        console->info("Building the MPH function from the k-mer database {}\n", kmer_container.container_location());
 
         auto data_iterator = boomphf::range(kmer_container.begin(), kmer_container.end());
         mph = new boomphf::mphf<cuttlefish::kmer_t, Kmer_Hasher> (kmer_container.size(), data_iterator, thread_count, gamma_factor);
 
-        std::cout << "Built the MPH function in memory.\n";
+        console->info("Built the MPH function in memory.\n");
         
 
         // Save the MPHF.
-        std::cout << "Saving the MPH function in file " << bbhash_file_name << "\n";
+        console->info("Saving the MPH function in file {}\n", bbhash_file_name);
 
         std::ofstream output(bbhash_file_name.c_str(), std::ofstream::out);
         mph->save(output);
         output.close();
 
-        std::cout << "Saved the MPH function in disk.\n";
+        console->info("Saved the MPH function in disk.\n");
     }
 }
 
 
-bool Validator::validate_kmer_set() const
+void Validator::validate_kmer_set(bool& result) const
 {
-    std::cout << "Testing validation of the uniqueness of the k-mers and completeness of the k-mer set in the produced unitigs.\n";
+    console->info("Testing validation of the uniqueness of the k-mers and completeness of the k-mer set in the produced unitigs.\n");
 
     const Kmer_Container kmer_container(kmc_db_name);
     const uint64_t kmer_count = kmer_container.size();
 
-    std::cout << "Number of k-mers in the database: " << kmer_count << "\n";
+    console->info("Number of k-mers in the database: {}\n", kmer_count);
 
     std::vector<bool> is_present(kmer_count);
     uint64_t kmers_seen = 0;
@@ -109,7 +134,7 @@ bool Validator::validate_kmer_set() const
             // Encountered a k-mer that is absent at the k-mer database and hashes outside of the valid range.
             if(hash_val >= kmer_count)
             {
-                std::cout << "Invalid k-mer encountered.\n";
+                console->error("Invalid k-mer encountered.\n");
                 kmers_invalid++;
             }
             // Encountered a k-mer for the first time that is either a k-mer present at the database, or is
@@ -119,7 +144,7 @@ bool Validator::validate_kmer_set() const
             // A repeated k-mer is seen.
             else
             {
-                std::cout << "Repeated k-mer encountered.\n";
+                console->info("Repeated k-mer encountered.\n");
                 kmers_repeated++;
             }
 
@@ -132,38 +157,38 @@ bool Validator::validate_kmer_set() const
         unitigs_processed++;
 
         if(unitigs_processed % progress_grain_size == 0)
-            std::cout << "Processed " << unitigs_processed / 1000000 << "M unitigs.\n";
+            console->info("Validated {}M unitigs.\n", unitigs_processed / 1000000);
     }
 
 
-    std::cout << "Total number of repeated k-mers: " << kmers_repeated << "\n";
-    std::cout << "Total number of invalid k-mers: " << kmers_invalid << "\n";
-    std::cout << "Total number of k-mers seen: " << kmers_seen << "\n";
-    std::cout << "Total number of k-mers expected: " << kmer_count << "\n";
+    console->info("Total number of repeated k-mers: {}\n", kmers_repeated);
+    console->info("Total number of invalid k-mers: {}\n", kmers_invalid);
+    console->info("Total number of k-mers seen: {}\n", kmers_seen);
+    console->info("Total number of k-mers expected: {}\n", kmer_count);
 
     input.close();
 
-    return !kmers_repeated && !kmers_invalid && kmers_seen == kmer_count;
+    result = (!kmers_repeated && !kmers_invalid && kmers_seen == kmer_count);
 }
 
 
-bool Validator::validate_sequence_completion()
+void Validator::validate_sequence_completion(const uint64_t thread_count, bool& result)
 {
-    std::cout << "Testing validation of the completeness of coverage of the sequence by the produced unitigs.\n";
+    console->info("Testing validation of the completeness of coverage of the sequence by the produced unitigs.\n");
 
     const Kmer_Container kmer_container(kmc_db_name);
     const uint64_t kmer_count = kmer_container.size();
 
-    std::cout << "Number of k-mers in the k-mer database: " << kmer_count << "\n";
+    console->info("Number of k-mers in the k-mer database: {}\n", kmer_count);
 
 
     // Allocate the unitig tables.
-    std::cout << "Allocating the unitig tables.\n";
+    console->info("Allocating the unitig tables.\n");
 
     unitig_id.resize(kmer_count);
     unitig_dir.resize(kmer_count);
 
-    std::cout << "Done allocation of the unitig tables.\n";
+    console->info("Done allocation of the unitig tables.\n");
 
 
     // Load the unitigs into memory and build the associated tables `unitig_id` and `unitig_dir`.
@@ -174,7 +199,7 @@ bool Validator::validate_sequence_completion()
     FILE* input = fopen(ref_file_name.c_str(), "r");
     if(input == NULL)
     {
-        std::cerr << "Error opening the reference file " << ref_file_name << ". Aborting.\n";
+        console->error("Error opening the reference file {}. Aborting.\n", ref_file_name);
         std::exit(EXIT_FAILURE);
     }
     
@@ -182,31 +207,67 @@ bool Validator::validate_sequence_completion()
     kseq_t* parser = kseq_init(fileno(input));
 
 
-    // Parse sequences one-by-one, and continue spelling them using the resultant unitigs
-    // of the compaction algorithm.
-    uint32_t seqCount = 0;
-    bool success = true;
-    while(success && kseq_read(parser) >= 0)
+    std::vector<std::thread> th(thread_count);  // Thread-pool (round-robin) to validate the sequences parallelly.
+    uint32_t seqCount = 0;  // Number of sequences read.
+    bool success = true;    // Whether the total validation succeeded.
+    char** S = new char*[thread_count]; // Sequence buffers to pass on to the threads.
+    bool* thread_result = new bool[thread_count];   // Validation result produced by the threads.
+    
+    // Parse sequences one-by-one, and continue spelling them using the resultant unitigs of the compaction algorithm.
+    while(kseq_read(parser) >= 0)
     {
         const char* seq = parser->seq.s;
         const size_t seq_len = parser->seq.l;
 
-        std::cout << "Spelling out sequence " << ++seqCount << ", with length " << seq_len << ".\n";
+        console->info("Spelling out sequence {}, with length {}.\n", seqCount, seq_len);
 
-        // Nothing to process for sequences with length shorter than `k`.
-        if(seq_len < k)
-            break;
 
-        if(!walk_sequence(seq, seq_len))
-            success = false;
+        // ID of the thread to pass on the latest-read sequence `seq`.
+        uint16_t thread_id = seqCount % thread_count;
+
+        // A buffer exists for thread number `thread_id`, so it's already processing a sequence.
+        if(seqCount >= thread_count)
+        {
+            if(!th[thread_id].joinable())
+            {
+                console->error("Early termination faced for a worker thread. Aborting.\n");
+                std::exit(EXIT_FAILURE);
+            }
+
+            th[thread_id].join();
+            delete S[thread_id];
+            
+            success = success && thread_result[thread_id];
+            if(!success)
+                break;
+        }
+
+        // Allocate a buffer for the thread number `thread_id` to pass on the latest-read sequence `seq`.
+        S[thread_id] = new char[seq_len + 1];
+        strcpy(S[thread_id], seq);
+
+        th[thread_id] = std::thread(&Validator::walk_sequence, this, S[thread_id], seq_len, std::ref(thread_result[thread_id]));
+
+        seqCount++;
     }
+
+
+    // Finish up the threads that might still be running.
+    for(uint16_t thread_id = 0; thread_id < thread_count; ++thread_id)
+        if(th[thread_id].joinable())
+        {
+            th[thread_id].join();
+            delete S[thread_id];
+
+            success = success && thread_result[thread_id];
+        }
 
 
     // Close the parser and the input file.
     kseq_destroy(parser);
     fclose(input);
 
-    return success;
+    result = success;
 }
 
 
@@ -215,12 +276,12 @@ void Validator::build_unitig_tables()
     std::ifstream input(cdbg_file_name.c_str(), std::ifstream::in);
     if(!input)
     {
-        std::cerr << "Error reading from the unitigs file " << cdbg_file_name << ". Aborting.\n";
+        console->error("Error reading from the unitigs file {}. Aborting.\n", cdbg_file_name);
         std::exit(EXIT_FAILURE);
     }
 
 
-    std::cout << "Loading the unitigs from the file " << cdbg_file_name << ".\n";
+    console->info("Loading the unitigs from the file {}\n", cdbg_file_name);
 
     size_t unitig_count = 0;
     std::string unitig;
@@ -257,17 +318,21 @@ void Validator::build_unitig_tables()
         
         // Track progress.
         if(unitig_count % progress_grain_size == 0)
-            std::cout << "Loaded " << unitig_count / 1000000 << "M unitigs.\n";
+            console->info("Loaded {}M unitigs.\n", unitig_count / 1000000);
     }
 
-    std::cout << "Done loading a total of " << unitig_count << " unitigs.\n";
+    console->info("Done loading a total of {} unitigs.\n", unitig_count);
 
     input.close();
 }
 
 
-bool Validator::walk_sequence(const char* seq, const size_t seq_len) const
+void Validator::walk_sequence(const char* seq, const size_t seq_len, bool& result) const
 {
+    // Nothing to process for sequences with length shorter than `k`.
+    if(seq_len < k)
+        return;
+
     size_t kmer_idx = 0;
     while(kmer_idx <= seq_len - k)
     {
@@ -280,10 +345,13 @@ bool Validator::walk_sequence(const char* seq, const size_t seq_len) const
         // Walk a maximal valid contiguous subsequence, and advance to the index following it.
         kmer_idx = walk_first_unitig(seq, seq_len, kmer_idx);
         if(kmer_idx == std::numeric_limits<size_t>::max())
-            return false;
+        {
+            result = false;
+            return;
+        }
     }
 
-    return true;
+    result = true;
 }
 
 
@@ -322,8 +390,8 @@ size_t Validator::walk_first_unitig(const char* seq, const size_t seq_len, const
     
     if(unitig_dir[kmer_hash] == Unitig_Dir::none)
     {
-        std::cout << "Encountered k-mer(s) in sequence that are not flanking k-mers of any of the result unitigs,"
-                     " yet unitig traversals were attempted from those. Aborting.\n";
+        console->error("Encountered k-mer(s) in sequence that are not flanking k-mers of any of the result unitigs,"
+                        " yet unitig traversals were attempted from those. Aborting.\n");
         return std::numeric_limits<size_t>::max();
     }
 
@@ -334,7 +402,7 @@ size_t Validator::walk_first_unitig(const char* seq, const size_t seq_len, const
 
     if(!walk_unitig(seq, seq_len, start_idx, unitig, dir))
     {
-        std::cout << "Mismatching nucleotide(s) found during walking a resultant unitig. Aborting.\n";
+        console->error("Mismatching nucleotide(s) found during walking a resultant unitig. Aborting.\n");
         return std::numeric_limits<size_t>::max();
     }
 

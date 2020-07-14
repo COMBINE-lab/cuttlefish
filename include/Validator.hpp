@@ -48,6 +48,9 @@ private:
     // Obviously, `kmer` must be a flanking k-mer of that unitig, i.e. the unitig is at `U [ unitig_id [h] ]`.
     std::vector<Unitig_Dir> unitig_dir;
 
+    // Console logger to display log messages.
+    cuttlefish::logger_t console;
+
 
     // Builds the minimal perfect hash function `mph` at the disk-file `bbhash_file_name`
     // (or loads from it), using up-to `thread_count` number of threads.
@@ -59,7 +62,7 @@ private:
 
     // Traverses the sequence `seq` of length `seq_len` to check that the sequence can be
     // spelled out by the unitigs at `U`. Returns `true` iff the spelling is successful.
-    bool walk_sequence(const char* seq, const size_t seq_len) const;
+    void walk_sequence(const char* seq, const size_t seq_len, bool& result) const;
 
     // Returns the index of the first valid k-mer, i.e. the first k-mer without the placeholder
     // nucleotide 'N', of the sequence `seq` (of length `seq_len`), searching onwards from the
@@ -94,12 +97,12 @@ private:
     // the number of "extra" k-mers encountered in the result must be equal to the number of
     // "missing" k-mers from the results; and also, those "extra" k-mers must hash, without
     // collisions, to exactly the hash values of the "missing" k-mers.
-    bool validate_kmer_set() const;
+    void validate_kmer_set(bool& result) const;
 
-    // Returns the validation result of the completeness of the coverage of the reference sequence
-    // by the resulting unitigs of the compaction algorithm. I.e., walks the reference and checks
-    // if it can be spelled out completely with unitigs at collection `U`.
-    bool validate_sequence_completion();
+    // Returns the validation result of the completeness of the coverage of the reference sequence by
+    // the resulting unitigs of the compaction algorithm. I.e., walks the reference and checks if it
+    // can be spelled out completely with unitigs at collection `U`, using up-to `thread_count` threads.
+    void validate_sequence_completion(const uint64_t thread_count, bool& result);
 
 
 public:
@@ -107,7 +110,7 @@ public:
     // Constructs a validator object to validate the resultant unitigs produced at the file
     // `cdbg_file_name` by the compaction algorithm on the reference file `ref_file_name`,
     // for k-mers of length `k`. The KMC database of the k-mers are stored at `kmc_db_name`. 
-    Validator(const std::string& ref_file_name, const uint16_t k, const std::string& kmc_db_name, const std::string& cdbg_file_name);
+    Validator(const std::string& ref_file_name, const uint16_t k, const std::string& kmc_db_name, const std::string& cdbg_file_name, cuttlefish::logger_t console);
 
     // Performs validation of the uniqueness and completeness of the k-mer set present at the
     // unitigs produced by the compaction algorithm, and also the validation of the complete

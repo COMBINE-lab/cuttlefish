@@ -63,6 +63,6 @@ install(TARGETS ${PROJECT_NAME}
         )
 
 
-add_executable(test test.cpp)
+add_executable(test test.cpp Validator.cpp)
 target_link_libraries(test PRIVATE core)
 target_compile_options(test PRIVATE ${WARNING_FLAGS})

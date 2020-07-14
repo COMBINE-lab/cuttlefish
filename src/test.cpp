@@ -1,12 +1,12 @@
 
 #include "Kmer.hpp"
-#include "kseq/kseq.h"
 #include "Directed_Kmer.hpp"
 #include "Kmer_Container.hpp"
 #include "Kmer_Iterator.hpp"
 #include "BBHash/BooPHF.h"
 #include "Kmer_Hasher.hpp"
 #include "Validator.hpp"
+#include "kseq/kseq.h"
 #include "spdlog/spdlog.h"
 #include "spdlog/async.h"
 #include "spdlog/sinks/basic_file_sink.h"
@@ -20,7 +20,7 @@
 #include <set>
 #include <map>
 
-#include "Temp-Validator.cpp"
+//#include "Validator.cpp"
 
 
 // Debug

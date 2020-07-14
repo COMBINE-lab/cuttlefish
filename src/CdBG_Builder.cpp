@@ -43,7 +43,7 @@ void CdBG::classify_vertices(const uint16_t thread_count)
 
         // Nothing to process for sequences with length shorter than `k`.
         if(seq_len < k)
-            break;
+            continue;
 
 
         // Single-threaded classification.

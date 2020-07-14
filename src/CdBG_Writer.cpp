@@ -61,7 +61,7 @@ void CdBG::output_maximal_unitigs(const std::string& output_file, const uint16_t
 
         // Nothing to process for sequences with length shorter than `k`.
         if(seq_len < k)
-            break;
+            continue;
 
 
         // Single-threaded writing.

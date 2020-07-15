@@ -226,9 +226,10 @@ size_t CdBG::output_maximal_unitigs(const uint64_t thread_id, const char* seq, c
                 {
                     output_unitig(thread_id, seq, unipath_start_kmer, curr_kmer, output);
                     on_unipath = false;
-
-                    break;
                 }
+
+                // The contiguous sequence ends at this k-mer.
+                return kmer_idx + k;
             }
             else    // A valid right neighbor exists.
             {

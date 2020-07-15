@@ -18,9 +18,11 @@ set(CMAKE_CXX_STANDARD 11)
 
 
 # Bundle the warning flags that we want to pass on to the compiler.
+# Disable unknown pragmas, b/c bbhash uses them extensively
+# Same with maybe-uninitialized (might want this one back later though)
 # Reference: https://gcc.gnu.org/onlinedocs/gcc/Warning-Options.html
-set(WARNING_FLAGS -Wall -Wextra)
-
+set(WARNING_FLAGS -Wall -Wextra -Wno-unknown-pragmas -Wno-maybe-uninitialized)
+add_definitions(-D__STDC_FORMAT_MACROS -DSPDLOG_FMT_EXTERNAL_HO)
 
 # Search the file system for the appropriate threads package for this platform, and then set
 # the `CMAKE_THREAD_LIBS_INIT` variable (and some other variables as well).

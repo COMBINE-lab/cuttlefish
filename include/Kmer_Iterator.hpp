@@ -30,7 +30,7 @@ public:
 
 private:
 
-    Kmer_Container* kmer_container; // The associated k-mer container on which to iterate on.
+    const Kmer_Container* kmer_container; // The associated k-mer container on which to iterate on.
     CKMCFile kmer_database_input;   // The input reader object (from KMC databases).
     CKmerAPI kmer_object;   // Current KMC k-mer object that this iterator is holding.
     cuttlefish::kmer_t kmer;    // K-mer present inside the `kmer_object` api.
@@ -39,7 +39,7 @@ private:
 
     // Constructs an iterator for the provided container `kmer_container`, on either
     // its beginning or its ending position based on the value of `at_begin`.
-    Kmer_Iterator(Kmer_Container* const kmer_container, const bool at_begin = true);
+    Kmer_Iterator(const Kmer_Container* const kmer_container, const bool at_begin = true);
 
     // Opens the KMC database (internally buffered) to read k-mers.
     void open_kmer_database();
@@ -77,7 +77,7 @@ public:
 
 
 
-inline Kmer_Iterator::Kmer_Iterator(Kmer_Container* const kmer_container, const bool at_begin):
+inline Kmer_Iterator::Kmer_Iterator(const Kmer_Container* const kmer_container, const bool at_begin):
     kmer_container(kmer_container), kmer_object(), at_begin(at_begin)
 {
     if(at_begin)

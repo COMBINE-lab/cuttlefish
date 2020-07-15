@@ -55,14 +55,24 @@ public:
     // `label[kmer_idx,...,kmer_idx + k - 1]`.
     Kmer(const char* label, const size_t kmer_idx);
 
+    // Constructs a k-mer from the provided characters at
+    // `label[kmer_idx,...,kmer_idx + k - 1]`.
+    Kmer(const std::string& label, const size_t kmer_idx);
+
     // Constructs a k-mer from `kmer_api` which is a k-mer object built from KMC.
     Kmer(const CKmerAPI& kmer_api);
 
     // Copy constructs the k-mer from another k-mer `rhs`.
     Kmer(const Kmer& rhs);
 
+    // Copy assignment operator
+    Kmer& operator=(const Kmer& rhs) = default;
+
     // Sets the value of the `k` parameter across the `Kmer` class.
     static void set_k(const uint16_t k);
+
+    // Returns the DNA-complement character of the nucleotide character `nucl`.
+    static cuttlefish::nucleotide_t complement(const cuttlefish::nucleotide_t nucl);
 
     // Returns the reverese complement of the k-mer.
     Kmer reverse_complement() const;
@@ -87,6 +97,9 @@ public:
     // Returns the canonical version of the k-mer, comparing it to its
     // reverse complement `rev_compl`.
     Kmer canonical(const Kmer& rev_compl) const;
+
+    // Returns the canonical version of the k-mer.
+    Kmer canonical() const;
 
     // Returns the string label of the k-mer.
     std::string string_label() const;
@@ -155,7 +168,12 @@ inline Kmer::Kmer(const CKmerAPI& kmer_api)
 
 inline Kmer::Kmer(const Kmer& rhs): kmer(rhs.kmer)
 {}
-
+/*
+inline Kmer& Kmer::operator=(const Kmer& rhs) {
+    kmer = rhs.kmer;
+    return *this; 
+}
+*/
 
 inline Kmer Kmer::reverse_complement() const
 {
@@ -200,6 +218,32 @@ inline Kmer::DNA_Base Kmer::complement_nucleotide(const DNA_Base nucleotide)
         // Placeholder rule to handle `N` nucleotides. Currently, as per the rule used by the KMC tool.
         
         std::cerr << "Encountered invalid DNA_Base. Aborting.\n";
+        std::exit(EXIT_FAILURE);
+    }
+}
+
+
+inline cuttlefish::nucleotide_t Kmer::complement(const cuttlefish::nucleotide_t nucl)
+{
+    switch (nucl)
+    {
+    case 'A':
+        return 'T';
+
+    case 'C':
+        return 'G';
+
+    case 'G':
+        return 'C';
+
+    case 'T':
+        return 'A';
+    
+    default:
+        // Placeholder rule to handle `N` nucleotides.
+        // TODO: Need to make an informed rule for this.
+        
+        std::cerr << "Invalid nucleotide " << nucl << " encountered. Aborting.";
         std::exit(EXIT_FAILURE);
     }
 }

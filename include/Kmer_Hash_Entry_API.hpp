@@ -31,8 +31,10 @@ private:
 
     // Constructs an API to the bitvector entry `bv_entry`.
     Kmer_Hash_Entry_API(const cuttlefish::bitvector_entry_t& bv_entry):
-        bv_entry(bv_entry), vertex_encoding_read(bv_entry), vertex_encoding(bv_entry)
-    {}
+        bv_entry(bv_entry), vertex_encoding_read(bv_entry)
+    {
+        vertex_encoding = vertex_encoding_read;
+    }
 
 
     // Returns the vertex encoding value read when the object was constructed.

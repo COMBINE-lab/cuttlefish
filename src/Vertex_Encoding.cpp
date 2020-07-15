@@ -41,7 +41,7 @@ Vertex_Encoding::Vertex_Encoding(const Vertex& vertex)
             break;
 
         default:
-            std::cerr << "Invalid vertex state " << (uint16_t)vertex.vertex_class << " encountered. Aborting.\n";
+            std::cerr << "Invalid vertex class " << (uint16_t)vertex.vertex_class << " encountered during state construction. Aborting.\n";
             std::exit(EXIT_FAILURE);
         }
     else
@@ -68,7 +68,7 @@ Vertex_Encoding::Vertex_Encoding(const Vertex& vertex)
             break;
 
         default:
-            std::cerr << "Invalid vertex state " << (uint16_t)vertex.vertex_class << " encountered. Aborting.\n";
+            std::cerr << "Invalid vertex class " << (uint16_t)vertex.vertex_class << " encountered during state construction. Aborting.\n";
             std::exit(EXIT_FAILURE);
         }
 }
@@ -96,10 +96,8 @@ inline void Vertex_Encoding::set_nibble_lower_half(const cuttlefish::nucleotide_
     default:
         // Placeholder rule to handle `N` nucleotides.
         // TODO: Need to make an informed rule for this.
-        break;
-        
-        // std::cerr << "Invalid nucelotide " << nucl << " encountered. Aborting.\n";
-        // std::exit(EXIT_FAILURE);
+        std::cerr << "Invalid nucleotide " << nucl << " encountered during state construction. Aborting.\n";
+        std::exit(EXIT_FAILURE);
     }
 }
 
@@ -126,10 +124,8 @@ inline void Vertex_Encoding::set_nibble_upper_half(const cuttlefish::nucleotide_
     default:
         // Placeholder rule to handle `N` nucleotides.
         // TODO: Need to make an informed rule for this.
-        break;
-
-        // std::cerr << "Invalid nucelotide " << nucl << " encountered. Aborting.\n";
-        // std::exit(EXIT_FAILURE);
+        std::cerr << "Invalid nucleotide " << nucl << " encountered during state construction. Aborting.\n";
+        std::exit(EXIT_FAILURE);
     }
 }
 
@@ -146,7 +142,7 @@ Vertex Vertex_Encoding::decode() const
 
     case 0b00001:   // 1
     case 0b00010:   // 2
-        std::cerr << "Invalid vertex encoding " << (uint16_t)vertex_code << " encountered. Aborting.\n";
+        std::cerr << "Invalid state " << (uint16_t)vertex_code << " encountered during state decoding. Aborting.\n";
         std::exit(EXIT_FAILURE);
 
     case 0b00011:   // 3
@@ -237,7 +233,7 @@ Vertex Vertex_Encoding::decode() const
         return Vertex(cuttlefish::Vertex_Class::single_in_single_out, 'T', 'T');
 
     default:
-        std::cerr << "Invalid vertex encoding " << vertex_code << " encountered. Aborting.\n";
+        std::cerr << "Invalid state " << (uint16_t)vertex_code << " encountered during state decoding. Aborting.\n";
         std::exit(EXIT_FAILURE);
     }
 }
@@ -252,7 +248,7 @@ bool Vertex_Encoding::is_visited() const
 
     case 0b00001:   // 1
     case 0b00010:   // 2
-        std::cerr << "Invalid vertex encoding " << vertex_code << " encountered. Aborting.\n";
+        std::cerr << "Invalid state " << (uint16_t)vertex_code << " encountered during checking visited status for vertices. Aborting.\n";
         std::exit(EXIT_FAILURE);
 
     case 0b00011:   // 3
@@ -287,7 +283,7 @@ bool Vertex_Encoding::is_visited() const
         return true;
 
     default:
-        std::cerr << "Invalid vertex encoding " << vertex_code << " encountered. Aborting.\n";
+        std::cerr << "Invalid state " << (uint16_t)vertex_code << " encountered during checking visited status for vertices. Aborting.\n";
         std::exit(EXIT_FAILURE);
     }
 }
@@ -303,7 +299,7 @@ Vertex_Encoding Vertex_Encoding::outputted() const
 
     case 0b00001:   // 1
     case 0b00010:   // 2
-        std::cerr << "Invalid vertex encoding " << vertex_code << " encountered. Aborting.\n";
+        std::cerr << "Invalid state " << (uint16_t)vertex_code << " encountered during output attempt. Aborting.\n";
         std::exit(EXIT_FAILURE);
 
     case 0b00011:   // 3
@@ -352,7 +348,7 @@ Vertex_Encoding Vertex_Encoding::outputted() const
         return Vertex_Encoding(0b01100);
 
     default:
-        std::cerr << "Invalid vertex encoding " << vertex_code << " encountered. Aborting.\n";
+        std::cerr << "Invalid state " << (uint16_t)vertex_code << " encountered during output attempt. Aborting.\n";
         std::exit(EXIT_FAILURE);
     }
 }
@@ -363,12 +359,12 @@ cuttlefish::Vertex_Class Vertex_Encoding::vertex_class() const
     switch(vertex_code)
     {
     case 0b00000:   // 0
-        std::cerr << "No state for an unvisited vertex. Aborting.\n";
+        std::cerr << "No class for an unvisited vertex. Aborting.\n";
         std::exit(EXIT_FAILURE);
 
     case 0b00001:   // 1
     case 0b00010:   // 2
-        std::cerr << "Invalid vertex encoding " << vertex_code << " encountered. Aborting.\n";
+        std::cerr << "Invalid state " << (uint16_t)vertex_code << " encountered during vertex class decoding. Aborting.\n";
         std::exit(EXIT_FAILURE);
 
     case 0b00011:   // 3
@@ -417,7 +413,7 @@ cuttlefish::Vertex_Class Vertex_Encoding::vertex_class() const
         return cuttlefish::Vertex_Class::single_in_single_out;
 
     default:
-        std::cerr << "Invalid vertex encoding " << vertex_code << " encountered. Aborting.\n";
+        std::cerr << "Invalid state " << (uint16_t)vertex_code << " encountered during vertex class decoding. Aborting.\n";
         std::exit(EXIT_FAILURE);
     }
 }
@@ -432,7 +428,7 @@ bool Vertex_Encoding::is_outputted() const
 
     case 0b00001:   // 1
     case 0b00010:   // 2
-        std::cerr << "Invalid vertex encoding " << vertex_code << " encountered. Aborting.\n";
+        std::cerr << "Invalid state " << (uint16_t)vertex_code << " encountered during checking ouuputted status. Aborting.\n";
         std::exit(EXIT_FAILURE);
 
     case 0b00011:   // 3
@@ -471,13 +467,13 @@ bool Vertex_Encoding::is_outputted() const
         return false;
 
     default:
-        std::cerr << "Invalid vertex encoding " << vertex_code << " encountered. Aborting.\n";
+        std::cerr << "Invalid state " << (uint16_t)vertex_code << " encountered during checking outputted status. Aborting.\n";
         std::exit(EXIT_FAILURE);
     }
 }
 
 
-std::ostream& operator <<(std::ostream& out, const Vertex_Encoding& vertex_encoding)
+std::ostream& operator<<(std::ostream& out, const Vertex_Encoding& vertex_encoding)
 {
     out << (uint16_t)vertex_encoding.vertex_code;
 

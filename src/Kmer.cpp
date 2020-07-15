@@ -25,10 +25,28 @@ Kmer::Kmer(const std::string& label)
 }
 
 
+Kmer::Kmer(const std::string& label, const size_t kmer_idx)
+{
+    kmer = 0;
+
+    for(size_t idx = kmer_idx; idx < kmer_idx + k; ++idx)
+    {
+        uint8_t nucleotide = map_nucleotide(label[idx]);
+        kmer = (kmer << 2) | nucleotide;
+    }
+}
+
+
 void Kmer::set_k(uint16_t k)
 {
     Kmer::k = k;
     Kmer::bitmask_MSN = ~(uint64_t(0b11) << (2 * (k - 1)));
+}
+
+
+Kmer Kmer::canonical() const
+{
+    return canonical(reverse_complement());
 }
 
 

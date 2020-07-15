@@ -70,9 +70,9 @@ void Kmer_Hash_Table::construct(const std::string& kmc_file_name, const std::str
     std::cout << "Allocated hash table buckets for " << kmer_count << " k-mers. ";
     std::cout << "Total memory taken (in MB): " << hash_table.bytes() / (1024 * 1024) << "\n";
 
-    uint64_t total_mem = ((total_bits / 8) + hash_table.bytes()) / (1024 * 1024);   // in MB
-    std::cout << "Total memory usage by the hash table: " << total_mem  << " MB.\n";
-    std::cout << "Bits per k-mer: " << (total_mem * 8) / kmer_count << "\n";
+    uint64_t total_mem = (total_bits / 8) + hash_table.bytes();   // in bytes
+    std::cout << "Total memory usage by the hash table: " << total_mem / (1024 * 1024)  << " MB.\n";
+    std::cout << "Bits per k-mer: " << (total_mem * 8.0) / kmer_count << "\n";
 
 
     std::chrono::high_resolution_clock::time_point t_end = std::chrono::high_resolution_clock::now();

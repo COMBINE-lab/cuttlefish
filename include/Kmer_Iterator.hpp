@@ -26,6 +26,8 @@ public:
     typedef cuttlefish::kmer_t* pointer;
     typedef cuttlefish::kmer_t& reference;
 
+    typedef const cuttlefish::kmer_t* const_ptr_t;
+
 
 
 private:
@@ -57,8 +59,11 @@ public:
     // Assigns the iterator `rhs` to this one, and returns the new iterator.
     const iterator& operator=(const iterator& rhs);
 
-    // Returns a `Kmer` object corresponding to the current iterator position.
+    // Returns a `Kmer` object corresponding to the iterator.
     value_type operator*() const;
+
+    // Returns a const pointer to the `Kmer` object corresponding to the iterator.
+    const_ptr_t operator->() const;
 
     // Advances the iterator by offset one, and returns the new iterator.
     const iterator& operator++();
@@ -143,6 +148,12 @@ inline Kmer_Iterator::value_type Kmer_Iterator::operator*() const
 {
     // return cuttlefish::kmer_t(kmer_object);
     return kmer;
+}
+
+
+inline Kmer_Iterator::const_ptr_t Kmer_Iterator::operator->() const
+{
+    return &kmer;
 }
 
 

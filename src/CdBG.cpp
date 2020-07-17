@@ -34,7 +34,7 @@ size_t CdBG::search_valid_kmer(const char* seq, const size_t left_end, const siz
     while(idx <= right_end)
     {
         // Go over the contiguous subsequence of 'N's.
-        for(; idx <= right_end && seq[idx] == 'N'; idx++);
+        for(; idx <= right_end && seq[idx] == cuttlefish::PLACEHOLDER_NUCLEOTIDE; idx++);
 
         // Go over the contiguous subsequence of non-'N's.
         if(idx <= right_end)
@@ -42,7 +42,7 @@ size_t CdBG::search_valid_kmer(const char* seq, const size_t left_end, const siz
             valid_start_idx = idx;
             nucl_count = 0;
 
-            for(; idx <= right_end + k - 1 && seq[idx] != 'N'; ++idx)
+            for(; idx <= right_end + k - 1 && seq[idx] != cuttlefish::PLACEHOLDER_NUCLEOTIDE; ++idx)
                 if(++nucl_count == k)
                     return valid_start_idx;
         }

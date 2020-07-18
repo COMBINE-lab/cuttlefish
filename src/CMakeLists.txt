@@ -6,7 +6,7 @@ set(PROJECT_SRC
         kmc_api/mmer.cpp
         Kmer.cpp
         Vertex.cpp
-        Vertex_Encoding.cpp
+        State.cpp
         Kmer_Container.cpp
         Kmer_Hash_Table.cpp
         CdBG.cpp

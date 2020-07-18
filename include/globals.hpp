@@ -42,7 +42,7 @@ namespace cuttlefish
     typedef Kmer kmer_t;
     typedef bool kmer_dir_t;
     typedef char nucleotide_t;
-    typedef uint8_t vertex_code_t;
+    typedef uint8_t state_code_t;
 
     constexpr nucleotide_t PLACEHOLDER_NUCLEOTIDE = 'N';
 

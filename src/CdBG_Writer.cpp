@@ -329,13 +329,13 @@ void CdBG::output_unitig(const uint64_t thread_id, const char* seq, const Annota
     // k-mer, irrespective of which direction the unitig may be traversed at.
     const cuttlefish::kmer_t min_flanking_kmer = std::min(start_kmer.canonical, end_kmer.canonical);
     Kmer_Hash_Entry_API hash_table_entry = Vertices[min_flanking_kmer];
-    Vertex_Encoding& vertex_encoding = hash_table_entry.get_vertex_encoding();
+    State& state = hash_table_entry.get_state();
 
-    if(vertex_encoding.is_outputted())
+    if(state.is_outputted())
         return;
     
 
-    vertex_encoding = vertex_encoding.outputted();
+    state = state.outputted();
 
     // If the hash table update is successful, only then this thread may output this unitig.
     if(Vertices.update(hash_table_entry))

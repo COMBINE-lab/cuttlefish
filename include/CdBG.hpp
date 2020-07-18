@@ -6,7 +6,7 @@
 
 #include "globals.hpp"
 #include "Vertex.hpp"
-#include "Vertex_Encoding.hpp"
+#include "State.hpp"
 #include "Kmer.hpp"
 #include "Kmer_Hash_Table.hpp"
 #include "Annotated_Kmer.hpp"

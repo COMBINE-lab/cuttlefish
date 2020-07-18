@@ -194,26 +194,26 @@ bool CdBG::process_leftmost_kmer(const cuttlefish::kmer_t& kmer_hat, const cuttl
 {
     // Fetch the entry for `kmer_hat`.
     Kmer_Hash_Entry_API hash_table_entry = Vertices[kmer_hat];
-    Vertex_Encoding& vertex_encoding = hash_table_entry.get_vertex_encoding();
-    // const Vertex_Encoding old_encoding = vertex_encoding;
+    State& state = hash_table_entry.get_state();
+    // const State old_state = state;
 
 
     // The k-mer is already classified as a complex node.
-    if(vertex_encoding.is_visited() && vertex_encoding.vertex_class() == cuttlefish::Vertex_Class::multi_in_multi_out)
+    if(state.is_visited() && state.vertex_class() == cuttlefish::Vertex_Class::multi_in_multi_out)
         return true;    // Early return is safe from here as this vertex is a dead-end for state transitions.
 
     
     // The k-mer forms a self-loop with the next k-mer.
     if(is_self_loop(kmer_hat, next_kmer_hat))
-        vertex_encoding = Vertex_Encoding(Vertex(cuttlefish::Vertex_Class::multi_in_multi_out));
+        state = State(Vertex(cuttlefish::Vertex_Class::multi_in_multi_out));
     else if(dir == cuttlefish::FWD)
     {
         // The sentinel k-mer is encountered for the first time, and in the forward direction.
-        if(!vertex_encoding.is_visited())
-            vertex_encoding = Vertex_Encoding(Vertex(cuttlefish::Vertex_Class::multi_in_single_out, next_nucl));
+        if(!state.is_visited())
+            state = State(Vertex(cuttlefish::Vertex_Class::multi_in_single_out, next_nucl));
         else    // The sentinel k-mer has been visited earlier and has some state; modify it accordingly.
         {
-            Vertex vertex = vertex_encoding.decode();
+            Vertex vertex = state.decode();
 
             if(vertex.vertex_class == cuttlefish::Vertex_Class::single_in_single_out)
             {
@@ -222,7 +222,7 @@ bool CdBG::process_leftmost_kmer(const cuttlefish::kmer_t& kmer_hat, const cuttl
                 else
                     vertex.vertex_class = cuttlefish::Vertex_Class::multi_in_multi_out;
 
-                vertex_encoding = Vertex_Encoding(vertex);
+                state = State(vertex);
             }
             else if(vertex.vertex_class == cuttlefish::Vertex_Class::multi_in_single_out)
             {
@@ -230,25 +230,25 @@ bool CdBG::process_leftmost_kmer(const cuttlefish::kmer_t& kmer_hat, const cuttl
                 {
                     vertex.vertex_class = cuttlefish::Vertex_Class::multi_in_multi_out;
 
-                    vertex_encoding = Vertex_Encoding(vertex);
+                    state = State(vertex);
                 }
             }
             else    // vertex.vertex_class == cuttlefish::Vertex_Class::single_in_multi_out
             {
                 vertex.vertex_class = cuttlefish::Vertex_Class::multi_in_multi_out;
 
-                vertex_encoding = Vertex_Encoding(vertex);
+                state = State(vertex);
             }
         }
     }
     else
     {
         // The sentinel k-mer is encountered for the first time, and in the backward direction.
-        if(!vertex_encoding.is_visited())
-            vertex_encoding = Vertex_Encoding(Vertex(cuttlefish::Vertex_Class::single_in_multi_out, complement(next_nucl)));
+        if(!state.is_visited())
+            state = State(Vertex(cuttlefish::Vertex_Class::single_in_multi_out, complement(next_nucl)));
         else    // The sentinel k-mer has been visited earlier and has some state; modify it accordingly.
         {
-            Vertex vertex = vertex_encoding.decode();
+            Vertex vertex = state.decode();
 
             if(vertex.vertex_class == cuttlefish::Vertex_Class::single_in_single_out)
             {
@@ -257,13 +257,13 @@ bool CdBG::process_leftmost_kmer(const cuttlefish::kmer_t& kmer_hat, const cuttl
                 else
                     vertex.vertex_class = cuttlefish::Vertex_Class::multi_in_multi_out;
 
-                vertex_encoding = Vertex_Encoding(vertex);
+                state = State(vertex);
             }
             else if(vertex.vertex_class == cuttlefish::Vertex_Class::multi_in_single_out)
             {
                 vertex.vertex_class = cuttlefish::Vertex_Class::multi_in_multi_out;
 
-                vertex_encoding = Vertex_Encoding(vertex);
+                state = State(vertex);
             }
             else    // vertex.vertex_class == cuttlefish::Vertex_Class::single_in_multi_out
             {
@@ -271,16 +271,16 @@ bool CdBG::process_leftmost_kmer(const cuttlefish::kmer_t& kmer_hat, const cuttl
                 {
                     vertex.vertex_class = cuttlefish::Vertex_Class::multi_in_multi_out;
 
-                    vertex_encoding = Vertex_Encoding(vertex);
+                    state = State(vertex);
                 }
             }
         }
     }
 
 
-    // Ideally, we can skip calling the `update` method when `vertex_encoding` has not changed here,
-    // i.e. `vertex_encoding` remains equal to the value with which it had been initialized. But in a
-    // multi-threaded environment, the actual location of `vertex_encoding` in the hash table could
+    // Ideally, we can skip calling the `update` method when `state` has not changed here,
+    // i.e. `state` remains equal to the value with which it had been initialized. But in a
+    // multi-threaded environment, the actual location of `state` in the hash table could
     // have been changed in between the initialization of the variable at the beginning and this exit
     // point of the method. For such cases, the `update` would fail, signalling the caller of the event.
     // TODO: We may also get away without updating the same value again, as the edge-ordering should not
@@ -293,23 +293,23 @@ bool CdBG::process_rightmost_kmer(const cuttlefish::kmer_t& kmer_hat, const cutt
 {
     // Fetch the entry for `kmer_hat`.
     Kmer_Hash_Entry_API hash_table_entry = Vertices[kmer_hat];
-    Vertex_Encoding& vertex_encoding = hash_table_entry.get_vertex_encoding();
-    // const Vertex_Encoding old_encoding = vertex_encoding;
+    State& state = hash_table_entry.get_state();
+    // const State old_state = state;
 
 
     // The k-mer is already classified as a complex node.
-    if(vertex_encoding.is_visited() && vertex_encoding.vertex_class() == cuttlefish::Vertex_Class::multi_in_multi_out)
+    if(state.is_visited() && state.vertex_class() == cuttlefish::Vertex_Class::multi_in_multi_out)
         return true;    // Early return is safe from here as this vertex is a dead-end for state transitions.
 
 
     if(dir == cuttlefish::FWD)
     {
         // The sentinel k-mer is encountered for the first time, and in the forward direction.
-        if(!vertex_encoding.is_visited())
-            vertex_encoding = Vertex_Encoding(Vertex(cuttlefish::Vertex_Class::single_in_multi_out, prev_nucl));
+        if(!state.is_visited())
+            state = State(Vertex(cuttlefish::Vertex_Class::single_in_multi_out, prev_nucl));
         else    // The sentinel k-mer has been visited earlier and has some state; modify it accordingly.
         {
-            Vertex vertex = vertex_encoding.decode();
+            Vertex vertex = state.decode();
 
             if(vertex.vertex_class == cuttlefish::Vertex_Class::single_in_single_out)
             {
@@ -318,13 +318,13 @@ bool CdBG::process_rightmost_kmer(const cuttlefish::kmer_t& kmer_hat, const cutt
                 else
                     vertex.vertex_class = cuttlefish::Vertex_Class::multi_in_multi_out;
 
-                vertex_encoding = Vertex_Encoding(vertex);
+                state = State(vertex);
             }
             else if(vertex.vertex_class == cuttlefish::Vertex_Class::multi_in_single_out)
             {
                 vertex.vertex_class = cuttlefish::Vertex_Class::multi_in_multi_out;
                 
-                vertex_encoding = Vertex_Encoding(vertex);
+                state = State(vertex);
             }
             else    // vertex.vertex_class == cuttlefish::Vertex_Class::single_in_multi_out
             {
@@ -332,7 +332,7 @@ bool CdBG::process_rightmost_kmer(const cuttlefish::kmer_t& kmer_hat, const cutt
                 {
                     vertex.vertex_class = cuttlefish::Vertex_Class::multi_in_multi_out;
 
-                    vertex_encoding = Vertex_Encoding(vertex);
+                    state = State(vertex);
                 }
             }
         }
@@ -340,11 +340,11 @@ bool CdBG::process_rightmost_kmer(const cuttlefish::kmer_t& kmer_hat, const cutt
     else
     {
         // The sentinel k-mer is encountered for the first time, and in the backward direction.
-        if(!vertex_encoding.is_visited())
-            vertex_encoding = Vertex_Encoding(Vertex(cuttlefish::Vertex_Class::multi_in_single_out, complement(prev_nucl)));
+        if(!state.is_visited())
+            state = State(Vertex(cuttlefish::Vertex_Class::multi_in_single_out, complement(prev_nucl)));
         else    // The sentinel k-mer has been visited earlier and has some state; modify it accordingly.
         {
-            Vertex vertex = vertex_encoding.decode();
+            Vertex vertex = state.decode();
 
             if(vertex.vertex_class == cuttlefish::Vertex_Class::single_in_single_out)
             {
@@ -353,7 +353,7 @@ bool CdBG::process_rightmost_kmer(const cuttlefish::kmer_t& kmer_hat, const cutt
                 else
                     vertex.vertex_class = cuttlefish::Vertex_Class::multi_in_multi_out;
 
-                vertex_encoding= Vertex_Encoding(vertex);
+                state= State(vertex);
             }
             else if(vertex.vertex_class == cuttlefish::Vertex_Class::multi_in_single_out)
             {
@@ -361,22 +361,22 @@ bool CdBG::process_rightmost_kmer(const cuttlefish::kmer_t& kmer_hat, const cutt
                 {
                     vertex.vertex_class = cuttlefish::Vertex_Class::multi_in_multi_out;
 
-                    vertex_encoding = Vertex_Encoding(vertex);
+                    state = State(vertex);
                 }
             }
             else    // vertex.vertex_class == cuttlefish::Vertex_Class::single_in_multi_out
             {
                 vertex.vertex_class = cuttlefish::Vertex_Class::multi_in_multi_out;
 
-                vertex_encoding = Vertex_Encoding(vertex);
+                state = State(vertex);
             }
         }
     }
 
 
-    // Ideally, we can skip calling the `update` method when `vertex_encoding` has not changed here,
-    // i.e. `vertex_encoding` remains equal to the value with which it had been initialized. But in a
-    // multi-threaded environment, the actual location of `vertex_encoding` in the hash table could
+    // Ideally, we can skip calling the `update` method when `state` has not changed here,
+    // i.e. `state` remains equal to the value with which it had been initialized. But in a
+    // multi-threaded environment, the actual location of `state` in the hash table could
     // have been changed in between the initialization of the variable at the beginning and this exit
     // point of the method. For such cases, the `update` would fail, signalling the caller of the event.
     // TODO: We may also get away without updating the same value again, as the edge-ordering should not
@@ -389,26 +389,26 @@ bool CdBG::process_internal_kmer(const cuttlefish::kmer_t& kmer_hat, const cuttl
 {
     // Fetch the hash table entry for `kmer_hat`.
     Kmer_Hash_Entry_API hash_table_entry = Vertices[kmer_hat];
-    Vertex_Encoding& vertex_encoding = hash_table_entry.get_vertex_encoding();
-    // const Vertex_Encoding old_encoding = vertex_encoding;
+    State& state = hash_table_entry.get_state();
+    // const State old_state = state;
 
 
     // The k-mer is already classified as a complex node.
-    if(vertex_encoding.is_visited() && vertex_encoding.vertex_class() == cuttlefish::Vertex_Class::multi_in_multi_out)
+    if(state.is_visited() && state.vertex_class() == cuttlefish::Vertex_Class::multi_in_multi_out)
         return true;    // Early return is safe from here as this vertex is a dead-end for state transitions.
 
 
     // The k-mer forms a self-loop with the next k-mer.
     if(is_self_loop(kmer_hat, next_kmer_hat))
-        vertex_encoding = Vertex_Encoding(Vertex(cuttlefish::Vertex_Class::multi_in_multi_out));
+        state = State(Vertex(cuttlefish::Vertex_Class::multi_in_multi_out));
     else if(dir == cuttlefish::FWD)
     {
         // The k-mer is encountered for the first time, and in the forward direction.
-        if(!vertex_encoding.is_visited())
-            vertex_encoding = Vertex_Encoding(Vertex(cuttlefish::Vertex_Class::single_in_single_out, prev_nucl, next_nucl));
+        if(!state.is_visited())
+            state = State(Vertex(cuttlefish::Vertex_Class::single_in_single_out, prev_nucl, next_nucl));
         else    // The k-mer has been visited earlier and has some state; modify it accordingly.
         {
-            Vertex vertex = vertex_encoding.decode();
+            Vertex vertex = state.decode();
 
             if(vertex.vertex_class == cuttlefish::Vertex_Class::single_in_single_out)
             {
@@ -423,7 +423,7 @@ bool CdBG::process_internal_kmer(const cuttlefish::kmer_t& kmer_hat, const cuttl
                 else    // vertex.exit != next_nucl
                     vertex.vertex_class = cuttlefish::Vertex_Class::single_in_multi_out;
 
-                vertex_encoding = Vertex_Encoding(vertex);
+                state = State(vertex);
             }
             else if(vertex.vertex_class == cuttlefish::Vertex_Class::multi_in_single_out)
             {
@@ -431,7 +431,7 @@ bool CdBG::process_internal_kmer(const cuttlefish::kmer_t& kmer_hat, const cuttl
                 {
                     vertex.vertex_class = cuttlefish::Vertex_Class::multi_in_multi_out;
 
-                    vertex_encoding = Vertex_Encoding(vertex);
+                    state = State(vertex);
                 }
             }
             else    // vertex.vertex_class == cuttlefish::Vertex_Class::single_in_multi_out
@@ -440,7 +440,7 @@ bool CdBG::process_internal_kmer(const cuttlefish::kmer_t& kmer_hat, const cuttl
                 {
                     vertex.vertex_class = cuttlefish::Vertex_Class::multi_in_multi_out;
 
-                    vertex_encoding = Vertex_Encoding(vertex);
+                    state = State(vertex);
                 }
             }
         }
@@ -448,11 +448,11 @@ bool CdBG::process_internal_kmer(const cuttlefish::kmer_t& kmer_hat, const cuttl
     else
     {
         // The k-mer is encountered for the first time, and in the backward direction.
-        if(!vertex_encoding.is_visited())
-            vertex_encoding = Vertex_Encoding(Vertex(cuttlefish::Vertex_Class::single_in_single_out, complement(next_nucl), complement(prev_nucl)));
+        if(!state.is_visited())
+            state = State(Vertex(cuttlefish::Vertex_Class::single_in_single_out, complement(next_nucl), complement(prev_nucl)));
         else    // The k-mer has been visited earlier and has some state; modify it accordingly.
         {
-            Vertex vertex = vertex_encoding.decode();
+            Vertex vertex = state.decode();
 
             if(vertex.vertex_class == cuttlefish::Vertex_Class::single_in_single_out)
             {
@@ -467,7 +467,7 @@ bool CdBG::process_internal_kmer(const cuttlefish::kmer_t& kmer_hat, const cuttl
                 else    // vertex.exit != complement(prev_nucl)
                     vertex.vertex_class = cuttlefish::Vertex_Class::single_in_multi_out;
 
-                vertex_encoding = Vertex_Encoding(vertex);
+                state = State(vertex);
             }
             else if(vertex.vertex_class == cuttlefish::Vertex_Class::multi_in_single_out)
             {
@@ -475,7 +475,7 @@ bool CdBG::process_internal_kmer(const cuttlefish::kmer_t& kmer_hat, const cuttl
                 {
                     vertex.vertex_class = cuttlefish::Vertex_Class::multi_in_multi_out;
 
-                    vertex_encoding = Vertex_Encoding(vertex);
+                    state = State(vertex);
                 }
             }
             else    // vertex.vertex_class == cuttlefish::Vertex_Class::single_in_multi_out
@@ -484,16 +484,16 @@ bool CdBG::process_internal_kmer(const cuttlefish::kmer_t& kmer_hat, const cuttl
                 {
                     vertex.vertex_class = cuttlefish::Vertex_Class::multi_in_multi_out;
 
-                    vertex_encoding = Vertex_Encoding(vertex);
+                    state = State(vertex);
                 }
             }
         }
     }
 
 
-    // Ideally, we can skip calling the `update` method when `vertex_encoding` has not changed here,
-    // i.e. `vertex_encoding` remains equal to the value with which it had been initialized. But in a
-    // multi-threaded environment, the actual location of `vertex_encoding` in the hash table could
+    // Ideally, we can skip calling the `update` method when `state` has not changed here,
+    // i.e. `state` remains equal to the value with which it had been initialized. But in a
+    // multi-threaded environment, the actual location of `state` in the hash table could
     // have been changed in between the initialization of the variable at the beginning and this exit
     // point of the method. For such cases, the `update` would fail, signalling the caller of the event.
     // TODO: We may also get away without updating the same value again, as the edge-ordering should not
@@ -506,15 +506,15 @@ bool CdBG::process_isolated_kmer(const cuttlefish::kmer_t& kmer_hat)
 {
     // Fetch the hash table entry for `kmer_hat`.
     Kmer_Hash_Entry_API hash_table_entry = Vertices[kmer_hat];
-    Vertex_Encoding& vertex_encoding = hash_table_entry.get_vertex_encoding();
+    State& state = hash_table_entry.get_state();
 
 
     // The k-mer is already classified as a complex node.
-    if(vertex_encoding.is_visited() && vertex_encoding.vertex_class() == cuttlefish::Vertex_Class::multi_in_multi_out)
+    if(state.is_visited() && state.vertex_class() == cuttlefish::Vertex_Class::multi_in_multi_out)
         return true;    // Early return is safe from here as this vertex is a dead-end for state transitions.
     
     // Classify the isolated k-mer as a complex node.
-    vertex_encoding = Vertex_Encoding(Vertex(cuttlefish::Vertex_Class::multi_in_multi_out));
+    state = State(Vertex(cuttlefish::Vertex_Class::multi_in_multi_out));
     return Vertices.update(hash_table_entry);
 }
 

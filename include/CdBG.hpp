@@ -128,7 +128,7 @@ private:
     // to the stream `output`. If `in_forward` is true, then the string spelled
     // by the path is written; otherwise its reverse complement is written.
     // Note that, the output operation appends a newline at the end.
-    void write_path(const uint64_t thread_id, const char* seq, const uint32_t start_kmer_idx, const uint32_t end_kmer_idx, const bool in_forward);
+    void write_path(const uint64_t thread_id, const char* seq, const size_t start_kmer_idx, const size_t end_kmer_idx, const bool in_forward);
 
     // Writes the string to the output object `output`.
     static void write(cuttlefish::logger_t output, const std::string& str);

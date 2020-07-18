@@ -156,7 +156,7 @@ inline Kmer::Kmer(const CKmerAPI& kmer_api)
 {
     kmer = 0;
 
-    for(uint32_t idx = 0; idx < k; ++idx)
+    for(uint16_t idx = 0; idx < k; ++idx)
     {
         // uint8_t nucleotide = map_nucleotide(kmer_api.get_asci_symbol(idx));
         uint8_t nucleotide = kmer_api.get_num_symbol(idx);  // Works as long as our nucleotide-to-integer mapping is the same as KMC.

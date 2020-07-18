@@ -354,16 +354,16 @@ void CdBG::output_unitig(const uint64_t thread_id, const char* seq, const Annota
 }
 
 
-void CdBG::write_path(const uint64_t thread_id, const char* seq, const uint32_t start_kmer_idx, const uint32_t end_kmer_idx, const bool in_forward) 
+void CdBG::write_path(const uint64_t thread_id, const char* seq, const size_t start_kmer_idx, const size_t end_kmer_idx, const bool in_forward) 
 {
     auto& output = out_buffers_[thread_id];
     if(in_forward)
-        for(uint32_t idx = start_kmer_idx; idx <= end_kmer_idx + k - 1; ++idx)
+        for(size_t idx = start_kmer_idx; idx <= end_kmer_idx + k - 1; ++idx)
             output << seq[idx];
     else
     {
         // To avoid underflow of unsigned integers, the flanking indices are incremented by 1.
-        uint32_t idx = end_kmer_idx + k;
+        size_t idx = end_kmer_idx + k;
         while(idx > start_kmer_idx)
         {
             idx--;

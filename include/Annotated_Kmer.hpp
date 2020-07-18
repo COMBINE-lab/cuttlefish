@@ -12,9 +12,9 @@
 class Annotated_Kmer: public Directed_Kmer
 {
 public:
-    uint32_t idx;
-    cuttlefish::Vertex_Class vertex_class;
 
+    size_t idx;
+    cuttlefish::Vertex_Class vertex_class;
 
 
     Annotated_Kmer()
@@ -22,7 +22,8 @@ public:
 
 
     // Constructs an annotated k-mer with its complete information.
-    Annotated_Kmer(const cuttlefish::kmer_t& kmer, const uint32_t kmer_idx, const Kmer_Hash_Table& hash):
+    // Annotated_Kmer(const cuttlefish::kmer_t& kmer, const uint32_t kmer_idx, const Kmer_Hash_Table& hash):
+    Annotated_Kmer(const cuttlefish::kmer_t& kmer, const size_t kmer_idx, const Kmer_Hash_Table& hash):
         Directed_Kmer(kmer), idx(kmer_idx)
     {
         vertex_class = hash[canonical].vertex_class();

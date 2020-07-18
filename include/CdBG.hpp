@@ -23,8 +23,12 @@ private:
     const std::string ref_file;   // Name of the file containing the reference.
     const uint16_t k;   // The k parameter for the edge-centric de Bruijn graph to be compacted.
     Kmer_Hash_Table Vertices;   // The hash table for the vertices (canonical k-mers) of the de Bruijn graph.
-    std::vector<std::stringstream> out_buffers_;    // TODO: Comment.
-    std::vector<uint64_t> contig_counts_;   // TODO: Comment.
+    
+    // `output_buffer[t_id]` holds output lines yet to be written to the disk from thread number `t_id`.
+    std::vector<std::stringstream> output_buffer;
+
+    // `buffer_size[t_id]` holds the count of lines currently stored at the buffer of thread number `t_id`.
+    std::vector<uint64_t> buffer_size;
 
     // Classifies the vertices into different types (or, classes), using up-to
     // `thread_count` number of threads.

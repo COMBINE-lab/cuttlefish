@@ -46,9 +46,10 @@ void CdBG::output_maximal_unitigs(const std::string& output_file, const uint16_t
     // Set the log message pattern for the writer.
     output->set_pattern("%v");
 
-
-    out_buffers_.resize(thread_count);
-    contig_counts_.resize(thread_count);
+    
+    // Allocate output buffers for each thread.
+    output_buffer.resize(thread_count);
+    buffer_size.resize(thread_count);
 
     // Parse sequences one-by-one, and output each unique maximal unitig encountered through them.
     uint32_t seqCount = 0;
@@ -99,11 +100,11 @@ void CdBG::output_maximal_unitigs(const std::string& output_file, const uint16_t
 
 
         for (uint16_t task_id = 0; task_id < thread_count; ++task_id)
-            if (contig_counts_[task_id] > 0)
+            if (buffer_size[task_id] > 0)
             {
-                write(output, out_buffers_[task_id].str());
-                out_buffers_[task_id].str("");
-                contig_counts_[task_id] = 0;
+                write(output, output_buffer[task_id].str());
+                output_buffer[task_id].str("");
+                buffer_size[task_id] = 0;
             }
 
 
@@ -341,22 +342,23 @@ void CdBG::output_unitig(const uint64_t thread_id, const char* seq, const Annota
     if(Vertices.update(hash_table_entry))
     {
         write_path(thread_id, seq, start_kmer.idx, end_kmer.idx, start_kmer.kmer < end_kmer.rev_compl);
-        ++contig_counts_[thread_id];
+        ++buffer_size[thread_id];
     }
 
-    if (contig_counts_[thread_id] > 128)
+    // TODO: Fix a max memory scheme for buffers instead of a fixed line count.
+    if (buffer_size[thread_id] > 128)
     {
-        write(output, out_buffers_[thread_id].str());
+        write(output, output_buffer[thread_id].str());
         
-        out_buffers_[thread_id].str("");
-        contig_counts_[thread_id] = 0;
+        output_buffer[thread_id].str("");
+        buffer_size[thread_id] = 0;
     }
 }
 
 
 void CdBG::write_path(const uint64_t thread_id, const char* seq, const size_t start_kmer_idx, const size_t end_kmer_idx, const bool in_forward) 
 {
-    auto& output = out_buffers_[thread_id];
+    auto& output = output_buffer[thread_id];
     if(in_forward)
         for(size_t idx = start_kmer_idx; idx <= end_kmer_idx + k - 1; ++idx)
             output << seq[idx];

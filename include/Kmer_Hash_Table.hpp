@@ -15,8 +15,13 @@
 #include "SpinLock/SpinLock.hpp"
 
 
+class CdBG;
+
+
 class Kmer_Hash_Table
 {
+    friend class CdBG;
+
 private:
 
     // Lowest bits/elem is achieved with gamma = 1, higher values lead to larger mphf but faster construction/query.
@@ -39,6 +44,15 @@ private:
     // with `bbhash_file_name` being the file to use for BBHash build
     // using `thread_count` number of threads.
     void build_mph_function(const Kmer_Container& kmer_container, const std::string& bbhash_file_name, const uint16_t thread_count);
+
+    // Returns the id / number of the bucket in the hash table that is
+    // supposed to store value items for the key `kmer`.
+    uint64_t bucket_id(const cuttlefish::kmer_t& kmer) const;
+
+    // Returns an API to the entry (in the hash table) for a k-mer hashing
+    // to the bucket number `bucket_id` of the hash table. The API wraps
+    // the hash table position and the state value at that position.
+    Kmer_Hash_Entry_API operator[](const uint64_t bucket_id);
 
 public:
 
@@ -70,6 +84,23 @@ public:
 
 
 
+inline uint64_t Kmer_Hash_Table::bucket_id(const cuttlefish::kmer_t& kmer) const
+{
+    return mph->lookup(kmer);
+}
+
+
+inline Kmer_Hash_Entry_API Kmer_Hash_Table::operator[](const uint64_t bucket_id)
+{
+    uint64_t lidx = bucket_id / chunk_size; 
+    locks_[lidx].lock();
+    auto r = Kmer_Hash_Entry_API(hash_table[bucket_id]);
+    locks_[lidx].unlock();
+    return r;
+}
+
+
+// TODO: Reuse the `operator[uint64_t]` method in this one.
 inline Kmer_Hash_Entry_API Kmer_Hash_Table::operator[](const cuttlefish::kmer_t& kmer)
 {
     auto v = mph->lookup(kmer);

@@ -47,9 +47,13 @@ void CdBG::output_maximal_unitigs_gfa(const std::string& gfa_file_name, const ui
     output->set_pattern("%v");
 
     
-    // Allocate output buffers for each thread.
+    // Allocate the output buffers for each thread.
     output_buffer.resize(thread_count);
     buffer_size.resize(thread_count);
+
+    // Allocate entries for the first and the last unitig seen by each thread.
+    first_unitig.resize(thread_count);
+    last_unitig.resize(thread_count);
 
 
     // Write the GFA header.
@@ -67,6 +71,11 @@ void CdBG::output_maximal_unitigs_gfa(const std::string& gfa_file_name, const ui
         // Nothing to process for sequences with length shorter than `k`.
         if(seq_len < k)
             continue;
+
+        
+        // Reset the first and the last unitigs seen for each thread.
+        std::fill(first_unitig.begin(), first_unitig.end(), Oriented_Unitig());
+        std::fill(last_unitig.begin(), last_unitig.end(), Oriented_Unitig());
 
 
         // Single-threaded writing.
@@ -103,15 +112,7 @@ void CdBG::output_maximal_unitigs_gfa(const std::string& gfa_file_name, const ui
         }
 
 
-        for (uint16_t task_id = 0; task_id < thread_count; ++task_id)
-            if (buffer_size[task_id] > 0)
-            {
-                write(output, output_buffer[task_id].str());
-                output_buffer[task_id].str("");
-                buffer_size[task_id] = 0;
-            }
-
-
+        consolidate_gfa_writer_threads(thread_count, output);
     }
 
     
@@ -263,46 +264,53 @@ void CdBG::output_unitig_gfa(const uint64_t thread_id, const char* seq, const An
     // For a particular unitig, always query the same well-defined canonical flanking
     // k-mer, irrespective of which direction the unitig may be traversed at.
     const cuttlefish::kmer_t min_flanking_kmer = std::min(start_kmer.canonical, end_kmer.canonical);
-    uint64_t bucket_id = Vertices.bucket_id(min_flanking_kmer);
+    const uint64_t bucket_id = Vertices.bucket_id(min_flanking_kmer);
     Kmer_Hash_Entry_API hash_table_entry = Vertices[bucket_id];
     State& state = hash_table_entry.get_state();
 
-    if(state.is_outputted())
-        return;
+    // Name the GFA segment with the hash value of the first k-mer of the canonical form unitig.
+    const uint64_t unitig_id = bucket_id;
+    const cuttlefish::kmer_dir_t unitig_dir = (start_kmer.kmer < end_kmer.rev_compl ? cuttlefish::FWD : cuttlefish::BWD);
+    const Oriented_Unitig current_unitig(unitig_id, unitig_dir, start_kmer.idx, end_kmer.idx);
+
+
+    // Output a possible GFA segment.
+
+    if(!state.is_outputted())
+    {
+        state = state.outputted();
+
+        // If the hash table update is successful, only then this thread may output this unitig.
+        if(Vertices.update(hash_table_entry))
+            write_gfa_segment(thread_id, seq, unitig_id, start_kmer.idx, end_kmer.idx, unitig_dir, output);
+    }
+
+
+    // Output a possible GFA link.
+
+    if(!first_unitig[thread_id].is_valid())
+        first_unitig[thread_id] = current_unitig;
+
+    Oriented_Unitig& prev_unitig = last_unitig[thread_id];
+    if(prev_unitig.is_valid())
+        write_gfa_link(thread_id, prev_unitig, current_unitig, output);
     
-
-    state = state.outputted();
-
-    // If the hash table update is successful, only then this thread may output this unitig.
-    if(Vertices.update(hash_table_entry))
-    {
-        // Name the GFA segment with the hash value of the first k-mer of the canonical form unitig.
-        write_gfa_segment(thread_id, seq, bucket_id, start_kmer.idx, end_kmer.idx, start_kmer.kmer < end_kmer.rev_compl);
-        ++buffer_size[thread_id];
-    }
-
-    // TODO: Fix a max memory scheme for buffers instead of a fixed line count.
-    if (buffer_size[thread_id] > 128)
-    {
-        write(output, output_buffer[thread_id].str());
-        
-        output_buffer[thread_id].str("");
-        buffer_size[thread_id] = 0;
-    }
+    prev_unitig = current_unitig;
 }
 
 
-void CdBG::write_gfa_segment(const uint64_t thread_id, const char* seq, const uint64_t segment_name, const size_t start_kmer_idx, const size_t end_kmer_idx, const bool in_forward) 
+void CdBG::write_gfa_segment(const uint64_t thread_id, const char* seq, const uint64_t segment_name, const size_t start_kmer_idx, const size_t end_kmer_idx, const cuttlefish::kmer_dir_t dir, cuttlefish::logger_t output) 
 {
-    auto& output = output_buffer[thread_id];
+    std::stringstream& buffer = output_buffer[thread_id];
 
     // Write the 'RecordType' and 'Name' fields for the segment line.
-    output << "S\t" << segment_name;
+    buffer << "S\t" << segment_name;
     
-    output << "\t";
-    if(in_forward)
+    // Write the segment field.
+    buffer << "\t";
+    if(dir == cuttlefish::FWD)
         for(size_t idx = start_kmer_idx; idx <= end_kmer_idx + k - 1; ++idx)
-            output << seq[idx];
+            buffer << seq[idx];
     else
     {
         // To avoid underflow of unsigned integers, the flanking indices are incremented by 1.
@@ -310,16 +318,78 @@ void CdBG::write_gfa_segment(const uint64_t thread_id, const char* seq, const ui
         while(idx > start_kmer_idx)
         {
             idx--;
-            output << complement(seq[idx]);
+            buffer << complement(seq[idx]);
         }
     }
 
 
     // Write some optional fields that are trivially inferrable here.
-    output << "\tLN:i:" << (end_kmer_idx - start_kmer_idx + k); // The segment length.
-    output << "\tKC:i:" << (end_kmer_idx - start_kmer_idx + 1); // The k-mer count.
+    buffer << "\tLN:i:" << (end_kmer_idx - start_kmer_idx + k); // The segment length.
+    buffer << "\tKC:i:" << (end_kmer_idx - start_kmer_idx + 1); // The k-mer count.
 
 
     // End the segment line.
-    output << "\n";
+    buffer << "\n";
+
+
+    // Mark buffer size increment.
+    fill_buffer(thread_id, 1, output);
+}
+
+
+void CdBG::write_gfa_link(const uint64_t thread_id, const Oriented_Unitig& left_unitig, const Oriented_Unitig& right_unitig, cuttlefish::logger_t output)
+{
+    std::stringstream& buffer = output_buffer[thread_id];
+
+    // Write the 'RecordType' field for the link line.
+    buffer << "L";
+
+    // Write the 'From' fields.
+    buffer << "\t" << left_unitig.unitig_id << "\t" << (left_unitig.dir == cuttlefish::FWD ? "+" : "-");
+
+    // Write the 'To' fields.
+    buffer << "\t" << right_unitig.unitig_id << "\t" << (right_unitig.dir == cuttlefish::FWD ? "+" : "-");
+
+    // Write the 'Overlap' field.
+    const uint16_t overlap = (right_unitig.start_kmer_idx == left_unitig.end_kmer_idx + 1 ? k - 1 : 0);
+    buffer << "\t" << overlap << "M";
+
+
+    // End the link line.
+    buffer << "\n";
+
+
+    // Mark buffer size increment.
+    fill_buffer(thread_id, 1, output);
+}
+
+
+void CdBG::consolidate_gfa_writer_threads(const uint16_t thread_count, cuttlefish::logger_t output)
+{
+    // Write the links that connect unitigs contained in their entirety in different thread-ranges.
+
+    Oriented_Unitig left_unitig;
+    Oriented_Unitig right_unitig;
+
+    for(uint16_t t_id = 0; t_id < thread_count; ++t_id)
+        if(!left_unitig.is_valid())
+            left_unitig = last_unitig[t_id];
+        else
+            if(first_unitig[t_id].is_valid())
+            {
+                write_gfa_link(t_id, left_unitig, first_unitig[t_id], output);
+
+                left_unitig = last_unitig[t_id];
+            }
+
+
+    // Flush the output buffers.
+
+    for (uint16_t task_id = 0; task_id < thread_count; ++task_id)
+        if (buffer_size[task_id] > 0)
+        {
+            write(output, output_buffer[task_id].str());
+            output_buffer[task_id].str("");
+            buffer_size[task_id] = 0;
+        }
 }

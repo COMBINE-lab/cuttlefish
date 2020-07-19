@@ -82,7 +82,7 @@ void CdBG::output_maximal_unitigs(const std::string& output_file, const uint16_t
             for(uint16_t task_id = 0; task_id < thread_count; ++task_id)
             {
                 right_end = (task_id == thread_count - 1 ? seq_len - k : left_end + task_size - 1);
-                task.emplace_back(&CdBG::output_off_substring, this, static_cast<uint64_t>(task_id), seq, seq_len, left_end, right_end, std::ref(output));
+                task.emplace_back(&CdBG::output_off_substring, this, static_cast<uint64_t>(task_id), seq, seq_len, left_end, right_end, output);
                 left_end += task_size;
             }
 
@@ -106,8 +106,6 @@ void CdBG::output_maximal_unitigs(const std::string& output_file, const uint16_t
                 output_buffer[task_id].str("");
                 buffer_size[task_id] = 0;
             }
-
-
     }
 
     
@@ -374,6 +372,21 @@ void CdBG::write_path(const uint64_t thread_id, const char* seq, const size_t st
     }
 
     output << "\n";
+}
+
+
+void CdBG::fill_buffer(const uint64_t thread_id, const uint64_t fill_amount, cuttlefish::logger_t output)
+{
+    buffer_size[thread_id] += fill_amount;
+
+    // TODO: Fix a max memory scheme for buffers instead of a fixed line count.
+    if(buffer_size[thread_id] > 128)
+    {
+        write(output, output_buffer[thread_id].str());
+        
+        output_buffer[thread_id].str("");
+        buffer_size[thread_id] = 0;
+    }
 }
 
 

@@ -10,6 +10,7 @@
 #include "Kmer.hpp"
 #include "Kmer_Hash_Table.hpp"
 #include "Annotated_Kmer.hpp"
+#include "Oriented_Unitig.hpp"
 #include "spdlog/spdlog.h"
 #include "spdlog/async.h"
 #include "spdlog/sinks/basic_file_sink.h"
@@ -32,6 +33,15 @@ private:
 
     // The GFA header line.
     const static std::string GFA_HEADER;
+
+
+    // After all the threads finish the parallel GFA outputting, `first_unitig[t_id]` contains
+    // the first unitig seen in its entirety by the thread number `t_id`.
+    std::vector<Oriented_Unitig> first_unitig;
+
+    // After all the threads finish the parallel GFA outputting, `last_unitig[t_id]` contains
+    // the last unitig seen in its entirety by the thread number `t_id`.
+    std::vector<Oriented_Unitig> last_unitig;
 
 
     // Classifies the vertices into different types (or, classes), using up-to
@@ -138,6 +148,13 @@ private:
     // Note that, the output operation appends a newline at the end.
     void write_path(const uint64_t thread_id, const char* seq, const size_t start_kmer_idx, const size_t end_kmer_idx, const bool in_forward);
 
+    // Increases the buffer size for this thread, i.e. `buffer_size[thread_id]`
+    // by `fill_amount`. If the resulting buffer size overflows a predefined constant
+    // size (TODO: refactor the fixed 128 to a const field), then the buffer content
+    // at `output_buffer[thread_id]` are dumped into the stream `output` and the buffer
+    // is emptied.
+    void fill_buffer(const uint64_t thread_id, const uint64_t fill_amount, cuttlefish::logger_t output);
+
     // Writes the string `str` to the output object `output`.
     static void write(cuttlefish::logger_t output, const std::string& str);
 
@@ -164,13 +181,22 @@ private:
     // already), to the stream `output`.
     void output_unitig_gfa(const uint64_t thread_id, const char* ref, const Annotated_Kmer& start_kmer, const Annotated_Kmer& end_kmer, cuttlefish::logger_t output);
 
-    // Writes the segment of the sequence `seq` having its starting and ending k-mers
+    // Writes the GFA segment of the sequence `seq` having its starting and ending k-mers
     // located at the indices `start_kmer_idx` and `end_kmer_idx` respectively, to the
     // stream `output`, in the GFA format. The GFA segment is named as `segment_name`.
-    // If `in_forward` is true, then the string spelled by the path is written; otherwise
-    // its reverse complement is written.
+    // If `dir` is `cuttlefish::FWD`, then the string spelled by the path is written;
+    // otherwise its reverse complement is written.
     // Note that, the output operation appends a newline at the end.
-    void write_gfa_segment(const uint64_t thread_id, const char* seq, const uint64_t segment_name, const size_t start_kmer_idx, const size_t end_kmer_idx, const bool in_forward);
+    void write_gfa_segment(const uint64_t thread_id, const char* seq, const uint64_t segment_name, const size_t start_kmer_idx, const size_t end_kmer_idx, const cuttlefish::kmer_dir_t dir, cuttlefish::logger_t output);
+
+    // Writes a GFA link between the oriented unitigs `left_unitig` and `right_unitig`,
+    // to the stream `output`.
+    void write_gfa_link(const uint64_t thread_id, const Oriented_Unitig& left_unitig, const Oriented_Unitig& right_unitig, cuttlefish::logger_t output);
+
+    // Consolidates the results from across different threads once they've finished.
+    // Specifically, writes links going across thread-ranges, and empties the nonempty
+    // output buffers to the stream `output`.
+    void consolidate_gfa_writer_threads(const uint16_t thread_count, cuttlefish::logger_t output);
 
     // Prints the distribution of the vertex classes for the canonical k-mers present
     // at the database named `kmc_file_name`.
@@ -216,6 +242,7 @@ inline cuttlefish::nucleotide_t CdBG::complement(const cuttlefish::nucleotide_t 
         std::exit(EXIT_FAILURE);
     }
 }
+
 
 
 #endif

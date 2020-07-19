@@ -30,6 +30,10 @@ private:
     // `buffer_size[t_id]` holds the count of lines currently stored at the buffer of thread number `t_id`.
     std::vector<uint64_t> buffer_size;
 
+    // The GFA header line.
+    const static std::string GFA_HEADER;
+
+
     // Classifies the vertices into different types (or, classes), using up-to
     // `thread_count` number of threads.
     void classify_vertices(const uint16_t thread_count);
@@ -134,8 +138,39 @@ private:
     // Note that, the output operation appends a newline at the end.
     void write_path(const uint64_t thread_id, const char* seq, const size_t start_kmer_idx, const size_t end_kmer_idx, const bool in_forward);
 
-    // Writes the string to the output object `output`.
+    // Writes the string `str` to the output object `output`.
     static void write(cuttlefish::logger_t output, const std::string& str);
+
+    // Outputs the distinct maximal unitigs (in canonical form) of the compacted de
+    // Bruijn graph in GFA format, to the file named `gfa_file_name`, using up-to
+    // `thread_count` number of threads.
+    void output_maximal_unitigs_gfa(const std::string& gfa_file_name, const uint16_t thread_count);
+
+    // Writes the maximal unitigs (in the GFA format) from the sequence `seq` (of
+    // length `seq_len`) that have their starting indices between (inclusive)
+    // `left_end` and `right_end`, to the stream `output`.
+    void output_gfa_off_substring(const uint64_t thread_id, const char* seq, const size_t seq_len, const size_t left_end, const size_t right_end, cuttlefish::logger_t output);
+
+    // Outputs the distinct maximal unitigs (in the GFA format) of the sequence `seq`
+    // (of length `seq_len`) to the stream `output`, that are present at its contiguous
+    // subsequence starting from the index `start_idx`, going up-to either the ending
+    // of the maximal unitig containing the index `right_end`, or up-to the first
+    // encountered placeholder nucleotide 'N'. Also, returns the non-inclusive point of
+    // termination of the processed subsequence, i.e. the index following the end of it.
+    size_t output_maximal_unitigs_gfa(const uint64_t thread_id, const char* seq, const size_t seq_len, const size_t right_end, const size_t start_idx, cuttlefish::logger_t output);
+
+    // Outputs the unitig (in GFA format) at the k-mer range between the annotated k-mers
+    // `start_kmer` and `end_kmer` of the sequence `seq` (if the unitig had not been output
+    // already), to the stream `output`.
+    void output_unitig_gfa(const uint64_t thread_id, const char* ref, const Annotated_Kmer& start_kmer, const Annotated_Kmer& end_kmer, cuttlefish::logger_t output);
+
+    // Writes the segment of the sequence `seq` having its starting and ending k-mers
+    // located at the indices `start_kmer_idx` and `end_kmer_idx` respectively, to the
+    // stream `output`, in the GFA format. The GFA segment is named as `segment_name`.
+    // If `in_forward` is true, then the string spelled by the path is written; otherwise
+    // its reverse complement is written.
+    // Note that, the output operation appends a newline at the end.
+    void write_gfa_segment(const uint64_t thread_id, const char* seq, const uint64_t segment_name, const size_t start_kmer_idx, const size_t end_kmer_idx, const bool in_forward);
 
     // Prints the distribution of the vertex classes for the canonical k-mers present
     // at the database named `kmc_file_name`.

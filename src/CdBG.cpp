@@ -2,6 +2,10 @@
 #include "CdBG.hpp"
 
 
+// Initialize the static field for the GFA header line.
+const std::string CdBG::GFA_HEADER = "H\tVN:Z:1.0";
+
+
 CdBG::CdBG(const std::string& ref_file, const uint16_t k):
     ref_file(ref_file), k(k)
 {
@@ -18,7 +22,8 @@ void CdBG::construct(const std::string& kmc_file_name, const std::string& bbhash
     classify_vertices(thread_count);
 
     std::cout << "Outputting the maximal unitigs.\n";
-    output_maximal_unitigs(output_file_name, thread_count);
+    // output_maximal_unitigs(output_file_name, thread_count);
+    output_maximal_unitigs_gfa(output_file_name, thread_count);
 
     Vertices.clear();
 }

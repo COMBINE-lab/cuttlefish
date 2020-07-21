@@ -2,8 +2,10 @@
 #include "CdBG.hpp"
 
 
-// Initialize the static field for the GFA header line.
+// Initialize the static fields required for the GFA output.
 const std::string CdBG::GFA_HEADER = "H\tVN:Z:1.0";
+const std::string CdBG::PATH_OUTPUT_PREFIX = "tmp-path-output-";
+const std::string CdBG::OVERLAP_OUTPUT_PREFIX = "tmp-overlap-output-";
 
 
 CdBG::CdBG(const std::string& ref_file, const uint16_t k):

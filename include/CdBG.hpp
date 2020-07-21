@@ -25,23 +25,34 @@ private:
     const uint16_t k;   // The k parameter for the edge-centric de Bruijn graph to be compacted.
     Kmer_Hash_Table Vertices;   // The hash table for the vertices (canonical k-mers) of the de Bruijn graph.
     
+    // A running counter kept to track the number of sequence being processed.
+    uint32_t seq_count = 0;
+
     // `output_buffer[t_id]` holds output lines yet to be written to the disk from thread number `t_id`.
     std::vector<std::stringstream> output_buffer;
 
     // `buffer_size[t_id]` holds the count of lines currently stored at the buffer of thread number `t_id`.
     std::vector<uint64_t> buffer_size;
 
+    // `path_output[t_id]` and `overlap_output[t_id]` are the output streams for the paths
+    // and the overlaps between the links in the paths respectively, produced from the
+    // underlying sequence, by the thread number `t_id`.
+    std::vector<std::ofstream> path_output, overlap_output;
+
+    // After all the threads finish the parallel GFA outputting, `first_unitig[t_id]`,
+    // `second_unitig[t_id]`, and `last_unitig[t_id]` contain the first unitig, the
+    // second unitig, and the last unitig respectively, seen in their entirety by the
+    // thread number `t_id`.
+    std::vector<Oriented_Unitig> first_unitig, second_unitig, last_unitig;
+
     // The GFA header line.
     const static std::string GFA_HEADER;
-
-
-    // After all the threads finish the parallel GFA outputting, `first_unitig[t_id]` contains
-    // the first unitig seen in its entirety by the thread number `t_id`.
-    std::vector<Oriented_Unitig> first_unitig;
-
-    // After all the threads finish the parallel GFA outputting, `last_unitig[t_id]` contains
-    // the last unitig seen in its entirety by the thread number `t_id`.
-    std::vector<Oriented_Unitig> last_unitig;
+    
+    // The prefixes for the names of the temprorary files used to store the thread-specific
+    // paths and overlaps.
+    // TODO: Apply some one-time randomness into the file names to avoid possible name conflicts in the file system.
+    const static std::string PATH_OUTPUT_PREFIX;
+    const static std::string OVERLAP_OUTPUT_PREFIX;
 
 
     // Classifies the vertices into different types (or, classes), using up-to
@@ -126,14 +137,12 @@ private:
     // the direction `dir` starts a maximal unitig, where `prev_kmer_state` and
     // `prev_kmer_dir` are the state and the direction of the previous k-mer in
     // the sequence, respectively.
-    // bool is_unipath_start(const cuttlefish::state_t state, const cuttlefish::kmer_dir_t dir, const cuttlefish::state_t prev_kmer_state, const cuttlefish::kmer_dir_t prev_kmer_dir) const;
     bool is_unipath_start(const cuttlefish::Vertex_Class vertex_class, const cuttlefish::kmer_dir_t dir, const cuttlefish::Vertex_Class prev_kmer_class, const cuttlefish::kmer_dir_t prev_kmer_dir) const;
 
     // Returns a Boolean denoting whether a k-mer with state `state` traversed in
     // the direction `dir` ends a maximal unitig, where `next_kmer_state` and
     // `next_kmer_dir` are the state and the direction of the next k-mer in the
     // sequence, respectively.
-    // bool is_unipath_end(const cuttlefish::state_t state, const cuttlefish::kmer_dir_t dir, const cuttlefish::state_t next_kmer_state, const cuttlefish::kmer_dir_t next_kmer_dir) const;
     bool is_unipath_end(const cuttlefish::Vertex_Class vertex_class, const cuttlefish::kmer_dir_t dir, const cuttlefish::Vertex_Class next_kmer_class, const cuttlefish::kmer_dir_t next_kmer_dir) const;
 
     // Outputs the unitig at the k-mer range between the annotated k-mers
@@ -157,11 +166,18 @@ private:
 
     // Writes the string `str` to the output object `output`.
     static void write(cuttlefish::logger_t output, const std::string& str);
+    
+    // Flushes the output buffers (one for each thread) to the stream `output`.
+    void flush_buffers(const uint16_t thread_count, cuttlefish::logger_t output);
 
     // Outputs the distinct maximal unitigs (in canonical form) of the compacted de
     // Bruijn graph in GFA format, to the file named `gfa_file_name`, using up-to
     // `thread_count` number of threads.
     void output_maximal_unitigs_gfa(const std::string& gfa_file_name, const uint16_t thread_count);
+
+    // Resets the path and overlap streams for each thread. Needs to invoked before
+    // processing each new sequence.
+    void reset_path_streams(const uint16_t thread_count);
 
     // Writes the maximal unitigs (in the GFA format) from the sequence `seq` (of
     // length `seq_len`) that have their starting indices between (inclusive)
@@ -193,10 +209,27 @@ private:
     // to the stream `output`.
     void write_gfa_link(const uint64_t thread_id, const Oriented_Unitig& left_unitig, const Oriented_Unitig& right_unitig, cuttlefish::logger_t output);
 
-    // Consolidates the results from across different threads once they've finished.
-    // Specifically, writes links going across thread-ranges, and empties the nonempty
-    // output buffers to the stream `output`.
-    void consolidate_gfa_writer_threads(const uint16_t thread_count, cuttlefish::logger_t output);
+    // Appends a link between the oriented unitigs `left_unitig` and `right_unitig` to
+    // the path and the overlap output streams of the thread number `thread_id`.
+    void append_link_to_path(const uint64_t thread_id, const Oriented_Unitig& left_unitig, const Oriented_Unitig& right_unitig);
+
+    // Writes the links present between unitigs processed by different threads.
+    void write_inter_thread_links(const uint16_t thread_count, cuttlefish::logger_t output);
+
+    // Searches for the very first link (i.e. leftmost) present at the underlying sequence
+    // being processed, by scanning through the `first_unitig` and `second_unitig` entries
+    // for the `thread_count` number of threads. Puts the left and the right unitigs producing
+    // that link into `left_unitig` and `right_unitig` respectively.
+    void search_first_link(const uint16_t thread_count, Oriented_Unitig& left_unitig, Oriented_Unitig& right_unitig) const;
+
+    // Writes a GFA path that completely tiles the underlying sequence being processed, at
+    // the end of the output file named `gfa_file_name`. It basicaly stiches together the
+    // path and overlap outputs produced by the `thread_count` number of threads.
+    void write_gfa_path(const uint16_t thread_count, const std::string& gfa_file_name);
+
+    // Removes the temporary files used for the thread-specific path and overlap output
+    // streams, from the disk.
+    void remove_temp_files(const uint16_t thread_count) const;
 
     // Prints the distribution of the vertex classes for the canonical k-mers present
     // at the database named `kmc_file_name`.

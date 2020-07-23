@@ -97,16 +97,11 @@ void CdBG::output_maximal_unitigs(const std::string& output_file, const uint16_t
             }
 
         }
-
-
-        for (uint16_t task_id = 0; task_id < thread_count; ++task_id)
-            if (buffer_size[task_id] > 0)
-            {
-                write(output, output_buffer[task_id].str());
-                output_buffer[task_id].str("");
-                buffer_size[task_id] = 0;
-            }
     }
+
+
+    // Flush the buffers.
+    flush_buffers(thread_count, output);
 
     
     // Close the loggers?
@@ -357,6 +352,8 @@ void CdBG::output_unitig(const uint64_t thread_id, const char* seq, const Annota
 void CdBG::write_path(const uint64_t thread_id, const char* seq, const size_t start_kmer_idx, const size_t end_kmer_idx, const bool in_forward) 
 {
     auto& output = output_buffer[thread_id];
+
+    // TODO: Use the offset-based logic here (used in GFA writer) to reduce code and avoid underflow.
     if(in_forward)
         for(size_t idx = start_kmer_idx; idx <= end_kmer_idx + k - 1; ++idx)
             output << seq[idx];
@@ -393,4 +390,16 @@ void CdBG::fill_buffer(const uint64_t thread_id, const uint64_t fill_amount, cut
 void CdBG::write(cuttlefish::logger_t output, const std::string& str)
 {
     output->info("{}", str);
+}
+
+
+void CdBG::flush_buffers(const uint16_t thread_count, cuttlefish::logger_t output)
+{
+    for (uint16_t t_id = 0; t_id < thread_count; ++t_id)
+        if(buffer_size[t_id] > 0)
+        {
+            write(output, output_buffer[t_id].str());
+            output_buffer[t_id].str("");
+            buffer_size[t_id] = 0;
+        }
 }

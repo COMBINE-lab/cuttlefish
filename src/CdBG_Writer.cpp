@@ -46,9 +46,10 @@ void CdBG::output_maximal_unitigs(const std::string& output_file, const uint16_t
     // Set the log message pattern for the writer.
     output->set_pattern("%v");
 
-
-    out_buffers_.resize(thread_count);
-    contig_counts_.resize(thread_count);
+    
+    // Allocate output buffers for each thread.
+    output_buffer.resize(thread_count);
+    buffer_size.resize(thread_count);
 
     // Parse sequences one-by-one, and output each unique maximal unitig encountered through them.
     uint32_t seqCount = 0;
@@ -81,7 +82,7 @@ void CdBG::output_maximal_unitigs(const std::string& output_file, const uint16_t
             for(uint16_t task_id = 0; task_id < thread_count; ++task_id)
             {
                 right_end = (task_id == thread_count - 1 ? seq_len - k : left_end + task_size - 1);
-                task.emplace_back(&CdBG::output_off_substring, this, static_cast<uint64_t>(task_id), seq, seq_len, left_end, right_end, std::ref(output));
+                task.emplace_back(&CdBG::output_off_substring, this, static_cast<uint64_t>(task_id), seq, seq_len, left_end, right_end, output);
                 left_end += task_size;
             }
 
@@ -96,18 +97,11 @@ void CdBG::output_maximal_unitigs(const std::string& output_file, const uint16_t
             }
 
         }
-
-
-        for (uint16_t task_id = 0; task_id < thread_count; ++task_id)
-            if (contig_counts_[task_id] > 0)
-            {
-                write(output, out_buffers_[task_id].str());
-                out_buffers_[task_id].str("");
-                contig_counts_[task_id] = 0;
-            }
-
-
     }
+
+
+    // Flush the buffers.
+    flush_buffers(thread_count, output);
 
     
     // Close the loggers?
@@ -341,22 +335,25 @@ void CdBG::output_unitig(const uint64_t thread_id, const char* seq, const Annota
     if(Vertices.update(hash_table_entry))
     {
         write_path(thread_id, seq, start_kmer.idx, end_kmer.idx, start_kmer.kmer < end_kmer.rev_compl);
-        ++contig_counts_[thread_id];
+        ++buffer_size[thread_id];
     }
 
-    if (contig_counts_[thread_id] > 128)
+    // TODO: Fix a max memory scheme for buffers instead of a fixed line count.
+    if (buffer_size[thread_id] > 128)
     {
-        write(output, out_buffers_[thread_id].str());
+        write(output, output_buffer[thread_id].str());
         
-        out_buffers_[thread_id].str("");
-        contig_counts_[thread_id] = 0;
+        output_buffer[thread_id].str("");
+        buffer_size[thread_id] = 0;
     }
 }
 
 
 void CdBG::write_path(const uint64_t thread_id, const char* seq, const size_t start_kmer_idx, const size_t end_kmer_idx, const bool in_forward) 
 {
-    auto& output = out_buffers_[thread_id];
+    auto& output = output_buffer[thread_id];
+
+    // TODO: Use the offset-based logic here (used in GFA writer) to reduce code and avoid underflow.
     if(in_forward)
         for(size_t idx = start_kmer_idx; idx <= end_kmer_idx + k - 1; ++idx)
             output << seq[idx];
@@ -375,7 +372,34 @@ void CdBG::write_path(const uint64_t thread_id, const char* seq, const size_t st
 }
 
 
+void CdBG::fill_buffer(const uint64_t thread_id, const uint64_t fill_amount, cuttlefish::logger_t output)
+{
+    buffer_size[thread_id] += fill_amount;
+
+    // TODO: Fix a max memory scheme for buffers instead of a fixed line count.
+    if(buffer_size[thread_id] > 128)
+    {
+        write(output, output_buffer[thread_id].str());
+        
+        output_buffer[thread_id].str("");
+        buffer_size[thread_id] = 0;
+    }
+}
+
+
 void CdBG::write(cuttlefish::logger_t output, const std::string& str)
 {
     output->info("{}", str);
+}
+
+
+void CdBG::flush_buffers(const uint16_t thread_count, cuttlefish::logger_t output)
+{
+    for (uint16_t t_id = 0; t_id < thread_count; ++t_id)
+        if(buffer_size[t_id] > 0)
+        {
+            write(output, output_buffer[t_id].str());
+            output_buffer[t_id].str("");
+            buffer_size[t_id] = 0;
+        }
 }

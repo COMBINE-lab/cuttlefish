@@ -32,7 +32,7 @@ void CdBG::construct(const std::string& kmc_file_name, const std::string& bbhash
 }
 
 
-size_t CdBG::search_valid_kmer(const char* seq, const size_t left_end, const size_t right_end)
+size_t CdBG::search_valid_kmer(const char* const seq, const size_t left_end, const size_t right_end)
 {
     size_t valid_start_idx;
     uint16_t nucl_count;

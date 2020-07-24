@@ -119,7 +119,7 @@ void CdBG::output_maximal_unitigs(const std::string& output_file, const uint16_t
 }
 
 
-void CdBG::output_off_substring(const uint64_t thread_id, const char* seq, const size_t seq_len, const size_t left_end, const size_t right_end, cuttlefish::logger_t output)
+void CdBG::output_off_substring(const uint64_t thread_id, const char* const seq, const size_t seq_len, const size_t left_end, const size_t right_end, cuttlefish::logger_t output)
 {
     size_t kmer_idx = left_end;
     while(kmer_idx <= right_end)
@@ -136,7 +136,7 @@ void CdBG::output_off_substring(const uint64_t thread_id, const char* seq, const
 }
 
 
-size_t CdBG::output_maximal_unitigs(const uint64_t thread_id, const char* seq, const size_t seq_len, const size_t right_end, const size_t start_idx, cuttlefish::logger_t output)
+size_t CdBG::output_maximal_unitigs(const uint64_t thread_id, const char* const seq, const size_t seq_len, const size_t right_end, const size_t start_idx, cuttlefish::logger_t output)
 {
     size_t kmer_idx = start_idx;
 
@@ -314,7 +314,7 @@ bool CdBG::is_unipath_end(const cuttlefish::Vertex_Class vertex_class, const cut
 }
 
 
-void CdBG::output_unitig(const uint64_t thread_id, const char* seq, const Annotated_Kmer& start_kmer, const Annotated_Kmer& end_kmer, cuttlefish::logger_t output)
+void CdBG::output_unitig(const uint64_t thread_id, const char* const seq, const Annotated_Kmer& start_kmer, const Annotated_Kmer& end_kmer, cuttlefish::logger_t output)
 {
     // This is to avoid race conditions that may arise while multi-threading.
     // If two threads try to output the same unitig at the same time but
@@ -349,7 +349,7 @@ void CdBG::output_unitig(const uint64_t thread_id, const char* seq, const Annota
 }
 
 
-void CdBG::write_path(const uint64_t thread_id, const char* seq, const size_t start_kmer_idx, const size_t end_kmer_idx, const bool in_forward) 
+void CdBG::write_path(const uint64_t thread_id, const char* const seq, const size_t start_kmer_idx, const size_t end_kmer_idx, const bool in_forward) 
 {
     auto& output = output_buffer[thread_id];
 

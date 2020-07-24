@@ -173,7 +173,7 @@ void CdBG::reset_path_streams(const uint8_t gfa_v, const uint16_t thread_count)
 }
 
 
-void CdBG::output_gfa_off_substring(const uint64_t thread_id, const char* seq, const size_t seq_len, const size_t left_end, const size_t right_end, const uint8_t gfa_v, cuttlefish::logger_t output)
+void CdBG::output_gfa_off_substring(const uint64_t thread_id, const char* const seq, const size_t seq_len, const size_t left_end, const size_t right_end, const uint8_t gfa_v, cuttlefish::logger_t output)
 {
     size_t kmer_idx = left_end;
     while(kmer_idx <= right_end)
@@ -190,7 +190,7 @@ void CdBG::output_gfa_off_substring(const uint64_t thread_id, const char* seq, c
 }
 
 
-size_t CdBG::output_maximal_unitigs_gfa(const uint64_t thread_id, const char* seq, const size_t seq_len, const size_t right_end, const size_t start_idx, const uint8_t gfa_v, cuttlefish::logger_t output)
+size_t CdBG::output_maximal_unitigs_gfa(const uint64_t thread_id, const char* const seq, const size_t seq_len, const size_t right_end, const size_t start_idx, const uint8_t gfa_v, cuttlefish::logger_t output)
 {
     size_t kmer_idx = start_idx;
 
@@ -298,7 +298,7 @@ size_t CdBG::output_maximal_unitigs_gfa(const uint64_t thread_id, const char* se
 }
 
 
-void CdBG::output_unitig_gfa(const uint64_t thread_id, const char* seq, const Annotated_Kmer& start_kmer, const Annotated_Kmer& end_kmer, const uint8_t gfa_v, cuttlefish::logger_t output)
+void CdBG::output_unitig_gfa(const uint64_t thread_id, const char* const seq, const Annotated_Kmer& start_kmer, const Annotated_Kmer& end_kmer, const uint8_t gfa_v, cuttlefish::logger_t output)
 {
     // This is to avoid race conditions that may arise while multi-threading.
     // If two threads try to output the same unitig at the same time but
@@ -361,7 +361,7 @@ void CdBG::write_gfa_header(const uint8_t gfa_v, std::ofstream& output) const
 }
 
 
-void CdBG::write_gfa_segment(const uint64_t thread_id, const char* seq, const uint64_t segment_name, const size_t start_kmer_idx, const size_t end_kmer_idx, const cuttlefish::dir_t dir, const uint8_t gfa_v, cuttlefish::logger_t output)
+void CdBG::write_gfa_segment(const uint64_t thread_id, const char* const seq, const uint64_t segment_name, const size_t start_kmer_idx, const size_t end_kmer_idx, const cuttlefish::dir_t dir, const uint8_t gfa_v, cuttlefish::logger_t output)
 {
     std::stringstream& buffer = output_buffer[thread_id];
     const size_t segment_len = end_kmer_idx - start_kmer_idx + k;

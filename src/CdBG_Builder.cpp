@@ -90,7 +90,7 @@ void CdBG::classify_vertices(const uint16_t thread_count)
 }
 
 
-void CdBG::process_substring(const char* seq, const size_t seq_len, const size_t left_end, const size_t right_end)
+void CdBG::process_substring(const char* const seq, const size_t seq_len, const size_t left_end, const size_t right_end)
 {
     size_t kmer_idx = left_end;
     while(kmer_idx <= right_end)
@@ -107,7 +107,7 @@ void CdBG::process_substring(const char* seq, const size_t seq_len, const size_t
 }
 
 
-size_t CdBG::process_contiguous_subseq(const char* seq, const size_t seq_len, const size_t right_end, const size_t start_idx)
+size_t CdBG::process_contiguous_subseq(const char* const seq, const size_t seq_len, const size_t right_end, const size_t start_idx)
 {
     size_t kmer_idx = start_idx;
 

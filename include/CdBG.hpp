@@ -34,6 +34,10 @@ private:
     // `buffer_size[t_id]` holds the count of lines currently stored at the buffer of thread number `t_id`.
     std::vector<uint64_t> buffer_size;
 
+    // Maximum output buffer size that triggers a flush. Currently, the size is measured with line counts. 
+    // TODO: Do better.
+    const static uint64_t MAX_BUFF_SIZE = 128;
+
     // `path_output[t_id]` and `overlap_output[t_id]` are the output streams for the paths
     // and the overlaps between the links in the paths respectively, produced from the
     // underlying sequence, by the thread number `t_id`.
@@ -152,17 +156,17 @@ private:
     void output_unitig(const uint64_t thread_id, const char* const ref, const Annotated_Kmer& start_kmer, const Annotated_Kmer& end_kmer, cuttlefish::logger_t output);
     
     // Writes the path in the sequence `seq` with its starting and ending k-mers
-    // located at the indices `start_kmer_idx` and `end_kmer_idx` respectively,
-    // to the stream `output`. If `in_forward` is true, then the string spelled
-    // by the path is written; otherwise its reverse complement is written.
+    // located at the indices `start_kmer_idx` and `end_kmer_idx` respectively to
+    // the output buffer of ghe thread number `thread_id`, flushing to the stream
+    // `output` if necessary. If `dir` is `FWD`, then the string spelled by the
+    // path is written; otherwise its reverse complement is written.
     // Note that, the output operation appends a newline at the end.
-    void write_path(const uint64_t thread_id, const char* const seq, const size_t start_kmer_idx, const size_t end_kmer_idx, const bool in_forward);
+    void write_path(const uint64_t thread_id, const char* const seq, const size_t start_kmer_idx, const size_t end_kmer_idx, const cuttlefish::dir_t dir, cuttlefish::logger_t output);
 
     // Increases the buffer size for this thread, i.e. `buffer_size[thread_id]`
-    // by `fill_amount`. If the resulting buffer size overflows a predefined constant
-    // size (TODO: refactor the fixed 128 to a const field), then the buffer content
-    // at `output_buffer[thread_id]` are dumped into the stream `output` and the buffer
-    // is emptied.
+    // by `fill_amount`. If the resulting buffer size overflows `MAX_BUFF_SIZE`,
+    // then the buffer content at `output_buffer[thread_id]` are dumped into the
+    // stream `output` and the buffer is emptied.
     void fill_buffer(const uint64_t thread_id, const uint64_t fill_amount, cuttlefish::logger_t output);
 
     // Writes the string `str` to the output object `output`.

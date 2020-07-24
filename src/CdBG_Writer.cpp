@@ -95,7 +95,6 @@ void CdBG::output_maximal_unitigs(const std::string& output_file, const uint16_t
                     std::exit(EXIT_FAILURE);
                 }
             }
-
         }
     }
 
@@ -333,42 +332,29 @@ void CdBG::output_unitig(const uint64_t thread_id, const char* const seq, const 
 
     // If the hash table update is successful, only then this thread may output this unitig.
     if(Vertices.update(hash_table_entry))
-    {
-        write_path(thread_id, seq, start_kmer.idx(), end_kmer.idx(), start_kmer.kmer() < end_kmer.rev_compl());
-        ++buffer_size[thread_id];
-    }
-
-    // TODO: Fix a max memory scheme for buffers instead of a fixed line count.
-    if (buffer_size[thread_id] > 128)
-    {
-        write(output, output_buffer[thread_id].str());
-        
-        output_buffer[thread_id].str("");
-        buffer_size[thread_id] = 0;
-    }
+        write_path(thread_id, seq, start_kmer.idx(), end_kmer.idx(), start_kmer.kmer() < end_kmer.rev_compl(), output);
 }
 
 
-void CdBG::write_path(const uint64_t thread_id, const char* const seq, const size_t start_kmer_idx, const size_t end_kmer_idx, const bool in_forward) 
+void CdBG::write_path(const uint64_t thread_id, const char* const seq, const size_t start_kmer_idx, const size_t end_kmer_idx, const cuttlefish::dir_t dir, cuttlefish::logger_t output) 
 {
-    auto& output = output_buffer[thread_id];
+    std::stringstream& buffer = output_buffer[thread_id];
+    const size_t path_len = end_kmer_idx - start_kmer_idx + k;
 
-    // TODO: Use the offset-based logic here (used in GFA writer) to reduce code and avoid underflow.
-    if(in_forward)
-        for(size_t idx = start_kmer_idx; idx <= end_kmer_idx + k - 1; ++idx)
-            output << seq[idx];
-    else
-    {
-        // To avoid underflow of unsigned integers, the flanking indices are incremented by 1.
-        size_t idx = end_kmer_idx + k;
-        while(idx > start_kmer_idx)
-        {
-            idx--;
-            output << complement(seq[idx]);
-        }
-    }
+    if(dir == cuttlefish::FWD)
+        for(size_t offset = 0; offset < path_len; ++offset)
+            buffer << seq[start_kmer_idx + offset];
+    else    // dir == cuttlefish::BWD
+        for(size_t offset = 0; offset < path_len; ++offset)
+            buffer << complement(seq[end_kmer_idx + k - 1 - offset]);
 
-    output << "\n";
+    // End the path.
+    buffer << "\n";
+
+    
+    // TODO: Fix a max memory scheme for buffers instead of a fixed line count.
+    // Mark buffer size increment.
+    fill_buffer(thread_id, 1, output);
 }
 
 
@@ -376,8 +362,7 @@ void CdBG::fill_buffer(const uint64_t thread_id, const uint64_t fill_amount, cut
 {
     buffer_size[thread_id] += fill_amount;
 
-    // TODO: Fix a max memory scheme for buffers instead of a fixed line count.
-    if(buffer_size[thread_id] > 128)
+    if(buffer_size[thread_id] > MAX_BUFF_SIZE)
     {
         write(output, output_buffer[thread_id].str());
         

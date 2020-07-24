@@ -244,7 +244,7 @@ size_t CdBG::output_maximal_unitigs(const uint64_t thread_id, const char* seq, c
 }
 
 
-bool CdBG::is_unipath_start(const cuttlefish::Vertex_Class vertex_class, const cuttlefish::kmer_dir_t dir, const cuttlefish::Vertex_Class prev_kmer_class, const cuttlefish::kmer_dir_t prev_kmer_dir) const
+bool CdBG::is_unipath_start(const cuttlefish::Vertex_Class vertex_class, const cuttlefish::dir_t dir, const cuttlefish::Vertex_Class prev_kmer_class, const cuttlefish::dir_t prev_kmer_dir) const
 {
     if(vertex_class == cuttlefish::Vertex_Class::multi_in_multi_out)
         return true;
@@ -279,7 +279,7 @@ bool CdBG::is_unipath_start(const cuttlefish::Vertex_Class vertex_class, const c
 }
 
 
-bool CdBG::is_unipath_end(const cuttlefish::Vertex_Class vertex_class, const cuttlefish::kmer_dir_t dir, const cuttlefish::Vertex_Class next_kmer_class, const cuttlefish::kmer_dir_t next_kmer_dir) const
+bool CdBG::is_unipath_end(const cuttlefish::Vertex_Class vertex_class, const cuttlefish::dir_t dir, const cuttlefish::Vertex_Class next_kmer_class, const cuttlefish::dir_t next_kmer_dir) const
 {
     if(vertex_class == cuttlefish::Vertex_Class::multi_in_multi_out)
         return true;

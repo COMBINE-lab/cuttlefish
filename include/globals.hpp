@@ -40,14 +40,14 @@ namespace spdlog
 namespace cuttlefish
 {
     typedef Kmer kmer_t;
-    typedef bool kmer_dir_t;
+    typedef bool dir_t;
     typedef char nucleotide_t;
     typedef uint8_t state_code_t;
 
     constexpr nucleotide_t PLACEHOLDER_NUCLEOTIDE = 'N';
 
-    constexpr kmer_dir_t FWD = true;
-    constexpr kmer_dir_t BWD = false;
+    constexpr dir_t FWD = true;
+    constexpr dir_t BWD = false;
 
     enum class Vertex_Class: uint8_t
     {
@@ -60,8 +60,8 @@ namespace cuttlefish
     typedef boomphf::mphf<cuttlefish::kmer_t, Kmer_Hasher> mphf_t;    // The MPH function type.
 
     constexpr uint8_t BITS_PER_KMER = 5;
-    typedef compact::ts_vector<uint8_t, BITS_PER_KMER, uint64_t, std::allocator<uint64_t>> bitvector_t;
-    typedef compact::iterator_imp::lhs_setter<uint8_t, BITS_PER_KMER, uint64_t, true, 64U> bitvector_entry_t;
+    typedef compact::ts_vector<state_code_t, BITS_PER_KMER, uint64_t, std::allocator<uint64_t>> bitvector_t;
+    typedef compact::iterator_imp::lhs_setter<state_code_t, BITS_PER_KMER, uint64_t, true, 64U> bitvector_entry_t;
 
     typedef std::shared_ptr<spdlog::logger> logger_t;
 }

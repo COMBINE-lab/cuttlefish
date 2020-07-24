@@ -20,7 +20,7 @@ private:
     cuttlefish::kmer_t kmer_;
     cuttlefish::kmer_t rev_compl_;
     cuttlefish::kmer_t canonical_;
-    cuttlefish::kmer_dir_t dir_;
+    cuttlefish::dir_t dir_;
 
 
 public:
@@ -52,7 +52,7 @@ public:
     cuttlefish::kmer_t canonical() const;
 
     // Returns the direction of the k-mer.
-    cuttlefish::kmer_dir_t dir() const;
+    cuttlefish::dir_t dir() const;
 };
 
 
@@ -102,7 +102,7 @@ inline cuttlefish::kmer_t Directed_Kmer::canonical() const
 }
 
 
-inline cuttlefish::kmer_dir_t Directed_Kmer::dir() const
+inline cuttlefish::dir_t Directed_Kmer::dir() const
 {
     return dir_;
 }

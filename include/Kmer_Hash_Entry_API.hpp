@@ -38,13 +38,13 @@ private:
 
 
     // Returns the state value read when the object was constructed.
-    uint8_t get_read_state() const;
+    cuttlefish::state_code_t get_read_state() const;
 
     
     // Returns the value of the mutable state value wrapped inside the API,
     // i.e. the state value that had been read at the object creation, and then
     // possibly have been modified.
-    uint8_t get_current_state() const;
+    cuttlefish::state_code_t get_current_state() const;
 
 
 public:
@@ -55,13 +55,13 @@ public:
 
 
 
-inline uint8_t Kmer_Hash_Entry_API::get_read_state() const
+inline cuttlefish::state_code_t Kmer_Hash_Entry_API::get_read_state() const
 {
     return state_read.get_state();
 }
 
 
-inline uint8_t Kmer_Hash_Entry_API::get_current_state() const
+inline cuttlefish::state_code_t Kmer_Hash_Entry_API::get_current_state() const
 {
     return state.get_state();
 }

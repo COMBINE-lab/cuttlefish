@@ -94,7 +94,7 @@ public:
     bool operator==(const Kmer& rhs) const;
 
     // Returns the direction of the k-mer relative to its canonical version.
-    cuttlefish::kmer_dir_t direction(const Kmer& kmer_hat) const;
+    cuttlefish::dir_t direction(const Kmer& kmer_hat) const;
 
     // Transforms this k-mer by chopping off the first nucleotide and
     // appending the next nucleotide `next_nucl` to the end, i.e.
@@ -275,7 +275,7 @@ inline bool Kmer::operator==(const Kmer& rhs) const
 }
 
 
-inline cuttlefish::kmer_dir_t Kmer::direction(const Kmer& kmer_hat) const
+inline cuttlefish::dir_t Kmer::direction(const Kmer& kmer_hat) const
 {
     return this->operator==(kmer_hat);
 }

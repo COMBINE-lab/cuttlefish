@@ -312,7 +312,7 @@ void CdBG::output_unitig_gfa(const uint64_t thread_id, const char* seq, const An
 
     // Name the GFA segment with the hash value of the first k-mer of the canonical form unitig.
     const uint64_t unitig_id = bucket_id;
-    const cuttlefish::kmer_dir_t unitig_dir = (start_kmer.kmer() < end_kmer.rev_compl() ? cuttlefish::FWD : cuttlefish::BWD);
+    const cuttlefish::dir_t unitig_dir = (start_kmer.kmer() < end_kmer.rev_compl() ? cuttlefish::FWD : cuttlefish::BWD);
     const Oriented_Unitig current_unitig(unitig_id, unitig_dir, start_kmer.idx(), end_kmer.idx());
 
 
@@ -361,7 +361,7 @@ void CdBG::write_gfa_header(const uint8_t gfa_v, std::ofstream& output) const
 }
 
 
-void CdBG::write_gfa_segment(const uint64_t thread_id, const char* seq, const uint64_t segment_name, const size_t start_kmer_idx, const size_t end_kmer_idx, const cuttlefish::kmer_dir_t dir, const uint8_t gfa_v, cuttlefish::logger_t output)
+void CdBG::write_gfa_segment(const uint64_t thread_id, const char* seq, const uint64_t segment_name, const size_t start_kmer_idx, const size_t end_kmer_idx, const cuttlefish::dir_t dir, const uint8_t gfa_v, cuttlefish::logger_t output)
 {
     std::stringstream& buffer = output_buffer[thread_id];
     const size_t segment_len = end_kmer_idx - start_kmer_idx + k;

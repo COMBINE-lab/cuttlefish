@@ -190,7 +190,7 @@ bool CdBG::is_self_loop(const cuttlefish::kmer_t& kmer_hat, const cuttlefish::km
 }
 
 
-bool CdBG::process_leftmost_kmer(const cuttlefish::kmer_t& kmer_hat, const cuttlefish::kmer_dir_t dir, const cuttlefish::kmer_t& next_kmer_hat, const cuttlefish::nucleotide_t next_nucl)
+bool CdBG::process_leftmost_kmer(const cuttlefish::kmer_t& kmer_hat, const cuttlefish::dir_t dir, const cuttlefish::kmer_t& next_kmer_hat, const cuttlefish::nucleotide_t next_nucl)
 {
     // Fetch the entry for `kmer_hat`.
     Kmer_Hash_Entry_API hash_table_entry = Vertices[kmer_hat];
@@ -289,7 +289,7 @@ bool CdBG::process_leftmost_kmer(const cuttlefish::kmer_t& kmer_hat, const cuttl
 }
 
 
-bool CdBG::process_rightmost_kmer(const cuttlefish::kmer_t& kmer_hat, const cuttlefish::kmer_dir_t dir, const cuttlefish::nucleotide_t prev_nucl)
+bool CdBG::process_rightmost_kmer(const cuttlefish::kmer_t& kmer_hat, const cuttlefish::dir_t dir, const cuttlefish::nucleotide_t prev_nucl)
 {
     // Fetch the entry for `kmer_hat`.
     Kmer_Hash_Entry_API hash_table_entry = Vertices[kmer_hat];
@@ -385,7 +385,7 @@ bool CdBG::process_rightmost_kmer(const cuttlefish::kmer_t& kmer_hat, const cutt
 }
 
 
-bool CdBG::process_internal_kmer(const cuttlefish::kmer_t& kmer_hat, const cuttlefish::kmer_dir_t dir, const cuttlefish::kmer_t& next_kmer_hat, const cuttlefish::nucleotide_t prev_nucl, const cuttlefish::nucleotide_t next_nucl)
+bool CdBG::process_internal_kmer(const cuttlefish::kmer_t& kmer_hat, const cuttlefish::dir_t dir, const cuttlefish::kmer_t& next_kmer_hat, const cuttlefish::nucleotide_t prev_nucl, const cuttlefish::nucleotide_t next_nucl)
 {
     // Fetch the hash table entry for `kmer_hat`.
     Kmer_Hash_Entry_API hash_table_entry = Vertices[kmer_hat];

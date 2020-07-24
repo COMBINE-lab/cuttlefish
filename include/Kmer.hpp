@@ -11,8 +11,13 @@
 #include <iostream>
 
 
+class Kmer_Hasher;
+
+
 class Kmer
 {
+    friend class Kmer_Hasher;
+
 private:
 
     static uint16_t k;  // The k-parameter.
@@ -42,6 +47,9 @@ private:
     // Returns the mapping integer value of the complement of `nucleotide`.
     static DNA_Base complement_nucleotide(const DNA_Base nucleotide);
 
+    // Returns the 64-bit encoding of the k-mer.
+    uint64_t to_u64() const;
+    
 
 public:
 
@@ -104,11 +112,11 @@ public:
     // Returns the string label of the k-mer.
     std::string string_label() const;
 
-    // Returns the 64-bit encoding of the k-mer.
-    uint64_t to_u64() const;
-
     // Gets the k-mer from the KMC api object `kmer_api`.
     void from_CKmerAPI(const CKmerAPI& kmer_api);
+
+    // Returns the k-parameter.
+    static uint16_t get_k();
     
     // For debugging purposes.
     friend std::ostream& operator<<(std::ostream& out, const Kmer& kmer);

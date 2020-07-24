@@ -4,36 +4,36 @@
 
 
 Vertex::Vertex(const cuttlefish::Vertex_Class vertex_class, const cuttlefish::nucleotide_t enter, const cuttlefish::nucleotide_t exit):
-    vertex_class(vertex_class), enter(enter), exit(exit), visited(true), outputted(false)
+    vertex_class_(vertex_class), enter_(enter), exit_(exit), visited_(true), outputted_(false)
 {
     assert(vertex_class == cuttlefish::Vertex_Class::single_in_single_out);
 }
 
 
 Vertex::Vertex(const cuttlefish::Vertex_Class vertex_class, const cuttlefish::nucleotide_t nucl):
-    vertex_class(vertex_class), visited(true), outputted(false)
+    vertex_class_(vertex_class), visited_(true), outputted_(false)
 {
     assert(vertex_class == cuttlefish::Vertex_Class::multi_in_single_out || vertex_class == cuttlefish::Vertex_Class::single_in_multi_out);
 
 
     if(vertex_class == cuttlefish::Vertex_Class::multi_in_single_out)
     {
-        enter = cuttlefish::PLACEHOLDER_NUCLEOTIDE;
-        exit = nucl;
+        enter_ = cuttlefish::PLACEHOLDER_NUCLEOTIDE;
+        exit_ = nucl;
     }
     else
     {
-        enter = nucl;
-        exit = cuttlefish::PLACEHOLDER_NUCLEOTIDE;
+        enter_ = nucl;
+        exit_ = cuttlefish::PLACEHOLDER_NUCLEOTIDE;
     }
 }
 
 
 Vertex::Vertex(const cuttlefish::Vertex_Class vertex_class, const bool outputted):
-    vertex_class(vertex_class), visited(true), outputted(outputted)
+    vertex_class_(vertex_class), visited_(true), outputted_(outputted)
 {
-    enter = cuttlefish::PLACEHOLDER_NUCLEOTIDE;
-    exit = cuttlefish::PLACEHOLDER_NUCLEOTIDE;
+    enter_ = cuttlefish::PLACEHOLDER_NUCLEOTIDE;
+    exit_ = cuttlefish::PLACEHOLDER_NUCLEOTIDE;
 }
 
 
@@ -41,7 +41,7 @@ std::ostream& operator <<(std::ostream& out, const Vertex& vertex)
 {
     std::string label;
 
-    switch (vertex.vertex_class)
+    switch (vertex.vertex_class_)
     {
     case cuttlefish::Vertex_Class::single_in_single_out:
         label = "Single_In_Single_Out";

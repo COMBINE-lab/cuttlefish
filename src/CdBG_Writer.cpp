@@ -157,7 +157,7 @@ size_t CdBG::output_maximal_unitigs(const uint64_t thread_id, const char* seq, c
             // A valid left neighbor exists as it's not an isolated k-mer.
             Annotated_Kmer prev_kmer(cuttlefish::kmer_t(seq, kmer_idx - 1), kmer_idx, Vertices);
             
-            if(is_unipath_start(curr_kmer.vertex_class, curr_kmer.dir, prev_kmer.vertex_class, prev_kmer.dir))
+            if(is_unipath_start(curr_kmer.vertex_class(), curr_kmer.dir(), prev_kmer.vertex_class(), prev_kmer.dir()))
                 // A maximal unitig ends at the ending of a maximal valid subsequence.
                 output_unitig(thread_id, seq, curr_kmer, curr_kmer, output);
 
@@ -185,14 +185,14 @@ size_t CdBG::output_maximal_unitigs(const uint64_t thread_id, const char* seq, c
         else
         {
             prev_kmer = Annotated_Kmer(cuttlefish::kmer_t(seq, kmer_idx - 1), kmer_idx, Vertices);
-            if(is_unipath_start(curr_kmer.vertex_class, curr_kmer.dir, prev_kmer.vertex_class, prev_kmer.dir))
+            if(is_unipath_start(curr_kmer.vertex_class(), curr_kmer.dir(), prev_kmer.vertex_class(), prev_kmer.dir()))
             {
                 on_unipath = true;
                 unipath_start_kmer = curr_kmer;
             }
         }
 
-        if(on_unipath && is_unipath_end(curr_kmer.vertex_class, curr_kmer.dir, next_kmer.vertex_class, next_kmer.dir))
+        if(on_unipath && is_unipath_end(curr_kmer.vertex_class(), curr_kmer.dir(), next_kmer.vertex_class(), next_kmer.dir()))
         {
             output_unitig(thread_id, seq, unipath_start_kmer, curr_kmer, output);
             on_unipath = false;
@@ -205,7 +205,7 @@ size_t CdBG::output_maximal_unitigs(const uint64_t thread_id, const char* seq, c
             prev_kmer = curr_kmer;
             curr_kmer = next_kmer;
 
-            if(is_unipath_start(curr_kmer.vertex_class, curr_kmer.dir, prev_kmer.vertex_class, prev_kmer.dir))
+            if(is_unipath_start(curr_kmer.vertex_class(), curr_kmer.dir(), prev_kmer.vertex_class(), prev_kmer.dir()))
             {
                 on_unipath = true;
                 unipath_start_kmer = curr_kmer;
@@ -229,7 +229,7 @@ size_t CdBG::output_maximal_unitigs(const uint64_t thread_id, const char* seq, c
             {
                 next_kmer.roll_to_next_kmer(seq[kmer_idx + k], Vertices);
                 
-                if(on_unipath && is_unipath_end(curr_kmer.vertex_class, curr_kmer.dir, next_kmer.vertex_class, next_kmer.dir))
+                if(on_unipath && is_unipath_end(curr_kmer.vertex_class(), curr_kmer.dir(), next_kmer.vertex_class(), next_kmer.dir()))
                 {
                     output_unitig(thread_id, seq, unipath_start_kmer, curr_kmer, output);
                     on_unipath = false;
@@ -321,7 +321,7 @@ void CdBG::output_unitig(const uint64_t thread_id, const char* seq, const Annota
     // encounter it in the opposite orientations, then data races may arise.
     // For a particular unitig, always query the same well-defined canonical flanking
     // k-mer, irrespective of which direction the unitig may be traversed at.
-    const cuttlefish::kmer_t min_flanking_kmer = std::min(start_kmer.canonical, end_kmer.canonical);
+    const cuttlefish::kmer_t min_flanking_kmer = std::min(start_kmer.canonical(), end_kmer.canonical());
     Kmer_Hash_Entry_API hash_table_entry = Vertices[min_flanking_kmer];
     State& state = hash_table_entry.get_state();
 
@@ -334,7 +334,7 @@ void CdBG::output_unitig(const uint64_t thread_id, const char* seq, const Annota
     // If the hash table update is successful, only then this thread may output this unitig.
     if(Vertices.update(hash_table_entry))
     {
-        write_path(thread_id, seq, start_kmer.idx, end_kmer.idx, start_kmer.kmer < end_kmer.rev_compl);
+        write_path(thread_id, seq, start_kmer.idx(), end_kmer.idx(), start_kmer.kmer() < end_kmer.rev_compl());
         ++buffer_size[thread_id];
     }
 

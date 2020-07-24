@@ -56,8 +56,6 @@ private:
 
 public:
 
-    // TODO: Make everything private and add `CdBG` as friend.
-
     Kmer_Hash_Table()
     {}
 

@@ -95,6 +95,12 @@ std::string Kmer::string_label() const
 }
 
 
+uint16_t Kmer::get_k()
+{
+    return k;
+}
+
+
 std::ostream& operator<<(std::ostream& out, const Kmer& kmer)
 {
     out << kmer.string_label();

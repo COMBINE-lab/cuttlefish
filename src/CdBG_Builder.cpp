@@ -119,7 +119,7 @@ size_t CdBG::process_contiguous_subseq(const char* seq, const size_t seq_len, co
     // i.e. there's no valid left or right neighboring k-mer to this k-mer.
     if((kmer_idx == 0 || seq[kmer_idx - 1] == cuttlefish::PLACEHOLDER_NUCLEOTIDE) &&
         (kmer_idx + k == seq_len || seq[kmer_idx + k] == cuttlefish::PLACEHOLDER_NUCLEOTIDE))
-        while(!process_isolated_kmer(curr_kmer.canonical));
+        while(!process_isolated_kmer(curr_kmer.canonical()));
     else    // At least one valid neighbor exists, either to the left or to the right, or on both sides.
     {
         // Process the leftmost k-mer of this contiguous subsequence.
@@ -128,7 +128,7 @@ size_t CdBG::process_contiguous_subseq(const char* seq, const size_t seq_len, co
         if(kmer_idx + k == seq_len || seq[kmer_idx + k] == cuttlefish::PLACEHOLDER_NUCLEOTIDE)
         {
             // A valid left neighbor exists at it's not an isolated k-mer.
-            while(!process_rightmost_kmer(curr_kmer.canonical, curr_kmer.dir, seq[kmer_idx - 1]));
+            while(!process_rightmost_kmer(curr_kmer.canonical(), curr_kmer.dir(), seq[kmer_idx - 1]));
 
             // The contiguous sequence ends at this k-mer.
             return kmer_idx + k;
@@ -140,10 +140,10 @@ size_t CdBG::process_contiguous_subseq(const char* seq, const size_t seq_len, co
         
         // No valid left neighbor exists for the k-mer.
         if(kmer_idx == 0 || seq[kmer_idx - 1] == cuttlefish::PLACEHOLDER_NUCLEOTIDE)
-            while(!process_leftmost_kmer(curr_kmer.canonical, curr_kmer.dir, next_kmer.canonical, seq[kmer_idx + k]));
+            while(!process_leftmost_kmer(curr_kmer.canonical(), curr_kmer.dir(), next_kmer.canonical(), seq[kmer_idx + k]));
         // Both left and right valid neighbors exist for this k-mer.
         else
-            while(!process_internal_kmer(curr_kmer.canonical, curr_kmer.dir, next_kmer.canonical, seq[kmer_idx - 1], seq[kmer_idx + k]));
+            while(!process_internal_kmer(curr_kmer.canonical(), curr_kmer.dir(), next_kmer.canonical(), seq[kmer_idx - 1], seq[kmer_idx + k]));
         
 
         // Process the internal k-mers of this contiguous subsequence.
@@ -153,7 +153,7 @@ size_t CdBG::process_contiguous_subseq(const char* seq, const size_t seq_len, co
             curr_kmer = next_kmer;
             next_kmer.roll_to_next_kmer(seq[kmer_idx + k]);
 
-            while(!process_internal_kmer(curr_kmer.canonical, curr_kmer.dir, next_kmer.canonical, seq[kmer_idx - 1], seq[kmer_idx + k]));
+            while(!process_internal_kmer(curr_kmer.canonical(), curr_kmer.dir(), next_kmer.canonical(), seq[kmer_idx - 1], seq[kmer_idx + k]));
         }
 
 
@@ -165,13 +165,13 @@ size_t CdBG::process_contiguous_subseq(const char* seq, const size_t seq_len, co
         
             // No valid right neighbor exists for the k-mer.
             if(kmer_idx + k == seq_len || seq[kmer_idx + k] == cuttlefish::PLACEHOLDER_NUCLEOTIDE)
-                while(!process_rightmost_kmer(curr_kmer.canonical, curr_kmer.dir, seq[kmer_idx - 1]));
+                while(!process_rightmost_kmer(curr_kmer.canonical(), curr_kmer.dir(), seq[kmer_idx - 1]));
             // A valid right neighbor exists for the k-mer.
             else
             {
                 next_kmer.roll_to_next_kmer(seq[kmer_idx + k]);
 
-                while(!process_internal_kmer(curr_kmer.canonical, curr_kmer.dir, next_kmer.canonical, seq[kmer_idx - 1], seq[kmer_idx + k]));
+                while(!process_internal_kmer(curr_kmer.canonical(), curr_kmer.dir(), next_kmer.canonical(), seq[kmer_idx - 1], seq[kmer_idx + k]));
             }
         }
         else
@@ -215,27 +215,27 @@ bool CdBG::process_leftmost_kmer(const cuttlefish::kmer_t& kmer_hat, const cuttl
         {
             Vertex vertex = state.decode();
 
-            if(vertex.vertex_class == cuttlefish::Vertex_Class::single_in_single_out)
+            if(vertex.vertex_class_ == cuttlefish::Vertex_Class::single_in_single_out)
             {
-                if(vertex.exit == next_nucl)
-                    vertex.vertex_class = cuttlefish::Vertex_Class::multi_in_single_out;
+                if(vertex.exit_ == next_nucl)
+                    vertex.vertex_class_ = cuttlefish::Vertex_Class::multi_in_single_out;
                 else
-                    vertex.vertex_class = cuttlefish::Vertex_Class::multi_in_multi_out;
+                    vertex.vertex_class_ = cuttlefish::Vertex_Class::multi_in_multi_out;
 
                 state = State(vertex);
             }
-            else if(vertex.vertex_class == cuttlefish::Vertex_Class::multi_in_single_out)
+            else if(vertex.vertex_class_ == cuttlefish::Vertex_Class::multi_in_single_out)
             {
-                if(vertex.exit != next_nucl)
+                if(vertex.exit_ != next_nucl)
                 {
-                    vertex.vertex_class = cuttlefish::Vertex_Class::multi_in_multi_out;
+                    vertex.vertex_class_ = cuttlefish::Vertex_Class::multi_in_multi_out;
 
                     state = State(vertex);
                 }
             }
             else    // vertex.vertex_class == cuttlefish::Vertex_Class::single_in_multi_out
             {
-                vertex.vertex_class = cuttlefish::Vertex_Class::multi_in_multi_out;
+                vertex.vertex_class_ = cuttlefish::Vertex_Class::multi_in_multi_out;
 
                 state = State(vertex);
             }
@@ -250,26 +250,26 @@ bool CdBG::process_leftmost_kmer(const cuttlefish::kmer_t& kmer_hat, const cuttl
         {
             Vertex vertex = state.decode();
 
-            if(vertex.vertex_class == cuttlefish::Vertex_Class::single_in_single_out)
+            if(vertex.vertex_class_ == cuttlefish::Vertex_Class::single_in_single_out)
             {
-                if(vertex.enter == complement(next_nucl))
-                    vertex.vertex_class = cuttlefish::Vertex_Class::single_in_multi_out;
+                if(vertex.enter_ == complement(next_nucl))
+                    vertex.vertex_class_ = cuttlefish::Vertex_Class::single_in_multi_out;
                 else
-                    vertex.vertex_class = cuttlefish::Vertex_Class::multi_in_multi_out;
+                    vertex.vertex_class_ = cuttlefish::Vertex_Class::multi_in_multi_out;
 
                 state = State(vertex);
             }
-            else if(vertex.vertex_class == cuttlefish::Vertex_Class::multi_in_single_out)
+            else if(vertex.vertex_class_ == cuttlefish::Vertex_Class::multi_in_single_out)
             {
-                vertex.vertex_class = cuttlefish::Vertex_Class::multi_in_multi_out;
+                vertex.vertex_class_ = cuttlefish::Vertex_Class::multi_in_multi_out;
 
                 state = State(vertex);
             }
             else    // vertex.vertex_class == cuttlefish::Vertex_Class::single_in_multi_out
             {
-                if(vertex.enter != complement(next_nucl))
+                if(vertex.enter_ != complement(next_nucl))
                 {
-                    vertex.vertex_class = cuttlefish::Vertex_Class::multi_in_multi_out;
+                    vertex.vertex_class_ = cuttlefish::Vertex_Class::multi_in_multi_out;
 
                     state = State(vertex);
                 }
@@ -311,26 +311,26 @@ bool CdBG::process_rightmost_kmer(const cuttlefish::kmer_t& kmer_hat, const cutt
         {
             Vertex vertex = state.decode();
 
-            if(vertex.vertex_class == cuttlefish::Vertex_Class::single_in_single_out)
+            if(vertex.vertex_class_ == cuttlefish::Vertex_Class::single_in_single_out)
             {
-                if(vertex.enter == prev_nucl)
-                    vertex.vertex_class = cuttlefish::Vertex_Class::single_in_multi_out;
+                if(vertex.enter_ == prev_nucl)
+                    vertex.vertex_class_ = cuttlefish::Vertex_Class::single_in_multi_out;
                 else
-                    vertex.vertex_class = cuttlefish::Vertex_Class::multi_in_multi_out;
+                    vertex.vertex_class_ = cuttlefish::Vertex_Class::multi_in_multi_out;
 
                 state = State(vertex);
             }
-            else if(vertex.vertex_class == cuttlefish::Vertex_Class::multi_in_single_out)
+            else if(vertex.vertex_class_ == cuttlefish::Vertex_Class::multi_in_single_out)
             {
-                vertex.vertex_class = cuttlefish::Vertex_Class::multi_in_multi_out;
+                vertex.vertex_class_ = cuttlefish::Vertex_Class::multi_in_multi_out;
                 
                 state = State(vertex);
             }
             else    // vertex.vertex_class == cuttlefish::Vertex_Class::single_in_multi_out
             {
-                if(vertex.enter != prev_nucl)
+                if(vertex.enter_ != prev_nucl)
                 {
-                    vertex.vertex_class = cuttlefish::Vertex_Class::multi_in_multi_out;
+                    vertex.vertex_class_ = cuttlefish::Vertex_Class::multi_in_multi_out;
 
                     state = State(vertex);
                 }
@@ -346,27 +346,27 @@ bool CdBG::process_rightmost_kmer(const cuttlefish::kmer_t& kmer_hat, const cutt
         {
             Vertex vertex = state.decode();
 
-            if(vertex.vertex_class == cuttlefish::Vertex_Class::single_in_single_out)
+            if(vertex.vertex_class_ == cuttlefish::Vertex_Class::single_in_single_out)
             {
-                if(vertex.exit == complement(prev_nucl))
-                    vertex.vertex_class = cuttlefish::Vertex_Class::multi_in_single_out;
+                if(vertex.exit_ == complement(prev_nucl))
+                    vertex.vertex_class_ = cuttlefish::Vertex_Class::multi_in_single_out;
                 else
-                    vertex.vertex_class = cuttlefish::Vertex_Class::multi_in_multi_out;
+                    vertex.vertex_class_ = cuttlefish::Vertex_Class::multi_in_multi_out;
 
                 state= State(vertex);
             }
-            else if(vertex.vertex_class == cuttlefish::Vertex_Class::multi_in_single_out)
+            else if(vertex.vertex_class_ == cuttlefish::Vertex_Class::multi_in_single_out)
             {
-                if(vertex.exit != complement(prev_nucl))
+                if(vertex.exit_ != complement(prev_nucl))
                 {
-                    vertex.vertex_class = cuttlefish::Vertex_Class::multi_in_multi_out;
+                    vertex.vertex_class_ = cuttlefish::Vertex_Class::multi_in_multi_out;
 
                     state = State(vertex);
                 }
             }
             else    // vertex.vertex_class == cuttlefish::Vertex_Class::single_in_multi_out
             {
-                vertex.vertex_class = cuttlefish::Vertex_Class::multi_in_multi_out;
+                vertex.vertex_class_ = cuttlefish::Vertex_Class::multi_in_multi_out;
 
                 state = State(vertex);
             }
@@ -410,35 +410,35 @@ bool CdBG::process_internal_kmer(const cuttlefish::kmer_t& kmer_hat, const cuttl
         {
             Vertex vertex = state.decode();
 
-            if(vertex.vertex_class == cuttlefish::Vertex_Class::single_in_single_out)
+            if(vertex.vertex_class_ == cuttlefish::Vertex_Class::single_in_single_out)
             {
-                if(vertex.enter == prev_nucl && vertex.exit == next_nucl)
+                if(vertex.enter_ == prev_nucl && vertex.exit_ == next_nucl)
                     ; // return true; // Probable race if returned early from here
                     // TODO: Maybe not. May get away without updating the same value again,
                     // as the edge-ordering should not matter in the algorithm.
-                else if(vertex.enter != prev_nucl && vertex.exit != next_nucl)
-                    vertex.vertex_class = cuttlefish::Vertex_Class::multi_in_multi_out;
-                else if(vertex.enter != prev_nucl)
-                    vertex.vertex_class = cuttlefish::Vertex_Class::multi_in_single_out;
+                else if(vertex.enter_ != prev_nucl && vertex.exit_ != next_nucl)
+                    vertex.vertex_class_ = cuttlefish::Vertex_Class::multi_in_multi_out;
+                else if(vertex.enter_ != prev_nucl)
+                    vertex.vertex_class_ = cuttlefish::Vertex_Class::multi_in_single_out;
                 else    // vertex.exit != next_nucl
-                    vertex.vertex_class = cuttlefish::Vertex_Class::single_in_multi_out;
+                    vertex.vertex_class_ = cuttlefish::Vertex_Class::single_in_multi_out;
 
                 state = State(vertex);
             }
-            else if(vertex.vertex_class == cuttlefish::Vertex_Class::multi_in_single_out)
+            else if(vertex.vertex_class_ == cuttlefish::Vertex_Class::multi_in_single_out)
             {
-                if(vertex.exit != next_nucl)
+                if(vertex.exit_ != next_nucl)
                 {
-                    vertex.vertex_class = cuttlefish::Vertex_Class::multi_in_multi_out;
+                    vertex.vertex_class_ = cuttlefish::Vertex_Class::multi_in_multi_out;
 
                     state = State(vertex);
                 }
             }
             else    // vertex.vertex_class == cuttlefish::Vertex_Class::single_in_multi_out
             {
-                if(vertex.enter != prev_nucl)
+                if(vertex.enter_ != prev_nucl)
                 {
-                    vertex.vertex_class = cuttlefish::Vertex_Class::multi_in_multi_out;
+                    vertex.vertex_class_ = cuttlefish::Vertex_Class::multi_in_multi_out;
 
                     state = State(vertex);
                 }
@@ -454,35 +454,35 @@ bool CdBG::process_internal_kmer(const cuttlefish::kmer_t& kmer_hat, const cuttl
         {
             Vertex vertex = state.decode();
 
-            if(vertex.vertex_class == cuttlefish::Vertex_Class::single_in_single_out)
+            if(vertex.vertex_class_ == cuttlefish::Vertex_Class::single_in_single_out)
             {
-                if(vertex.enter == complement(next_nucl) && vertex.exit == complement(prev_nucl))
+                if(vertex.enter_ == complement(next_nucl) && vertex.exit_ == complement(prev_nucl))
                     ; // return true; // Probable race if returned early from here
                     // TODO: Maybe not. May get away without updating the same value again,
                     // as the edge-ordering should not matter in the algorithm.
-                else if(vertex.enter != complement(next_nucl) && vertex.exit != complement(prev_nucl))
-                    vertex.vertex_class = cuttlefish::Vertex_Class::multi_in_multi_out;
-                else if(vertex.enter != complement(next_nucl))
-                    vertex.vertex_class = cuttlefish::Vertex_Class::multi_in_single_out;
+                else if(vertex.enter_ != complement(next_nucl) && vertex.exit_ != complement(prev_nucl))
+                    vertex.vertex_class_ = cuttlefish::Vertex_Class::multi_in_multi_out;
+                else if(vertex.enter_ != complement(next_nucl))
+                    vertex.vertex_class_ = cuttlefish::Vertex_Class::multi_in_single_out;
                 else    // vertex.exit != complement(prev_nucl)
-                    vertex.vertex_class = cuttlefish::Vertex_Class::single_in_multi_out;
+                    vertex.vertex_class_ = cuttlefish::Vertex_Class::single_in_multi_out;
 
                 state = State(vertex);
             }
-            else if(vertex.vertex_class == cuttlefish::Vertex_Class::multi_in_single_out)
+            else if(vertex.vertex_class_ == cuttlefish::Vertex_Class::multi_in_single_out)
             {
-                if(vertex.exit != complement(prev_nucl))
+                if(vertex.exit_ != complement(prev_nucl))
                 {
-                    vertex.vertex_class = cuttlefish::Vertex_Class::multi_in_multi_out;
+                    vertex.vertex_class_ = cuttlefish::Vertex_Class::multi_in_multi_out;
 
                     state = State(vertex);
                 }
             }
             else    // vertex.vertex_class == cuttlefish::Vertex_Class::single_in_multi_out
             {
-                if(vertex.enter != complement(next_nucl))
+                if(vertex.enter_ != complement(next_nucl))
                 {
-                    vertex.vertex_class = cuttlefish::Vertex_Class::multi_in_multi_out;
+                    vertex.vertex_class_ = cuttlefish::Vertex_Class::multi_in_multi_out;
 
                     state = State(vertex);
                 }
@@ -531,7 +531,7 @@ void CdBG::print_vertex_class_dist(const std::string& kmc_file_name) const
     size_t C[4] = {0, 0, 0, 0};
 
     for(auto it = it_beg; it != it_end; ++it)
-        C[uint8_t(Vertices[*it].decode().vertex_class)]++;
+        C[uint8_t(Vertices[*it].decode().vertex_class_)]++;
 
 
     std::cout << "Single-In-Single-Out:\t" << C[0] << "\n";

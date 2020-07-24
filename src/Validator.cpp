@@ -129,7 +129,7 @@ void Validator::validate_kmer_set(bool& result) const
         // Scan through the k-mers one-by-one.
         for(size_t kmer_idx = 0; kmer_idx <= unitig.length() - k; ++kmer_idx)
         {
-            uint64_t hash_val = mph->lookup(kmer.canonical);
+            uint64_t hash_val = mph->lookup(kmer.canonical());
 
             // Encountered a k-mer that is absent at the k-mer database and hashes outside of the valid range.
             if(hash_val >= kmer_count)

@@ -12,25 +12,25 @@ State::State(): code(0b00000)
 
 State::State(const Vertex& vertex)
 {
-    if(!vertex.outputted)
-        switch(vertex.vertex_class)
+    if(!vertex.outputted())
+        switch(vertex.vertex_class())
         {
         case cuttlefish::Vertex_Class::single_in_single_out:
             code = 0b10000;
-            set_nibble_upper_half(vertex.enter);
-            set_nibble_lower_half(vertex.exit);
+            set_nibble_upper_half(vertex.enter());
+            set_nibble_lower_half(vertex.exit());
 
             break;
 
         case cuttlefish::Vertex_Class::multi_in_single_out:
             code = 0b00100;
-            set_nibble_lower_half(vertex.exit);
+            set_nibble_lower_half(vertex.exit());
 
             break;
 
         case cuttlefish::Vertex_Class::single_in_multi_out:
             code = 0b01000;
-            set_nibble_lower_half(vertex.enter);
+            set_nibble_lower_half(vertex.enter());
 
             break;
 
@@ -40,11 +40,11 @@ State::State(const Vertex& vertex)
             break;
 
         default:
-            std::cerr << "Invalid vertex class " << (uint16_t)vertex.vertex_class << " encountered during state construction. Aborting.\n";
+            std::cerr << "Invalid vertex class " << (uint16_t)vertex.vertex_class() << " encountered during state construction. Aborting.\n";
             std::exit(EXIT_FAILURE);
         }
     else
-        switch(vertex.vertex_class)
+        switch(vertex.vertex_class())
         {
         case cuttlefish::Vertex_Class::single_in_single_out:
             code = 0b01100;
@@ -67,7 +67,7 @@ State::State(const Vertex& vertex)
             break;
 
         default:
-            std::cerr << "Invalid vertex class " << (uint16_t)vertex.vertex_class << " encountered during state construction. Aborting.\n";
+            std::cerr << "Invalid vertex class " << (uint16_t)vertex.vertex_class() << " encountered during state construction. Aborting.\n";
             std::exit(EXIT_FAILURE);
         }
 }

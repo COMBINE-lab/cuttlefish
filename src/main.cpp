@@ -46,9 +46,9 @@ int main(int argc, char** argv)
 
         std::cout << "Constructing compacted de Bruijn graph for references at " << refs << ", with k = " << k << "\n";
 
-        CdBG cdbg(refs, k);
+        CdBG cdbg(refs, k, kmer_database);
 
-        cdbg.construct(kmer_database, bbhash_file, thread_count, output_file);
+        cdbg.construct(bbhash_file, thread_count, output_file);
 
         std::cout << "Constructed the compacted de Bruijn graph.\n";
     } catch (std::exception &e) {

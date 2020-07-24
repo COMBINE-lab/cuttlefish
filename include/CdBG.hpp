@@ -23,6 +23,7 @@ private:
 
     const std::string ref_file;   // Name of the file containing the reference.
     const uint16_t k;   // The k parameter for the edge-centric de Bruijn graph to be compacted.
+    const std::string kmc_db_name;  // Name of the KMC database containing the k-mer set.
     Kmer_Hash_Table Vertices;   // The hash table for the vertices (canonical k-mers) of the de Bruijn graph.
     
     // A running counter kept to track the number of sequence being processed.
@@ -269,14 +270,11 @@ private:
 
 public:
 
-    CdBG(const std::string& ref_file, const uint16_t k);
+    CdBG(const std::string& ref_file, const uint16_t k, const std::string& kmc_db_name);
 
-    // Constructs the compacted de Bruijn graph with its distinct k-mers collection
-    // being present in the KMC database with prefix `kmc_file_name` using
-    // `thread_count` threads, and outputs the maximal unitigs into the file named
-    // `output_file_name`.
-    // TODO: Move `kmc_file_name` as one of the class fields.
-    void construct(const std::string& kmc_file_name, const std::string& bbhash_file_name, const uint16_t thread_count, const std::string& output_file_name);
+    // Constructs the compacted de Bruijn graph using up-to `thread_count` threads, and
+    // outputs the maximal unitigs into the file named `output_file_name`.
+    void construct(const std::string& bbhash_file_name, const uint16_t thread_count, const std::string& output_file_name);
 };
 
 

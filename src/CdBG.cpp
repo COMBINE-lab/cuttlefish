@@ -9,17 +9,17 @@ const std::string CdBG::PATH_OUTPUT_PREFIX = "tmp-path-output-";
 const std::string CdBG::OVERLAP_OUTPUT_PREFIX = "tmp-overlap-output-";
 
 
-CdBG::CdBG(const std::string& ref_file, const uint16_t k):
-    ref_file(ref_file), k(k)
+CdBG::CdBG(const std::string& ref_file, const uint16_t k, const std::string& kmc_db_name):
+    ref_file(ref_file), k(k), kmc_db_name(kmc_db_name)
 {
     Kmer::set_k(k);
 }
 
 
-void CdBG::construct(const std::string& kmc_file_name, const std::string& bbhash_file_name, const uint16_t thread_count, const std::string& output_file_name)
+void CdBG::construct(const std::string& bbhash_file_name, const uint16_t thread_count, const std::string& output_file_name)
 {
     std::cout << "Constructing the minimal perfect hash function.\n";
-    Vertices.construct(kmc_file_name, bbhash_file_name, thread_count);
+    Vertices.construct(kmc_db_name, bbhash_file_name, thread_count);
 
     std::cout << "Classifying the vertices.\n";
     classify_vertices(thread_count);

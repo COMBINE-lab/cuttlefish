@@ -14,6 +14,7 @@ set(PROJECT_SRC
         CdBG_Writer.cpp
         CdBG_GFA_Writer.cpp
         Validator.cpp
+        utility.cpp
     )
 
 
@@ -41,6 +42,9 @@ add_executable(${PROJECT_NAME} main.cpp)
 
 # Link the core library to the threads package in the platform.
 target_link_libraries(core PRIVATE ${CMAKE_THREAD_LIBS_INIT})
+
+# Link the core library to the `std::experimental::filesystem` library.
+target_link_libraries(core PRIVATE stdc++fs)
 
 
 # Link the executable to the required libraries.

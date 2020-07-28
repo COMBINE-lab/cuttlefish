@@ -93,8 +93,6 @@ inline void State::set_nibble_lower_half(const cuttlefish::nucleotide_t nucl)
         break;
 
     default:
-        // Placeholder rule to handle `N` nucleotides.
-        // TODO: Need to make an informed rule for this.
         std::cerr << "Invalid nucleotide " << nucl << " encountered during state construction. Aborting.\n";
         std::exit(EXIT_FAILURE);
     }
@@ -121,8 +119,6 @@ inline void State::set_nibble_upper_half(const cuttlefish::nucleotide_t nucl)
         break;
 
     default:
-        // Placeholder rule to handle `N` nucleotides.
-        // TODO: Need to make an informed rule for this.
         std::cerr << "Invalid nucleotide " << nucl << " encountered during state construction. Aborting.\n";
         std::exit(EXIT_FAILURE);
     }

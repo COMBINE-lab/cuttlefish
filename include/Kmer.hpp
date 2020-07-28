@@ -247,10 +247,7 @@ inline cuttlefish::nucleotide_t Kmer::complement(const cuttlefish::nucleotide_t 
     case 'T':
         return 'A';
     
-    default:
-        // Placeholder rule to handle `N` nucleotides.
-        // TODO: Need to make an informed rule for this.
-        
+    default:        
         std::cerr << "Invalid nucleotide " << nucl << " encountered. Aborting.";
         std::exit(EXIT_FAILURE);
     }

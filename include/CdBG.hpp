@@ -301,9 +301,6 @@ inline cuttlefish::nucleotide_t CdBG::complement(const cuttlefish::nucleotide_t 
         return 'A';
     
     default:
-        // Placeholder rule to handle `N` nucleotides.
-        // TODO: Need to make an informed rule for this.
-        
         std::cerr << "Invalid nucleotide " << nucleotide << " encountered. Aborting.";
         std::exit(EXIT_FAILURE);
     }

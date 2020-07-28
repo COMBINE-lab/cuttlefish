@@ -199,7 +199,7 @@ bool CdBG::process_leftmost_kmer(const cuttlefish::kmer_t& kmer_hat, const cuttl
 
 
     // The k-mer is already classified as a complex node.
-    if(state.is_visited() && state.vertex_class() == cuttlefish::Vertex_Class::multi_in_multi_out)
+    if(state.is_dead_end())
         return true;    // Early return is safe from here as this vertex is a dead-end for state transitions.
 
     
@@ -298,7 +298,7 @@ bool CdBG::process_rightmost_kmer(const cuttlefish::kmer_t& kmer_hat, const cutt
 
 
     // The k-mer is already classified as a complex node.
-    if(state.is_visited() && state.vertex_class() == cuttlefish::Vertex_Class::multi_in_multi_out)
+    if(state.is_dead_end())
         return true;    // Early return is safe from here as this vertex is a dead-end for state transitions.
 
 
@@ -394,7 +394,7 @@ bool CdBG::process_internal_kmer(const cuttlefish::kmer_t& kmer_hat, const cuttl
 
 
     // The k-mer is already classified as a complex node.
-    if(state.is_visited() && state.vertex_class() == cuttlefish::Vertex_Class::multi_in_multi_out)
+    if(state.is_dead_end())
         return true;    // Early return is safe from here as this vertex is a dead-end for state transitions.
 
 
@@ -510,17 +510,13 @@ bool CdBG::process_isolated_kmer(const cuttlefish::kmer_t& kmer_hat)
 
 
     // The k-mer is already classified as a complex node.
-    if(state.is_visited() && state.vertex_class() == cuttlefish::Vertex_Class::multi_in_multi_out)
+    if(state.is_dead_end())
         return true;    // Early return is safe from here as this vertex is a dead-end for state transitions.
     
     // Classify the isolated k-mer as a complex node.
     state = State(Vertex(cuttlefish::Vertex_Class::multi_in_multi_out));
     return Vertices.update(hash_table_entry);
 }
-
-
-// TODO: Separate the classification and the outputting task implementations into different source files.
-// Reason: This source file is getting too large.
 
 
 void CdBG::print_vertex_class_dist(const std::string& kmc_file_name) const

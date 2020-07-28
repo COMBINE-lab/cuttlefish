@@ -40,10 +40,7 @@ private:
     void set_nibble_upper_half(const cuttlefish::nucleotide_t nucl);
 
     // Returns the wrapped state code value.
-    cuttlefish::state_code_t get_state() const
-    {
-        return code;
-    }
+    cuttlefish::state_code_t get_state() const;
 
 
 public:
@@ -70,7 +67,8 @@ public:
     // Returns the output status of a vertex that has this state.
     bool is_outputted() const;
 
-    // TODO
+    // Returns `true` iff this state qualifies as a dead-end in the state-transition model
+    // during the states classification step of the algorithm.
     bool is_dead_end() const;
 
     // Returns true iff the underlying codes are different.
@@ -123,6 +121,18 @@ inline State::State(const cuttlefish::bitvector_entry_t& bv_entry)
         std::cerr << "Invalid state " << (uint16_t)code << " encountered during construction from bitvector entry. Aborting.\n";
         std::exit(EXIT_FAILURE);
     }
+}
+
+
+inline cuttlefish::state_code_t State::get_state() const
+{
+    return code;
+}
+
+
+inline bool State::is_dead_end() const
+{
+    return is_visited() && vertex_class() == cuttlefish::Vertex_Class::multi_in_multi_out;
 }
 
 

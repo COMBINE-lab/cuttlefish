@@ -56,9 +56,13 @@ private:
     
     // The prefixes for the names of the temprorary files used to store the thread-specific
     // paths and overlaps.
-    // TODO: Apply some one-time randomness into the file names to avoid possible name conflicts in the file system.
-    const static std::string PATH_OUTPUT_PREFIX;
-    const static std::string OVERLAP_OUTPUT_PREFIX;
+    static std::string PATH_OUTPUT_PREFIX;
+    static std::string OVERLAP_OUTPUT_PREFIX;
+    const static size_t TEMP_FILE_PREFIX_LEN = 10;
+
+
+    // Sets a unique prefix for the temporary files to be used during GFA output.
+    static void set_temp_file_prefixes(const std::string& working_dir);
 
 
     // Classifies the vertices into different types (or, classes), using up-to
@@ -178,8 +182,9 @@ private:
 
     // Outputs the distinct maximal unitigs (in canonical form) of the compacted de
     // Bruijn graph in GFA format (version `gfa_v`), to the file named `gfa_file_name`,
-    // using up-to `thread_count` number of threads.
-    void output_maximal_unitigs_gfa(const std::string& gfa_file_name, const uint8_t gfa_v, const uint16_t thread_count);
+    // using up-to `thread_count` number of threads. Uses the path named `working_dir`
+    // to store temporary files.
+    void output_maximal_unitigs_gfa(const std::string& gfa_file_name, const uint8_t gfa_v, const uint16_t thread_count, const std::string& working_dir);
 
     // Resets the path output streams (depending on GFA version `gfa_v`) for each
     // thread. Needs to be invoked before processing each new sequence.

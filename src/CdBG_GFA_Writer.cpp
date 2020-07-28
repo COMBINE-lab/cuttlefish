@@ -1,6 +1,7 @@
 
 #include "CdBG.hpp"
 #include "kseq/kseq.h"
+#include "utility.hpp"
 
 #include <chrono>
 #include <thread>
@@ -12,7 +13,7 @@
 KSEQ_INIT(int, read);
 
 
-void CdBG::output_maximal_unitigs_gfa(const std::string& gfa_file_name, const uint8_t gfa_v, const uint16_t thread_count)
+void CdBG::output_maximal_unitigs_gfa(const std::string& gfa_file_name, const uint8_t gfa_v, const uint16_t thread_count, const std::string& working_dir)
 {
     std::chrono::high_resolution_clock::time_point t_start = std::chrono::high_resolution_clock::now();
 
@@ -49,6 +50,10 @@ void CdBG::output_maximal_unitigs_gfa(const std::string& gfa_file_name, const ui
     first_unitig.resize(thread_count);
     second_unitig.resize(thread_count);
     last_unitig.resize(thread_count);
+
+    // Set the prefixes of the temporary path output files. This is to avoid possible name
+    // conflicts in the file system.
+    set_temp_file_prefixes(working_dir);
 
 
     // Parse sequences one-by-one, and output each unique maximal unitig encountered through them.
@@ -154,6 +159,31 @@ void CdBG::output_maximal_unitigs_gfa(const std::string& gfa_file_name, const ui
     std::chrono::high_resolution_clock::time_point t_end = std::chrono::high_resolution_clock::now();
     double elapsed_seconds = std::chrono::duration_cast<std::chrono::duration<double>>(t_end - t_start).count();
     std::cout << "Done outputting the maximal unitigs. Time taken = " << elapsed_seconds << " seconds.\n";
+}
+
+
+void CdBG::set_temp_file_prefixes(const std::string& working_dir)
+{
+    // Check if temporary files can be created with random names.
+    const uint64_t RETRY_COUNT = 10;
+    std::string temp_file_prefix;
+    
+    for(uint64_t attempt = 0; attempt < RETRY_COUNT; ++attempt)
+    {
+        temp_file_prefix = get_random_string(TEMP_FILE_PREFIX_LEN);
+        if(!file_prefix_exists(working_dir, temp_file_prefix))
+        {
+            PATH_OUTPUT_PREFIX = working_dir + "/" + PATH_OUTPUT_PREFIX + temp_file_prefix;
+            OVERLAP_OUTPUT_PREFIX = working_dir + "/" + OVERLAP_OUTPUT_PREFIX + temp_file_prefix;
+
+            std::cout << "Temporary file name prefixes: " << PATH_OUTPUT_PREFIX << "\n";
+
+            return;
+        }
+    }
+
+    std::cerr << "Failed to find any random prefix for temporary file names. Aborting.\n";
+    std::exit(EXIT_FAILURE);
 }
 
 

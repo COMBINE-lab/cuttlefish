@@ -5,8 +5,8 @@
 // Initialize the static fields required for the GFA output.
 const std::string CdBG::GFA1_HEADER = "H\tVN:Z:1.0";
 const std::string CdBG::GFA2_HEADER = "H\tVN:Z:2.0";
-const std::string CdBG::PATH_OUTPUT_PREFIX = "tmp-path-output-";
-const std::string CdBG::OVERLAP_OUTPUT_PREFIX = "tmp-overlap-output-";
+std::string CdBG::PATH_OUTPUT_PREFIX = "cuttlefish-path-output-";
+std::string CdBG::OVERLAP_OUTPUT_PREFIX = "cuttlefish-overlap-output-";
 
 
 CdBG::CdBG(const std::string& ref_file, const uint16_t k, const std::string& kmc_db_name):
@@ -26,7 +26,7 @@ void CdBG::construct(const std::string& bbhash_file_name, const uint16_t thread_
 
     std::cout << "Outputting the maximal unitigs.\n";
     // output_maximal_unitigs(output_file_name, thread_count);
-    output_maximal_unitigs_gfa(output_file_name, 2, thread_count);
+    output_maximal_unitigs_gfa(output_file_name, 2, thread_count, ".");
 
     Vertices.clear();
 }

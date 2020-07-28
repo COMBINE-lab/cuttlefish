@@ -26,8 +26,6 @@ private:
 
     // Lowest bits/elem is achieved with gamma = 1, higher values lead to larger mphf but faster construction/query.
     constexpr static double gamma_factor = 2.0;
-    constexpr static const uint64_t num_chunks{65536};  // TODO: Comment.
-    uint64_t chunk_size;    // TODO: Comment.
 
     // The MPH function.
     cuttlefish::mphf_t* mph = NULL;
@@ -36,7 +34,14 @@ private:
     // keys (`kmer_t`) are passed to the MPHF, and the resulting function-value is used as index in the values table.
     cuttlefish::bitvector_t hash_table;
 
-    std::array<SpinLock, num_chunks> locks_;    // TODO: Comment.
+    // Number of locks for thread-safe access to the bitvector `hash_table`.
+    constexpr static const uint64_t lock_count{65536};
+
+    // Number of contiguous entries of the bitvector that each lock is assigned to.
+    uint64_t lock_range_size;
+
+    // The locks to maintain mutually exclusive access for threads, to the bitvector `hash_table`.
+    std::array<SpinLock, lock_count> locks_;
 
 
     // Builds the minimal perfect hash function `mph` over the set of
@@ -90,7 +95,7 @@ inline uint64_t Kmer_Hash_Table::bucket_id(const cuttlefish::kmer_t& kmer) const
 
 inline Kmer_Hash_Entry_API Kmer_Hash_Table::operator[](const uint64_t bucket_id)
 {
-    uint64_t lidx = bucket_id / chunk_size; 
+    uint64_t lidx = bucket_id / lock_range_size; 
     locks_[lidx].lock();
     auto r = Kmer_Hash_Entry_API(hash_table[bucket_id]);
     locks_[lidx].unlock();
@@ -98,15 +103,9 @@ inline Kmer_Hash_Entry_API Kmer_Hash_Table::operator[](const uint64_t bucket_id)
 }
 
 
-// TODO: Reuse the `operator[uint64_t]` method in this one.
 inline Kmer_Hash_Entry_API Kmer_Hash_Table::operator[](const cuttlefish::kmer_t& kmer)
 {
-    auto v = mph->lookup(kmer);
-    uint64_t lidx = v / chunk_size; 
-    locks_[lidx].lock();
-    auto r = Kmer_Hash_Entry_API(hash_table[v]);
-    locks_[lidx].unlock();
-    return r;
+    return operator[](mph->lookup(kmer));
 }
 
 
@@ -114,7 +113,7 @@ inline const State Kmer_Hash_Table::operator[](const cuttlefish::kmer_t& kmer) c
 {
     // NOTE: this makes the `const` a lie.  Should be a better solution here.
     auto v = mph->lookup(kmer);
-    uint64_t lidx = v / chunk_size; 
+    uint64_t lidx = v / lock_range_size; 
     auto* tp = const_cast<Kmer_Hash_Table*>(this);
     const_cast<decltype(tp->locks_[lidx])>(tp->locks_[lidx]).lock();
     auto ve = State(hash_table[v]);
@@ -126,7 +125,7 @@ inline const State Kmer_Hash_Table::operator[](const cuttlefish::kmer_t& kmer) c
 inline bool Kmer_Hash_Table::update(Kmer_Hash_Entry_API& api)
 {
     auto it = &(api.bv_entry);
-    uint64_t lidx = (std::distance(hash_table.begin(), it)) / chunk_size;
+    uint64_t lidx = (std::distance(hash_table.begin(), it)) / lock_range_size;
     locks_[lidx].lock();
     bool success = (api.bv_entry == api.get_read_state());
     if (success) {

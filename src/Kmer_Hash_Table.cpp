@@ -55,7 +55,7 @@ void Kmer_Hash_Table::construct(const std::string& kmc_file_name, const std::str
     Kmer_Container kmer_container(kmc_file_name);
     uint64_t kmer_count = kmer_container.size();
     
-    chunk_size = uint64_t(std::ceil(double(kmer_count) / num_chunks));
+    lock_range_size = uint64_t(std::ceil(double(kmer_count) / lock_count));
 
 
     // Build the minimal perfect hash function.

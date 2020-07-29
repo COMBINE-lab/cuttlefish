@@ -5,15 +5,10 @@
 
 
 #include "globals.hpp"
-#include "Vertex.hpp"
-#include "State.hpp"
 #include "Kmer.hpp"
 #include "Kmer_Hash_Table.hpp"
 #include "Annotated_Kmer.hpp"
 #include "Oriented_Unitig.hpp"
-#include "spdlog/spdlog.h"
-#include "spdlog/async.h"
-#include "spdlog/sinks/basic_file_sink.h"
 
 #include <sstream>
 

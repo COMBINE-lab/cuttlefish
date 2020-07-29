@@ -1,6 +1,9 @@
 
 #include "CdBG.hpp"
 #include "kseq/kseq.h"
+#include "spdlog/spdlog.h"
+#include "spdlog/async.h"
+#include "spdlog/sinks/basic_file_sink.h"
 
 #include <chrono>
 #include <thread>

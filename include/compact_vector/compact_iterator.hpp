@@ -167,7 +167,7 @@ struct gs {
     res                      = x | ((*(p + 1) & nmask) << (BITS - over));
     if(std::is_signed<IDX>::value && res & ((IDX)1 << (BITS - 1)))
       res |= ~(IDX)0 << BITS;
-    mask_store<W, true>cas(p, mask, x, x | msb);
+    mask_store<W, true>::cas(p, mask, x, x | msb);
     return true;
   }
 };
@@ -615,6 +615,12 @@ public:
     Derived& self = *static_cast<Derived*>(this);
     return gs<IDX, BITS, W, UB>::cas(x, exp, ptr, self.bits(), offset);
   }
+  // Added by self. Fetches the value stored at the location pointed by the setter
+  // (in a thread-safe manner) to the passed reference `res`.
+  inline void fetch_val(IDX& res) const
+  {
+    gs<IDX, BITS, W, UB>::fetch(res, ptr, offset);
+  }
 };
 
 template<typename IDX, unsigned BITS, typename W, bool TS, unsigned UB>
@@ -650,6 +656,8 @@ class lhs_setter
 public:
   lhs_setter(W* p, int o) : super(p, o) { }
   lhs_setter(W* p, unsigned bits, int o) : super(p, o) { (void)(bits); }
+  lhs_setter(const lhs_setter& rhs) = default;//: super(rhs.super::ptr, rhs.o) {}
+
   lhs_setter& operator=(const IDX x) {
     gs<IDX, BITS, W, UB>::template set<TS>(x, super::ptr, super::offset);
     return *this;
@@ -783,7 +791,7 @@ public:
   iterator(W* p, unsigned o)
     : m_ptr(p), m_offset(o) { }
   iterator(W* p, unsigned b, unsigned o)
-    : m_ptr(p), m_offset(o) { } // XXX Should we assert that BITS == b?
+    : m_ptr(p), m_offset(o) { (void)b; } // XXX Should we assert that BITS == b?
   template<bool TTS>
   iterator(const iterator<IDX, BITS, W, TTS>& rhs)
     : m_ptr(rhs.m_ptr), m_offset(rhs.m_offset) { }

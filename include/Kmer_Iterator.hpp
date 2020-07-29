@@ -26,11 +26,13 @@ public:
     typedef cuttlefish::kmer_t* pointer;
     typedef cuttlefish::kmer_t& reference;
 
+    typedef const cuttlefish::kmer_t* const_ptr_t;
+
 
 
 private:
 
-    Kmer_Container* kmer_container; // The associated k-mer container on which to iterate on.
+    const Kmer_Container* kmer_container; // The associated k-mer container on which to iterate on.
     CKMCFile kmer_database_input;   // The input reader object (from KMC databases).
     CKmerAPI kmer_object;   // Current KMC k-mer object that this iterator is holding.
     cuttlefish::kmer_t kmer;    // K-mer present inside the `kmer_object` api.
@@ -39,7 +41,7 @@ private:
 
     // Constructs an iterator for the provided container `kmer_container`, on either
     // its beginning or its ending position based on the value of `at_begin`.
-    Kmer_Iterator(Kmer_Container* const kmer_container, const bool at_begin = true);
+    Kmer_Iterator(const Kmer_Container* const kmer_container, const bool at_begin = true);
 
     // Opens the KMC database (internally buffered) to read k-mers.
     void open_kmer_database();
@@ -57,8 +59,11 @@ public:
     // Assigns the iterator `rhs` to this one, and returns the new iterator.
     const iterator& operator=(const iterator& rhs);
 
-    // Returns a `Kmer` object corresponding to the current iterator position.
+    // Returns a `Kmer` object corresponding to the iterator.
     value_type operator*() const;
+
+    // Returns a const pointer to the `Kmer` object corresponding to the iterator.
+    const_ptr_t operator->() const;
 
     // Advances the iterator by offset one, and returns the new iterator.
     const iterator& operator++();
@@ -77,7 +82,7 @@ public:
 
 
 
-inline Kmer_Iterator::Kmer_Iterator(Kmer_Container* const kmer_container, const bool at_begin):
+inline Kmer_Iterator::Kmer_Iterator(const Kmer_Container* const kmer_container, const bool at_begin):
     kmer_container(kmer_container), kmer_object(), at_begin(at_begin)
 {
     if(at_begin)
@@ -143,6 +148,12 @@ inline Kmer_Iterator::value_type Kmer_Iterator::operator*() const
 {
     // return cuttlefish::kmer_t(kmer_object);
     return kmer;
+}
+
+
+inline Kmer_Iterator::const_ptr_t Kmer_Iterator::operator->() const
+{
+    return &kmer;
 }
 
 

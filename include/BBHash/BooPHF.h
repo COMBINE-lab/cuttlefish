@@ -8,7 +8,7 @@
 #include <stdlib.h>
 #include <iostream>
 #include <math.h>
-
+#include <inttypes.h>
 #include <array>
 #include <unordered_map>
 #include <vector>
@@ -70,6 +70,10 @@ namespace boomphf {
 			_buffsize = 10000;
 			_buffer = (basetype *) malloc(_buffsize*sizeof(basetype));
 			int reso = fseek(_is,0,SEEK_SET);
+			if (reso) {
+			  fprintf(stderr, "fseek failed on FILE* %p with return code %d",
+					  is, reso);
+			}
 			advance();
 		}
 		
@@ -253,6 +257,7 @@ namespace boomphf {
 		{
 			done = 0;
 			double rem = 0;
+			(void)rem;
 			for (int ii=0; ii<_nthreads;ii++) done += (done_threaded[ii] );
 			for (int ii=0; ii<_nthreads;ii++) partial += (partial_threaded[ii] );
 
@@ -1023,9 +1028,9 @@ we need this 2-functors scheme because HashFunctors won't work with unordered_ma
 
 			uint64_t totalsize =  totalsizeBitset +  _final_hash.size()*42*8 ;  // unordered map takes approx 42B per elem [personal test] (42B with uint64_t key, would be larger for other type of elem)
 
-			printf("Bitarray    %12llu  bits (%.2f %%)   (array + ranks )\n",
+			printf("Bitarray    %12" PRId64 "  bits (%.2f %%)   (array + ranks )\n",
 				   totalsizeBitset, 100*(float)totalsizeBitset/totalsize);
-			printf("Last level hash  %12lu  bits (%.2f %%) (nb in last level hash %lu)\n",
+			printf("Last level hash  %12" PRId64 "  bits (%.2f %%) (nb in last level hash %lu)\n",
 				   _final_hash.size()*42*8, 100*(float)(_final_hash.size()*42*8)/totalsize,
 				   _final_hash.size() );
 			return totalsize;
@@ -1279,6 +1284,7 @@ we need this 2-functors scheme because HashFunctors won't work with unordered_ma
 			_proba_collision = 1.0 -  pow(((_gamma*(double)_nelem -1 ) / (_gamma*(double)_nelem)),_nelem-1);
 
 			double sum_geom =_gamma * ( 1.0 +  _proba_collision / (1.0 - _proba_collision));
+			(void)sum_geom;
 			//printf("proba collision %f  sum_geom  %f   \n",_proba_collision,sum_geom);
 
 			_nb_levels = 25;

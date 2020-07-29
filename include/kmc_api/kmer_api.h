@@ -448,7 +448,7 @@ public:
 	};
 
 
-	// Convert the k-mer object to a 64-bit version `kmer`.
+	// Converts the k-mer object to a 64-bit version `kmer_`.
 	inline void to_u64(uint64_t& kmer_) const
 	{
 		uint32 offset = 62 - ((kmer_length - 1 + byte_alignment) & 31) * 2;

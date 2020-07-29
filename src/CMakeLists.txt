@@ -4,15 +4,17 @@ set(PROJECT_SRC
         kmc_api/kmc_file.cpp
         kmc_api/kmer_api.cpp
         kmc_api/mmer.cpp
-        # Kmer_Str.cpp
         Kmer.cpp
         Vertex.cpp
-        Vertex_Encoding.cpp
+        State.cpp
         Kmer_Container.cpp
-        # Kmer_Iterator.cpp
         Kmer_Hash_Table.cpp
-        # CdBG.cpp
+        CdBG.cpp
         CdBG_Builder.cpp
+        CdBG_Writer.cpp
+        CdBG_GFA_Writer.cpp
+        Validator.cpp
+        utility.cpp
     )
 
 
@@ -41,6 +43,9 @@ add_executable(${PROJECT_NAME} main.cpp)
 # Link the core library to the threads package in the platform.
 target_link_libraries(core PRIVATE ${CMAKE_THREAD_LIBS_INIT})
 
+# Link the core library to the `std::experimental::filesystem` library.
+target_link_libraries(core PRIVATE stdc++fs)
+
 
 # Link the executable to the required libraries.
 target_link_libraries(${PROJECT_NAME} PRIVATE core)
@@ -50,19 +55,24 @@ target_link_libraries(${PROJECT_NAME} PRIVATE core)
 target_compile_options(${PROJECT_NAME} PRIVATE ${WARNING_FLAGS})
 
 
-# Set the parent directory for the target binaries as `bin` directory inside the "installation directory".
-# The installation directory is set to `/usr/local` by default. Installing softwares there ensures that
-# those are automatically available to users. You may need root access (use `sudo`) for such.
-# To specify a different parent installation directory, pass the directory as the value of the
-# `-DCMAKE_INSTALL_PREFIX` with the `cmake` command.
+# Set the parent directory for the target binaries inside the "installation directory". The
+# installation directory is set to `/usr/local` by default. If it's set there, i.e. the user
+# have not passed any other value for such, then the parent installation directory is set to
+# a default (`bin`) directory at the top level of the source tree. To specify a different parent
+# installation directory, pass its path as the value of the `-DCMAKE_INSTALL_PREFIX` with the
+# `cmake` command.
 
-# TODO: Employ a better design choice regarding `INSTALL_DIR` (by relating it to `CMAKE_INSTALL_PREFIX`)
-set(INSTALL_DIR ${CMAKE_SOURCE_DIR}/bin)
+set(DEFAULT_INSTALL_DIR ${CMAKE_SOURCE_DIR}/bin)        # Set our default installation directory as a `bin` directory inside the top level of the source tree.
+set(INSTALL_DIR .)      # Set the installation directory to what CMake has recieved, i.e. either the system default or the user-provided one.
+if(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT) # If it's set to the system default, then set it to our defined default directory.
+        set(INSTALL_DIR ${CMAKE_SOURCE_DIR}/bin)
+endif()
+
 install(TARGETS ${PROJECT_NAME}
         DESTINATION ${INSTALL_DIR}
         )
 
 
-add_executable(test test.cpp)
+add_executable(test test.cpp Validator.cpp)
 target_link_libraries(test PRIVATE core)
 target_compile_options(test PRIVATE ${WARNING_FLAGS})

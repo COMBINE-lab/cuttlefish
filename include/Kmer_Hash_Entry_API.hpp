@@ -5,7 +5,7 @@
 
 
 #include "globals.hpp"
-#include "Vertex_Encoding.hpp"
+#include "State.hpp"
 
 
 class Kmer_Hash_Table;
@@ -23,51 +23,53 @@ private:
     cuttlefish::bitvector_entry_t bv_entry;
 
     // Value read from the bitvector entry when the object is constructed; is immutable.
-    const Vertex_Encoding vertex_encoding_read;
+    const State state_read;
 
     // Value read from the bitvector entry when the object is constrcuted; is mutable.
-    Vertex_Encoding vertex_encoding;
+    State state;
 
 
     // Constructs an API to the bitvector entry `bv_entry`.
     Kmer_Hash_Entry_API(const cuttlefish::bitvector_entry_t& bv_entry):
-        bv_entry(bv_entry), vertex_encoding_read(bv_entry), vertex_encoding(bv_entry)
-    {}
+        bv_entry(bv_entry), state_read(bv_entry)
+    {
+        state = state_read;
+    }
 
 
-    // Returns the vertex encoding value read when the object was constructed.
-    uint8_t get_read_encoding() const;
+    // Returns the state value read when the object was constructed.
+    cuttlefish::state_code_t get_read_state() const;
 
     
-    // Returns the value of the mutable vertex encoding wrapped inside the API,
-    // i.e. the encoding value that had been read at the object creation, and then
+    // Returns the value of the mutable state value wrapped inside the API,
+    // i.e. the state value that had been read at the object creation, and then
     // possibly have been modified.
-    uint8_t get_current_encoding() const;
+    cuttlefish::state_code_t get_current_state() const;
 
 
 public:
 
-    // Returns a reference to the mutable copy of the wrapped vertex encoding.
-    Vertex_Encoding& get_vertex_encoding();
+    // Returns a reference to the mutable copy of the wrapped state value.
+    State& get_state();
 };
 
 
 
-inline uint8_t Kmer_Hash_Entry_API::get_read_encoding() const
+inline cuttlefish::state_code_t Kmer_Hash_Entry_API::get_read_state() const
 {
-    return vertex_encoding_read.get_vertex_code();
+    return state_read.get_state();
 }
 
 
-inline uint8_t Kmer_Hash_Entry_API::get_current_encoding() const
+inline cuttlefish::state_code_t Kmer_Hash_Entry_API::get_current_state() const
 {
-    return vertex_encoding.get_vertex_code();
+    return state.get_state();
 }
 
 
-inline Vertex_Encoding& Kmer_Hash_Entry_API::get_vertex_encoding()
+inline State& Kmer_Hash_Entry_API::get_state()
 {
-    return vertex_encoding;
+    return state;
 }
 
 

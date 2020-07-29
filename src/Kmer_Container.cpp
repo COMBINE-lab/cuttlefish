@@ -23,6 +23,12 @@ Kmer_Container::Kmer_Container(const std::string& kmc_file_name):
 }
 
 
+std::string Kmer_Container::container_location() const
+{
+    return kmc_file_name;
+}
+
+
 uint32_t Kmer_Container::kmer_length() const
 {
     return kmer_database_info.kmer_length;
@@ -35,13 +41,13 @@ uint64_t Kmer_Container::size() const
 }
 
 
-Kmer_Container::iterator Kmer_Container::begin()
+Kmer_Container::iterator Kmer_Container::begin() const
 {
     return iterator(this);
 }
 
 
-Kmer_Container::iterator Kmer_Container::end()
+Kmer_Container::iterator Kmer_Container::end() const
 {
     return iterator(this, false);
 }

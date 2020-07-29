@@ -10,31 +10,78 @@
 #include <iostream>
 
 
+class CdBG;
+
+
 class Vertex
 {
-public:
-    cuttlefish::state_t state;
-    cuttlefish::nucleotide_t enter, exit;
-    bool visited;
-    bool outputted;
+    friend class CdBG;
 
+private:
+
+    cuttlefish::Vertex_Class vertex_class_;
+    cuttlefish::nucleotide_t enter_;
+    cuttlefish::nucleotide_t exit_;
+    bool visited_;
+    bool outputted_;
+
+
+public:
 
     // Constructs an unvisited vertex.
-    Vertex(): visited(false)
+    Vertex(): visited_(false)
     {}
 
-    // Constructs a vertex of type SINGLE_IN_SINGLE_OUT.
-    Vertex(const cuttlefish::state_t state, const cuttlefish::nucleotide_t enter, const cuttlefish::nucleotide_t exit);
+    // Constructs a vertex of class `single_in_single_out`.
+    Vertex(const cuttlefish::Vertex_Class vertex_class, const cuttlefish::nucleotide_t enter, const cuttlefish::nucleotide_t exit);
 
-    // Constructs a vertex of type MULTI_IN_SINGLE_OUT or SINGLE_IN_MULTI_OUT.
-    Vertex(const cuttlefish::state_t state, const cuttlefish::nucleotide_t nucl);
+    // Constructs a vertex of class either `multi_in_single_out` or `single_in_multi_out`.
+    Vertex(const cuttlefish::Vertex_Class vertex_class, const cuttlefish::nucleotide_t nucl);
 
-    // Constructs a vertex of type `state`, with the provided outputted status.
-    Vertex(const cuttlefish::state_t state, const bool outputted = false);
+    // Constructs a vertex of class `vertex_class`, with the provided outputted status.
+    Vertex(const cuttlefish::Vertex_Class vertex_class, const bool outputted = false);
+
+    // Returns the vertex class.
+    cuttlefish::Vertex_Class vertex_class() const;
+
+    // Returns the entering nucleotide.
+    cuttlefish::nucleotide_t enter() const;
+
+    // Returns the exitting nucleotide.
+    cuttlefish::nucleotide_t exit() const;
+
+    // Returns the outputted status.
+    bool outputted() const;
 
     // For debugging purposes: prints the vertex information.
     friend std::ostream& operator <<(std::ostream& out, const Vertex& vertex);
 };
+
+
+
+inline cuttlefish::Vertex_Class Vertex::vertex_class() const
+{
+    return vertex_class_;
+}
+
+
+inline cuttlefish::nucleotide_t Vertex::enter() const
+{
+    return enter_;
+}
+
+
+inline cuttlefish::nucleotide_t Vertex::exit() const
+{
+    return exit_;
+}
+
+
+inline bool Vertex::outputted() const
+{
+    return outputted_;
+}
+
 
 
 #endif

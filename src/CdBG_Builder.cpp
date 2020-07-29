@@ -195,7 +195,7 @@ bool CdBG::process_leftmost_kmer(const cuttlefish::kmer_t& kmer_hat, const cuttl
     // Fetch the entry for `kmer_hat`.
     Kmer_Hash_Entry_API hash_table_entry = Vertices[kmer_hat];
     State& state = hash_table_entry.get_state();
-    // const State old_state = state;
+    const State old_state = state;
 
 
     // The k-mer is already classified as a complex node.
@@ -278,14 +278,11 @@ bool CdBG::process_leftmost_kmer(const cuttlefish::kmer_t& kmer_hat, const cuttl
     }
 
 
-    // Ideally, we can skip calling the `update` method when `state` has not changed here,
-    // i.e. `state` remains equal to the value with which it had been initialized. But in a
-    // multi-threaded environment, the actual location of `state` in the hash table could
-    // have been changed in between the initialization of the variable at the beginning and this exit
-    // point of the method. For such cases, the `update` would fail, signalling the caller of the event.
-    // TODO: We may also get away without updating the same value again, as the edge-ordering should not
-    // matter in the algorithm.
-    return Vertices.update(hash_table_entry);
+    // We can get away without updating the same value again, because -- (1) even if this k-mer's state changes
+    // in the hash table by the time this method completes, making no updates at this point is theoretically
+    // equivalent to returning instantaneously as soon as the hash table value had been read; and also (2) the
+    // ordering of the edges processed does not matter in the algorithm.
+    return state == old_state ? true : Vertices.update(hash_table_entry);
 }
 
 
@@ -294,7 +291,7 @@ bool CdBG::process_rightmost_kmer(const cuttlefish::kmer_t& kmer_hat, const cutt
     // Fetch the entry for `kmer_hat`.
     Kmer_Hash_Entry_API hash_table_entry = Vertices[kmer_hat];
     State& state = hash_table_entry.get_state();
-    // const State old_state = state;
+    const State old_state = state;
 
 
     // The k-mer is already classified as a complex node.
@@ -374,14 +371,11 @@ bool CdBG::process_rightmost_kmer(const cuttlefish::kmer_t& kmer_hat, const cutt
     }
 
 
-    // Ideally, we can skip calling the `update` method when `state` has not changed here,
-    // i.e. `state` remains equal to the value with which it had been initialized. But in a
-    // multi-threaded environment, the actual location of `state` in the hash table could
-    // have been changed in between the initialization of the variable at the beginning and this exit
-    // point of the method. For such cases, the `update` would fail, signalling the caller of the event.
-    // TODO: We may also get away without updating the same value again, as the edge-ordering should not
-    // matter in the algorithm.
-    return Vertices.update(hash_table_entry);
+    // We can get away without updating the same value again, because -- (1) even if this k-mer's state changes
+    // in the hash table by the time this method completes, making no updates at this point is theoretically
+    // equivalent to returning instantaneously as soon as the hash table value had been read; and also (2) the
+    // ordering of the edges processed does not matter in the algorithm.
+    return state == old_state ? true : Vertices.update(hash_table_entry);
 }
 
 
@@ -390,7 +384,7 @@ bool CdBG::process_internal_kmer(const cuttlefish::kmer_t& kmer_hat, const cuttl
     // Fetch the hash table entry for `kmer_hat`.
     Kmer_Hash_Entry_API hash_table_entry = Vertices[kmer_hat];
     State& state = hash_table_entry.get_state();
-    // const State old_state = state;
+    const State old_state = state;
 
 
     // The k-mer is already classified as a complex node.
@@ -413,9 +407,7 @@ bool CdBG::process_internal_kmer(const cuttlefish::kmer_t& kmer_hat, const cuttl
             if(vertex.vertex_class_ == cuttlefish::Vertex_Class::single_in_single_out)
             {
                 if(vertex.enter_ == prev_nucl && vertex.exit_ == next_nucl)
-                    ; // return true; // Probable race if returned early from here
-                    // TODO: Maybe not. May get away without updating the same value again,
-                    // as the edge-ordering should not matter in the algorithm.
+                    return true;    // See note at the end on early return w/o hash table update.
                 else if(vertex.enter_ != prev_nucl && vertex.exit_ != next_nucl)
                     vertex.vertex_class_ = cuttlefish::Vertex_Class::multi_in_multi_out;
                 else if(vertex.enter_ != prev_nucl)
@@ -457,9 +449,7 @@ bool CdBG::process_internal_kmer(const cuttlefish::kmer_t& kmer_hat, const cuttl
             if(vertex.vertex_class_ == cuttlefish::Vertex_Class::single_in_single_out)
             {
                 if(vertex.enter_ == complement(next_nucl) && vertex.exit_ == complement(prev_nucl))
-                    ; // return true; // Probable race if returned early from here
-                    // TODO: Maybe not. May get away without updating the same value again,
-                    // as the edge-ordering should not matter in the algorithm.
+                    return true;    // See note at the end on early return w/o hash table update.
                 else if(vertex.enter_ != complement(next_nucl) && vertex.exit_ != complement(prev_nucl))
                     vertex.vertex_class_ = cuttlefish::Vertex_Class::multi_in_multi_out;
                 else if(vertex.enter_ != complement(next_nucl))
@@ -491,14 +481,11 @@ bool CdBG::process_internal_kmer(const cuttlefish::kmer_t& kmer_hat, const cuttl
     }
 
 
-    // Ideally, we can skip calling the `update` method when `state` has not changed here,
-    // i.e. `state` remains equal to the value with which it had been initialized. But in a
-    // multi-threaded environment, the actual location of `state` in the hash table could
-    // have been changed in between the initialization of the variable at the beginning and this exit
-    // point of the method. For such cases, the `update` would fail, signalling the caller of the event.
-    // TODO: We may also get away without updating the same value again, as the edge-ordering should not
-    // matter in the algorithm.
-    return Vertices.update(hash_table_entry);
+    // We can get away without updating the same value again, because -- (1) even if this k-mer's state changes
+    // in the hash table by the time this method completes, making no updates at this point is theoretically
+    // equivalent to returning instantaneously as soon as the hash table value had been read; and also (2) the
+    // ordering of the edges processed does not matter in the algorithm.
+    return state == old_state ? true : Vertices.update(hash_table_entry);
 }
 
 

@@ -71,11 +71,11 @@ public:
     // during the states classification step of the algorithm.
     bool is_dead_end() const;
 
-    // Returns true iff the underlying codes are different.
-    bool operator!=(const State& rhs) const
-    {
-        return code != rhs.code;
-    }
+    // TODO?
+    // const State& operator=();
+
+    // Returns true iff the underlying codes are the same.
+    bool operator==(const State& rhs) const;
 
     // For debugging.
     friend std::ostream& operator <<(std::ostream& out, const State& state);
@@ -133,6 +133,12 @@ inline cuttlefish::state_code_t State::get_state() const
 inline bool State::is_dead_end() const
 {
     return is_visited() && vertex_class() == cuttlefish::Vertex_Class::multi_in_multi_out;
+}
+
+
+inline bool State::operator==(const State& rhs) const
+{
+    return code == rhs.code;
 }
 
 

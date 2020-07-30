@@ -274,7 +274,7 @@ public:
 
     // Constructs the compacted de Bruijn graph using up-to `thread_count` threads, and
     // outputs the maximal unitigs into the file named `output_file_name`.
-    void construct(const std::string& bbhash_file_name, const uint16_t thread_count, const std::string& output_file_name);
+    void construct(const std::string& bbhash_file_name, const uint16_t thread_count, const std::string& output_file_name, const uint8_t output_format, const std::string& working_dir);
 };
 
 

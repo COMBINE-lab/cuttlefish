@@ -12,18 +12,15 @@ void Kmer_Hash_Table::build_mph_function(const Kmer_Container& kmer_container, c
 {
     // The serialized BBHash file (saved from some earlier execution) exists.
     struct stat buffer;
-    if(stat(bbhash_file_name.c_str(), &buffer) == 0)
+    if(!bbhash_file_name.empty() && stat(bbhash_file_name.c_str(), &buffer) == 0)
     {
         std::cout << "Loading the MPH function from file " << bbhash_file_name << "\n";
-        
-        std::ifstream input(bbhash_file_name.c_str(), std::ifstream::in);
-        mph = new boomphf::mphf<cuttlefish::kmer_t, Kmer_Hasher>();
-        mph->load(input);
-        input.close();
-        
+
+        load_mph_function(bbhash_file_name);
+
         std::cout << "Loaded the MPH function into memory.\n";
     }
-    else    // No BBHash file exists. Build and save one now.
+    else    // No BBHash file name provided, or does not exist. Build and save (if specified) one now.
     {
         // Build the MPHF.
         std::cout << "Building the MPH function from the k-mer database " << kmer_container.container_location() << "\n";
@@ -34,15 +31,47 @@ void Kmer_Hash_Table::build_mph_function(const Kmer_Container& kmer_container, c
         std::cout << "Built the MPH function in memory.\n";
         
 
-        // Save the MPHF.
-        std::cout << "Saving the MPH function in file " << bbhash_file_name << "\n";
+        // Save the MPHF if specified.
+        if(!bbhash_file_name.empty())
+        {
+            std::cout << "Saving the MPH function in file " << bbhash_file_name << "\n";
 
-        std::ofstream output(bbhash_file_name.c_str(), std::ofstream::out);
-        mph->save(output);
-        output.close();
+            save_mph_function(bbhash_file_name);
 
-        std::cout << "Saved the MPH function in disk.\n";
+            std::cout << "Saved the MPH function in disk.\n";
+        }
     }
+}
+
+
+void Kmer_Hash_Table::load_mph_function(const std::string& file_name)
+{
+    std::ifstream input(file_name.c_str(), std::ifstream::in);
+    if(input.fail())
+    {
+        std::cerr << "Error opening file " << file_name << ". Aborting.\n";
+        std::exit(EXIT_FAILURE);
+    }
+
+    mph = new cuttlefish::mphf_t();
+    mph->load(input);
+
+    input.close();
+}
+
+
+void Kmer_Hash_Table::save_mph_function(const std::string& file_name) const
+{
+    std::ofstream output(file_name.c_str(), std::ofstream::out);
+    if(output.fail())
+    {
+        std::cerr << "Error writing to file " << file_name << ". Aborting.\n";
+        std::exit(EXIT_FAILURE);
+    }
+
+    mph->save(output);
+    
+    output.close();
 }
 
 

@@ -16,7 +16,7 @@ CdBG::CdBG(const std::string& ref_file, const uint16_t k, const std::string& kmc
 }
 
 
-void CdBG::construct(const std::string& bbhash_file_name, const uint16_t thread_count, const std::string& output_file_name)
+void CdBG::construct(const std::string& bbhash_file_name, const uint16_t thread_count, const std::string& output_file_name, const uint8_t output_format, const std::string& working_dir)
 {
     std::cout << "Constructing the minimal perfect hash function.\n";
     Vertices.construct(kmc_db_name, bbhash_file_name, thread_count);
@@ -25,8 +25,9 @@ void CdBG::construct(const std::string& bbhash_file_name, const uint16_t thread_
     classify_vertices(thread_count);
 
     std::cout << "Outputting the maximal unitigs.\n";
-    // output_maximal_unitigs(output_file_name, thread_count);
-    output_maximal_unitigs_gfa(output_file_name, 2, thread_count, ".");
+
+    (output_format == 0 ?   output_maximal_unitigs(output_file_name, thread_count) :
+                            output_maximal_unitigs_gfa(output_file_name, output_format, thread_count, working_dir));
 
     Vertices.clear();
 }

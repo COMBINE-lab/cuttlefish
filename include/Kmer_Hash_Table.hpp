@@ -50,6 +50,12 @@ private:
     // using `thread_count` number of threads.
     void build_mph_function(const Kmer_Container& kmer_container, const std::string& bbhash_file_name, const uint16_t thread_count);
 
+    // Loads an MPH function stored at the file named `file_name` into `mph`.
+    void load_mph_function(const std::string& file_name);
+
+    // Saves the MPH function `mph` into a file named `file_name`.
+    void save_mph_function(const std::string& file_name) const;
+
     // Returns the id / number of the bucket in the hash table that is
     // supposed to store value items for the key `kmer`.
     uint64_t bucket_id(const cuttlefish::kmer_t& kmer) const;

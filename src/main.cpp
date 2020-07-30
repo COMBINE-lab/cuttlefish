@@ -1,6 +1,8 @@
 
 #include "CdBG.hpp"
+#include "Validator.hpp"
 #include "cxxopts/cxxopts.hpp"
+#include "spdlog/sinks/stdout_color_sinks.h"
 
 #include <cstdlib>
 #include <fstream>
@@ -10,7 +12,7 @@
 // Driver function for the CdBG build.
 void build(int argc, char** argv)
 {
-    cxxopts::Options options("cuttlefish", "Efficiently construct the compacted de Brijn graph from references");
+    cxxopts::Options options("cuttlefish build", "Efficiently construct the compacted de Bruijn graph from references");
     options.add_options()
         ("r,ref", "reference sequence (in FASTA)", cxxopts::value<std::string>())
         ("k,kmer_len", "k-mer length", cxxopts::value<uint16_t>())
@@ -70,12 +72,62 @@ void build(int argc, char** argv)
 
 
 // Driver function for the CdBG validation.
-int validate(int argc, char** argv);
+void validate(int argc, char** argv)
+{
+    cxxopts::Options options("cuttlefish validate", "Validate a compacted de Bruijn graph constructed by cuttlefish");
+    options.add_options()
+        ("r,ref", "reference sequence (in FASTA)", cxxopts::value<std::string>())
+        ("k,kmer_len", "k-mer length", cxxopts::value<uint16_t>())
+        ("d,kmc_db", "KMC database prefix", cxxopts::value<std::string>())
+        ("c,cdbg", "CdBG file", cxxopts::value<std::string>())
+        ("t,threads", "number of threads to use", cxxopts::value<uint16_t>()->default_value("1"))
+        ("b,bbhash", "BBHash file (optional)", cxxopts::value<std::string>()->default_value(""))
+        ("h,help", "print usage");
+
+    try
+    {
+        auto result = options.parse(argc, argv);
+        if(result.count("help"))
+        {
+            std::cout << options.help() << std::endl;
+            return;
+        }
+
+        auto ref = result["ref"].as<std::string>();
+        auto k = result["kmer_len"].as<uint16_t>();
+        auto kmer_database = result["kmc_db"].as<std::string>();
+        auto cdbg = result["cdbg"].as<std::string>();
+        auto thread_count = result["threads"].as<uint16_t>();
+        auto bbhash_file = result["bbhash"].as<std::string>();
+
+
+        cuttlefish::logger_t console = spdlog::stdout_color_mt("Validator");
+        Validator validator(ref, k, kmer_database, cdbg, console);
+        std::cout << "Validation " << (validator.validate(bbhash_file, thread_count) ? "successful" : "failed") << std::endl;
+    }
+    catch(const std::exception& e)
+    {
+        std::cerr << e.what() << std::endl;
+        std::cerr << std::endl << "Usage :" << std::endl;
+        std::cerr << options.help() << std::endl;
+    }
+}
 
 
 int main(int argc, char** argv)
 {
-    build(argc, argv);
+    if(argc < 2)
+        std::cout << "Usage:\ncuttlefish <command> [OPTIONS]" << std::endl;
+    else
+    {
+        const std::string command = argv[1];
+        if(command == "build")
+            build(argc - 1, argv + 1);
+        else if(command == "validate")
+            validate(argc - 1, argv + 1);
+        else
+            std::cout << "Invalid command. Supported commands: `build` and `validate`" << std::endl;
+    }
 
     return EXIT_SUCCESS;
 }

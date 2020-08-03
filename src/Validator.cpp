@@ -22,7 +22,7 @@ KSEQ_INIT(int, read);
 Validator::Validator(const std::string& ref_file_name, const uint16_t k, const std::string& kmc_db_name, const std::string& cdbg_file_name, cuttlefish::logger_t console):
     ref_file_name(ref_file_name), k(k), kmc_db_name(kmc_db_name), cdbg_file_name(cdbg_file_name), mph(NULL), console(console)
 {
-    Kmer_u64::set_k(k);
+    cuttlefish::kmer_t::set_k(k);
 }
 
 
@@ -433,7 +433,7 @@ bool Validator::walk_unitig(const char* seq, const size_t seq_len, const size_t 
 
     const size_t len = unitig.length();
     for(size_t idx = 0; idx < len; ++idx)
-        if(start_idx + idx >= seq_len || seq[start_idx + idx] != Kmer_u64::complement(unitig[len - 1 - idx]))
+        if(start_idx + idx >= seq_len || seq[start_idx + idx] != cuttlefish::kmer_t::complement(unitig[len - 1 - idx]))
             return false;
             
     return true;

@@ -59,7 +59,7 @@ inline bool Oriented_Unitig::is_valid() const
 
 inline size_t Oriented_Unitig::length() const
 {
-    return end_kmer_idx - start_kmer_idx + Kmer_u64::get_k();
+    return end_kmer_idx - start_kmer_idx + cuttlefish::kmer_t::get_k();
 }
 
 

@@ -349,7 +349,7 @@ void CdBG::write_path(const uint64_t thread_id, const char* const seq, const siz
             buffer << seq[start_kmer_idx + offset];
     else    // dir == cuttlefish::BWD
         for(size_t offset = 0; offset < path_len; ++offset)
-            buffer << complement(seq[end_kmer_idx + k - 1 - offset]);
+            buffer << cuttlefish::kmer_t::complement(seq[end_kmer_idx + k - 1 - offset]);
 
     // End the path.
     buffer << "\n";

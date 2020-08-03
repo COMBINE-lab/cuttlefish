@@ -9,32 +9,14 @@ uint16_t Kmer_u64::k = 0;
 uint64_t Kmer_u64::bitmask_MSN = 0;
 
 
-Kmer_u64::Kmer_u64(const std::string& label)
-{
-    assert(label.length() == k);
-
-    kmer = 0;
-
-    for(const char p: label)
-    {
-        uint8_t nucleotide = map_nucleotide(p);
-        // assert(nucleotide < DNA_Base::N);
-
-        kmer = (kmer << 2) | nucleotide;
-    }
-}
+Kmer_u64::Kmer_u64(const std::string& label):
+    Kmer_u64(label.c_str(), 0)
+{}
 
 
-Kmer_u64::Kmer_u64(const std::string& label, const size_t kmer_idx)
-{
-    kmer = 0;
-
-    for(size_t idx = kmer_idx; idx < kmer_idx + k; ++idx)
-    {
-        uint8_t nucleotide = map_nucleotide(label[idx]);
-        kmer = (kmer << 2) | nucleotide;
-    }
-}
+Kmer_u64::Kmer_u64(const std::string& label, const size_t kmer_idx):
+    Kmer_u64(label.c_str(), kmer_idx)
+{}
 
 
 void Kmer_u64::set_k(uint16_t k)

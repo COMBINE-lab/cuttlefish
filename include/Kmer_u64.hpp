@@ -31,6 +31,7 @@ private:
 
 public:
 
+    // Default constructs the k-mer with a 0-value, equivalent to "AA...A".
     Kmer_u64(): kmer(0)
     {}
 
@@ -64,8 +65,7 @@ public:
     // encoding of the other k-mer `rhs`.
     bool operator<(const Kmer_u64& rhs) const;
 
-    // Returns true iff the bitwise encoding of this k-mer is equal to the
-    // encoding of the other k-mer `rhs`.
+    // Returns true iff this k-mer is identical to the other k-mer `rhs`.
     bool operator==(const Kmer_u64& rhs) const;
 
     // Returns `true` iff the k-mer is in the forward direction relative to

@@ -3,18 +3,14 @@
 #define DIRECTED_KMER_HPP
 
 
+
 #include "globals.hpp"
-
-
-class Annotated_Kmer;
 
 
 // K-mer and its reverse complement, canonical form, and direction.
 class Directed_Kmer
 {
-    friend class Annotated_Kmer;
-
-private:
+protected:
 
     cuttlefish::kmer_t kmer_;
     cuttlefish::kmer_t rev_compl_;

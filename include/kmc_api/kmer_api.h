@@ -453,19 +453,9 @@ public:
 	{
 		uint32 offset = 62 - ((kmer_length - 1 + byte_alignment) & 31) * 2;
 		if (offset)
-		{
-			for (int32 i = no_of_rows - 1; i >= 1; --i)
-			{
-				kmer_ = kmer_data[i] >> offset;
-				kmer_ += kmer_data[i - 1] << (64 - offset);
-			}
 			kmer_ = kmer_data[0] >> offset;
-		}
 		else
-		{
-			for (int32 i = no_of_rows - 1; i >= 0; --i)			
-				kmer_ = kmer_data[i];						
-		}
+			kmer_ = kmer_data[0];
 	}
 
 	inline void to_long(std::vector<uint64>& kmer)

@@ -1,7 +1,7 @@
 
 #include <cstdlib>
 #include <ctime>
-#include <experimental/filesystem>
+#include "ghc/filesystem.hpp"
 
 
 std::string get_random_string(const size_t len)
@@ -38,7 +38,7 @@ bool is_prefix(const std::string& s, const std::string& pref)
 
 bool file_prefix_exists(const std::string& path, const std::string& prefix)
 {
-    for(const auto& entry: std::experimental::filesystem::directory_iterator(path))
+    for(const auto& entry: ghc::filesystem::directory_iterator(path))
         if(is_prefix(entry.path(), prefix))
             return true;
 

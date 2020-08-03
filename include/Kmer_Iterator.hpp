@@ -4,8 +4,8 @@
 
 
 
+#include "globals.hpp"
 #include "kmc_api/kmc_file.h"
-#include "Kmer_u64.hpp"
 #include "Kmer_Container.hpp"
 
 

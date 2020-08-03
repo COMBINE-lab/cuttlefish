@@ -5,7 +5,6 @@
 
 
 #include "globals.hpp"
-#include "Kmer_u64.hpp"
 
 
 class Kmer_Hasher

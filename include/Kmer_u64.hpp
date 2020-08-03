@@ -1,10 +1,9 @@
 
-#ifndef KMER_HPP
-#define KMER_HPP
+#ifndef KMER_U64_HPP
+#define KMER_U64_HPP
 
 
 
-#include "globals.hpp"
 #include "kmc_api/kmc_file.h"
 
 #include <string>
@@ -79,8 +78,8 @@ public:
     // Sets the value of the `k` parameter across the `Kmer_u64` class.
     static void set_k(const uint16_t k);
 
-    // Returns the DNA-complement character of the nucleotide character `nucl`.
-    static cuttlefish::nucleotide_t complement(const cuttlefish::nucleotide_t nucl);
+    // Returns the DNA-complement character of the character `nucl`.
+    static char complement(const char nucl);
 
     // Returns the reverese complement of the k-mer.
     Kmer_u64 reverse_complement() const;
@@ -93,14 +92,15 @@ public:
     // encoding of the other k-mer `rhs`.
     bool operator==(const Kmer_u64& rhs) const;
 
-    // Returns the direction of the k-mer relative to its canonical version.
-    cuttlefish::dir_t direction(const Kmer_u64& kmer_hat) const;
+    // Returns `true` iff the k-mer is in the forward direction relative to
+    // the other k-mer `kmer_hat`.
+    bool in_forward(const Kmer_u64& kmer_hat) const;
 
     // Transforms this k-mer by chopping off the first nucleotide and
     // appending the next nucleotide `next_nucl` to the end, i.e.
     // rolls the k-mer by one nucleotide. Also sets the passed reverse
     // complement `rev_compl` of the k-mer accordingly.
-    void roll_to_next_kmer(const cuttlefish::nucleotide_t next_nucl, cuttlefish::kmer_t& rev_compl);
+    void roll_to_next_kmer(const char next_nucl, Kmer_u64& rev_compl);
 
     // Returns the canonical version of the k-mer, comparing it to its
     // reverse complement `rev_compl`.
@@ -231,7 +231,7 @@ inline Kmer_u64::DNA_Base Kmer_u64::complement_nucleotide(const DNA_Base nucleot
 }
 
 
-inline cuttlefish::nucleotide_t Kmer_u64::complement(const cuttlefish::nucleotide_t nucl)
+inline char Kmer_u64::complement(const char nucl)
 {
     switch (nucl)
     {
@@ -272,13 +272,13 @@ inline bool Kmer_u64::operator==(const Kmer_u64& rhs) const
 }
 
 
-inline cuttlefish::dir_t Kmer_u64::direction(const Kmer_u64& kmer_hat) const
+inline bool Kmer_u64::in_forward(const Kmer_u64& kmer_hat) const
 {
     return this->operator==(kmer_hat);
 }
 
 
-inline void Kmer_u64::roll_to_next_kmer(const cuttlefish::nucleotide_t next_nucl, cuttlefish::kmer_t& rev_compl)
+inline void Kmer_u64::roll_to_next_kmer(const char next_nucl, Kmer_u64& rev_compl)
 {
     const DNA_Base mapped_nucl = map_nucleotide(next_nucl);
 

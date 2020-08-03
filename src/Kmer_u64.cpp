@@ -76,7 +76,7 @@ std::string Kmer_u64::string_label() const
             break;
 
         default:
-            label[idx] = cuttlefish::PLACEHOLDER_NUCLEOTIDE;
+            label[idx] = 'N';
         }
 
         

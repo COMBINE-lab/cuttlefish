@@ -4,11 +4,10 @@
 
 
 
+#include "Kmer_u64.hpp"
+
 #include <memory>
 
-
-// Forward declaration of the k-mer type.
-class Kmer_u64;
 
 // Forward declaration of the k-mer hasher type.
 class Kmer_Hasher;

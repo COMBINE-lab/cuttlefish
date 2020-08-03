@@ -4,7 +4,6 @@
 
 
 #include "globals.hpp"
-#include "Kmer_u64.hpp"
 
 
 class Annotated_Kmer;
@@ -62,7 +61,7 @@ inline Directed_Kmer::Directed_Kmer(const cuttlefish::kmer_t& kmer):
 {
     rev_compl_ = kmer.reverse_complement();
     canonical_ = kmer.canonical(rev_compl_);
-    dir_ = kmer.direction(canonical_);
+    dir_ = kmer.in_forward(canonical_);
 }
 
 
@@ -71,7 +70,7 @@ inline void Directed_Kmer::roll_to_next_kmer(const cuttlefish::nucleotide_t next
     kmer_.roll_to_next_kmer(next_nucl, rev_compl_);
     
     canonical_ = kmer_.canonical(rev_compl_);
-    dir_ = kmer_.direction(canonical_);
+    dir_ = kmer_.in_forward(canonical_);
 }
 
 

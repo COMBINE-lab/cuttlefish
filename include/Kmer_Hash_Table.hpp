@@ -5,7 +5,6 @@
 
 
 #include "globals.hpp"
-#include "Kmer.hpp"
 #include "State.hpp"
 #include "Kmer_Container.hpp"
 #include "BBHash/BooPHF.h"

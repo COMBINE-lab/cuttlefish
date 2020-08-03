@@ -12,7 +12,7 @@ std::string CdBG::OVERLAP_OUTPUT_PREFIX = "cuttlefish-overlap-output-";
 CdBG::CdBG(const std::string& ref_file, const uint16_t k, const std::string& kmc_db_name):
     ref_file(ref_file), k(k), kmc_db_name(kmc_db_name)
 {
-    Kmer::set_k(k);
+    Kmer_u64::set_k(k);
 }
 
 

@@ -14,7 +14,7 @@
 class Kmer_Hasher;
 
 
-class Kmer
+class Kmer_u64
 {
     friend class Kmer_Hasher;
 
@@ -39,7 +39,7 @@ private:
 
 
     // Constructs a k-mer with the provided encoded value `kmer`.
-    Kmer(const uint64_t kmer);
+    Kmer_u64(const uint64_t kmer);
 
     // Returns the mapping integer value of the given character `nucleotide`.
     static DNA_Base map_nucleotide(const char nucleotide);
@@ -53,48 +53,48 @@ private:
 
 public:
 
-    Kmer(): kmer(0)
+    Kmer_u64(): kmer(0)
     {}
 
     // Constructs a k-mer from the provided string `label`.
-    Kmer(const std::string& label);
+    Kmer_u64(const std::string& label);
 
     // Constructs a k-mer from the provided characters at
     // `label[kmer_idx,...,kmer_idx + k - 1]`.
-    Kmer(const char* label, const size_t kmer_idx);
+    Kmer_u64(const char* label, const size_t kmer_idx);
 
     // Constructs a k-mer from the provided characters at
     // `label[kmer_idx,...,kmer_idx + k - 1]`.
-    Kmer(const std::string& label, const size_t kmer_idx);
+    Kmer_u64(const std::string& label, const size_t kmer_idx);
 
     // Constructs a k-mer from `kmer_api` which is a k-mer object built from KMC.
-    Kmer(const CKmerAPI& kmer_api);
+    Kmer_u64(const CKmerAPI& kmer_api);
 
     // Copy constructs the k-mer from another k-mer `rhs`.
-    Kmer(const Kmer& rhs);
+    Kmer_u64(const Kmer_u64& rhs);
 
     // Copy assignment operator
-    Kmer& operator=(const Kmer& rhs) = default;
+    Kmer_u64& operator=(const Kmer_u64& rhs) = default;
 
-    // Sets the value of the `k` parameter across the `Kmer` class.
+    // Sets the value of the `k` parameter across the `Kmer_u64` class.
     static void set_k(const uint16_t k);
 
     // Returns the DNA-complement character of the nucleotide character `nucl`.
     static cuttlefish::nucleotide_t complement(const cuttlefish::nucleotide_t nucl);
 
     // Returns the reverese complement of the k-mer.
-    Kmer reverse_complement() const;
+    Kmer_u64 reverse_complement() const;
 
     // Returns true iff the bitwise encoding of this k-mer is lesser to the
     // encoding of the other k-mer `rhs`.
-    bool operator<(const Kmer& rhs) const;
+    bool operator<(const Kmer_u64& rhs) const;
 
     // Returns true iff the bitwise encoding of this k-mer is equal to the
     // encoding of the other k-mer `rhs`.
-    bool operator==(const Kmer& rhs) const;
+    bool operator==(const Kmer_u64& rhs) const;
 
     // Returns the direction of the k-mer relative to its canonical version.
-    cuttlefish::dir_t direction(const Kmer& kmer_hat) const;
+    cuttlefish::dir_t direction(const Kmer_u64& kmer_hat) const;
 
     // Transforms this k-mer by chopping off the first nucleotide and
     // appending the next nucleotide `next_nucl` to the end, i.e.
@@ -104,10 +104,10 @@ public:
 
     // Returns the canonical version of the k-mer, comparing it to its
     // reverse complement `rev_compl`.
-    Kmer canonical(const Kmer& rev_compl) const;
+    Kmer_u64 canonical(const Kmer_u64& rev_compl) const;
 
     // Returns the canonical version of the k-mer.
-    Kmer canonical() const;
+    Kmer_u64 canonical() const;
 
     // Returns the string label of the k-mer.
     std::string string_label() const;
@@ -119,11 +119,11 @@ public:
     static uint16_t get_k();
     
     // For debugging purposes.
-    friend std::ostream& operator<<(std::ostream& out, const Kmer& kmer);
+    friend std::ostream& operator<<(std::ostream& out, const Kmer_u64& kmer);
 };
 
 
-inline Kmer::DNA_Base Kmer::map_nucleotide(const char nucleotide)
+inline Kmer_u64::DNA_Base Kmer_u64::map_nucleotide(const char nucleotide)
 {
     switch(nucleotide)
     {
@@ -148,7 +148,7 @@ inline Kmer::DNA_Base Kmer::map_nucleotide(const char nucleotide)
 }
 
 
-inline Kmer::Kmer(const char* label, const size_t kmer_idx)
+inline Kmer_u64::Kmer_u64(const char* label, const size_t kmer_idx)
 {
     kmer = 0;
 
@@ -160,7 +160,7 @@ inline Kmer::Kmer(const char* label, const size_t kmer_idx)
 }
 
 
-inline Kmer::Kmer(const CKmerAPI& kmer_api)
+inline Kmer_u64::Kmer_u64(const CKmerAPI& kmer_api)
 {
     kmer = 0;
 
@@ -174,19 +174,19 @@ inline Kmer::Kmer(const CKmerAPI& kmer_api)
 }
 
 
-inline Kmer::Kmer(const Kmer& rhs): kmer(rhs.kmer)
+inline Kmer_u64::Kmer_u64(const Kmer_u64& rhs): kmer(rhs.kmer)
 {}
 /*
-inline Kmer& Kmer::operator=(const Kmer& rhs) {
+inline Kmer& Kmer_u64::operator=(const Kmer_u64& rhs) {
     kmer = rhs.kmer;
     return *this; 
 }
 */
 
-inline Kmer Kmer::reverse_complement() const
+inline Kmer_u64 Kmer_u64::reverse_complement() const
 {
     uint64_t kmer_val = kmer;
-    Kmer rev_comp;
+    Kmer_u64 rev_comp;
 
     for(uint16_t idx = 0; idx < k; ++idx)
     {
@@ -199,14 +199,14 @@ inline Kmer Kmer::reverse_complement() const
 }
 
 
-inline void Kmer::from_CKmerAPI(const CKmerAPI& kmer_api)
+inline void Kmer_u64::from_CKmerAPI(const CKmerAPI& kmer_api)
 {
     kmer = 0;
     kmer_api.to_u64(kmer);
 }
 
 
-inline Kmer::DNA_Base Kmer::complement_nucleotide(const DNA_Base nucleotide)
+inline Kmer_u64::DNA_Base Kmer_u64::complement_nucleotide(const DNA_Base nucleotide)
 {
     switch(nucleotide)
     {
@@ -231,7 +231,7 @@ inline Kmer::DNA_Base Kmer::complement_nucleotide(const DNA_Base nucleotide)
 }
 
 
-inline cuttlefish::nucleotide_t Kmer::complement(const cuttlefish::nucleotide_t nucl)
+inline cuttlefish::nucleotide_t Kmer_u64::complement(const cuttlefish::nucleotide_t nucl)
 {
     switch (nucl)
     {
@@ -254,31 +254,31 @@ inline cuttlefish::nucleotide_t Kmer::complement(const cuttlefish::nucleotide_t 
 }
 
 
-inline uint64_t Kmer::to_u64() const
+inline uint64_t Kmer_u64::to_u64() const
 {
     return kmer;
 }
 
 
-inline bool Kmer::operator<(const Kmer& rhs) const
+inline bool Kmer_u64::operator<(const Kmer_u64& rhs) const
 {
     return kmer < rhs.kmer;
 }
 
 
-inline bool Kmer::operator==(const Kmer& rhs) const
+inline bool Kmer_u64::operator==(const Kmer_u64& rhs) const
 {
     return kmer == rhs.kmer;
 }
 
 
-inline cuttlefish::dir_t Kmer::direction(const Kmer& kmer_hat) const
+inline cuttlefish::dir_t Kmer_u64::direction(const Kmer_u64& kmer_hat) const
 {
     return this->operator==(kmer_hat);
 }
 
 
-inline void Kmer::roll_to_next_kmer(const cuttlefish::nucleotide_t next_nucl, cuttlefish::kmer_t& rev_compl)
+inline void Kmer_u64::roll_to_next_kmer(const cuttlefish::nucleotide_t next_nucl, cuttlefish::kmer_t& rev_compl)
 {
     const DNA_Base mapped_nucl = map_nucleotide(next_nucl);
 
@@ -287,7 +287,7 @@ inline void Kmer::roll_to_next_kmer(const cuttlefish::nucleotide_t next_nucl, cu
 }
 
 
-inline Kmer Kmer::canonical(const Kmer& rev_compl) const
+inline Kmer_u64 Kmer_u64::canonical(const Kmer_u64& rev_compl) const
 {
     return std::min(*this, rev_compl);
 }

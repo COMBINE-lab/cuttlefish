@@ -8,7 +8,7 @@
 
 
 // Forward declaration of the k-mer type.
-class Kmer;
+class Kmer_u64;
 
 // Forward declaration of the k-mer hasher type.
 class Kmer_Hasher;
@@ -39,7 +39,7 @@ namespace spdlog
 
 namespace cuttlefish
 {
-    typedef Kmer kmer_t;
+    typedef Kmer_u64 kmer_t;
     typedef bool dir_t;
     typedef char nucleotide_t;
     typedef uint8_t state_code_t;

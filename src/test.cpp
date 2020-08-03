@@ -1,5 +1,4 @@
 
-#include "Kmer.hpp"
 #include "Directed_Kmer.hpp"
 #include "Kmer_Container.hpp"
 #include "Kmer_Iterator.hpp"
@@ -118,7 +117,7 @@ void check_repeated_kmers(const char* file_name)
 
 void check_N_base(const char* file_name, uint16_t k)
 {
-    Kmer::set_k(k);
+    Kmer_u64::set_k(k);
 
     std::ifstream input(file_name, std::ifstream::in);
     if(!input)
@@ -240,7 +239,7 @@ void test_kmer_iterator(const char* file_name)
     // Open the k-mers container.
     Kmer_Container kmers(kmc_file);
 
-    Kmer::set_k(kmers.kmer_length());
+    Kmer_u64::set_k(kmers.kmer_length());
 
     std::cout << "k-mers length: " << kmers.kmer_length() << "\n";
     std::cout << "k-mers count: " << kmers.size() << "\n";

@@ -5,7 +5,7 @@
 
 
 #include "kmc_api/kmc_file.h"
-#include "Kmer.hpp"
+#include "Kmer_u64.hpp"
 #include "Kmer_Container.hpp"
 
 

@@ -4,7 +4,7 @@
 
 
 #include "globals.hpp"
-#include "Kmer.hpp"
+#include "Kmer_u64.hpp"
 
 
 class Annotated_Kmer;

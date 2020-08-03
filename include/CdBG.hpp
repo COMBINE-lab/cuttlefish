@@ -5,7 +5,6 @@
 
 
 #include "globals.hpp"
-#include "Kmer.hpp"
 #include "Kmer_Hash_Table.hpp"
 #include "Annotated_Kmer.hpp"
 #include "Oriented_Unitig.hpp"

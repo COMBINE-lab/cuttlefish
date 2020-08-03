@@ -1,15 +1,15 @@
 
-#include "Kmer.hpp"
+#include "Kmer_u64.hpp"
 
 #include <cassert>
 
 
 // Static fields initialization.
-uint16_t Kmer::k = 0;
-uint64_t Kmer::bitmask_MSN = 0;
+uint16_t Kmer_u64::k = 0;
+uint64_t Kmer_u64::bitmask_MSN = 0;
 
 
-Kmer::Kmer(const std::string& label)
+Kmer_u64::Kmer_u64(const std::string& label)
 {
     assert(label.length() == k);
 
@@ -25,7 +25,7 @@ Kmer::Kmer(const std::string& label)
 }
 
 
-Kmer::Kmer(const std::string& label, const size_t kmer_idx)
+Kmer_u64::Kmer_u64(const std::string& label, const size_t kmer_idx)
 {
     kmer = 0;
 
@@ -37,20 +37,20 @@ Kmer::Kmer(const std::string& label, const size_t kmer_idx)
 }
 
 
-void Kmer::set_k(uint16_t k)
+void Kmer_u64::set_k(uint16_t k)
 {
-    Kmer::k = k;
-    Kmer::bitmask_MSN = ~(uint64_t(0b11) << (2 * (k - 1)));
+    Kmer_u64::k = k;
+    Kmer_u64::bitmask_MSN = ~(uint64_t(0b11) << (2 * (k - 1)));
 }
 
 
-Kmer Kmer::canonical() const
+Kmer_u64 Kmer_u64::canonical() const
 {
     return canonical(reverse_complement());
 }
 
 
-std::string Kmer::string_label() const
+std::string Kmer_u64::string_label() const
 {
     uint64_t kmer = this -> kmer;
     char* label = new char[k + 1];
@@ -95,13 +95,13 @@ std::string Kmer::string_label() const
 }
 
 
-uint16_t Kmer::get_k()
+uint16_t Kmer_u64::get_k()
 {
     return k;
 }
 
 
-std::ostream& operator<<(std::ostream& out, const Kmer& kmer)
+std::ostream& operator<<(std::ostream& out, const Kmer_u64& kmer)
 {
     out << kmer.string_label();
     

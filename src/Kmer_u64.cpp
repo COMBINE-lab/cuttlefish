@@ -1,6 +1,7 @@
 
 #include "Kmer_u64.hpp"
 
+#include <algorithm>
 #include <cassert>
 
 
@@ -34,7 +35,7 @@ Kmer_u64 Kmer_u64::canonical() const
 
 std::string Kmer_u64::string_label() const
 {
-    uint64_t kmer = this -> kmer;
+    uint64_t kmer = this->kmer;
     char* label = new char[k + 1];
     
     for(uint16_t idx = 0; idx < k; ++idx)

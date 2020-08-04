@@ -32,15 +32,14 @@ private:
 public:
 
     // Default constructs the k-mer with a 0-value, equivalent to "AA...A".
-    Kmer_u64(): kmer(0)
-    {}
+    Kmer_u64();
 
     // Constructs a k-mer from the provided string `label`.
     Kmer_u64(const std::string& label);
 
     // Constructs a k-mer from the provided characters at
     // `label[kmer_idx,...,kmer_idx + k - 1]`.
-    Kmer_u64(const char* label, const size_t kmer_idx);
+    Kmer_u64(const char* const label, const size_t kmer_idx);
 
     // Constructs a k-mer from the provided characters at
     // `label[kmer_idx,...,kmer_idx + k - 1]`.
@@ -99,13 +98,17 @@ public:
 };
 
 
-inline Kmer_u64::Kmer_u64(const char* label, const size_t kmer_idx)
-{
-    kmer = 0;
+inline Kmer_u64::Kmer_u64():
+    kmer(0)
+{}
 
+
+inline Kmer_u64::Kmer_u64(const char* const label, const size_t kmer_idx):
+    Kmer_u64()
+{
     for(size_t idx = kmer_idx; idx < kmer_idx + k; ++idx)
     {
-        uint8_t nucleotide = map_nucleotide(label[idx]);
+        const uint8_t nucleotide = map_nucleotide(label[idx]);
         kmer = (kmer << 2) | nucleotide;
     }
 }
@@ -113,6 +116,7 @@ inline Kmer_u64::Kmer_u64(const char* label, const size_t kmer_idx)
 
 inline Kmer_u64::Kmer_u64(const CKmerAPI& kmer_api)
 {
+    /*
     kmer = 0;
 
     for(uint16_t idx = 0; idx < k; ++idx)
@@ -122,6 +126,9 @@ inline Kmer_u64::Kmer_u64(const CKmerAPI& kmer_api)
 
         kmer = (kmer << 2) | nucleotide;
     }
+    */
+
+   from_CKmerAPI(kmer_api);
 }
 
 

@@ -20,7 +20,10 @@ std::string get_random_string(const size_t len)
     s[len] = '\0';
 
 
-    return std::string(s);
+    const std::string str(s);
+    delete s;
+
+    return str;
 }
 
 

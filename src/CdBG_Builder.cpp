@@ -32,12 +32,18 @@ void CdBG::classify_vertices(const uint16_t thread_count)
     // Initialize the parser.
     kseq_t* parser = kseq_init(fileno(input));
 
+    // Track the maximum sequence buffer size used.
+    size_t max_buf_sz = 0;
+
     // Parse sequences one-by-one, and continue partial classification of the k-mers through them.
     uint32_t seqCount = 0;
     while(kseq_read(parser) >= 0)
     {
         const char* seq = parser->seq.s;
         const size_t seq_len = parser->seq.l;
+        const size_t seq_buf_sz = parser->seq.m;
+
+        max_buf_sz = std::max(max_buf_sz, seq_buf_sz);
 
         std::cout << "Processing sequence " << ++seqCount << ", with length " << seq_len << ".\n";
 
@@ -77,6 +83,8 @@ void CdBG::classify_vertices(const uint16_t thread_count)
                 }
         } 
     }
+
+    std::cout << "Maximum buffer size used (in MB): " << max_buf_sz / (1024 * 1024) << "\n";
 
 
     // Close the parser and the input file.

@@ -54,12 +54,18 @@ void CdBG::output_maximal_unitigs(const std::string& output_file, const uint16_t
     output_buffer.resize(thread_count);
     buffer_size.resize(thread_count);
 
+    // Track the maximum sequence buffer size used.
+    size_t max_buf_sz = 0;
+
     // Parse sequences one-by-one, and output each unique maximal unitig encountered through them.
     uint32_t seqCount = 0;
     while(kseq_read(parser) >= 0)
     {
         const char* seq = parser->seq.s;
         const size_t seq_len = parser->seq.l;
+        const size_t seq_buf_sz = parser->seq.m;
+
+        max_buf_sz = std::max(max_buf_sz, seq_buf_sz);
 
         std::cout << "Processing sequence " << ++seqCount << ", with length " << seq_len << ".\n";
 
@@ -100,6 +106,8 @@ void CdBG::output_maximal_unitigs(const std::string& output_file, const uint16_t
             }
         }
     }
+
+    std::cout << "Maximum buffer size used (in MB): " << max_buf_sz / (1024 * 1024) << "\n";
 
 
     // Flush the buffers.
@@ -367,6 +375,12 @@ void CdBG::fill_buffer(const uint64_t thread_id, const uint64_t fill_amount, cut
 
     if(buffer_size[thread_id] > MAX_BUFF_SIZE)
     {
+        // TODO: Avoid the presence of the same content in the memory simultaneously.
+        // E.g. skipping this line results in consuming memory:
+        // "fixed" HG38: 176 instead of 346 MB;
+        // HG38: 17 instead of 93 MB;
+        // Gorgor3: 0.5 instead of 40MB.
+
         write(output, output_buffer[thread_id].str());
         
         output_buffer[thread_id].str("");

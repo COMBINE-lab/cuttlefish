@@ -59,6 +59,9 @@ void CdBG::output_maximal_unitigs_gfa(const std::string& gfa_file_name, const ui
     set_temp_file_prefixes(working_dir);
 
 
+    // Track the maximum sequence buffer size used.
+    size_t max_buf_sz = 0;
+
     // Parse sequences one-by-one, and output each unique maximal unitig encountered through them.
     // uint32_t seq_count = 0;
     seq_count = 0;
@@ -66,6 +69,9 @@ void CdBG::output_maximal_unitigs_gfa(const std::string& gfa_file_name, const ui
     {
         const char* seq = parser->seq.s;
         const size_t seq_len = parser->seq.l;
+        const size_t seq_buf_sz = parser->seq.m;
+
+        max_buf_sz = std::max(max_buf_sz, seq_buf_sz);
 
         std::chrono::high_resolution_clock::time_point t_s = std::chrono::high_resolution_clock::now();
         std::cout << "Processing sequence " << ++seq_count << ", with length " << seq_len << ".\n";
@@ -139,6 +145,8 @@ void CdBG::output_maximal_unitigs_gfa(const std::string& gfa_file_name, const ui
         // Write the GFA path for this sequence.
         gfa_v == 1 ? write_gfa_path(thread_count, gfa_file_name) : write_gfa_ordered_group(thread_count, gfa_file_name);
     }
+
+    std::cout << "Maximum buffer size used (in MB): " << max_buf_sz / (1024 * 1024) << "\n";
 
 
     // Flush the buffers.

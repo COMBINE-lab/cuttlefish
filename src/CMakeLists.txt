@@ -4,6 +4,7 @@ set(PROJECT_SRC
         kmc_api/kmc_file.cpp
         kmc_api/kmer_api.cpp
         kmc_api/mmer.cpp
+        smhasher/MurmurHash3.cpp
         Kmer_u64.cpp
         Vertex.cpp
         State.cpp

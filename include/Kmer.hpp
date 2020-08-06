@@ -5,6 +5,7 @@
 
 
 #include "Kmer_Utility.hpp"
+#include "smhasher/MurmurHash3.h"
 
 #include <string>
 
@@ -33,11 +34,7 @@ private:
 
     
     // Returns a 64-bit hash value for the k-mer.
-    // TODO.
-    uint64_t to_u64() const
-    {
-        return kmer_data[0];
-    }
+    uint64_t to_u64() const;
 
     // Left-shifts the collection of the bits at the `kmer_data` array by one nucleotide (2-bits).
     void left_shift();
@@ -139,6 +136,23 @@ inline void Kmer<k>::right_shift()
         kmer_data[idx] = (kmer_data[idx] >> 2) | ((kmer_data[idx + 1] & mask_LSN) << 62);
 
     kmer_data[NUM_INTS - 1] >>= 2;
+}
+
+
+template <uint16_t k>
+inline uint64_t Kmer<k>::to_u64() const
+{
+    // The k-mer uses just one 64-bit integer, i.e. k <= 32.
+    if(NUM_INTS == 1)
+        return kmer_data[0];
+
+    // The k-mer uses more than one 64-bit integer, i.e. k > 32.
+    constexpr uint16_t NUM_BYTES = (k + 3) / 4;
+    uint64_t H[2];
+
+    MurmurHash3_x64_128(kmer_data, NUM_BYTES, 0, H);
+    
+    return H[0] ^ H[1];
 }
 
 

@@ -66,7 +66,7 @@ target_compile_options(${PROJECT_NAME} PRIVATE ${WARNING_FLAGS})
 set(DEFAULT_INSTALL_DIR ${CMAKE_SOURCE_DIR}/bin)        # Set our default installation directory as a `bin` directory inside the top level of the source tree.
 set(INSTALL_DIR .)      # Set the installation directory to what CMake has recieved, i.e. either the system default or the user-provided one.
 if(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT) # If it's set to the system default, then set it to our defined default directory.
-        set(INSTALL_DIR ${CMAKE_SOURCE_DIR}/bin)
+        set(INSTALL_DIR ${DEFAULT_INSTALL_DIR})
 endif()
 
 install(TARGETS ${PROJECT_NAME}

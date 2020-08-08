@@ -33,7 +33,7 @@ void CdBG::construct(const std::string& bbhash_file_name, const uint16_t thread_
 }
 
 
-size_t CdBG::search_valid_kmer(const char* const seq, const size_t left_end, const size_t right_end)
+size_t CdBG::search_valid_kmer(const char* const seq, const size_t left_end, const size_t right_end) const
 {
     size_t valid_start_idx;
     uint16_t nucl_count;

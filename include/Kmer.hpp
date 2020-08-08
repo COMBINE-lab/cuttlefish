@@ -8,6 +8,7 @@
 #include "smhasher/MurmurHash3.h"
 
 #include <string>
+#include <algorithm>
 
 
 class Kmer_Hasher;

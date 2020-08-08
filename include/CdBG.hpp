@@ -52,12 +52,11 @@ private:
     // paths and overlaps.
     static std::string PATH_OUTPUT_PREFIX;
     static std::string OVERLAP_OUTPUT_PREFIX;
-    const static size_t TEMP_FILE_PREFIX_LEN = 10;
+    constexpr static size_t TEMP_FILE_PREFIX_LEN = 10;
 
 
     // Sets a unique prefix for the temporary files to be used during GFA output.
     static void set_temp_file_prefixes(const std::string& working_dir);
-
 
     // Classifies the vertices into different types (or, classes), using up-to
     // `thread_count` number of threads.
@@ -72,7 +71,7 @@ private:
     // the placeholder nucleotide 'N', in the index range `[left_end, right_end]`
     // of the sequence `seq`. If no such k-mer is found, returns the first invalid
     // index after its assigned range, i.e. `right_end + 1`.
-    size_t search_valid_kmer(const char* const seq, const size_t left_end, const size_t right_end);
+    size_t search_valid_kmer(const char* const seq, const size_t left_end, const size_t right_end) const;
 
     // Processes classification for the canonical versions of the valid k-mers of
     // the sequence `seq` (of length `seq_len`) that are present at its contiguous

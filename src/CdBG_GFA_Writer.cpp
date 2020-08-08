@@ -22,7 +22,7 @@ void CdBG::output_maximal_unitigs_gfa(const std::string& gfa_file_name, const ui
 
 
     // Open the file handler for the FASTA / FASTQ file containing the reference.
-    FILE* input = fopen(ref_file.c_str(), "r");
+    FILE* const input = fopen(ref_file.c_str(), "r");
     if(input == NULL)
     {
         std::cerr << "Error opening input file " << ref_file << ". Aborting.\n";
@@ -30,7 +30,7 @@ void CdBG::output_maximal_unitigs_gfa(const std::string& gfa_file_name, const ui
     }
 
     // Initialize the parser.
-    kseq_t* parser = kseq_init(fileno(input));
+    kseq_t* const parser = kseq_init(fileno(input));
 
 
     // Clear the output file and write the GFA header.
@@ -67,7 +67,7 @@ void CdBG::output_maximal_unitigs_gfa(const std::string& gfa_file_name, const ui
     seq_count = 0;
     while(kseq_read(parser) >= 0)
     {
-        const char* seq = parser->seq.s;
+        const char* const seq = parser->seq.s;
         const size_t seq_len = parser->seq.l;
         const size_t seq_buf_sz = parser->seq.m;
 

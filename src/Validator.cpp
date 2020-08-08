@@ -196,7 +196,7 @@ void Validator::validate_sequence_completion(const uint64_t thread_count, bool& 
 
 
     // Open the file handler for the FASTA / FASTQ file containing the reference.
-    FILE* input = fopen(ref_file_name.c_str(), "r");
+    FILE* const input = fopen(ref_file_name.c_str(), "r");
     if(input == NULL)
     {
         console->error("Error opening the reference file {}. Aborting.\n", ref_file_name);
@@ -204,7 +204,7 @@ void Validator::validate_sequence_completion(const uint64_t thread_count, bool& 
     }
     
     // Initialize the parser.
-    kseq_t* parser = kseq_init(fileno(input));
+    kseq_t* const parser = kseq_init(fileno(input));
 
 
     std::vector<std::thread> th(thread_count);  // Thread-pool (round-robin) to validate the sequences parallelly.
@@ -216,7 +216,7 @@ void Validator::validate_sequence_completion(const uint64_t thread_count, bool& 
     // Parse sequences one-by-one, and continue spelling them using the resultant unitigs of the compaction algorithm.
     while(kseq_read(parser) >= 0)
     {
-        const char* seq = parser->seq.s;
+        const char* const seq = parser->seq.s;
         const size_t seq_len = parser->seq.l;
 
         console->info("Spelling out sequence {}, with length {}.\n", seqCount, seq_len);
@@ -327,7 +327,7 @@ void Validator::build_unitig_tables()
 }
 
 
-void Validator::walk_sequence(const char* seq, const size_t seq_len, bool& result) const
+void Validator::walk_sequence(const char* const seq, const size_t seq_len, bool& result) const
 {
     // Nothing to process for sequences with length shorter than `k`.
     if(seq_len < k)
@@ -355,7 +355,7 @@ void Validator::walk_sequence(const char* seq, const size_t seq_len, bool& resul
 }
 
 
-size_t Validator::search_valid_kmer(const char* seq, const size_t seq_len, const size_t start_idx) const
+size_t Validator::search_valid_kmer(const char* const seq, const size_t seq_len, const size_t start_idx) const
 {
     size_t valid_start_idx;
     uint16_t nucl_count;
@@ -383,7 +383,7 @@ size_t Validator::search_valid_kmer(const char* seq, const size_t seq_len, const
 }
 
 
-size_t Validator::walk_first_unitig(const char* seq, const size_t seq_len, const size_t start_idx) const
+size_t Validator::walk_first_unitig(const char* const seq, const size_t seq_len, const size_t start_idx) const
 {
     const cuttlefish::kmer_t kmer(seq, start_idx);
     const uint64_t kmer_hash = mph->lookup(kmer.canonical());
@@ -410,7 +410,7 @@ size_t Validator::walk_first_unitig(const char* seq, const size_t seq_len, const
 }
 
 
-bool Validator::walk_unitig(const char* seq, const size_t seq_len, const size_t start_idx, const std::string& unitig, const Unitig_Dir dir) const
+bool Validator::walk_unitig(const char* const seq, const size_t seq_len, const size_t start_idx, const std::string& unitig, const Unitig_Dir dir) const
 {
     if(dir == Unitig_Dir::either)
         return walk_unitig(seq, seq_len, start_idx, unitig, true) || walk_unitig(seq, seq_len, start_idx, unitig, false);
@@ -419,7 +419,7 @@ bool Validator::walk_unitig(const char* seq, const size_t seq_len, const size_t 
 }
 
 
-bool Validator::walk_unitig(const char* seq, const size_t seq_len, const size_t start_idx, const std::string& unitig, const bool in_forward) const
+bool Validator::walk_unitig(const char* const seq, const size_t seq_len, const size_t start_idx, const std::string& unitig, const bool in_forward) const
 {
     if(in_forward)
     {

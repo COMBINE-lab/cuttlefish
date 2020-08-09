@@ -2,12 +2,16 @@
 #include "CdBG.hpp"
 #include "Validator.hpp"
 #include "Build_Params.hpp"
+#include "Validation_Params.hpp"
 #include "cxxopts/cxxopts.hpp"
 #include "spdlog/sinks/stdout_color_sinks.h"
 
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
+
+
+// TODO: Replace the term 'bbhash' with 'mph' throughout to be more general.
 
 
 // Driver function for the CdBG build.
@@ -104,9 +108,10 @@ void validate(int argc, char** argv)
         auto bbhash_file = result["bbhash"].as<std::string>();
 
 
+        const Validation_Params params(ref, k, kmer_database, cdbg, thread_count, bbhash_file);
         cuttlefish::logger_t console = spdlog::stdout_color_mt("Validator");
-        Validator validator(ref, k, kmer_database, cdbg, console);
-        std::cout << "Validation " << (validator.validate(bbhash_file, thread_count) ? "successful" : "failed") << std::endl;
+        Validator validator(params, console);
+        std::cout << "Validation " << (validator.validate() ? "successful" : "failed") << std::endl;
     }
     catch(const std::exception& e)
     {

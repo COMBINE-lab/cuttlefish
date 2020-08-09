@@ -5,6 +5,7 @@
 
 
 #include "globals.hpp"
+#include "Validation_Params.hpp"
 
 #include <string>
 #include <vector>
@@ -15,12 +16,11 @@ class Validator
 {
 private:
 
-    const std::string ref_file_name; // Name of the file containing the reference.
-    const uint16_t k;   // The k-parameter of the compacted edge-centric de Bruijn graph.
-    const std::string kmc_db_name;  // Prefix of the KMC database of the k-mer set of the reference.
-    const std::string cdbg_file_name;   // File containing the maximal unitigs.
+    const Validation_Params params; // Required parameters wrapped in one object.
+    const uint16_t k;   // The k-parameter of the compacted edge-centric de Bruijn graph. To be removed.
     cuttlefish::mphf_t* mph;    // Minimal perfect hash function over the set of canonical k-mers of the reference.
-    constexpr static size_t progress_grain_size = 1000000;  // 1M
+
+    constexpr static size_t PROGRESS_GRAIN_SIZE = 1000000;  // 1M
     
     // The gamma factor for the BBHash algorithm. Lowest bits/elem is achieved with gamma = 1,
     // higher values lead to larger mphf but faster construction/query.
@@ -52,11 +52,10 @@ private:
     cuttlefish::logger_t console;
 
 
-    // Builds the minimal perfect hash function `mph` at the disk-file `bbhash_file_name`
-    // (or loads from it), using up-to `thread_count` number of threads.
-    void build_mph_function(const std::string& bbhash_file_name, const uint16_t thread_count);
+    // Builds the minimal perfect hash function `mph` or loads it from disk.
+    void build_mph_function();
 
-    // Loads the unitigs from the file `cdbg_file_name` into the collection `U`, and
+    // Loads the unitigs from the algorithm output file into the collection `U`, and
     // builds the tables `unitig_id` and `unitig_dir`.
     void build_unitig_tables();
 
@@ -70,7 +69,7 @@ private:
     size_t search_valid_kmer(const char* const seq, const size_t seq_len, const size_t start_idx) const;
 
     // Traverses the sequence `seq` (of length `seq_len`) partially, starting from the index
-    // `star_idx` such that, the traversal spells out an unitig from the unitigs collection
+    // `start_idx` such that, the traversal spells out an unitig from the unitigs collection
     // `U`. If the spelling fails, then returns `std::numeric_limits<size_t>::max()`. Otherwise,
     // returns the index of the immediately following k-mer, which might be invalid; and if
     // valid, that k-mer is the starting point of another unitig traversal.
@@ -102,20 +101,18 @@ private:
     // Returns the validation result of the completeness of the coverage of the reference sequence by
     // the resulting unitigs of the compaction algorithm. I.e., walks the reference and checks if it
     // can be spelled out completely with unitigs at collection `U`, using up-to `thread_count` threads.
-    void validate_sequence_completion(const uint64_t thread_count, bool& result);
+    void validate_sequence_completion(bool& result);
 
 
 public:
 
-    // Constructs a validator object to validate the resultant unitigs produced at the file
-    // `cdbg_file_name` by the compaction algorithm on the reference file `ref_file_name`,
-    // for k-mers of length `k`. The KMC database of the k-mers are stored at `kmc_db_name`. 
-    Validator(const std::string& ref_file_name, const uint16_t k, const std::string& kmc_db_name, const std::string& cdbg_file_name, cuttlefish::logger_t console);
+    // Constructs a `CdBG` object with the parameters wrapped at `params`.
+    Validator(const Validation_Params& params, cuttlefish::logger_t console);
 
     // Performs validation of the uniqueness and completeness of the k-mer set present at the
     // unitigs produced by the compaction algorithm, and also the validation of the complete
     // coverage of the reference by those unitigs. Returns `true` iff the validation succeeds.
-    bool validate(const std::string& bbhash_file_name, const uint16_t thread_count);
+    bool validate();
 };
 
 

@@ -9,25 +9,23 @@ std::string CdBG::PATH_OUTPUT_PREFIX = "cuttlefish-path-output-";
 std::string CdBG::OVERLAP_OUTPUT_PREFIX = "cuttlefish-overlap-output-";
 
 
-CdBG::CdBG(const std::string& ref_file, const uint16_t k, const std::string& kmc_db_name):
-    ref_file(ref_file), k(k), kmc_db_name(kmc_db_name)
+CdBG::CdBG(const Build_Params& params):
+    params(params), k(params.k())
 {
     cuttlefish::kmer_t::set_k(k);
 }
 
 
-void CdBG::construct(const std::string& bbhash_file_name, const uint16_t thread_count, const std::string& output_file_name, const uint8_t output_format, const std::string& working_dir)
+void CdBG::construct()
 {
     std::cout << "Constructing the minimal perfect hash function.\n";
-    Vertices.construct(kmc_db_name, bbhash_file_name, thread_count);
+    Vertices.construct(params.kmc_db_path(), params.thread_count(), params.mph_file_path());
 
     std::cout << "Classifying the vertices.\n";
-    classify_vertices(thread_count);
+    classify_vertices();
 
     std::cout << "Outputting the maximal unitigs.\n";
-
-    (output_format == 0 ?   output_maximal_unitigs(output_file_name, thread_count) :
-                            output_maximal_unitigs_gfa(output_file_name, output_format, thread_count, working_dir));
+    params.output_format() == 0 ? output_maximal_unitigs() : output_maximal_unitigs_gfa();
 
     Vertices.clear();
 }

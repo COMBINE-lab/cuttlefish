@@ -45,15 +45,15 @@ private:
 
     // Builds the minimal perfect hash function `mph` over the set of
     // k-mers present at the KMC database container `kmer_container`,
-    // with `bbhash_file_name` being the file to use for BBHash build
+    // with `mph_file_path` being the file to use for BBHash build
     // using `thread_count` number of threads.
-    void build_mph_function(const Kmer_Container& kmer_container, const std::string& bbhash_file_name, const uint16_t thread_count);
+    void build_mph_function(const Kmer_Container& kmer_container, const uint16_t thread_count, const std::string& mph_file_path);
 
-    // Loads an MPH function stored at the file named `file_name` into `mph`.
-    void load_mph_function(const std::string& file_name);
+    // Loads an MPH function stored at the file named `file_path` into `mph`.
+    void load_mph_function(const std::string& file_path);
 
-    // Saves the MPH function `mph` into a file named `file_name`.
-    void save_mph_function(const std::string& file_name) const;
+    // Saves the MPH function `mph` into a file named `file_path`.
+    void save_mph_function(const std::string& file_path) const;
 
     // Returns the id / number of the bucket in the hash table that is
     // supposed to store value items for the key `kmer`.
@@ -70,8 +70,11 @@ public:
     {}
 
     // Constructs a minimal perfect hash function (specifically, the BBHash) for
-    // the collection of k-mers present at the KMC database named `kmc_file_name`.
-    void construct(const std::string& kmc_file_name, const std::string& bbhash_file_name, const uint16_t thread_count);
+    // the collection of k-mers present at the KMC database at path `kmc_db_path`,
+    // using up-to `thread_count` number of threads. If a non-empty path is passed
+    // with `mph_file_path`, either an MPH is loaded from there (instead of building
+    // from scratch), or the newly built MPH is saved there.
+    void construct(const std::string& kmc_db_path, const uint16_t thread_count, const std::string& mph_file_path);
 
     // Returns an API to the entry (in the hash table) for the key `kmer`. The API
     // wraps the hash table position and the state value at that position.

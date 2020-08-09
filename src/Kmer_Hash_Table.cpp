@@ -8,15 +8,15 @@
 #include <sys/stat.h>
 
 
-void Kmer_Hash_Table::build_mph_function(const Kmer_Container& kmer_container, const std::string& bbhash_file_name, const uint16_t thread_count)
+void Kmer_Hash_Table::build_mph_function(const Kmer_Container& kmer_container, const uint16_t thread_count, const std::string& mph_file_path)
 {
     // The serialized BBHash file (saved from some earlier execution) exists.
     struct stat buffer;
-    if(!bbhash_file_name.empty() && stat(bbhash_file_name.c_str(), &buffer) == 0)
+    if(!mph_file_path.empty() && stat(mph_file_path.c_str(), &buffer) == 0)
     {
-        std::cout << "Loading the MPH function from file " << bbhash_file_name << "\n";
+        std::cout << "Loading the MPH function from file " << mph_file_path << "\n";
 
-        load_mph_function(bbhash_file_name);
+        load_mph_function(mph_file_path);
 
         std::cout << "Loaded the MPH function into memory.\n";
     }
@@ -32,11 +32,11 @@ void Kmer_Hash_Table::build_mph_function(const Kmer_Container& kmer_container, c
         
 
         // Save the MPHF if specified.
-        if(!bbhash_file_name.empty())
+        if(!mph_file_path.empty())
         {
-            std::cout << "Saving the MPH function in file " << bbhash_file_name << "\n";
+            std::cout << "Saving the MPH function in file " << mph_file_path << "\n";
 
-            save_mph_function(bbhash_file_name);
+            save_mph_function(mph_file_path);
 
             std::cout << "Saved the MPH function in disk.\n";
         }
@@ -44,12 +44,12 @@ void Kmer_Hash_Table::build_mph_function(const Kmer_Container& kmer_container, c
 }
 
 
-void Kmer_Hash_Table::load_mph_function(const std::string& file_name)
+void Kmer_Hash_Table::load_mph_function(const std::string& file_path)
 {
-    std::ifstream input(file_name.c_str(), std::ifstream::in);
+    std::ifstream input(file_path.c_str(), std::ifstream::in);
     if(input.fail())
     {
-        std::cerr << "Error opening file " << file_name << ". Aborting.\n";
+        std::cerr << "Error opening file " << file_path << ". Aborting.\n";
         std::exit(EXIT_FAILURE);
     }
 
@@ -60,12 +60,12 @@ void Kmer_Hash_Table::load_mph_function(const std::string& file_name)
 }
 
 
-void Kmer_Hash_Table::save_mph_function(const std::string& file_name) const
+void Kmer_Hash_Table::save_mph_function(const std::string& file_path) const
 {
-    std::ofstream output(file_name.c_str(), std::ofstream::out);
+    std::ofstream output(file_path.c_str(), std::ofstream::out);
     if(output.fail())
     {
-        std::cerr << "Error writing to file " << file_name << ". Aborting.\n";
+        std::cerr << "Error writing to file " << file_path << ". Aborting.\n";
         std::exit(EXIT_FAILURE);
     }
 
@@ -75,20 +75,20 @@ void Kmer_Hash_Table::save_mph_function(const std::string& file_name) const
 }
 
 
-void Kmer_Hash_Table::construct(const std::string& kmc_file_name, const std::string& bbhash_file_name, const uint16_t thread_count)
+void Kmer_Hash_Table::construct(const std::string& kmc_db_path, const uint16_t thread_count, const std::string& mph_file_path)
 {
     std::chrono::high_resolution_clock::time_point t_start = std::chrono::high_resolution_clock::now();
 
 
     // Open a container over the k-mer database.
-    Kmer_Container kmer_container(kmc_file_name);
+    Kmer_Container kmer_container(kmc_db_path);
     uint64_t kmer_count = kmer_container.size();
     
     lock_range_size = uint64_t(std::ceil(double(kmer_count) / lock_count));
 
 
     // Build the minimal perfect hash function.
-    build_mph_function(kmer_container, bbhash_file_name, thread_count);
+    build_mph_function(kmer_container, thread_count, mph_file_path);
     const uint64_t total_bits = mph->totalBitSize();
     std::cout << "Total MPH size (in MB): " << total_bits / (8 * 1024 * 1024) << "\n";
     std::cout << "MPH table size in bits / elem: " << (float)(total_bits) / kmer_count << "\n";

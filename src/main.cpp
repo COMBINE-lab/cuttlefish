@@ -1,6 +1,7 @@
 
 #include "CdBG.hpp"
 #include "Validator.hpp"
+#include "Build_Params.hpp"
 #include "cxxopts/cxxopts.hpp"
 #include "spdlog/sinks/stdout_color_sinks.h"
 
@@ -57,8 +58,10 @@ void build(int argc, char** argv)
         
         std::cout << "Constructing compacted de Bruijn graph for the reference at " << ref << ", with k = " << k << "\n";
 
-        CdBG cdbg(ref, k, kmer_database);
-        cdbg.construct(bbhash_file, thread_count, output_file, format, working_dir);
+        const Build_Params params(ref, k, kmer_database, thread_count, output_file, format, working_dir, bbhash_file);
+        CdBG cdbg(params);
+
+        cdbg.construct();
 
         std::cout << "Constructed the compacted de Bruijn graph at " << output_file << "\n";
     }

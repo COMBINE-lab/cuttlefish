@@ -15,16 +15,17 @@
 KSEQ_INIT(int, read);
 
 
-void CdBG::classify_vertices(const uint16_t thread_count)
+void CdBG::classify_vertices()
 {
     std::chrono::high_resolution_clock::time_point t_start = std::chrono::high_resolution_clock::now();
 
 
     // Open the file handler for the FASTA / FASTQ file containing the reference.
-    FILE* const input = fopen(ref_file.c_str(), "r");
+    const std::string& ref_file_path =  params.ref_file_path();
+    FILE* const input = fopen(ref_file_path.c_str(), "r");
     if(input == NULL)
     {
-        std::cerr << "Error opening input file " << ref_file << ". Aborting.\n";
+        std::cerr << "Error opening input file " << ref_file_path << ". Aborting.\n";
         std::exit(EXIT_FAILURE);
     }
 
@@ -57,7 +58,9 @@ void CdBG::classify_vertices(const uint16_t thread_count)
 
 
         // Multi-threaded classification.
+        const uint16_t thread_count = params.thread_count();
         size_t task_size = (seq_len - k + 1) / thread_count;
+
         if(!task_size)
             process_substring(seq, seq_len, 0, seq_len - k);
         else
@@ -514,9 +517,11 @@ bool CdBG::process_isolated_kmer(const cuttlefish::kmer_t& kmer_hat)
 }
 
 
-void CdBG::print_vertex_class_dist(const std::string& kmc_file_name) const
+void CdBG::print_vertex_class_dist() const
 {
-    Kmer_Container kmers(kmc_file_name);
+    const std::string& kmc_db_path = params.kmc_db_path();
+
+    Kmer_Container kmers(kmc_db_path);
     auto it_beg = kmers.begin();
     auto it_end = kmers.end();
     size_t C[4] = {0, 0, 0, 0};

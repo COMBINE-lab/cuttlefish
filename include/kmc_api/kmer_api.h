@@ -453,20 +453,43 @@ public:
 	{
 		uint32 offset = 62 - ((kmer_length - 1 + byte_alignment) & 31) * 2;
 		if (offset)
+			kmer_ = kmer_data[0] >> offset;
+		else
+			kmer_ = kmer_data[0];
+	}
+
+	
+	// Gets the 64-bit integer k-mer representation into the array `kmer`.
+	inline void to_u64(uint64_t* kmer) const
+	{
+		// The endianness of the k-mer data array in the KMC database is in the opposite
+		// order of the one Cuttlefish uses. So the fetch gathers it in the reverse order.
+		// Roughly, the KMC database stores a k-mer `n_{k - 1} ... n_1 n_0` such that
+		// the prefix aligns with a byte boundary, i.e. `n_{k - 1} ... n_{k - 1 - 63}`
+		// is stored as one 64-bit collection at its `kmer_data[0]` entry, and the rest
+		// follows this alignment. This is why, the 64-bits corresponding to the substring
+		// `n_63 ... n_0` can be shared between the two maximum indices of `kmer_data`;
+		// so can be all the next disjoint 64-bit substrings. The remainder substring
+		// (of < 64-bits) can be found from just the 0'th entry of `kmer_data`.
+		
+
+		uint32 offset = 62 - ((kmer_length - 1 + byte_alignment) & 31) * 2;
+		if (offset)
 		{
 			for (int32 i = no_of_rows - 1; i >= 1; --i)
 			{
-				kmer_ = kmer_data[i] >> offset;
-				kmer_ += kmer_data[i - 1] << (64 - offset);
+				kmer[no_of_rows - 1 - i] = kmer_data[i] >> offset;
+				kmer[no_of_rows - 1 - i] += kmer_data[i - 1] << (64 - offset);
 			}
-			kmer_ = kmer_data[0] >> offset;
+			kmer[no_of_rows - 1] = kmer_data[0] >> offset;
 		}
 		else
 		{
 			for (int32 i = no_of_rows - 1; i >= 0; --i)			
-				kmer_ = kmer_data[i];						
+				kmer[no_of_rows - 1 - i] = kmer_data[i];						
 		}
 	}
+
 
 	inline void to_long(std::vector<uint64>& kmer)
 	{

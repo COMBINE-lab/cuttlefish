@@ -4,107 +4,105 @@
 
 
 
-#include "globals.hpp"
-#include "kmc_api/kmc_file.h"
+#include "Kmer_Utility.hpp"
+#include "smhasher/MurmurHash3.h"
 
 #include <string>
-#include <iostream>
+#include <algorithm>
 
 
 class Kmer_Hasher;
 
 
-class Kmer
+template <uint16_t k>
+class Kmer: public Kmer_Utility
 {
     friend class Kmer_Hasher;
 
 private:
 
-    static uint16_t k;  // The k-parameter.
-    uint64_t kmer = 0;  // The 64-bit encoding of the underlying k-mer.
-    static uint64_t bitmask_MSN;    // Bitmask used to clear the most significant nucleotide character, i.e. the first nucleotide of the k-mer which is at the bits `2k-1 : 2k-2`.
+    // Number of 64-bit integers required to compactly represent the underlying k-mer with 2-bits/base encoding.
+    static constexpr uint16_t NUM_INTS = (k + 31) / 32;
 
-    // A = 0, C = 1, G = 2, T = 3.
-    // Note that, this is not possible to change this mapping w/o modifications to the
-    // interfacing of our code with the KMC api. This mapping is essential for some
-    // crucial performance hacks in the interfacing.
-    enum DNA_Base: uint8_t
-    {
-        A = 0b00,   // 0b00
-        C = 0b01,   // 0b01
-        G = 0b10,   // 0b11
-        T = 0b11,   // 0b11
-        N = 0b100   // 0b100
-    };
+    // Bitmask used to clear the most significant nucleotide character, i.e. the first nucleotide of the k-mer which is at the bits `2k-1 : 2k-2`.
+    static constexpr uint64_t CLEAR_MSN_MASK = ~(uint64_t(0b11) << (2 * ((k - 1) % 32)));
 
+    // The underlying k-mer represented with 2-bit encoding, as a collection of 64-bit integers.
+    // A k-mer `n_{k - 1} ... n_1 n_0` is stored in the array `kmer_data` such that, `kmer_data[0]`
+    // stores the suffix `n_63 ... n_0`, then `kmer_data[1]` stores `n_127 ... n_64`, and so on.
+    // That is, the suffix is aligned with a byte boundary.
+    uint64_t kmer_data[NUM_INTS];
 
-    // Constructs a k-mer with the provided encoded value `kmer`.
-    Kmer(const uint64_t kmer);
-
-    // Returns the mapping integer value of the given character `nucleotide`.
-    static DNA_Base map_nucleotide(const char nucleotide);
-
-    // Returns the mapping integer value of the complement of `nucleotide`.
-    static DNA_Base complement_nucleotide(const DNA_Base nucleotide);
-
-    // Returns the 64-bit encoding of the k-mer.
-    uint64_t to_u64() const;
     
+    // Returns a 64-bit hash value for the k-mer.
+    uint64_t to_u64() const;
+
+    // Left-shifts the collection of the bits at the `kmer_data` array by one nucleotide (2-bits).
+    void left_shift();
+
+    // Right-shifts the collection of the bits at the `kmer_data` array by one nucleotide (2-bits).
+    void right_shift();
+
 
 public:
 
-    Kmer(): kmer(0)
-    {}
+    // Default constructs the k-mer with a 0-value, equivalent to "AA...A".
+    Kmer();
+
+    // Constructs a k-mer from the provided characters at
+    // `label[kmer_idx,...,kmer_idx + k - 1]`.
+    Kmer(const char* label, size_t kmer_idx);
 
     // Constructs a k-mer from the provided string `label`.
     Kmer(const std::string& label);
 
     // Constructs a k-mer from the provided characters at
     // `label[kmer_idx,...,kmer_idx + k - 1]`.
-    Kmer(const char* label, const size_t kmer_idx);
+    Kmer(const std::string& label, size_t kmer_idx);
 
-    // Constructs a k-mer from the provided characters at
-    // `label[kmer_idx,...,kmer_idx + k - 1]`.
-    Kmer(const std::string& label, const size_t kmer_idx);
-
-    // Constructs a k-mer from `kmer_api` which is a k-mer object built from KMC.
+    // Constructs a k-mer from `kmer_api`, a k-mer object built from KMC.
     Kmer(const CKmerAPI& kmer_api);
 
     // Copy constructs the k-mer from another k-mer `rhs`.
-    Kmer(const Kmer& rhs);
+    Kmer(const Kmer<k>& rhs);
 
-    // Copy assignment operator
-    Kmer& operator=(const Kmer& rhs) = default;
+    // Copy assignment operator.
+    Kmer<k>& operator=(const Kmer<k>& rhs);
 
     // Sets the value of the `k` parameter across the `Kmer` class.
-    static void set_k(const uint16_t k);
+    // Note: For this general k-mer class with `k` being fixed at compile-time,
+    // this method effectively does nothing.
+    static void set_k(uint16_t kmer_len);
 
-    // Returns the DNA-complement character of the nucleotide character `nucl`.
-    static cuttlefish::nucleotide_t complement(const cuttlefish::nucleotide_t nucl);
+    // Returns the k-parameter.
+    constexpr static uint16_t get_k();
+
+    // Gets the k-mer from the KMC api object `kmer_api`.
+    void from_CKmerAPI(const CKmerAPI& kmer_api);
 
     // Returns the reverese complement of the k-mer.
-    Kmer reverse_complement() const;
+    Kmer<k> reverse_complement() const;
 
     // Returns true iff the bitwise encoding of this k-mer is lesser to the
     // encoding of the other k-mer `rhs`.
-    bool operator<(const Kmer& rhs) const;
+    bool operator<(const Kmer<k>& rhs) const;
 
-    // Returns true iff the bitwise encoding of this k-mer is equal to the
-    // encoding of the other k-mer `rhs`.
-    bool operator==(const Kmer& rhs) const;
+    // Returns true iff this k-mer is identical to the other k-mer `rhs`.
+    bool operator==(const Kmer<k>& rhs) const;
 
-    // Returns the direction of the k-mer relative to its canonical version.
-    cuttlefish::dir_t direction(const Kmer& kmer_hat) const;
+    // Returns `true` iff the k-mer is in the forward direction relative to
+    // the other k-mer `kmer_hat`.
+    bool in_forward(const Kmer<k>& kmer_hat) const;
 
     // Transforms this k-mer by chopping off the first nucleotide and
     // appending the next nucleotide `next_nucl` to the end, i.e.
     // rolls the k-mer by one nucleotide. Also sets the passed reverse
     // complement `rev_compl` of the k-mer accordingly.
-    void roll_to_next_kmer(const cuttlefish::nucleotide_t next_nucl, cuttlefish::kmer_t& rev_compl);
+    void roll_to_next_kmer(char next_nucl, Kmer<k>& rev_compl);
 
     // Returns the canonical version of the k-mer, comparing it to its
     // reverse complement `rev_compl`.
-    Kmer canonical(const Kmer& rev_compl) const;
+    Kmer canonical(const Kmer<k>& rev_compl) const;
 
     // Returns the canonical version of the k-mer.
     Kmer canonical() const;
@@ -112,184 +110,264 @@ public:
     // Returns the string label of the k-mer.
     std::string string_label() const;
 
-    // Gets the k-mer from the KMC api object `kmer_api`.
-    void from_CKmerAPI(const CKmerAPI& kmer_api);
-
-    // Returns the k-parameter.
-    static uint16_t get_k();
-    
     // For debugging purposes.
-    friend std::ostream& operator<<(std::ostream& out, const Kmer& kmer);
+    template <uint16_t K>
+    friend std::ostream& operator<<(std::ostream& out, const Kmer<k>& kmer);
 };
 
 
-inline Kmer::DNA_Base Kmer::map_nucleotide(const char nucleotide)
+template <uint16_t k>
+inline void Kmer<k>::left_shift()
 {
-    switch(nucleotide)
-    {
-    case 'A':
-        return DNA_Base::A;
-    
-    case 'C':
-        return DNA_Base::C;
+    constexpr uint64_t mask_MSN = (uint64_t(0b11) << 62);
 
-    case 'G':
-        return DNA_Base::G;
+    for(uint16_t idx = NUM_INTS - 1; idx > 0; --idx)
+        kmer_data[idx] = (kmer_data[idx] << 2) | ((kmer_data[idx - 1] & mask_MSN) >> 62);
 
-    case 'T':
-        return DNA_Base::T;
-
-    default:
-        // Placeholder rule to handle `N` nucleotides. Currently, as per the rule used by the KMC tool.
-        
-        std::cerr << "Encountered invalid nucleotide " << nucleotide << ". Aborting.\n";
-        std::exit(EXIT_FAILURE);
-    }
+    kmer_data[0] <<= 2;
 }
 
 
-inline Kmer::Kmer(const char* label, const size_t kmer_idx)
+template <uint16_t k>
+inline void Kmer<k>::right_shift()
 {
-    kmer = 0;
+    constexpr uint64_t mask_LSN = uint64_t(0b11);
 
+    for(uint16_t idx = 0; idx < NUM_INTS - 1; ++idx)
+        kmer_data[idx] = (kmer_data[idx] >> 2) | ((kmer_data[idx + 1] & mask_LSN) << 62);
+
+    kmer_data[NUM_INTS - 1] >>= 2;
+}
+
+
+template <uint16_t k>
+inline uint64_t Kmer<k>::to_u64() const
+{
+    // The k-mer uses just one 64-bit integer, i.e. k <= 32.
+    if(NUM_INTS == 1)
+        return kmer_data[0];
+
+    // The k-mer uses more than one 64-bit integer, i.e. k > 32.
+    constexpr uint16_t NUM_BYTES = (k + 3) / 4;
+    uint64_t H[2];
+
+    MurmurHash3_x64_128(kmer_data, NUM_BYTES, 0, H);
+    
+    return H[0] ^ H[1];
+}
+
+
+template <uint16_t k>
+inline Kmer<k>::Kmer():
+    kmer_data() // Value-initializes the data array, i.e. zeroes it out.
+{}
+
+
+template <uint16_t k>
+inline Kmer<k>::Kmer(const char* const label, const size_t kmer_idx):
+    Kmer()
+{
     for(size_t idx = kmer_idx; idx < kmer_idx + k; ++idx)
     {
-        uint8_t nucleotide = map_nucleotide(label[idx]);
-        kmer = (kmer << 2) | nucleotide;
+        const uint8_t nucleotide = map_nucleotide(label[idx]);
+
+        left_shift();
+        kmer_data[0] |= nucleotide;
     }
 }
 
 
-inline Kmer::Kmer(const CKmerAPI& kmer_api)
-{
-    kmer = 0;
-
-    for(uint16_t idx = 0; idx < k; ++idx)
-    {
-        // uint8_t nucleotide = map_nucleotide(kmer_api.get_asci_symbol(idx));
-        uint8_t nucleotide = kmer_api.get_num_symbol(idx);  // Works as long as our nucleotide-to-integer mapping is the same as KMC.
-
-        kmer = (kmer << 2) | nucleotide;
-    }
-}
-
-
-inline Kmer::Kmer(const Kmer& rhs): kmer(rhs.kmer)
+template <uint16_t k>
+inline Kmer<k>::Kmer(const std::string& label):
+    Kmer(label.c_str(), 0)
 {}
-/*
-inline Kmer& Kmer::operator=(const Kmer& rhs) {
-    kmer = rhs.kmer;
-    return *this; 
-}
-*/
 
-inline Kmer Kmer::reverse_complement() const
+
+template <uint16_t k>
+inline Kmer<k>::Kmer(const std::string& label, const size_t kmer_idx):
+    Kmer(label.c_str(), kmer_idx)
+{}
+
+
+template <uint16_t k>
+inline Kmer<k>::Kmer(const CKmerAPI& kmer_api)
 {
-    uint64_t kmer_val = kmer;
-    Kmer rev_comp;
+    from_CKmerAPI(kmer_api);
+}
+
+
+template <uint16_t k>
+inline Kmer<k>::Kmer(const Kmer<k>& rhs)
+{
+    for(uint16_t idx = 0; idx < NUM_INTS; ++idx)
+        kmer_data[idx] = rhs.kmer_data[idx];
+}
+
+
+template <uint16_t k>
+inline Kmer<k>& Kmer<k>::operator=(const Kmer<k>& rhs)
+{
+    for(uint16_t idx = 0; idx < NUM_INTS; ++idx)
+        kmer_data[idx] = rhs.kmer_data[idx];
+
+    return *this;
+}
+
+
+template <uint16_t k>
+inline void Kmer<k>::set_k(const uint16_t kmer_len)
+{
+    if(kmer_len != k)
+    {
+        std::cerr << "Expected k = " << k << ", recieved " << kmer_len << ". Aborting.\n";
+        std::exit(EXIT_FAILURE);
+    }
+}
+
+
+template <uint16_t k>
+inline constexpr uint16_t Kmer<k>::get_k()
+{
+    return k;
+}
+
+
+template <uint16_t k>
+inline void Kmer<k>::from_CKmerAPI(const CKmerAPI& kmer_api)
+{
+    kmer_api.to_u64(kmer_data);
+}
+
+
+template <uint16_t k>
+inline Kmer<k> Kmer<k>::reverse_complement() const
+{
+    Kmer<k> kmer(*this);
+    Kmer<k> rev_compl;
+    
+    constexpr uint64_t mask_LSN = uint64_t(0b11);
 
     for(uint16_t idx = 0; idx < k; ++idx)
     {
-        rev_comp.kmer = ((rev_comp.kmer << 2) | complement_nucleotide(DNA_Base(kmer_val & 0b11)));
+        rev_compl.left_shift();
+        rev_compl.kmer_data[0] |= complement_nucleotide(DNA_Base(kmer.kmer_data[0] & mask_LSN));
 
-        kmer_val >>= 2;
+        kmer.right_shift();
     }
 
-    return rev_comp;
+
+    return rev_compl;
 }
 
 
-inline void Kmer::from_CKmerAPI(const CKmerAPI& kmer_api)
+template <uint16_t k>
+inline bool Kmer<k>::operator<(const Kmer<k>& rhs) const
 {
-    kmer = 0;
-    kmer_api.to_u64(kmer);
+    for(int16_t idx = NUM_INTS - 1; idx >= 0; --idx)
+        if(kmer_data[idx] != rhs.kmer_data[idx])
+            return kmer_data[idx] < rhs.kmer_data[idx];
+
+    return false;
 }
 
 
-inline Kmer::DNA_Base Kmer::complement_nucleotide(const DNA_Base nucleotide)
+template <uint16_t k>
+inline bool Kmer<k>::operator==(const Kmer<k>& rhs) const
 {
-    switch(nucleotide)
-    {
-    case DNA_Base::A:
-        return DNA_Base::T;
+    for(uint16_t idx = 0; idx < NUM_INTS; ++idx)
+        if(kmer_data[idx] != rhs.kmer_data[idx])
+            return false;
 
-    case DNA_Base::C:
-        return DNA_Base::G;
-
-    case DNA_Base::G:
-        return DNA_Base::C;
-
-    case DNA_Base::T:
-        return DNA_Base::A;
-
-    default:
-        // Placeholder rule to handle `N` nucleotides. Currently, as per the rule used by the KMC tool.
-        
-        std::cerr << "Encountered invalid DNA_Base. Aborting.\n";
-        std::exit(EXIT_FAILURE);
-    }
+    return true;
 }
 
 
-inline cuttlefish::nucleotide_t Kmer::complement(const cuttlefish::nucleotide_t nucl)
-{
-    switch (nucl)
-    {
-    case 'A':
-        return 'T';
-
-    case 'C':
-        return 'G';
-
-    case 'G':
-        return 'C';
-
-    case 'T':
-        return 'A';
-    
-    default:        
-        std::cerr << "Invalid nucleotide " << nucl << " encountered. Aborting.";
-        std::exit(EXIT_FAILURE);
-    }
-}
-
-
-inline uint64_t Kmer::to_u64() const
-{
-    return kmer;
-}
-
-
-inline bool Kmer::operator<(const Kmer& rhs) const
-{
-    return kmer < rhs.kmer;
-}
-
-
-inline bool Kmer::operator==(const Kmer& rhs) const
-{
-    return kmer == rhs.kmer;
-}
-
-
-inline cuttlefish::dir_t Kmer::direction(const Kmer& kmer_hat) const
+template <uint16_t k>
+inline bool Kmer<k>::in_forward(const Kmer<k>& kmer_hat) const
 {
     return this->operator==(kmer_hat);
 }
 
 
-inline void Kmer::roll_to_next_kmer(const cuttlefish::nucleotide_t next_nucl, cuttlefish::kmer_t& rev_compl)
+template <uint16_t k>
+inline void Kmer<k>::roll_to_next_kmer(const char next_nucl, Kmer<k>& rev_compl)
 {
     const DNA_Base mapped_nucl = map_nucleotide(next_nucl);
 
-    kmer = ((kmer & bitmask_MSN) << 2) | mapped_nucl;
-    rev_compl.kmer = (rev_compl.kmer >> 2) | (uint64_t(complement_nucleotide(mapped_nucl)) << (2 * (k - 1)));
+    kmer_data[NUM_INTS - 1] &= CLEAR_MSN_MASK;
+    left_shift();
+    kmer_data[0] |= mapped_nucl;
+
+    rev_compl.right_shift();
+    rev_compl.kmer_data[NUM_INTS - 1] |= (uint64_t(complement_nucleotide(mapped_nucl)) << (2 * ((k - 1) & 31)));
 }
 
 
-inline Kmer Kmer::canonical(const Kmer& rev_compl) const
+template <uint16_t k>
+inline Kmer<k> Kmer<k>::canonical(const Kmer<k>& rev_compl) const
 {
     return std::min(*this, rev_compl);
+}
+
+
+template <uint16_t k>
+inline Kmer<k> Kmer<k>::canonical() const
+{
+    return canonical(reverse_complement());
+}
+
+
+template <uint16_t k>
+inline std::string Kmer<k>::string_label() const
+{
+    Kmer<k> kmer(*this);
+    char* label = new char[k + 1];
+
+    for(uint16_t idx = 0; idx < k; ++idx)
+    {
+        switch(kmer.kmer_data[0] & 0b11)
+        {
+        case DNA_Base::A:
+            label[idx] = 'A';
+            break;
+        
+        case DNA_Base::C:
+            label[idx] = 'C';
+            break;
+
+        case DNA_Base::G:
+            label[idx] = 'G';
+            break;
+
+        case DNA_Base::T:
+            label[idx] = 'T';
+            break;
+
+        default:
+            label[idx] = 'N';
+        }
+
+
+        kmer.right_shift();
+    }
+
+
+    std::reverse(label, label + k);
+    std::string str_label(label, label + k);
+
+    
+    delete label;
+    
+    return str_label;
+}
+
+
+template <uint16_t k>
+std::ostream& operator<<(std::ostream& out, const Kmer<k>& kmer)
+{
+    out << kmer.string_label();
+
+    return out;
 }
 
 

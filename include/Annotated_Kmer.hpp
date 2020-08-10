@@ -8,26 +8,23 @@
 #include "Kmer_Hash_Table.hpp"
 
 
-class CdBG;
-
-
 // Complete k-mer information: k-mer itself and its reverse complement,
 // canonical form, direction, index in corresponding sequence, and its class.
 class Annotated_Kmer: public Directed_Kmer
 {
-    friend class CdBG;
-
 private:
 
     size_t idx_;
     cuttlefish::Vertex_Class vertex_class_;
 
 
+public:
+
     Annotated_Kmer()
     {}
 
     // Constructs an annotated k-mer with its complete information.
-    Annotated_Kmer(const cuttlefish::kmer_t& kmer, const size_t kmer_idx, const Kmer_Hash_Table& hash);
+    Annotated_Kmer(const cuttlefish::kmer_t& kmer, size_t kmer_idx, const Kmer_Hash_Table& hash);
 
     // Copy constructs the annotated k-mer from `rhs`.
     Annotated_Kmer(const Annotated_Kmer& rhs) = default;
@@ -36,7 +33,7 @@ private:
     // appending the next nucleotide `next_nucl` to the end, i.e.
     // rolls the k-mer by one nucleotide, sets all the relevant k-mer
     // information accordingly (k-mer state is set using the `hash`).
-    void roll_to_next_kmer(const cuttlefish::nucleotide_t next_nucl, const Kmer_Hash_Table& hash);
+    void roll_to_next_kmer(cuttlefish::nucleotide_t next_nucl, const Kmer_Hash_Table& hash);
 
     void operator=(const Annotated_Kmer& rhs);
 

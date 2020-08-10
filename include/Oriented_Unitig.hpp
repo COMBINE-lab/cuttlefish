@@ -25,10 +25,10 @@ private:
     size_t start_kmer_idx;
     size_t end_kmer_idx;
 
-    const static uint64_t invalid_id = std::numeric_limits<uint64_t>::max();
+    constexpr static uint64_t INVALID_ID = std::numeric_limits<uint64_t>::max();
 
 
-    Oriented_Unitig(const uint64_t unitig_id, const cuttlefish::dir_t dir, const size_t start_kmer_idx, const size_t end_kmer_idx);
+    Oriented_Unitig(uint64_t unitig_id, cuttlefish::dir_t dir, size_t start_kmer_idx, size_t end_kmer_idx);
 
     bool is_valid() const;
 
@@ -42,7 +42,7 @@ public:
 
 
 inline Oriented_Unitig::Oriented_Unitig():
-    unitig_id(invalid_id)
+    unitig_id(INVALID_ID)
 {}
 
 
@@ -53,13 +53,13 @@ inline Oriented_Unitig::Oriented_Unitig(const uint64_t unitig_id, const cuttlefi
 
 inline bool Oriented_Unitig::is_valid() const
 {
-    return unitig_id != invalid_id;
+    return unitig_id != INVALID_ID;
 }
 
 
 inline size_t Oriented_Unitig::length() const
 {
-    return end_kmer_idx - start_kmer_idx + Kmer::get_k();
+    return end_kmer_idx - start_kmer_idx + cuttlefish::kmer_t::get_k();
 }
 
 

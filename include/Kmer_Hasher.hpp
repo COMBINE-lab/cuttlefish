@@ -5,7 +5,6 @@
 
 
 #include "globals.hpp"
-#include "Kmer.hpp"
 
 
 class Kmer_Hasher
@@ -17,7 +16,8 @@ public:
     uint64_t operator()(const cuttlefish::kmer_t& key, uint64_t seed = 0xAAAAAAAA55555555ULL) const
     {
         uint64_t hash = seed;
-        hash ^= (hash <<  7) ^  key.to_u64() * (hash >> 3) ^ (~((hash << 11) + (key.to_u64() ^ (hash >> 5))));
+        const uint64_t key_u64 = key.to_u64();
+        hash ^= (hash <<  7) ^  key_u64 * (hash >> 3) ^ (~((hash << 11) + (key_u64 ^ (hash >> 5))));
         hash = (~hash) + (hash << 21);
         hash = hash ^ (hash >> 24);
         hash = (hash + (hash << 3)) + (hash << 8);

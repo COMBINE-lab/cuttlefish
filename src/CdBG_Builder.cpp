@@ -15,29 +15,36 @@
 KSEQ_INIT(int, read);
 
 
-void CdBG::classify_vertices(const uint16_t thread_count)
+void CdBG::classify_vertices()
 {
     std::chrono::high_resolution_clock::time_point t_start = std::chrono::high_resolution_clock::now();
 
 
     // Open the file handler for the FASTA / FASTQ file containing the reference.
-    FILE* input = fopen(ref_file.c_str(), "r");
+    const std::string& ref_file_path =  params.ref_file_path();
+    FILE* const input = fopen(ref_file_path.c_str(), "r");
     if(input == NULL)
     {
-        std::cerr << "Error opening input file " << ref_file << ". Aborting.\n";
+        std::cerr << "Error opening input file " << ref_file_path << ". Aborting.\n";
         std::exit(EXIT_FAILURE);
     }
 
     
     // Initialize the parser.
-    kseq_t* parser = kseq_init(fileno(input));
+    kseq_t* const parser = kseq_init(fileno(input));
+
+    // Track the maximum sequence buffer size used.
+    size_t max_buf_sz = 0;
 
     // Parse sequences one-by-one, and continue partial classification of the k-mers through them.
     uint32_t seqCount = 0;
     while(kseq_read(parser) >= 0)
     {
-        const char* seq = parser->seq.s;
+        const char* const seq = parser->seq.s;
         const size_t seq_len = parser->seq.l;
+        const size_t seq_buf_sz = parser->seq.m;
+
+        max_buf_sz = std::max(max_buf_sz, seq_buf_sz);
 
         std::cout << "Processing sequence " << ++seqCount << ", with length " << seq_len << ".\n";
 
@@ -51,7 +58,9 @@ void CdBG::classify_vertices(const uint16_t thread_count)
 
 
         // Multi-threaded classification.
+        const uint16_t thread_count = params.thread_count();
         size_t task_size = (seq_len - k + 1) / thread_count;
+
         if(!task_size)
             process_substring(seq, seq_len, 0, seq_len - k);
         else
@@ -77,6 +86,8 @@ void CdBG::classify_vertices(const uint16_t thread_count)
                 }
         } 
     }
+
+    std::cout << "Maximum buffer size used (in MB): " << max_buf_sz / (1024 * 1024) << "\n";
 
 
     // Close the parser and the input file.
@@ -245,14 +256,14 @@ bool CdBG::process_leftmost_kmer(const cuttlefish::kmer_t& kmer_hat, const cuttl
     {
         // The sentinel k-mer is encountered for the first time, and in the backward direction.
         if(!state.is_visited())
-            state = State(Vertex(cuttlefish::Vertex_Class::single_in_multi_out, complement(next_nucl)));
+            state = State(Vertex(cuttlefish::Vertex_Class::single_in_multi_out, cuttlefish::kmer_t::complement(next_nucl)));
         else    // The sentinel k-mer has been visited earlier and has some state; modify it accordingly.
         {
             Vertex vertex = state.decode();
 
             if(vertex.vertex_class_ == cuttlefish::Vertex_Class::single_in_single_out)
             {
-                if(vertex.enter_ == complement(next_nucl))
+                if(vertex.enter_ == cuttlefish::kmer_t::complement(next_nucl))
                     vertex.vertex_class_ = cuttlefish::Vertex_Class::single_in_multi_out;
                 else
                     vertex.vertex_class_ = cuttlefish::Vertex_Class::multi_in_multi_out;
@@ -267,7 +278,7 @@ bool CdBG::process_leftmost_kmer(const cuttlefish::kmer_t& kmer_hat, const cuttl
             }
             else    // vertex.vertex_class == cuttlefish::Vertex_Class::single_in_multi_out
             {
-                if(vertex.enter_ != complement(next_nucl))
+                if(vertex.enter_ != cuttlefish::kmer_t::complement(next_nucl))
                 {
                     vertex.vertex_class_ = cuttlefish::Vertex_Class::multi_in_multi_out;
 
@@ -338,14 +349,14 @@ bool CdBG::process_rightmost_kmer(const cuttlefish::kmer_t& kmer_hat, const cutt
     {
         // The sentinel k-mer is encountered for the first time, and in the backward direction.
         if(!state.is_visited())
-            state = State(Vertex(cuttlefish::Vertex_Class::multi_in_single_out, complement(prev_nucl)));
+            state = State(Vertex(cuttlefish::Vertex_Class::multi_in_single_out, cuttlefish::kmer_t::complement(prev_nucl)));
         else    // The sentinel k-mer has been visited earlier and has some state; modify it accordingly.
         {
             Vertex vertex = state.decode();
 
             if(vertex.vertex_class_ == cuttlefish::Vertex_Class::single_in_single_out)
             {
-                if(vertex.exit_ == complement(prev_nucl))
+                if(vertex.exit_ == cuttlefish::kmer_t::complement(prev_nucl))
                     vertex.vertex_class_ = cuttlefish::Vertex_Class::multi_in_single_out;
                 else
                     vertex.vertex_class_ = cuttlefish::Vertex_Class::multi_in_multi_out;
@@ -354,7 +365,7 @@ bool CdBG::process_rightmost_kmer(const cuttlefish::kmer_t& kmer_hat, const cutt
             }
             else if(vertex.vertex_class_ == cuttlefish::Vertex_Class::multi_in_single_out)
             {
-                if(vertex.exit_ != complement(prev_nucl))
+                if(vertex.exit_ != cuttlefish::kmer_t::complement(prev_nucl))
                 {
                     vertex.vertex_class_ = cuttlefish::Vertex_Class::multi_in_multi_out;
 
@@ -441,18 +452,18 @@ bool CdBG::process_internal_kmer(const cuttlefish::kmer_t& kmer_hat, const cuttl
     {
         // The k-mer is encountered for the first time, and in the backward direction.
         if(!state.is_visited())
-            state = State(Vertex(cuttlefish::Vertex_Class::single_in_single_out, complement(next_nucl), complement(prev_nucl)));
+            state = State(Vertex(cuttlefish::Vertex_Class::single_in_single_out, cuttlefish::kmer_t::complement(next_nucl), cuttlefish::kmer_t::complement(prev_nucl)));
         else    // The k-mer has been visited earlier and has some state; modify it accordingly.
         {
             Vertex vertex = state.decode();
 
             if(vertex.vertex_class_ == cuttlefish::Vertex_Class::single_in_single_out)
             {
-                if(vertex.enter_ == complement(next_nucl) && vertex.exit_ == complement(prev_nucl))
+                if(vertex.enter_ == cuttlefish::kmer_t::complement(next_nucl) && vertex.exit_ == cuttlefish::kmer_t::complement(prev_nucl))
                     return true;    // See note at the end on early return w/o hash table update.
-                else if(vertex.enter_ != complement(next_nucl) && vertex.exit_ != complement(prev_nucl))
+                else if(vertex.enter_ != cuttlefish::kmer_t::complement(next_nucl) && vertex.exit_ != cuttlefish::kmer_t::complement(prev_nucl))
                     vertex.vertex_class_ = cuttlefish::Vertex_Class::multi_in_multi_out;
-                else if(vertex.enter_ != complement(next_nucl))
+                else if(vertex.enter_ != cuttlefish::kmer_t::complement(next_nucl))
                     vertex.vertex_class_ = cuttlefish::Vertex_Class::multi_in_single_out;
                 else    // vertex.exit != complement(prev_nucl)
                     vertex.vertex_class_ = cuttlefish::Vertex_Class::single_in_multi_out;
@@ -461,7 +472,7 @@ bool CdBG::process_internal_kmer(const cuttlefish::kmer_t& kmer_hat, const cuttl
             }
             else if(vertex.vertex_class_ == cuttlefish::Vertex_Class::multi_in_single_out)
             {
-                if(vertex.exit_ != complement(prev_nucl))
+                if(vertex.exit_ != cuttlefish::kmer_t::complement(prev_nucl))
                 {
                     vertex.vertex_class_ = cuttlefish::Vertex_Class::multi_in_multi_out;
 
@@ -470,7 +481,7 @@ bool CdBG::process_internal_kmer(const cuttlefish::kmer_t& kmer_hat, const cuttl
             }
             else    // vertex.vertex_class == cuttlefish::Vertex_Class::single_in_multi_out
             {
-                if(vertex.enter_ != complement(next_nucl))
+                if(vertex.enter_ != cuttlefish::kmer_t::complement(next_nucl))
                 {
                     vertex.vertex_class_ = cuttlefish::Vertex_Class::multi_in_multi_out;
 
@@ -506,9 +517,11 @@ bool CdBG::process_isolated_kmer(const cuttlefish::kmer_t& kmer_hat)
 }
 
 
-void CdBG::print_vertex_class_dist(const std::string& kmc_file_name) const
+void CdBG::print_vertex_class_dist() const
 {
-    Kmer_Container kmers(kmc_file_name);
+    const std::string& kmc_db_path = params.kmc_db_path();
+
+    Kmer_Container kmers(kmc_db_path);
     auto it_beg = kmers.begin();
     auto it_end = kmers.end();
     size_t C[4] = {0, 0, 0, 0};

@@ -3,6 +3,7 @@
 #define VERTEX_HPP
 
 
+
 #include "globals.hpp"
 
 #include <cstdint>
@@ -33,13 +34,13 @@ public:
     {}
 
     // Constructs a vertex of class `single_in_single_out`.
-    Vertex(const cuttlefish::Vertex_Class vertex_class, const cuttlefish::nucleotide_t enter, const cuttlefish::nucleotide_t exit);
+    Vertex(cuttlefish::Vertex_Class vertex_class, cuttlefish::nucleotide_t enter, cuttlefish::nucleotide_t exit);
 
     // Constructs a vertex of class either `multi_in_single_out` or `single_in_multi_out`.
-    Vertex(const cuttlefish::Vertex_Class vertex_class, const cuttlefish::nucleotide_t nucl);
+    Vertex(cuttlefish::Vertex_Class vertex_class, cuttlefish::nucleotide_t nucl);
 
     // Constructs a vertex of class `vertex_class`, with the provided outputted status.
-    Vertex(const cuttlefish::Vertex_Class vertex_class, const bool outputted = false);
+    Vertex(cuttlefish::Vertex_Class vertex_class, bool outputted = false);
 
     // Returns the vertex class.
     cuttlefish::Vertex_Class vertex_class() const;

@@ -26,18 +26,18 @@ private:
 
 
     // Constructs a `State` with the provided code `state`.
-    State(const cuttlefish::state_code_t code);
+    State(cuttlefish::state_code_t code);
 
     // Constructs a `State` from the state stored at the bitvector entry `bv_entry`.
     State(const cuttlefish::bitvector_entry_t& bv_entry);
 
     // Sets the nucleotide 2-bit encoding at the bits b1 and b0 of `code`.
     // Requirement: the two bits must be zero before the call, for consistent behavior.
-    void set_nibble_lower_half(const cuttlefish::nucleotide_t nucl);
+    void set_nibble_lower_half(cuttlefish::nucleotide_t nucl);
 
     // Sets the nucleotide 2-bit encoding at the bits b3 and b2 of `code`.
     // Requirement: the two bits must be zero before the call, for consistent behavior.
-    void set_nibble_upper_half(const cuttlefish::nucleotide_t nucl);
+    void set_nibble_upper_half(cuttlefish::nucleotide_t nucl);
 
     // Returns the wrapped state code value.
     cuttlefish::state_code_t get_state() const;

@@ -15,28 +15,32 @@
 KSEQ_INIT(int, read);
 
 
-void CdBG::output_maximal_unitigs(const std::string& output_file, const uint16_t thread_count)
+void CdBG::output_maximal_unitigs()
 {
     std::chrono::high_resolution_clock::time_point t_start = std::chrono::high_resolution_clock::now();
 
+    
+    const std::string& ref_file_path = params.ref_file_path();
+    const uint16_t thread_count = params.thread_count();
+    const std::string& output_file_path = params.output_file_path();
 
     // Open the file handler for the FASTA / FASTQ file containing the reference.
-    FILE* input = fopen(ref_file.c_str(), "r");
+    FILE* const input = fopen(ref_file_path.c_str(), "r");
     if(input == NULL)
     {
-        std::cerr << "Error opening input file " << ref_file << ". Aborting.\n";
+        std::cerr << "Error opening input file " << ref_file_path << ". Aborting.\n";
         std::exit(EXIT_FAILURE);
     }
 
     // Initialize the parser.
-    kseq_t* parser = kseq_init(fileno(input));
+    kseq_t* const parser = kseq_init(fileno(input));
 
 
     // Clear the output file.
-    std::ofstream op_stream(output_file.c_str(), std::ofstream::out);
+    std::ofstream op_stream(output_file_path.c_str(), std::ofstream::out);
     if(!op_stream)
     {
-        std::cerr << "Error opening output file " << output_file << ". Aborting.\n";
+        std::cerr << "Error opening output file " << output_file_path << ". Aborting.\n";
         std::exit(EXIT_FAILURE);
     }
 
@@ -44,7 +48,7 @@ void CdBG::output_maximal_unitigs(const std::string& output_file, const uint16_t
 
 
     // Open an asynchronous logger to write into the output file.
-    cuttlefish::logger_t output = spdlog::basic_logger_mt<spdlog::async_factory>("async_file_logger", output_file.c_str());
+    cuttlefish::logger_t output = spdlog::basic_logger_mt<spdlog::async_factory>("async_file_logger", output_file_path);
 
     // Set the log message pattern for the writer.
     output->set_pattern("%v");
@@ -54,12 +58,18 @@ void CdBG::output_maximal_unitigs(const std::string& output_file, const uint16_t
     output_buffer.resize(thread_count);
     buffer_size.resize(thread_count);
 
+    // Track the maximum sequence buffer size used.
+    size_t max_buf_sz = 0;
+
     // Parse sequences one-by-one, and output each unique maximal unitig encountered through them.
     uint32_t seqCount = 0;
     while(kseq_read(parser) >= 0)
     {
-        const char* seq = parser->seq.s;
+        const char* const seq = parser->seq.s;
         const size_t seq_len = parser->seq.l;
+        const size_t seq_buf_sz = parser->seq.m;
+
+        max_buf_sz = std::max(max_buf_sz, seq_buf_sz);
 
         std::cout << "Processing sequence " << ++seqCount << ", with length " << seq_len << ".\n";
 
@@ -69,7 +79,7 @@ void CdBG::output_maximal_unitigs(const std::string& output_file, const uint16_t
 
 
         // Single-threaded writing.
-        // output_off_substring(seq, seq_len, 0, seq_len - k, output);
+        // output_off_substring(0, seq, seq_len, 0, seq_len - k, output);
 
 
         // Multi-threaded writing.
@@ -85,7 +95,7 @@ void CdBG::output_maximal_unitigs(const std::string& output_file, const uint16_t
             for(uint16_t task_id = 0; task_id < thread_count; ++task_id)
             {
                 right_end = (task_id == thread_count - 1 ? seq_len - k : left_end + task_size - 1);
-                task.emplace_back(&CdBG::output_off_substring, this, static_cast<uint64_t>(task_id), seq, seq_len, left_end, right_end, output);
+                task.emplace_back(&CdBG::output_off_substring, this, task_id, seq, seq_len, left_end, right_end, output);
                 left_end += task_size;
             }
 
@@ -101,9 +111,11 @@ void CdBG::output_maximal_unitigs(const std::string& output_file, const uint16_t
         }
     }
 
+    std::cout << "Maximum buffer size used (in MB): " << max_buf_sz / (1024 * 1024) << "\n";
+
 
     // Flush the buffers.
-    flush_buffers(thread_count, output);
+    flush_buffers(output);
 
     
     // Close the loggers?
@@ -121,7 +133,7 @@ void CdBG::output_maximal_unitigs(const std::string& output_file, const uint16_t
 }
 
 
-void CdBG::output_off_substring(const uint64_t thread_id, const char* const seq, const size_t seq_len, const size_t left_end, const size_t right_end, cuttlefish::logger_t output)
+void CdBG::output_off_substring(const uint16_t thread_id, const char* const seq, const size_t seq_len, const size_t left_end, const size_t right_end, cuttlefish::logger_t output)
 {
     size_t kmer_idx = left_end;
     while(kmer_idx <= right_end)
@@ -138,7 +150,7 @@ void CdBG::output_off_substring(const uint64_t thread_id, const char* const seq,
 }
 
 
-size_t CdBG::output_maximal_unitigs(const uint64_t thread_id, const char* const seq, const size_t seq_len, const size_t right_end, const size_t start_idx, cuttlefish::logger_t output)
+size_t CdBG::output_maximal_unitigs(const uint16_t thread_id, const char* const seq, const size_t seq_len, const size_t right_end, const size_t start_idx, cuttlefish::logger_t output)
 {
     size_t kmer_idx = start_idx;
 
@@ -316,7 +328,7 @@ bool CdBG::is_unipath_end(const cuttlefish::Vertex_Class vertex_class, const cut
 }
 
 
-void CdBG::output_unitig(const uint64_t thread_id, const char* const seq, const Annotated_Kmer& start_kmer, const Annotated_Kmer& end_kmer, cuttlefish::logger_t output)
+void CdBG::output_unitig(const uint16_t thread_id, const char* const seq, const Annotated_Kmer& start_kmer, const Annotated_Kmer& end_kmer, cuttlefish::logger_t output)
 {
     // This is to avoid race conditions that may arise while multi-threading.
     // If two threads try to output the same unitig at the same time but
@@ -339,7 +351,7 @@ void CdBG::output_unitig(const uint64_t thread_id, const char* const seq, const 
 }
 
 
-void CdBG::write_path(const uint64_t thread_id, const char* const seq, const size_t start_kmer_idx, const size_t end_kmer_idx, const cuttlefish::dir_t dir, cuttlefish::logger_t output) 
+void CdBG::write_path(const uint16_t thread_id, const char* const seq, const size_t start_kmer_idx, const size_t end_kmer_idx, const cuttlefish::dir_t dir, cuttlefish::logger_t output) 
 {
     std::stringstream& buffer = output_buffer[thread_id];
     const size_t path_len = end_kmer_idx - start_kmer_idx + k;
@@ -349,7 +361,7 @@ void CdBG::write_path(const uint64_t thread_id, const char* const seq, const siz
             buffer << seq[start_kmer_idx + offset];
     else    // dir == cuttlefish::BWD
         for(size_t offset = 0; offset < path_len; ++offset)
-            buffer << complement(seq[end_kmer_idx + k - 1 - offset]);
+            buffer << cuttlefish::kmer_t::complement(seq[end_kmer_idx + k - 1 - offset]);
 
     // End the path.
     buffer << "\n";
@@ -361,12 +373,18 @@ void CdBG::write_path(const uint64_t thread_id, const char* const seq, const siz
 }
 
 
-void CdBG::fill_buffer(const uint64_t thread_id, const uint64_t fill_amount, cuttlefish::logger_t output)
+void CdBG::fill_buffer(const uint16_t thread_id, const uint64_t fill_amount, cuttlefish::logger_t output)
 {
     buffer_size[thread_id] += fill_amount;
 
     if(buffer_size[thread_id] > MAX_BUFF_SIZE)
     {
+        // TODO: Avoid the presence of the same content in the memory simultaneously.
+        // E.g. skipping this line results in consuming memory:
+        // "fixed" HG38: 176 instead of 346 MB;
+        // HG38: 17 instead of 93 MB;
+        // Gorgor3: 0.5 instead of 40MB.
+
         write(output, output_buffer[thread_id].str());
         
         output_buffer[thread_id].str("");
@@ -381,8 +399,10 @@ void CdBG::write(cuttlefish::logger_t output, const std::string& str)
 }
 
 
-void CdBG::flush_buffers(const uint16_t thread_count, cuttlefish::logger_t output)
+void CdBG::flush_buffers(cuttlefish::logger_t output)
 {
+    const uint16_t thread_count = params.thread_count();
+
     for (uint16_t t_id = 0; t_id < thread_count; ++t_id)
         if(buffer_size[t_id] > 0)
         {

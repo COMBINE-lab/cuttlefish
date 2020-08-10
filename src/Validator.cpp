@@ -19,34 +19,23 @@
 KSEQ_INIT(int, read);
 
 
-Validator::Validator(const std::string& ref_file_name, const uint16_t k, const std::string& kmc_db_name, const std::string& cdbg_file_name, cuttlefish::logger_t console):
-    ref_file_name(ref_file_name), k(k), kmc_db_name(kmc_db_name), cdbg_file_name(cdbg_file_name), mph(NULL), console(console)
+Validator::Validator(const Validation_Params& params, cuttlefish::logger_t console):
+    params(params), k(params.k()), console(console)
 {
-    Kmer::set_k(k);
+    cuttlefish::kmer_t::set_k(k);
 }
 
 
-bool Validator::validate(const std::string& bbhash_file_name, const uint16_t thread_count)
+bool Validator::validate()
 {
-    build_mph_function(bbhash_file_name, thread_count);
+    build_mph_function();
 
-    // const bool is_valid_kmer_set = validate_kmer_set();
+
+    bool is_valid_sequence;
+    std::thread sequence_validator(&Validator::validate_sequence_completion, this, std::ref(is_valid_sequence));
+
     bool is_valid_kmer_set;
     std::thread kmer_set_validator(&Validator::validate_kmer_set, this, std::ref(is_valid_kmer_set));
-
-    // const bool is_valid_sequence = validate_sequence_completion();
-    bool is_valid_sequence;
-    std::thread sequence_validator(&Validator::validate_sequence_completion, this, thread_count, std::ref(is_valid_sequence));
-
-    
-    if(!kmer_set_validator.joinable())
-    {
-        console->error("Early termination faced for a worker thread. Aborting.\n");
-        std::exit(EXIT_FAILURE);
-    }
-
-    kmer_set_validator.join();
-    console->info("{} validation of the k-mer set.\n", is_valid_kmer_set ? "Passed" : "Failed");
 
 
     if(!sequence_validator.joinable())
@@ -59,21 +48,36 @@ bool Validator::validate(const std::string& bbhash_file_name, const uint16_t thr
     console->info("{} validation of complete coverage of the sequence by the produced unitigs.\n",
                     is_valid_sequence ? "Passed" : "Failed");
 
+    
+    if(!kmer_set_validator.joinable())
+    {
+        console->error("Early termination faced for a worker thread. Aborting.\n");
+        std::exit(EXIT_FAILURE);
+    }
+
+    kmer_set_validator.join();
+    console->info("{} validation of the k-mer set.\n", is_valid_kmer_set ? "Passed" : "Failed");
+
+
     return is_valid_kmer_set && is_valid_sequence;
 }
 
 
-void Validator::build_mph_function(const std::string& bbhash_file_name, const uint16_t thread_count)
+void Validator::build_mph_function()
 {
-    const Kmer_Container kmer_container(kmc_db_name);
+    const std::string& kmc_db_path = params.kmc_db_path();
+    const uint16_t thread_count = params.thread_count();
+    const std::string& mph_file_path = params.mph_file_path();
+
+    const Kmer_Container kmer_container(kmc_db_path);
 
     // The serialized BBHash file (saved from some earlier execution) exists.
     struct stat buffer;
-    if(stat(bbhash_file_name.c_str(), &buffer) == 0)
+    if(stat(mph_file_path.c_str(), &buffer) == 0)
     {
-        console->info("Loading the MPH function from file {}\n", bbhash_file_name);
+        console->info("Loading the MPH function from file {}\n", mph_file_path);
         
-        std::ifstream input(bbhash_file_name.c_str(), std::ifstream::in);
+        std::ifstream input(mph_file_path.c_str(), std::ifstream::in);
         mph = new boomphf::mphf<cuttlefish::kmer_t, Kmer_Hasher>();
         mph->load(input);
         input.close();
@@ -86,15 +90,15 @@ void Validator::build_mph_function(const std::string& bbhash_file_name, const ui
         console->info("Building the MPH function from the k-mer database {}\n", kmer_container.container_location());
 
         auto data_iterator = boomphf::range(kmer_container.begin(), kmer_container.end());
-        mph = new boomphf::mphf<cuttlefish::kmer_t, Kmer_Hasher> (kmer_container.size(), data_iterator, thread_count, gamma_factor);
+        mph = new boomphf::mphf<cuttlefish::kmer_t, Kmer_Hasher> (kmer_container.size(), data_iterator, thread_count, GAMMA_FACTOR);
 
         console->info("Built the MPH function in memory.\n");
         
 
         // Save the MPHF.
-        console->info("Saving the MPH function in file {}\n", bbhash_file_name);
+        console->info("Saving the MPH function in file {}\n", mph_file_path);
 
-        std::ofstream output(bbhash_file_name.c_str(), std::ofstream::out);
+        std::ofstream output(mph_file_path.c_str(), std::ofstream::out);
         mph->save(output);
         output.close();
 
@@ -107,7 +111,10 @@ void Validator::validate_kmer_set(bool& result) const
 {
     console->info("Testing validation of the uniqueness of the k-mers and completeness of the k-mer set in the produced unitigs.\n");
 
-    const Kmer_Container kmer_container(kmc_db_name);
+    const std::string& kmc_db_path = params.kmc_db_path();
+    const std::string& cdbg_file_path = params.cdbg_file_path();
+
+    const Kmer_Container kmer_container(kmc_db_path);
     const uint64_t kmer_count = kmer_container.size();
 
     console->info("Number of k-mers in the database: {}\n", kmer_count);
@@ -120,7 +127,7 @@ void Validator::validate_kmer_set(bool& result) const
 
     // Scan through the unitigs one-by-one.
     std::string unitig;
-    std::ifstream input(cdbg_file_name.c_str(), std::ifstream::in);
+    std::ifstream input(cdbg_file_path.c_str(), std::ifstream::in);
     while(input >> unitig)
     {
         cuttlefish::kmer_t first_kmer(unitig, 0);
@@ -156,7 +163,7 @@ void Validator::validate_kmer_set(bool& result) const
         kmers_seen += unitig.length() - k + 1;
         unitigs_processed++;
 
-        if(unitigs_processed % progress_grain_size == 0)
+        if(unitigs_processed % PROGRESS_GRAIN_SIZE == 0)
             console->info("Validated {}M unitigs.\n", unitigs_processed / 1000000);
     }
 
@@ -172,11 +179,15 @@ void Validator::validate_kmer_set(bool& result) const
 }
 
 
-void Validator::validate_sequence_completion(const uint64_t thread_count, bool& result)
+void Validator::validate_sequence_completion(bool& result)
 {
     console->info("Testing validation of the completeness of coverage of the sequence by the produced unitigs.\n");
 
-    const Kmer_Container kmer_container(kmc_db_name);
+    const std::string& ref_file_path = params.ref_file_path();
+    const std::string& kmc_db_path = params.kmc_db_path();
+    const uint16_t thread_count = params.thread_count();
+
+    const Kmer_Container kmer_container(kmc_db_path);
     const uint64_t kmer_count = kmer_container.size();
 
     console->info("Number of k-mers in the k-mer database: {}\n", kmer_count);
@@ -196,15 +207,15 @@ void Validator::validate_sequence_completion(const uint64_t thread_count, bool& 
 
 
     // Open the file handler for the FASTA / FASTQ file containing the reference.
-    FILE* input = fopen(ref_file_name.c_str(), "r");
+    FILE* const input = fopen(ref_file_path.c_str(), "r");
     if(input == NULL)
     {
-        console->error("Error opening the reference file {}. Aborting.\n", ref_file_name);
+        console->error("Error opening the reference file {}. Aborting.\n", ref_file_path);
         std::exit(EXIT_FAILURE);
     }
     
     // Initialize the parser.
-    kseq_t* parser = kseq_init(fileno(input));
+    kseq_t* const parser = kseq_init(fileno(input));
 
 
     std::vector<std::thread> th(thread_count);  // Thread-pool (round-robin) to validate the sequences parallelly.
@@ -216,7 +227,7 @@ void Validator::validate_sequence_completion(const uint64_t thread_count, bool& 
     // Parse sequences one-by-one, and continue spelling them using the resultant unitigs of the compaction algorithm.
     while(kseq_read(parser) >= 0)
     {
-        const char* seq = parser->seq.s;
+        const char* const seq = parser->seq.s;
         const size_t seq_len = parser->seq.l;
 
         console->info("Spelling out sequence {}, with length {}.\n", seqCount, seq_len);
@@ -273,15 +284,17 @@ void Validator::validate_sequence_completion(const uint64_t thread_count, bool& 
 
 void Validator::build_unitig_tables()
 {
-    std::ifstream input(cdbg_file_name.c_str(), std::ifstream::in);
+    const std::string& cdbg_file_path = params.cdbg_file_path();
+
+    std::ifstream input(cdbg_file_path.c_str(), std::ifstream::in);
     if(!input)
     {
-        console->error("Error reading from the unitigs file {}. Aborting.\n", cdbg_file_name);
+        console->error("Error reading from the unitigs file {}. Aborting.\n", cdbg_file_path);
         std::exit(EXIT_FAILURE);
     }
 
 
-    console->info("Loading the unitigs from the file {}\n", cdbg_file_name);
+    console->info("Loading the unitigs from the file {}\n", cdbg_file_path);
 
     size_t unitig_count = 0;
     std::string unitig;
@@ -317,7 +330,7 @@ void Validator::build_unitig_tables()
         unitig_count++;
         
         // Track progress.
-        if(unitig_count % progress_grain_size == 0)
+        if(unitig_count % PROGRESS_GRAIN_SIZE == 0)
             console->info("Loaded {}M unitigs.\n", unitig_count / 1000000);
     }
 
@@ -327,7 +340,7 @@ void Validator::build_unitig_tables()
 }
 
 
-void Validator::walk_sequence(const char* seq, const size_t seq_len, bool& result) const
+void Validator::walk_sequence(const char* const seq, const size_t seq_len, bool& result) const
 {
     // Nothing to process for sequences with length shorter than `k`.
     if(seq_len < k)
@@ -355,7 +368,7 @@ void Validator::walk_sequence(const char* seq, const size_t seq_len, bool& resul
 }
 
 
-size_t Validator::search_valid_kmer(const char* seq, const size_t seq_len, const size_t start_idx) const
+size_t Validator::search_valid_kmer(const char* const seq, const size_t seq_len, const size_t start_idx) const
 {
     size_t valid_start_idx;
     uint16_t nucl_count;
@@ -383,7 +396,7 @@ size_t Validator::search_valid_kmer(const char* seq, const size_t seq_len, const
 }
 
 
-size_t Validator::walk_first_unitig(const char* seq, const size_t seq_len, const size_t start_idx) const
+size_t Validator::walk_first_unitig(const char* const seq, const size_t seq_len, const size_t start_idx) const
 {
     const cuttlefish::kmer_t kmer(seq, start_idx);
     const uint64_t kmer_hash = mph->lookup(kmer.canonical());
@@ -410,7 +423,7 @@ size_t Validator::walk_first_unitig(const char* seq, const size_t seq_len, const
 }
 
 
-bool Validator::walk_unitig(const char* seq, const size_t seq_len, const size_t start_idx, const std::string& unitig, const Unitig_Dir dir) const
+bool Validator::walk_unitig(const char* const seq, const size_t seq_len, const size_t start_idx, const std::string& unitig, const Unitig_Dir dir) const
 {
     if(dir == Unitig_Dir::either)
         return walk_unitig(seq, seq_len, start_idx, unitig, true) || walk_unitig(seq, seq_len, start_idx, unitig, false);
@@ -419,7 +432,7 @@ bool Validator::walk_unitig(const char* seq, const size_t seq_len, const size_t 
 }
 
 
-bool Validator::walk_unitig(const char* seq, const size_t seq_len, const size_t start_idx, const std::string& unitig, const bool in_forward) const
+bool Validator::walk_unitig(const char* const seq, const size_t seq_len, const size_t start_idx, const std::string& unitig, const bool in_forward) const
 {
     if(in_forward)
     {
@@ -433,7 +446,7 @@ bool Validator::walk_unitig(const char* seq, const size_t seq_len, const size_t 
 
     const size_t len = unitig.length();
     for(size_t idx = 0; idx < len; ++idx)
-        if(start_idx + idx >= seq_len || seq[start_idx + idx] != Kmer::complement(unitig[len - 1 - idx]))
+        if(start_idx + idx >= seq_len || seq[start_idx + idx] != cuttlefish::kmer_t::complement(unitig[len - 1 - idx]))
             return false;
             
     return true;

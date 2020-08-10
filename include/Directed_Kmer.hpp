@@ -3,19 +3,14 @@
 #define DIRECTED_KMER_HPP
 
 
+
 #include "globals.hpp"
-#include "Kmer.hpp"
-
-
-class Annotated_Kmer;
 
 
 // K-mer and its reverse complement, canonical form, and direction.
 class Directed_Kmer
 {
-    friend class Annotated_Kmer;
-
-private:
+protected:
 
     cuttlefish::kmer_t kmer_;
     cuttlefish::kmer_t rev_compl_;
@@ -38,7 +33,7 @@ public:
     // appending the next nucleotide `next_nucl` to the end, i.e.
     // rolls the k-mer by one nucleotide and sets all the relevant
     // information accordingly.
-    void roll_to_next_kmer(const cuttlefish::nucleotide_t next_nucl);
+    void roll_to_next_kmer(cuttlefish::nucleotide_t next_nucl);
 
     void operator=(const Directed_Kmer& rhs);
 
@@ -62,7 +57,7 @@ inline Directed_Kmer::Directed_Kmer(const cuttlefish::kmer_t& kmer):
 {
     rev_compl_ = kmer.reverse_complement();
     canonical_ = kmer.canonical(rev_compl_);
-    dir_ = kmer.direction(canonical_);
+    dir_ = kmer.in_forward(canonical_);
 }
 
 
@@ -71,7 +66,7 @@ inline void Directed_Kmer::roll_to_next_kmer(const cuttlefish::nucleotide_t next
     kmer_.roll_to_next_kmer(next_nucl, rev_compl_);
     
     canonical_ = kmer_.canonical(rev_compl_);
-    dir_ = kmer_.direction(canonical_);
+    dir_ = kmer_.in_forward(canonical_);
 }
 
 

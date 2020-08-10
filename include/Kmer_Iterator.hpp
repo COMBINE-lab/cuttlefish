@@ -4,8 +4,8 @@
 
 
 
+#include "globals.hpp"
 #include "kmc_api/kmc_file.h"
-#include "Kmer.hpp"
 #include "Kmer_Container.hpp"
 
 
@@ -41,7 +41,7 @@ private:
 
     // Constructs an iterator for the provided container `kmer_container`, on either
     // its beginning or its ending position based on the value of `at_begin`.
-    Kmer_Iterator(const Kmer_Container* const kmer_container, const bool at_begin = true);
+    Kmer_Iterator(const Kmer_Container* kmer_container, bool at_begin = true);
 
     // Opens the KMC database (internally buffered) to read k-mers.
     void open_kmer_database();
@@ -69,6 +69,7 @@ public:
     const iterator& operator++();
 
     // Advances the iterator by offset one, and returns the old iterator.
+    // TODO
     iterator operator++(int);
 
     // Returns true iff this and `rhs` -- both the iterators refer to the same

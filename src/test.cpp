@@ -352,21 +352,6 @@ void count_kmers_in_unitigs(const char* file_name, uint16_t k)
 }
 
 
-void validate_result(char **argv)
-{
-    const std::string ref_file_name(argv[1]);
-    const uint16_t k(atoi(argv[2]));
-    const std::string kmc_db_name(argv[3]);
-    const std::string cdbg_file_name(argv[4]);
-    const std::string bbhash_file_name(argv[5]);
-    const uint16_t thread_count(atoi(argv[6]));
-    cuttlefish::logger_t console = spdlog::stdout_color_mt("Validator");
-    
-    Validator validator(ref_file_name, k, kmc_db_name, cdbg_file_name, console);
-    std::cout << "Validation " << (validator.validate(bbhash_file_name, thread_count) ? "successful" : "failed") << "\n";
-}
-
-
 int main(int argc, char** argv)
 {
     (void)argc;
@@ -395,8 +380,6 @@ int main(int argc, char** argv)
     // test_async_writer(argv[1]);
 
     // count_kmers_in_unitigs(argv[1], atoi(argv[2]));
-
-    validate_result(argv);
 
 
     return 0;

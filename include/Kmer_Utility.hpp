@@ -7,6 +7,8 @@
 #include <cstdint>
 #include <cstdlib>
 #include <iostream>
+#include <ctime>
+#include <algorithm>
 
 
 class Kmer_Utility
@@ -27,16 +29,16 @@ protected:
     };
 
     // Returns the mapping integer value of the given character `nucleotide`.
-    static DNA_Base map_nucleotide(const char nucleotide);
+    static DNA_Base map_nucleotide(char nucleotide);
 
     // Returns the mapping integer value of the complement of `nucleotide`.
-    static DNA_Base complement_nucleotide(const DNA_Base nucleotide);
+    static DNA_Base complement_nucleotide(DNA_Base nucleotide);
 
 
 public:
 
     // Returns the DNA-complement character of the character `nucl`.
-    static char complement(const char nucl);
+    static char complement(char nucl);
 };
 
 
@@ -111,7 +113,6 @@ inline char Kmer_Utility::complement(const char nucl)
         std::exit(EXIT_FAILURE);
     }
 }
-
 
 
 

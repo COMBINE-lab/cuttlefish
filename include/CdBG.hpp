@@ -12,6 +12,7 @@
 
 #include <sstream>
 
+
 class CdBG
 {
 private:
@@ -63,13 +64,13 @@ private:
     // Processes classification of the valid k-mers present at the sequence `seq`
     // (of length `seq_len`) that have their starting indices between (inclusive)
     // `left_end` and `right_end`.
-    void process_substring(const char* const seq, const size_t seq_len, const size_t left_end, const size_t right_end);
+    void process_substring(const char* seq, size_t seq_len, size_t left_end, size_t right_end);
 
     // Returns the index of the first valid k-mer, i.e. the first k-mer without
     // the placeholder nucleotide 'N', in the index range `[left_end, right_end]`
     // of the sequence `seq`. If no such k-mer is found, returns the first invalid
     // index after its assigned range, i.e. `right_end + 1`.
-    size_t search_valid_kmer(const char* const seq, const size_t left_end, const size_t right_end) const;
+    size_t search_valid_kmer(const char* seq, size_t left_end, size_t right_end) const;
 
     // Processes classification for the canonical versions of the valid k-mers of
     // the sequence `seq` (of length `seq_len`) that are present at its contiguous
@@ -79,7 +80,7 @@ private:
     // last k-mer before the first encountered placeholder nucleotide 'N', whichever
     // comes first. Also, returns the non-inclusive point of termination of the
     // processed subsequence, i.e. the index following the end of it.
-    size_t process_contiguous_subseq(const char* const seq, const size_t seq_len, const size_t right_end, const size_t start_idx);
+    size_t process_contiguous_subseq(const char* seq, size_t seq_len, size_t right_end, size_t start_idx);
 
     // Process classification for the canonical version `kmer_hat` of some k-mer
     // in the sequence that is isolated, i.e. does not have any adjacent k-mers.
@@ -91,13 +92,13 @@ private:
     // direction `dir`, the canonical version of the next k-mer in the sequence is
     // `next_kmer_hat`, and the nucletiode succeeding the first k-mer is `next_nucl`.
     // Returns `false` iff an attempted state transition for the k-mer failed.
-    bool process_leftmost_kmer(const cuttlefish::kmer_t& kmer_hat, const cuttlefish::dir_t dir, const cuttlefish::kmer_t& next_kmer_hat, const cuttlefish::nucleotide_t next_nucl);
+    bool process_leftmost_kmer(const cuttlefish::kmer_t& kmer_hat, cuttlefish::dir_t dir, const cuttlefish::kmer_t& next_kmer_hat, cuttlefish::nucleotide_t next_nucl);
 
     // Processes classification (partially) for the canonical version `kmer_hat` of
     // the last k-mer of some sequence, where the k-mer is encountered in the
     // direction `dir`, and the nucletiode preceding the last k-mer is `prev_nucl`.
     // Returns `false` iff an attempted state transition for the k-mer failed.
-    bool process_rightmost_kmer(const cuttlefish::kmer_t& kmer_hat, const cuttlefish::dir_t dir, const cuttlefish::nucleotide_t prev_nucl);
+    bool process_rightmost_kmer(const cuttlefish::kmer_t& kmer_hat, cuttlefish::dir_t dir, cuttlefish::nucleotide_t prev_nucl);
 
     // Processes classification (partially) for the canonical version `kmer_hat` of
     // some internal k-mer of some sequence, where the k-mer is encountered in the
@@ -105,7 +106,7 @@ private:
     // `next_kmer_hat`, the nucletiode preceding the k-mer is `prev_nucl`, and the
     // nucletiode succeeding the k-mer is `next_nucl`.
     // Returns `false` iff an attempted state transition for the k-mer failed.
-    bool process_internal_kmer(const cuttlefish::kmer_t& kmer_hat, const cuttlefish::dir_t dir, const cuttlefish::kmer_t& next_kmer_hat, const cuttlefish::nucleotide_t prev_nucl, const cuttlefish::nucleotide_t next_nucl);
+    bool process_internal_kmer(const cuttlefish::kmer_t& kmer_hat, cuttlefish::dir_t dir, const cuttlefish::kmer_t& next_kmer_hat, cuttlefish::nucleotide_t prev_nucl, cuttlefish::nucleotide_t next_nucl);
 
     // Returns a Boolean denoting whether the canonical k-mer `kmer_hat` forms a
     // self loop with the canonical k-mer `next_kmer_hat` in the sequence. This
@@ -119,7 +120,7 @@ private:
     // Writes the maximal unitigs at the sequence `seq` (of length `seq_len`) that
     // have their starting indices between (inclusive) `left_end` and `right_end`,
     // to the stream `output`.
-    void output_off_substring(const uint16_t thread_id, const char* const seq, const size_t seq_len, const size_t left_end, const size_t right_end, cuttlefish::logger_t output);
+    void output_off_substring(uint16_t thread_id, const char* seq, size_t seq_len, size_t left_end, size_t right_end, cuttlefish::logger_t output);
 
     // Outputs the distinct maximal unitigs of the sequence `seq` (of length
     // `seq_len`) to the stream `output`, that are present at its contiguous
@@ -128,24 +129,24 @@ private:
     // up-to the first encountered placeholder nucleotide 'N'. Also, returns
     // the non-inclusive point of termination of the processed subsequence,
     // i.e. the index following the end of it.
-    size_t output_maximal_unitigs(const uint16_t thread_id, const char* const seq, const size_t seq_len, const size_t right_end, const size_t start_idx, cuttlefish::logger_t output);
+    size_t output_maximal_unitigs(uint16_t thread_id, const char* seq, size_t seq_len, size_t right_end, size_t start_idx, cuttlefish::logger_t output);
 
     // Returns a Boolean denoting whether a k-mer with state `state` traversed in
     // the direction `dir` starts a maximal unitig, where `prev_kmer_state` and
     // `prev_kmer_dir` are the state and the direction of the previous k-mer in
     // the sequence, respectively.
-    bool is_unipath_start(const cuttlefish::Vertex_Class vertex_class, const cuttlefish::dir_t dir, const cuttlefish::Vertex_Class prev_kmer_class, const cuttlefish::dir_t prev_kmer_dir) const;
+    bool is_unipath_start(cuttlefish::Vertex_Class vertex_class, cuttlefish::dir_t dir, cuttlefish::Vertex_Class prev_kmer_class, cuttlefish::dir_t prev_kmer_dir) const;
 
     // Returns a Boolean denoting whether a k-mer with state `state` traversed in
     // the direction `dir` ends a maximal unitig, where `next_kmer_state` and
     // `next_kmer_dir` are the state and the direction of the next k-mer in the
     // sequence, respectively.
-    bool is_unipath_end(const cuttlefish::Vertex_Class vertex_class, const cuttlefish::dir_t dir, const cuttlefish::Vertex_Class next_kmer_class, const cuttlefish::dir_t next_kmer_dir) const;
+    bool is_unipath_end(cuttlefish::Vertex_Class vertex_class, cuttlefish::dir_t dir, cuttlefish::Vertex_Class next_kmer_class, cuttlefish::dir_t next_kmer_dir) const;
 
     // Outputs the unitig at the k-mer range between the annotated k-mers
     // `start_kmer` and `end_kmer` of the sequence `seq` (if the unitig had not
     // been output already), to the stream `output`.
-    void output_unitig(const uint16_t thread_id, const char* const ref, const Annotated_Kmer& start_kmer, const Annotated_Kmer& end_kmer, cuttlefish::logger_t output);
+    void output_unitig(uint16_t thread_id, const char* seq, const Annotated_Kmer& start_kmer, const Annotated_Kmer& end_kmer, cuttlefish::logger_t output);
     
     // Writes the path in the sequence `seq` with its starting and ending k-mers
     // located at the indices `start_kmer_idx` and `end_kmer_idx` respectively to
@@ -153,13 +154,13 @@ private:
     // `output` if necessary. If `dir` is `FWD`, then the string spelled by the
     // path is written; otherwise its reverse complement is written.
     // Note that, the output operation appends a newline at the end.
-    void write_path(const uint16_t thread_id, const char* const seq, const size_t start_kmer_idx, const size_t end_kmer_idx, const cuttlefish::dir_t dir, cuttlefish::logger_t output);
+    void write_path(uint16_t thread_id, const char* seq, size_t start_kmer_idx, size_t end_kmer_idx, cuttlefish::dir_t dir, cuttlefish::logger_t output);
 
     // Increases the buffer size for this thread, i.e. `buffer_size[thread_id]`
     // by `fill_amount`. If the resulting buffer size overflows `MAX_BUFF_SIZE`,
     // then the buffer content at `output_buffer[thread_id]` are dumped into the
     // stream `output` and the buffer is emptied.
-    void fill_buffer(const uint16_t thread_id, const uint64_t fill_amount, cuttlefish::logger_t output);
+    void fill_buffer(uint16_t thread_id, uint64_t fill_amount, cuttlefish::logger_t output);
 
     // Writes the string `str` to the output object `output`.
     static void write(cuttlefish::logger_t output, const std::string& str);
@@ -178,7 +179,7 @@ private:
     // Writes the maximal unitigs from the sequence `seq` (of length `seq_len`) that
     // have their starting indices between (inclusive) `left_end` and `right_end`,
     // to the stream `output`.
-    void output_gfa_off_substring(const uint16_t thread_id, const char* const seq, const size_t seq_len, const size_t left_end, const size_t right_end, cuttlefish::logger_t output);
+    void output_gfa_off_substring(uint16_t thread_id, const char* seq, size_t seq_len, size_t left_end, size_t right_end, cuttlefish::logger_t output);
 
     // Outputs the distinct maximal unitig of the sequence `seq` (of length `seq_len`)
     // to the stream `output`, that are present at its contiguous subsequence starting
@@ -186,12 +187,12 @@ private:
     // containing the index `right_end`, or up-to the first encountered placeholder
     // nucleotide 'N'. Also, returns the non-inclusive point of termination of the
     // processed subsequence, i.e. the index following the end of it.
-    size_t output_maximal_unitigs_gfa(const uint16_t thread_id, const char* const seq, const size_t seq_len, const size_t right_end, const size_t start_idx, cuttlefish::logger_t output);
+    size_t output_maximal_unitigs_gfa(uint16_t thread_id, const char* seq, size_t seq_len, size_t right_end, size_t start_idx, cuttlefish::logger_t output);
 
     // Outputs the unitig at the k-mer range between the annotated k-mers `start_kmer` and
     // `end_kmer` of the sequence `seq` (if the unitig had not been output already), to the
     // stream `output`.
-    void output_unitig_gfa(const uint16_t thread_id, const char* const ref, const Annotated_Kmer& start_kmer, const Annotated_Kmer& end_kmer, cuttlefish::logger_t output);
+    void output_unitig_gfa(uint16_t thread_id, const char* ref, const Annotated_Kmer& start_kmer, const Annotated_Kmer& end_kmer, cuttlefish::logger_t output);
 
     // Writes the GFA header record to the stream `output`.
     void write_gfa_header(std::ofstream& output) const;
@@ -202,31 +203,31 @@ private:
     // as `segment_name`. If `dir` is `cuttlefish::FWD`, then the string spelled by the
     // path is written; otherwise its reverse complement is written.
     // Note that, the output operation appends a newline at the end.
-    void write_gfa_segment(const uint16_t thread_id, const char* const seq, const uint64_t segment_name, const size_t start_kmer_idx, const size_t end_kmer_idx, const cuttlefish::dir_t dir, cuttlefish::logger_t output);
+    void write_gfa_segment(uint16_t thread_id, const char* seq, uint64_t segment_name, size_t start_kmer_idx, size_t end_kmer_idx, cuttlefish::dir_t dir, cuttlefish::logger_t output);
 
     // Writes a GFA connection (link, edge, or gap depending on GFA version `gfa_v`) between
     // the oriented unitigs `left_unitig` and `right_unitig`, to the stream `output`.
-    void write_gfa_connection(const uint16_t thread_id, const Oriented_Unitig& left_unitig, const Oriented_Unitig& right_unitig, cuttlefish::logger_t output);
+    void write_gfa_connection(uint16_t thread_id, const Oriented_Unitig& left_unitig, const Oriented_Unitig& right_unitig, cuttlefish::logger_t output);
 
     // Writes a GFA1 link between the oriented unitigs `left_unitig` and `right_unitig`,
     // to the stream `output`.
-    void write_gfa_link(const uint16_t thread_id, const Oriented_Unitig& left_unitig, const Oriented_Unitig& right_unitig, cuttlefish::logger_t output);
+    void write_gfa_link(uint16_t thread_id, const Oriented_Unitig& left_unitig, const Oriented_Unitig& right_unitig, cuttlefish::logger_t output);
 
     // Writes a GFA2 edge between the oriented unitigs `left_unitig` and `right_unitig`,
     // to the stream `output`.
-    void write_gfa_edge(const uint16_t thread_id, const Oriented_Unitig& left_unitig, const Oriented_Unitig& right_unitig, cuttlefish::logger_t output);
+    void write_gfa_edge(uint16_t thread_id, const Oriented_Unitig& left_unitig, const Oriented_Unitig& right_unitig, cuttlefish::logger_t output);
 
     // Writes a GFA2 gap between the oriented unitigs `left_unitig` and `right_unitig`,
     // to the stream `output`.
-    void write_gfa_gap(const uint16_t thread_id, const Oriented_Unitig& left_unitig, const Oriented_Unitig& right_unitig, cuttlefish::logger_t output);
+    void write_gfa_gap(uint16_t thread_id, const Oriented_Unitig& left_unitig, const Oriented_Unitig& right_unitig, cuttlefish::logger_t output);
 
     // Appends a link between the oriented unitigs `left_unitig` and `right_unitig` to
     // the path and the overlap output streams of the thread number `thread_id`.
-    void append_link_to_path(const uint16_t thread_id, const Oriented_Unitig& left_unitig, const Oriented_Unitig& right_unitig);
+    void append_link_to_path(uint16_t thread_id, const Oriented_Unitig& left_unitig, const Oriented_Unitig& right_unitig);
 
     // Appends an edge between the oriented unitigs `left_unitig` and `right_unitig` to
     // the path output stream of the thread number `thread_id`.
-    void append_edge_to_path(const uint16_t thread_id, const Oriented_Unitig& left_unitig, const Oriented_Unitig& right_unitig);
+    void append_edge_to_path(uint16_t thread_id, const Oriented_Unitig& left_unitig, const Oriented_Unitig& right_unitig);
 
     // Writes the connections (links, edges, or gaps) present between unitigs processed
     // by different threads.

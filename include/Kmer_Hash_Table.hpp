@@ -24,7 +24,7 @@ class Kmer_Hash_Table
 private:
 
     // Lowest bits/elem is achieved with gamma = 1, higher values lead to larger mphf but faster construction/query.
-    constexpr static double gamma_factor = 2.0;
+    constexpr static double GAMMA_FACTOR = 2.0;
 
     // The MPH function.
     cuttlefish::mphf_t* mph = NULL;
@@ -34,7 +34,7 @@ private:
     cuttlefish::bitvector_t hash_table;
 
     // Number of locks for thread-safe access to the bitvector `hash_table`.
-    constexpr static const uint64_t lock_count{65536};
+    constexpr static uint64_t lock_count{65536};
 
     // Number of contiguous entries of the bitvector that each lock is assigned to.
     uint64_t lock_range_size;
@@ -47,7 +47,7 @@ private:
     // k-mers present at the KMC database container `kmer_container`,
     // with `mph_file_path` being the file to use for BBHash build
     // using `thread_count` number of threads.
-    void build_mph_function(const Kmer_Container& kmer_container, const uint16_t thread_count, const std::string& mph_file_path);
+    void build_mph_function(const Kmer_Container& kmer_container, uint16_t thread_count, const std::string& mph_file_path);
 
     // Loads an MPH function stored at the file named `file_path` into `mph`.
     void load_mph_function(const std::string& file_path);
@@ -62,7 +62,7 @@ private:
     // Returns an API to the entry (in the hash table) for a k-mer hashing
     // to the bucket number `bucket_id` of the hash table. The API wraps
     // the hash table position and the state value at that position.
-    Kmer_Hash_Entry_API operator[](const uint64_t bucket_id);
+    Kmer_Hash_Entry_API operator[](uint64_t bucket_id);
 
 public:
 
@@ -74,7 +74,7 @@ public:
     // using up-to `thread_count` number of threads. If a non-empty path is passed
     // with `mph_file_path`, either an MPH is loaded from there (instead of building
     // from scratch), or the newly built MPH is saved there.
-    void construct(const std::string& kmc_db_path, const uint16_t thread_count, const std::string& mph_file_path);
+    void construct(const std::string& kmc_db_path, uint16_t thread_count, const std::string& mph_file_path);
 
     // Returns an API to the entry (in the hash table) for the key `kmer`. The API
     // wraps the hash table position and the state value at that position.

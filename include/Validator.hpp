@@ -24,7 +24,7 @@ private:
     
     // The gamma factor for the BBHash algorithm. Lowest bits/elem is achieved with gamma = 1,
     // higher values lead to larger mphf but faster construction/query.
-    constexpr static double gamma_factor = 2.0;
+    constexpr static double GAMMA_FACTOR = 2.0;
     
     std::vector<std::string> U; // Collection of the maximal unitig strings produced by the compaction algorithm.
     
@@ -61,30 +61,30 @@ private:
 
     // Traverses the sequence `seq` of length `seq_len` to check that the sequence can be
     // spelled out by the unitigs at `U`. Returns `true` iff the spelling is successful.
-    void walk_sequence(const char* const seq, const size_t seq_len, bool& result) const;
+    void walk_sequence(const char* seq, size_t seq_len, bool& result) const;
 
     // Returns the index of the first valid k-mer, i.e. the first k-mer without the placeholder
     // nucleotide 'N', of the sequence `seq` (of length `seq_len`), searching onwards from the
     // index `start_idx`. If no such k-mer is found, returns `seq_len`.
-    size_t search_valid_kmer(const char* const seq, const size_t seq_len, const size_t start_idx) const;
+    size_t search_valid_kmer(const char* seq, size_t seq_len, size_t start_idx) const;
 
     // Traverses the sequence `seq` (of length `seq_len`) partially, starting from the index
     // `start_idx` such that, the traversal spells out an unitig from the unitigs collection
     // `U`. If the spelling fails, then returns `std::numeric_limits<size_t>::max()`. Otherwise,
     // returns the index of the immediately following k-mer, which might be invalid; and if
     // valid, that k-mer is the starting point of another unitig traversal.
-    size_t walk_first_unitig(const char* const seq, const size_t seq_len, const size_t start_idx) const;
+    size_t walk_first_unitig(const char* seq, size_t seq_len, size_t start_idx) const;
 
     // Traverses the sequence `seq` (of length `seq_len`) partially, starting from the index
     // `start_idx` such that, the traversal spells out the string `unitig` in the direction `dir`.
     // Returns `true` iff the spelling is successful.
-    bool walk_unitig(const char* const seq, const size_t seq_len, const size_t start_idx, const std::string& unitig, const Unitig_Dir dir) const;
+    bool walk_unitig(const char* seq, size_t seq_len, size_t start_idx, const std::string& unitig, Unitig_Dir dir) const;
 
     // Traverses the sequence `seq` (of length `seq_len`) partially, starting from the index
     // `start_idx` such that, the traversal spells out the string `unitig` in the forward or
     // the backward direction, based on whether `in_forward` is true or false. Returns `true`
     // iff the spelling is successful.
-    bool walk_unitig(const char* const seq, const size_t seq_len, const size_t start_idx, const std::string& unitig, const bool in_forward) const;
+    bool walk_unitig(const char* seq, size_t seq_len, size_t start_idx, const std::string& unitig, bool in_forward) const;
 
     // Returns validation result of the set of k-mers present at the supposed maximal unitigs
     // produced by the algorithm. Checks if the set of k-mers present at the supposed maximal

@@ -51,14 +51,14 @@ public:
 
     // Constructs a k-mer from the provided characters at
     // `label[kmer_idx,...,kmer_idx + k - 1]`.
-    Kmer(const char* const label, const size_t kmer_idx);
+    Kmer(const char* label, size_t kmer_idx);
 
     // Constructs a k-mer from the provided string `label`.
     Kmer(const std::string& label);
 
     // Constructs a k-mer from the provided characters at
     // `label[kmer_idx,...,kmer_idx + k - 1]`.
-    Kmer(const std::string& label, const size_t kmer_idx);
+    Kmer(const std::string& label, size_t kmer_idx);
 
     // Constructs a k-mer from `kmer_api`, a k-mer object built from KMC.
     Kmer(const CKmerAPI& kmer_api);
@@ -72,7 +72,7 @@ public:
     // Sets the value of the `k` parameter across the `Kmer` class.
     // Note: For this general k-mer class with `k` being fixed at compile-time,
     // this method effectively does nothing.
-    static void set_k(const uint16_t kmer_len);
+    static void set_k(uint16_t kmer_len);
 
     // Returns the k-parameter.
     constexpr static uint16_t get_k();
@@ -98,7 +98,7 @@ public:
     // appending the next nucleotide `next_nucl` to the end, i.e.
     // rolls the k-mer by one nucleotide. Also sets the passed reverse
     // complement `rev_compl` of the k-mer accordingly.
-    void roll_to_next_kmer(const char next_nucl, Kmer<k>& rev_compl);
+    void roll_to_next_kmer(char next_nucl, Kmer<k>& rev_compl);
 
     // Returns the canonical version of the k-mer, comparing it to its
     // reverse complement `rev_compl`.

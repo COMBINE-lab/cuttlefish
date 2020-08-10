@@ -26,7 +26,7 @@ void Kmer_Hash_Table::build_mph_function(const Kmer_Container& kmer_container, c
         std::cout << "Building the MPH function from the k-mer database " << kmer_container.container_location() << "\n";
 
         auto data_iterator = boomphf::range(kmer_container.begin(), kmer_container.end());
-        mph = new boomphf::mphf<cuttlefish::kmer_t, Kmer_Hasher> (kmer_container.size(), data_iterator, thread_count, gamma_factor);
+        mph = new boomphf::mphf<cuttlefish::kmer_t, Kmer_Hasher> (kmer_container.size(), data_iterator, thread_count, GAMMA_FACTOR);
 
         std::cout << "Built the MPH function in memory.\n";
         

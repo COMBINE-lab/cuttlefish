@@ -90,7 +90,7 @@ void Validator::build_mph_function()
         console->info("Building the MPH function from the k-mer database {}\n", kmer_container.container_location());
 
         auto data_iterator = boomphf::range(kmer_container.begin(), kmer_container.end());
-        mph = new boomphf::mphf<cuttlefish::kmer_t, Kmer_Hasher> (kmer_container.size(), data_iterator, thread_count, gamma_factor);
+        mph = new boomphf::mphf<cuttlefish::kmer_t, Kmer_Hasher> (kmer_container.size(), data_iterator, thread_count, GAMMA_FACTOR);
 
         console->info("Built the MPH function in memory.\n");
         

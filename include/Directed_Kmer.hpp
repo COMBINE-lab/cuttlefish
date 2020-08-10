@@ -33,7 +33,7 @@ public:
     // appending the next nucleotide `next_nucl` to the end, i.e.
     // rolls the k-mer by one nucleotide and sets all the relevant
     // information accordingly.
-    void roll_to_next_kmer(const cuttlefish::nucleotide_t next_nucl);
+    void roll_to_next_kmer(cuttlefish::nucleotide_t next_nucl);
 
     void operator=(const Directed_Kmer& rhs);
 

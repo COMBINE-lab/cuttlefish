@@ -7,7 +7,7 @@
 
 
 // Returns a random string of length `len`.
-std::string get_random_string(const size_t len);
+std::string get_random_string(size_t len);
 
 // Returns `true` iff `pref` is a prefix of `s`.
 bool is_prefix(const std::string& s, const std::string& pref);

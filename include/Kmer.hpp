@@ -6,19 +6,15 @@
 
 #include "Kmer_Utility.hpp"
 #include "smhasher/MurmurHash3.h"
+#include "kmc_api/kmc_file.h"
 
 #include <string>
 #include <algorithm>
 
 
-class Kmer_Hasher;
-
-
 template <uint16_t k>
 class Kmer: public Kmer_Utility
 {
-    friend class Kmer_Hasher;
-
 private:
 
     // Number of 64-bit integers required to compactly represent the underlying k-mer with 2-bits/base encoding.
@@ -33,9 +29,6 @@ private:
     // That is, the suffix is aligned with a byte boundary.
     uint64_t kmer_data[NUM_INTS];
 
-    
-    // Returns a 64-bit hash value for the k-mer.
-    uint64_t to_u64() const;
 
     // Left-shifts the collection of the bits at the `kmer_data` array by one nucleotide (2-bits).
     void left_shift();
@@ -76,6 +69,9 @@ public:
 
     // Returns the k-parameter.
     constexpr static uint16_t get_k();
+
+    // Returns a 64-bit hash value for the k-mer.
+    uint64_t to_u64() const;
 
     // Gets the k-mer from the KMC api object `kmer_api`.
     void from_CKmerAPI(const CKmerAPI& kmer_api);

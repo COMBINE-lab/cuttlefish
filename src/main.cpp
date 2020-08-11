@@ -63,7 +63,7 @@ void build(int argc, char** argv)
         std::cout << "Constructing compacted de Bruijn graph for the reference at " << ref << ", with k = " << k << "\n";
 
         const Build_Params params(ref, k, kmer_database, thread_count, output_file, format, working_dir, bbhash_file);
-        CdBG cdbg(params);
+        CdBG<cuttlefish::MAX_K> cdbg(params);
 
         cdbg.construct();
 
@@ -110,7 +110,7 @@ void validate(int argc, char** argv)
 
         const Validation_Params params(ref, k, kmer_database, cdbg, thread_count, bbhash_file);
         cuttlefish::logger_t console = spdlog::stdout_color_mt("Validator");
-        Validator validator(params, console);
+        Validator<cuttlefish::MAX_K> validator(params, console);
         std::cout << "Validation " << (validator.validate() ? "successful" : "failed") << std::endl;
     }
     catch(const std::exception& e)

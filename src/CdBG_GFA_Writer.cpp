@@ -1,7 +1,7 @@
 
 #include "CdBG.hpp"
-#include "kseq/kseq.h"
 #include "utility.hpp"
+#include "kseq/kseq.h"
 #include "spdlog/spdlog.h"
 #include "spdlog/async.h"
 #include "spdlog/sinks/basic_file_sink.h"
@@ -16,7 +16,8 @@
 KSEQ_INIT(int, read);
 
 
-void CdBG::output_maximal_unitigs_gfa()
+template <uint16_t k>
+void CdBG<k>::output_maximal_unitigs_gfa()
 {
     std::chrono::high_resolution_clock::time_point t_start = std::chrono::high_resolution_clock::now();
 
@@ -178,7 +179,8 @@ void CdBG::output_maximal_unitigs_gfa()
 }
 
 
-void CdBG::set_temp_file_prefixes(const std::string& working_dir)
+template <uint16_t k>
+void CdBG<k>::set_temp_file_prefixes(const std::string& working_dir)
 {
     // Check if temporary files can be created with random names.
     const uint64_t RETRY_COUNT = 10;
@@ -203,7 +205,8 @@ void CdBG::set_temp_file_prefixes(const std::string& working_dir)
 }
 
 
-void CdBG::reset_path_streams()
+template <uint16_t k>
+void CdBG<k>::reset_path_streams()
 {
     const uint8_t gfa_v = params.output_format();
     const uint16_t thread_count = params.thread_count();
@@ -222,7 +225,8 @@ void CdBG::reset_path_streams()
 }
 
 
-void CdBG::output_gfa_off_substring(const uint16_t thread_id, const char* const seq, const size_t seq_len, const size_t left_end, const size_t right_end, cuttlefish::logger_t output)
+template <uint16_t k>
+void CdBG<k>::output_gfa_off_substring(const uint16_t thread_id, const char* const seq, const size_t seq_len, const size_t left_end, const size_t right_end, cuttlefish::logger_t output)
 {
     size_t kmer_idx = left_end;
     while(kmer_idx <= right_end)
@@ -239,13 +243,14 @@ void CdBG::output_gfa_off_substring(const uint16_t thread_id, const char* const 
 }
 
 
-size_t CdBG::output_maximal_unitigs_gfa(const uint16_t thread_id, const char* const seq, const size_t seq_len, const size_t right_end, const size_t start_idx, cuttlefish::logger_t output)
+template <uint16_t k>
+size_t CdBG<k>::output_maximal_unitigs_gfa(const uint16_t thread_id, const char* const seq, const size_t seq_len, const size_t right_end, const size_t start_idx, cuttlefish::logger_t output)
 {
     size_t kmer_idx = start_idx;
 
     // assert(kmer_idx <= seq_len - k);
 
-    Annotated_Kmer curr_kmer(cuttlefish::kmer_t(seq, kmer_idx), kmer_idx, Vertices);
+    Annotated_Kmer<k> curr_kmer(Kmer<k>(seq, kmer_idx), kmer_idx, Vertices);
 
     // The subsequence contains only an isolated k-mer, i.e. there's no valid left or right
     // neighboring k-mer to this k-mer. So it's a maximal unitig by itself.
@@ -258,7 +263,7 @@ size_t CdBG::output_maximal_unitigs_gfa(const uint16_t thread_id, const char* co
         if(kmer_idx + k == seq_len || seq[kmer_idx + k] == cuttlefish::PLACEHOLDER_NUCLEOTIDE)
         {
             // A valid left neighbor exists as it's not an isolated k-mer.
-            Annotated_Kmer prev_kmer(cuttlefish::kmer_t(seq, kmer_idx - 1), kmer_idx, Vertices);
+            Annotated_Kmer<k> prev_kmer(Kmer<k>(seq, kmer_idx - 1), kmer_idx, Vertices);
             
             if(is_unipath_start(curr_kmer.vertex_class(), curr_kmer.dir(), prev_kmer.vertex_class(), prev_kmer.dir()))
                 // A maximal unitig ends at the ending of a maximal valid subsequence.
@@ -270,12 +275,12 @@ size_t CdBG::output_maximal_unitigs_gfa(const uint16_t thread_id, const char* co
 
 
         // A valid right neighbor exists for the k-mer.
-        Annotated_Kmer next_kmer = curr_kmer;
+        Annotated_Kmer<k> next_kmer = curr_kmer;
         next_kmer.roll_to_next_kmer(seq[kmer_idx + k], Vertices);
 
         bool on_unipath = false;
-        Annotated_Kmer unipath_start_kmer;
-        Annotated_Kmer prev_kmer;
+        Annotated_Kmer<k> unipath_start_kmer;
+        Annotated_Kmer<k> prev_kmer;
 
         // No valid left neighbor exists for the k-mer.
         if(kmer_idx == 0 || seq[kmer_idx - 1] == cuttlefish::PLACEHOLDER_NUCLEOTIDE)
@@ -287,7 +292,7 @@ size_t CdBG::output_maximal_unitigs_gfa(const uint16_t thread_id, const char* co
         // Both left and right valid neighbors exist for this k-mer.
         else
         {
-            prev_kmer = Annotated_Kmer(cuttlefish::kmer_t(seq, kmer_idx - 1), kmer_idx, Vertices);
+            prev_kmer = Annotated_Kmer<k>(Kmer<k>(seq, kmer_idx - 1), kmer_idx, Vertices);
             if(is_unipath_start(curr_kmer.vertex_class(), curr_kmer.dir(), prev_kmer.vertex_class(), prev_kmer.dir()))
             {
                 on_unipath = true;
@@ -347,14 +352,15 @@ size_t CdBG::output_maximal_unitigs_gfa(const uint16_t thread_id, const char* co
 }
 
 
-void CdBG::output_unitig_gfa(const uint16_t thread_id, const char* const seq, const Annotated_Kmer& start_kmer, const Annotated_Kmer& end_kmer, cuttlefish::logger_t output)
+template <uint16_t k>
+void CdBG<k>::output_unitig_gfa(const uint16_t thread_id, const char* const seq, const Annotated_Kmer<k>& start_kmer, const Annotated_Kmer<k>& end_kmer, cuttlefish::logger_t output)
 {
     // This is to avoid race conditions that may arise while multi-threading.
     // If two threads try to output the same unitig at the same time but
     // encounter it in the opposite orientations, then data races may arise.
     // For a particular unitig, always query the same well-defined canonical flanking
     // k-mer, irrespective of which direction the unitig may be traversed at.
-    const cuttlefish::kmer_t min_flanking_kmer = std::min(start_kmer.canonical(), end_kmer.canonical());
+    const Kmer<k> min_flanking_kmer = std::min(start_kmer.canonical(), end_kmer.canonical());
     const uint64_t bucket_id = Vertices.bucket_id(min_flanking_kmer);
     Kmer_Hash_Entry_API hash_table_entry = Vertices[bucket_id];
     State& state = hash_table_entry.get_state();
@@ -392,7 +398,8 @@ void CdBG::output_unitig_gfa(const uint16_t thread_id, const char* const seq, co
 }
 
 
-void CdBG::write_gfa_header(std::ofstream& output) const
+template <uint16_t k>
+void CdBG<k>::write_gfa_header(std::ofstream& output) const
 {
     const uint8_t gfa_v = params.output_format();
 
@@ -412,7 +419,8 @@ void CdBG::write_gfa_header(std::ofstream& output) const
 }
 
 
-void CdBG::write_gfa_segment(const uint16_t thread_id, const char* const seq, const uint64_t segment_name, const size_t start_kmer_idx, const size_t end_kmer_idx, const cuttlefish::dir_t dir, cuttlefish::logger_t output)
+template <uint16_t k>
+void CdBG<k>::write_gfa_segment(const uint16_t thread_id, const char* const seq, const uint64_t segment_name, const size_t start_kmer_idx, const size_t end_kmer_idx, const cuttlefish::dir_t dir, cuttlefish::logger_t output)
 {
     const uint8_t gfa_v = params.output_format();
 
@@ -436,7 +444,7 @@ void CdBG::write_gfa_segment(const uint16_t thread_id, const char* const seq, co
             buffer << seq[start_kmer_idx + offset];
     else
         for(size_t offset = 0; offset < segment_len; ++offset)
-            buffer << cuttlefish::kmer_t::complement(seq[end_kmer_idx + k - 1 - offset]);
+            buffer << Kmer<k>::complement(seq[end_kmer_idx + k - 1 - offset]);
 
 
     // Write some optional fields that are trivially inferrable here.
@@ -455,7 +463,8 @@ void CdBG::write_gfa_segment(const uint16_t thread_id, const char* const seq, co
 }
 
 
-void CdBG::write_gfa_connection(const uint16_t thread_id, const Oriented_Unitig& left_unitig, const Oriented_Unitig& right_unitig, cuttlefish::logger_t output)
+template <uint16_t k>
+void CdBG<k>::write_gfa_connection(const uint16_t thread_id, const Oriented_Unitig& left_unitig, const Oriented_Unitig& right_unitig, cuttlefish::logger_t output)
 {
     const uint8_t gfa_v = params.output_format();
 
@@ -469,7 +478,8 @@ void CdBG::write_gfa_connection(const uint16_t thread_id, const Oriented_Unitig&
 }
 
 
-void CdBG::write_gfa_link(const uint16_t thread_id, const Oriented_Unitig& left_unitig, const Oriented_Unitig& right_unitig, cuttlefish::logger_t output)
+template <uint16_t k>
+void CdBG<k>::write_gfa_link(const uint16_t thread_id, const Oriented_Unitig& left_unitig, const Oriented_Unitig& right_unitig, cuttlefish::logger_t output)
 {
     std::stringstream& buffer = output_buffer[thread_id];
 
@@ -499,7 +509,8 @@ void CdBG::write_gfa_link(const uint16_t thread_id, const Oriented_Unitig& left_
 }
 
 
-void CdBG::write_gfa_edge(const uint16_t thread_id, const Oriented_Unitig& left_unitig, const Oriented_Unitig& right_unitig, cuttlefish::logger_t output)
+template <uint16_t k>
+void CdBG<k>::write_gfa_edge(const uint16_t thread_id, const Oriented_Unitig& left_unitig, const Oriented_Unitig& right_unitig, cuttlefish::logger_t output)
 {
     std::stringstream& buffer = output_buffer[thread_id];
 
@@ -515,14 +526,14 @@ void CdBG::write_gfa_edge(const uint16_t thread_id, const Oriented_Unitig& left_
 
 
     // The 'Begin' and 'End' fields for the first segment.
-    size_t unitig_len = left_unitig.length();
+    size_t unitig_len = left_unitig.length(k);
     if(left_unitig.dir == cuttlefish::FWD)
         buffer << "\t" << (unitig_len - (k - 1)) << "\t" << unitig_len << "$";
     else
         buffer << "\t" << 0 << "\t" << (k - 1);
 
     // The 'Begin' and 'End' fields for the second segment.
-    unitig_len = right_unitig.length();
+    unitig_len = right_unitig.length(k);
     if(right_unitig.dir == cuttlefish::FWD)
         buffer << "\t" << 0 << "\t" << (k - 1);
     else
@@ -545,7 +556,8 @@ void CdBG::write_gfa_edge(const uint16_t thread_id, const Oriented_Unitig& left_
 }
 
 
-void CdBG::write_gfa_gap(const uint16_t thread_id, const Oriented_Unitig& left_unitig, const Oriented_Unitig& right_unitig, cuttlefish::logger_t output)
+template <uint16_t k>
+void CdBG<k>::write_gfa_gap(const uint16_t thread_id, const Oriented_Unitig& left_unitig, const Oriented_Unitig& right_unitig, cuttlefish::logger_t output)
 {
     std::stringstream& buffer = output_buffer[thread_id];
 
@@ -578,7 +590,8 @@ void CdBG::write_gfa_gap(const uint16_t thread_id, const Oriented_Unitig& left_u
 }
 
 
-void CdBG::append_link_to_path(const uint16_t thread_id, const Oriented_Unitig& left_unitig, const Oriented_Unitig& right_unitig)
+template <uint16_t k>
+void CdBG<k>::append_link_to_path(const uint16_t thread_id, const Oriented_Unitig& left_unitig, const Oriented_Unitig& right_unitig)
 {
     // The destination vertex (unitig) is written for each link.
     // Note that, the very first vertex of the path tiling for the sequence is thus missing in the path outputs.
@@ -590,7 +603,8 @@ void CdBG::append_link_to_path(const uint16_t thread_id, const Oriented_Unitig& 
 }
 
 
-void CdBG::append_edge_to_path(const uint16_t thread_id, const Oriented_Unitig& left_unitig, const Oriented_Unitig& right_unitig)
+template <uint16_t k>
+void CdBG<k>::append_edge_to_path(const uint16_t thread_id, const Oriented_Unitig& left_unitig, const Oriented_Unitig& right_unitig)
 {
     // The destination vertex (unitig) is written for each edge.
     // Note that, the very first vertex of the path tiling for the sequence is thus missing in the path outputs.
@@ -602,7 +616,8 @@ void CdBG::append_edge_to_path(const uint16_t thread_id, const Oriented_Unitig& 
 }
 
 
-void CdBG::write_inter_thread_connections(cuttlefish::logger_t output)
+template <uint16_t k>
+void CdBG<k>::write_inter_thread_connections(cuttlefish::logger_t output)
 {
     const uint16_t thread_count = params.thread_count();
 
@@ -632,7 +647,8 @@ void CdBG::write_inter_thread_connections(cuttlefish::logger_t output)
 }
 
 
-void CdBG::search_first_connection(Oriented_Unitig& left_unitig, Oriented_Unitig& right_unitig) const
+template <uint16_t k>
+void CdBG<k>::search_first_connection(Oriented_Unitig& left_unitig, Oriented_Unitig& right_unitig) const
 {
     const uint16_t thread_count = params.thread_count();
 
@@ -663,7 +679,8 @@ void CdBG::search_first_connection(Oriented_Unitig& left_unitig, Oriented_Unitig
 }
 
 
-void CdBG::write_gfa_path()
+template <uint16_t k>
+void CdBG<k>::write_gfa_path()
 {
     std::chrono::high_resolution_clock::time_point t_start = std::chrono::high_resolution_clock::now();
 
@@ -775,7 +792,8 @@ void CdBG::write_gfa_path()
 }
 
 
-void CdBG::write_gfa_ordered_group()
+template <uint16_t k>
+void CdBG<k>::write_gfa_ordered_group()
 {
     std::chrono::high_resolution_clock::time_point t_start = std::chrono::high_resolution_clock::now();
 
@@ -853,7 +871,8 @@ void CdBG::write_gfa_ordered_group()
 }
 
 
-void CdBG::remove_temp_files() const
+template <uint16_t k>
+void CdBG<k>::remove_temp_files() const
 {
     const uint16_t thread_count = params.thread_count();
     const uint8_t gfa_v = params.output_format();
@@ -871,3 +890,8 @@ void CdBG::remove_temp_files() const
         }
     }
 }
+
+
+
+// Template instantiation for the required specializations.
+template class CdBG<cuttlefish::MAX_K>;

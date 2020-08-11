@@ -3,8 +3,8 @@
 #include "Kmer_Container.hpp"
 #include "Kmer_Iterator.hpp"
 #include "Kmer_Hasher.hpp"
-#include "BBHash/BooPHF.h"
 #include "Directed_Kmer.hpp"
+#include "BBHash/BooPHF.h"
 #include "kseq/kseq.h"
 
 #include "spdlog/sinks/stdout_color_sinks.h"
@@ -19,14 +19,24 @@
 KSEQ_INIT(int, read);
 
 
-Validator::Validator(const Validation_Params& params, cuttlefish::logger_t console):
-    params(params), k(params.k()), console(console)
+template <uint16_t k>
+Validator<k>::Validator(const Validation_Params& params, cuttlefish::logger_t console):
+    params(params), console(console)
 {
-    cuttlefish::kmer_t::set_k(k);
+    Kmer<k>::set_k(params.k());
 }
 
 
-bool Validator::validate()
+template <uint16_t k>
+Validator<k>::~Validator()
+{
+    if(mph != NULL)
+        delete mph;
+}
+
+
+template <uint16_t k>
+bool Validator<k>::validate()
 {
     build_mph_function();
 
@@ -63,13 +73,14 @@ bool Validator::validate()
 }
 
 
-void Validator::build_mph_function()
+template <uint16_t k>
+void Validator<k>::build_mph_function()
 {
     const std::string& kmc_db_path = params.kmc_db_path();
     const uint16_t thread_count = params.thread_count();
     const std::string& mph_file_path = params.mph_file_path();
 
-    const Kmer_Container kmer_container(kmc_db_path);
+    const Kmer_Container<k> kmer_container(kmc_db_path);
 
     // The serialized BBHash file (saved from some earlier execution) exists.
     struct stat buffer;
@@ -78,7 +89,7 @@ void Validator::build_mph_function()
         console->info("Loading the MPH function from file {}\n", mph_file_path);
         
         std::ifstream input(mph_file_path.c_str(), std::ifstream::in);
-        mph = new boomphf::mphf<cuttlefish::kmer_t, Kmer_Hasher>();
+        mph = new mphf_t();
         mph->load(input);
         input.close();
         
@@ -90,7 +101,7 @@ void Validator::build_mph_function()
         console->info("Building the MPH function from the k-mer database {}\n", kmer_container.container_location());
 
         auto data_iterator = boomphf::range(kmer_container.begin(), kmer_container.end());
-        mph = new boomphf::mphf<cuttlefish::kmer_t, Kmer_Hasher> (kmer_container.size(), data_iterator, thread_count, GAMMA_FACTOR);
+        mph = new mphf_t(kmer_container.size(), data_iterator, thread_count, GAMMA_FACTOR);
 
         console->info("Built the MPH function in memory.\n");
         
@@ -107,14 +118,15 @@ void Validator::build_mph_function()
 }
 
 
-void Validator::validate_kmer_set(bool& result) const
+template <uint16_t k>
+void Validator<k>::validate_kmer_set(bool& result) const
 {
     console->info("Testing validation of the uniqueness of the k-mers and completeness of the k-mer set in the produced unitigs.\n");
 
     const std::string& kmc_db_path = params.kmc_db_path();
     const std::string& cdbg_file_path = params.cdbg_file_path();
 
-    const Kmer_Container kmer_container(kmc_db_path);
+    const Kmer_Container<k> kmer_container(kmc_db_path);
     const uint64_t kmer_count = kmer_container.size();
 
     console->info("Number of k-mers in the database: {}\n", kmer_count);
@@ -130,8 +142,8 @@ void Validator::validate_kmer_set(bool& result) const
     std::ifstream input(cdbg_file_path.c_str(), std::ifstream::in);
     while(input >> unitig)
     {
-        cuttlefish::kmer_t first_kmer(unitig, 0);
-        Directed_Kmer kmer(first_kmer);
+        const Kmer<k> first_kmer(unitig, 0);
+        Directed_Kmer<k> kmer(first_kmer);
 
         // Scan through the k-mers one-by-one.
         for(size_t kmer_idx = 0; kmer_idx <= unitig.length() - k; ++kmer_idx)
@@ -179,7 +191,8 @@ void Validator::validate_kmer_set(bool& result) const
 }
 
 
-void Validator::validate_sequence_completion(bool& result)
+template <uint16_t k>
+void Validator<k>::validate_sequence_completion(bool& result)
 {
     console->info("Testing validation of the completeness of coverage of the sequence by the produced unitigs.\n");
 
@@ -187,7 +200,7 @@ void Validator::validate_sequence_completion(bool& result)
     const std::string& kmc_db_path = params.kmc_db_path();
     const uint16_t thread_count = params.thread_count();
 
-    const Kmer_Container kmer_container(kmc_db_path);
+    const Kmer_Container<k> kmer_container(kmc_db_path);
     const uint64_t kmer_count = kmer_container.size();
 
     console->info("Number of k-mers in the k-mer database: {}\n", kmer_count);
@@ -282,7 +295,8 @@ void Validator::validate_sequence_completion(bool& result)
 }
 
 
-void Validator::build_unitig_tables()
+template <uint16_t k>
+void Validator<k>::build_unitig_tables()
 {
     const std::string& cdbg_file_path = params.cdbg_file_path();
 
@@ -304,7 +318,7 @@ void Validator::build_unitig_tables()
 
         if(unitig.length() == k)
         {
-            const cuttlefish::kmer_t kmer(unitig);
+            const Kmer<k> kmer(unitig);
             const uint64_t kmer_hash = mph->lookup(kmer.canonical());
             
             unitig_id[kmer_hash] = unitig_count;
@@ -312,9 +326,9 @@ void Validator::build_unitig_tables()
         }
         else
         {
-            const cuttlefish::kmer_t last_kmer = cuttlefish::kmer_t(unitig.substr(unitig.length() - k, k));
-            const cuttlefish::kmer_t kmer_fwd(unitig, 0);
-            const cuttlefish::kmer_t kmer_bwd = last_kmer.reverse_complement();
+            const Kmer<k> last_kmer(unitig.substr(unitig.length() - k, k));
+            const Kmer<k> kmer_fwd(unitig, 0);
+            const Kmer<k> kmer_bwd = last_kmer.reverse_complement();
 
             const uint64_t kmer_fwd_hash = mph->lookup(kmer_fwd.canonical());
             const uint64_t kmer_bwd_hash = mph->lookup(kmer_bwd.canonical());
@@ -340,7 +354,8 @@ void Validator::build_unitig_tables()
 }
 
 
-void Validator::walk_sequence(const char* const seq, const size_t seq_len, bool& result) const
+template <uint16_t k>
+void Validator<k>::walk_sequence(const char* const seq, const size_t seq_len, bool& result) const
 {
     // Nothing to process for sequences with length shorter than `k`.
     if(seq_len < k)
@@ -368,7 +383,8 @@ void Validator::walk_sequence(const char* const seq, const size_t seq_len, bool&
 }
 
 
-size_t Validator::search_valid_kmer(const char* const seq, const size_t seq_len, const size_t start_idx) const
+template <uint16_t k>
+size_t Validator<k>::search_valid_kmer(const char* const seq, const size_t seq_len, const size_t start_idx) const
 {
     size_t valid_start_idx;
     uint16_t nucl_count;
@@ -396,9 +412,10 @@ size_t Validator::search_valid_kmer(const char* const seq, const size_t seq_len,
 }
 
 
-size_t Validator::walk_first_unitig(const char* const seq, const size_t seq_len, const size_t start_idx) const
+template <uint16_t k>
+size_t Validator<k>::walk_first_unitig(const char* const seq, const size_t seq_len, const size_t start_idx) const
 {
-    const cuttlefish::kmer_t kmer(seq, start_idx);
+    const Kmer<k> kmer(seq, start_idx);
     const uint64_t kmer_hash = mph->lookup(kmer.canonical());
     
     if(unitig_dir[kmer_hash] == Unitig_Dir::none)
@@ -423,7 +440,8 @@ size_t Validator::walk_first_unitig(const char* const seq, const size_t seq_len,
 }
 
 
-bool Validator::walk_unitig(const char* const seq, const size_t seq_len, const size_t start_idx, const std::string& unitig, const Unitig_Dir dir) const
+template <uint16_t k>
+bool Validator<k>::walk_unitig(const char* const seq, const size_t seq_len, const size_t start_idx, const std::string& unitig, const Unitig_Dir dir) const
 {
     if(dir == Unitig_Dir::either)
         return walk_unitig(seq, seq_len, start_idx, unitig, true) || walk_unitig(seq, seq_len, start_idx, unitig, false);
@@ -432,7 +450,8 @@ bool Validator::walk_unitig(const char* const seq, const size_t seq_len, const s
 }
 
 
-bool Validator::walk_unitig(const char* const seq, const size_t seq_len, const size_t start_idx, const std::string& unitig, const bool in_forward) const
+template <uint16_t k>
+bool Validator<k>::walk_unitig(const char* const seq, const size_t seq_len, const size_t start_idx, const std::string& unitig, const bool in_forward) const
 {
     if(in_forward)
     {
@@ -446,8 +465,13 @@ bool Validator::walk_unitig(const char* const seq, const size_t seq_len, const s
 
     const size_t len = unitig.length();
     for(size_t idx = 0; idx < len; ++idx)
-        if(start_idx + idx >= seq_len || seq[start_idx + idx] != cuttlefish::kmer_t::complement(unitig[len - 1 - idx]))
+        if(start_idx + idx >= seq_len || seq[start_idx + idx] != Kmer<k>::complement(unitig[len - 1 - idx]))
             return false;
             
     return true;
 }
+
+
+
+// Template instantiation for the required specializations.
+template class Validator<cuttlefish::MAX_K>;

@@ -8,7 +8,8 @@
 #include <sys/stat.h>
 
 
-void Kmer_Hash_Table::build_mph_function(const Kmer_Container& kmer_container, const uint16_t thread_count, const std::string& mph_file_path)
+template <uint16_t k>
+void Kmer_Hash_Table<k>::build_mph_function(const Kmer_Container<k>& kmer_container, const uint16_t thread_count, const std::string& mph_file_path)
 {
     // The serialized BBHash file (saved from some earlier execution) exists.
     struct stat buffer;
@@ -26,7 +27,7 @@ void Kmer_Hash_Table::build_mph_function(const Kmer_Container& kmer_container, c
         std::cout << "Building the MPH function from the k-mer database " << kmer_container.container_location() << "\n";
 
         auto data_iterator = boomphf::range(kmer_container.begin(), kmer_container.end());
-        mph = new boomphf::mphf<cuttlefish::kmer_t, Kmer_Hasher> (kmer_container.size(), data_iterator, thread_count, GAMMA_FACTOR);
+        mph = new mphf_t(kmer_container.size(), data_iterator, thread_count, GAMMA_FACTOR);
 
         std::cout << "Built the MPH function in memory.\n";
         
@@ -44,7 +45,8 @@ void Kmer_Hash_Table::build_mph_function(const Kmer_Container& kmer_container, c
 }
 
 
-void Kmer_Hash_Table::load_mph_function(const std::string& file_path)
+template <uint16_t k>
+void Kmer_Hash_Table<k>::load_mph_function(const std::string& file_path)
 {
     std::ifstream input(file_path.c_str(), std::ifstream::in);
     if(input.fail())
@@ -53,14 +55,15 @@ void Kmer_Hash_Table::load_mph_function(const std::string& file_path)
         std::exit(EXIT_FAILURE);
     }
 
-    mph = new cuttlefish::mphf_t();
+    mph = new mphf_t();
     mph->load(input);
 
     input.close();
 }
 
 
-void Kmer_Hash_Table::save_mph_function(const std::string& file_path) const
+template <uint16_t k>
+void Kmer_Hash_Table<k>::save_mph_function(const std::string& file_path) const
 {
     std::ofstream output(file_path.c_str(), std::ofstream::out);
     if(output.fail())
@@ -75,13 +78,14 @@ void Kmer_Hash_Table::save_mph_function(const std::string& file_path) const
 }
 
 
-void Kmer_Hash_Table::construct(const std::string& kmc_db_path, const uint16_t thread_count, const std::string& mph_file_path)
+template <uint16_t k>
+void Kmer_Hash_Table<k>::construct(const std::string& kmc_db_path, const uint16_t thread_count, const std::string& mph_file_path)
 {
     std::chrono::high_resolution_clock::time_point t_start = std::chrono::high_resolution_clock::now();
 
 
     // Open a container over the k-mer database.
-    Kmer_Container kmer_container(kmc_db_path);
+    Kmer_Container<k> kmer_container(kmc_db_path);
     uint64_t kmer_count = kmer_container.size();
     
     lock_range_size = uint64_t(std::ceil(double(kmer_count) / lock_count));
@@ -110,10 +114,19 @@ void Kmer_Hash_Table::construct(const std::string& kmc_db_path, const uint16_t t
 }
 
 
-void Kmer_Hash_Table::clear()
+template <uint16_t k>
+void Kmer_Hash_Table<k>::clear()
 {
-    delete mph;
+    if(mph != NULL)
+        delete mph;
+
+    mph = NULL;
     
     // hash_table.clear();
     hash_table.resize(0);
 }
+
+
+
+// Template instantiation for the required specializations.
+template class Kmer_Hash_Table<cuttlefish::MAX_K>;

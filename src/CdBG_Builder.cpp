@@ -1,7 +1,7 @@
 
 #include "CdBG.hpp"
-#include "kseq/kseq.h"
 #include "Kmer_Iterator.hpp"
+#include "kseq/kseq.h"
 
 #include <fstream>
 #include <thread>
@@ -15,7 +15,8 @@
 KSEQ_INIT(int, read);
 
 
-void CdBG::classify_vertices()
+template <uint16_t k>
+void CdBG<k>::classify_vertices()
 {
     std::chrono::high_resolution_clock::time_point t_start = std::chrono::high_resolution_clock::now();
 
@@ -101,7 +102,8 @@ void CdBG::classify_vertices()
 }
 
 
-void CdBG::process_substring(const char* const seq, const size_t seq_len, const size_t left_end, const size_t right_end)
+template <uint16_t k> 
+void CdBG<k>::process_substring(const char* const seq, const size_t seq_len, const size_t left_end, const size_t right_end)
 {
     size_t kmer_idx = left_end;
     while(kmer_idx <= right_end)
@@ -118,13 +120,14 @@ void CdBG::process_substring(const char* const seq, const size_t seq_len, const 
 }
 
 
-size_t CdBG::process_contiguous_subseq(const char* const seq, const size_t seq_len, const size_t right_end, const size_t start_idx)
+template <uint16_t k> 
+size_t CdBG<k>::process_contiguous_subseq(const char* const seq, const size_t seq_len, const size_t right_end, const size_t start_idx)
 {
     size_t kmer_idx = start_idx;
 
     // assert(kmer_idx <= seq_len - k);
 
-    Directed_Kmer curr_kmer(cuttlefish::kmer_t(seq, kmer_idx));
+    Directed_Kmer<k> curr_kmer(Kmer<k>(seq, kmer_idx));
 
     // The subsequence contains only an isolated k-mer,
     // i.e. there's no valid left or right neighboring k-mer to this k-mer.
@@ -146,7 +149,7 @@ size_t CdBG::process_contiguous_subseq(const char* const seq, const size_t seq_l
         }
 
         // A valid right neighbor exists for the k-mer.
-        Directed_Kmer next_kmer = curr_kmer;
+        Directed_Kmer<k> next_kmer = curr_kmer;
         next_kmer.roll_to_next_kmer(seq[kmer_idx + k]);
         
         // No valid left neighbor exists for the k-mer.
@@ -195,13 +198,15 @@ size_t CdBG::process_contiguous_subseq(const char* const seq, const size_t seq_l
 }
 
 
-bool CdBG::is_self_loop(const cuttlefish::kmer_t& kmer_hat, const cuttlefish::kmer_t& next_kmer_hat) const
+template <uint16_t k> 
+bool CdBG<k>::is_self_loop(const Kmer<k>& kmer_hat, const Kmer<k>& next_kmer_hat) const
 {
     return kmer_hat == next_kmer_hat;
 }
 
 
-bool CdBG::process_leftmost_kmer(const cuttlefish::kmer_t& kmer_hat, const cuttlefish::dir_t dir, const cuttlefish::kmer_t& next_kmer_hat, const cuttlefish::nucleotide_t next_nucl)
+template <uint16_t k> 
+bool CdBG<k>::process_leftmost_kmer(const Kmer<k>& kmer_hat, const cuttlefish::dir_t dir, const Kmer<k>& next_kmer_hat, const cuttlefish::nucleotide_t next_nucl)
 {
     // Fetch the entry for `kmer_hat`.
     Kmer_Hash_Entry_API hash_table_entry = Vertices[kmer_hat];
@@ -256,14 +261,14 @@ bool CdBG::process_leftmost_kmer(const cuttlefish::kmer_t& kmer_hat, const cuttl
     {
         // The sentinel k-mer is encountered for the first time, and in the backward direction.
         if(!state.is_visited())
-            state = State(Vertex(cuttlefish::Vertex_Class::single_in_multi_out, cuttlefish::kmer_t::complement(next_nucl)));
+            state = State(Vertex(cuttlefish::Vertex_Class::single_in_multi_out, Kmer<k>::complement(next_nucl)));
         else    // The sentinel k-mer has been visited earlier and has some state; modify it accordingly.
         {
             Vertex vertex = state.decode();
 
             if(vertex.vertex_class_ == cuttlefish::Vertex_Class::single_in_single_out)
             {
-                if(vertex.enter_ == cuttlefish::kmer_t::complement(next_nucl))
+                if(vertex.enter_ == Kmer<k>::complement(next_nucl))
                     vertex.vertex_class_ = cuttlefish::Vertex_Class::single_in_multi_out;
                 else
                     vertex.vertex_class_ = cuttlefish::Vertex_Class::multi_in_multi_out;
@@ -278,7 +283,7 @@ bool CdBG::process_leftmost_kmer(const cuttlefish::kmer_t& kmer_hat, const cuttl
             }
             else    // vertex.vertex_class == cuttlefish::Vertex_Class::single_in_multi_out
             {
-                if(vertex.enter_ != cuttlefish::kmer_t::complement(next_nucl))
+                if(vertex.enter_ != Kmer<k>::complement(next_nucl))
                 {
                     vertex.vertex_class_ = cuttlefish::Vertex_Class::multi_in_multi_out;
 
@@ -297,7 +302,8 @@ bool CdBG::process_leftmost_kmer(const cuttlefish::kmer_t& kmer_hat, const cuttl
 }
 
 
-bool CdBG::process_rightmost_kmer(const cuttlefish::kmer_t& kmer_hat, const cuttlefish::dir_t dir, const cuttlefish::nucleotide_t prev_nucl)
+template <uint16_t k> 
+bool CdBG<k>::process_rightmost_kmer(const Kmer<k>& kmer_hat, const cuttlefish::dir_t dir, const cuttlefish::nucleotide_t prev_nucl)
 {
     // Fetch the entry for `kmer_hat`.
     Kmer_Hash_Entry_API hash_table_entry = Vertices[kmer_hat];
@@ -349,14 +355,14 @@ bool CdBG::process_rightmost_kmer(const cuttlefish::kmer_t& kmer_hat, const cutt
     {
         // The sentinel k-mer is encountered for the first time, and in the backward direction.
         if(!state.is_visited())
-            state = State(Vertex(cuttlefish::Vertex_Class::multi_in_single_out, cuttlefish::kmer_t::complement(prev_nucl)));
+            state = State(Vertex(cuttlefish::Vertex_Class::multi_in_single_out, Kmer<k>::complement(prev_nucl)));
         else    // The sentinel k-mer has been visited earlier and has some state; modify it accordingly.
         {
             Vertex vertex = state.decode();
 
             if(vertex.vertex_class_ == cuttlefish::Vertex_Class::single_in_single_out)
             {
-                if(vertex.exit_ == cuttlefish::kmer_t::complement(prev_nucl))
+                if(vertex.exit_ == Kmer<k>::complement(prev_nucl))
                     vertex.vertex_class_ = cuttlefish::Vertex_Class::multi_in_single_out;
                 else
                     vertex.vertex_class_ = cuttlefish::Vertex_Class::multi_in_multi_out;
@@ -365,7 +371,7 @@ bool CdBG::process_rightmost_kmer(const cuttlefish::kmer_t& kmer_hat, const cutt
             }
             else if(vertex.vertex_class_ == cuttlefish::Vertex_Class::multi_in_single_out)
             {
-                if(vertex.exit_ != cuttlefish::kmer_t::complement(prev_nucl))
+                if(vertex.exit_ != Kmer<k>::complement(prev_nucl))
                 {
                     vertex.vertex_class_ = cuttlefish::Vertex_Class::multi_in_multi_out;
 
@@ -390,7 +396,8 @@ bool CdBG::process_rightmost_kmer(const cuttlefish::kmer_t& kmer_hat, const cutt
 }
 
 
-bool CdBG::process_internal_kmer(const cuttlefish::kmer_t& kmer_hat, const cuttlefish::dir_t dir, const cuttlefish::kmer_t& next_kmer_hat, const cuttlefish::nucleotide_t prev_nucl, const cuttlefish::nucleotide_t next_nucl)
+template <uint16_t k> 
+bool CdBG<k>::process_internal_kmer(const Kmer<k>& kmer_hat, const cuttlefish::dir_t dir, const Kmer<k>& next_kmer_hat, const cuttlefish::nucleotide_t prev_nucl, const cuttlefish::nucleotide_t next_nucl)
 {
     // Fetch the hash table entry for `kmer_hat`.
     Kmer_Hash_Entry_API hash_table_entry = Vertices[kmer_hat];
@@ -452,18 +459,18 @@ bool CdBG::process_internal_kmer(const cuttlefish::kmer_t& kmer_hat, const cuttl
     {
         // The k-mer is encountered for the first time, and in the backward direction.
         if(!state.is_visited())
-            state = State(Vertex(cuttlefish::Vertex_Class::single_in_single_out, cuttlefish::kmer_t::complement(next_nucl), cuttlefish::kmer_t::complement(prev_nucl)));
+            state = State(Vertex(cuttlefish::Vertex_Class::single_in_single_out, Kmer<k>::complement(next_nucl), Kmer<k>::complement(prev_nucl)));
         else    // The k-mer has been visited earlier and has some state; modify it accordingly.
         {
             Vertex vertex = state.decode();
 
             if(vertex.vertex_class_ == cuttlefish::Vertex_Class::single_in_single_out)
             {
-                if(vertex.enter_ == cuttlefish::kmer_t::complement(next_nucl) && vertex.exit_ == cuttlefish::kmer_t::complement(prev_nucl))
+                if(vertex.enter_ == Kmer<k>::complement(next_nucl) && vertex.exit_ == Kmer<k>::complement(prev_nucl))
                     return true;    // See note at the end on early return w/o hash table update.
-                else if(vertex.enter_ != cuttlefish::kmer_t::complement(next_nucl) && vertex.exit_ != cuttlefish::kmer_t::complement(prev_nucl))
+                else if(vertex.enter_ != Kmer<k>::complement(next_nucl) && vertex.exit_ != Kmer<k>::complement(prev_nucl))
                     vertex.vertex_class_ = cuttlefish::Vertex_Class::multi_in_multi_out;
-                else if(vertex.enter_ != cuttlefish::kmer_t::complement(next_nucl))
+                else if(vertex.enter_ != Kmer<k>::complement(next_nucl))
                     vertex.vertex_class_ = cuttlefish::Vertex_Class::multi_in_single_out;
                 else    // vertex.exit != complement(prev_nucl)
                     vertex.vertex_class_ = cuttlefish::Vertex_Class::single_in_multi_out;
@@ -472,7 +479,7 @@ bool CdBG::process_internal_kmer(const cuttlefish::kmer_t& kmer_hat, const cuttl
             }
             else if(vertex.vertex_class_ == cuttlefish::Vertex_Class::multi_in_single_out)
             {
-                if(vertex.exit_ != cuttlefish::kmer_t::complement(prev_nucl))
+                if(vertex.exit_ != Kmer<k>::complement(prev_nucl))
                 {
                     vertex.vertex_class_ = cuttlefish::Vertex_Class::multi_in_multi_out;
 
@@ -481,7 +488,7 @@ bool CdBG::process_internal_kmer(const cuttlefish::kmer_t& kmer_hat, const cuttl
             }
             else    // vertex.vertex_class == cuttlefish::Vertex_Class::single_in_multi_out
             {
-                if(vertex.enter_ != cuttlefish::kmer_t::complement(next_nucl))
+                if(vertex.enter_ != Kmer<k>::complement(next_nucl))
                 {
                     vertex.vertex_class_ = cuttlefish::Vertex_Class::multi_in_multi_out;
 
@@ -500,7 +507,8 @@ bool CdBG::process_internal_kmer(const cuttlefish::kmer_t& kmer_hat, const cuttl
 }
 
 
-bool CdBG::process_isolated_kmer(const cuttlefish::kmer_t& kmer_hat)
+template <uint16_t k> 
+bool CdBG<k>::process_isolated_kmer(const Kmer<k>& kmer_hat)
 {
     // Fetch the hash table entry for `kmer_hat`.
     Kmer_Hash_Entry_API hash_table_entry = Vertices[kmer_hat];
@@ -517,11 +525,12 @@ bool CdBG::process_isolated_kmer(const cuttlefish::kmer_t& kmer_hat)
 }
 
 
-void CdBG::print_vertex_class_dist() const
+template <uint16_t k> 
+void CdBG<k>::print_vertex_class_dist() const
 {
     const std::string& kmc_db_path = params.kmc_db_path();
 
-    Kmer_Container kmers(kmc_db_path);
+    Kmer_Container<k> kmers(kmc_db_path);
     auto it_beg = kmers.begin();
     auto it_end = kmers.end();
     size_t C[4] = {0, 0, 0, 0};
@@ -535,3 +544,8 @@ void CdBG::print_vertex_class_dist() const
     std::cout << "Single-In-Multi-Out:\t" << C[2] << "\n";
     std::cout << "Multi-In-Multi-Out:\t" << C[3] << "\n";
 }
+
+
+
+// Template instantiation for the required specializations.
+template class CdBG<cuttlefish::MAX_K>;

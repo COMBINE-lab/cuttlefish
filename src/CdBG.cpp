@@ -3,20 +3,22 @@
 
 
 // Initialize the static fields required for the GFA output.
-const std::string CdBG::GFA1_HEADER = "H\tVN:Z:1.0";
-const std::string CdBG::GFA2_HEADER = "H\tVN:Z:2.0";
-std::string CdBG::PATH_OUTPUT_PREFIX = "cuttlefish-path-output-";
-std::string CdBG::OVERLAP_OUTPUT_PREFIX = "cuttlefish-overlap-output-";
+template <uint16_t k> const std::string CdBG<k>::GFA1_HEADER = "H\tVN:Z:1.0";
+template <uint16_t k> const std::string CdBG<k>::GFA2_HEADER = "H\tVN:Z:2.0";
+template <uint16_t k> std::string CdBG<k>::PATH_OUTPUT_PREFIX = "cuttlefish-path-output-";
+template <uint16_t k> std::string CdBG<k>::OVERLAP_OUTPUT_PREFIX = "cuttlefish-overlap-output-";
 
 
-CdBG::CdBG(const Build_Params& params):
-    params(params), k(params.k())
+template <uint16_t k> 
+CdBG<k>::CdBG(const Build_Params& params):
+    params(params)
 {
-    cuttlefish::kmer_t::set_k(k);
+    Kmer<k>::set_k(params.k());
 }
 
 
-void CdBG::construct()
+template <uint16_t k> 
+void CdBG<k>::construct()
 {
     std::cout << "Constructing the minimal perfect hash function.\n";
     Vertices.construct(params.kmc_db_path(), params.thread_count(), params.mph_file_path());
@@ -31,7 +33,8 @@ void CdBG::construct()
 }
 
 
-size_t CdBG::search_valid_kmer(const char* const seq, const size_t left_end, const size_t right_end) const
+template <uint16_t k> 
+size_t CdBG<k>::search_valid_kmer(const char* const seq, const size_t left_end, const size_t right_end) const
 {
     size_t valid_start_idx;
     uint16_t nucl_count;
@@ -58,3 +61,8 @@ size_t CdBG::search_valid_kmer(const char* const seq, const size_t left_end, con
 
     return right_end + 1;
 }
+
+
+
+// Template instantiation for the required specializations.
+template class CdBG<cuttlefish::MAX_K>;

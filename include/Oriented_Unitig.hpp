@@ -9,13 +9,14 @@
 #include <limits>
 
 
-class CdBG;
+template <uint16_t k> class CdBG;
 
 
 // An oriented unitig information: an id for the unitig, its direction,
 // index of its first and last k-mers into the underlying reference sequence.
 class Oriented_Unitig
 {
+    template <uint16_t k>
     friend class CdBG;
 
 private:
@@ -32,7 +33,7 @@ private:
 
     bool is_valid() const;
 
-    size_t length() const;
+    size_t length(uint16_t k) const;
 
 public:
 
@@ -57,9 +58,9 @@ inline bool Oriented_Unitig::is_valid() const
 }
 
 
-inline size_t Oriented_Unitig::length() const
+inline size_t Oriented_Unitig::length(const uint16_t k) const
 {
-    return end_kmer_idx - start_kmer_idx + cuttlefish::kmer_t::get_k();
+    return end_kmer_idx - start_kmer_idx + k;
 }
 
 

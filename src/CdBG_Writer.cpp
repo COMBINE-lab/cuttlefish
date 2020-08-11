@@ -15,7 +15,8 @@
 KSEQ_INIT(int, read);
 
 
-void CdBG::output_maximal_unitigs()
+template <uint16_t k>
+void CdBG<k>::output_maximal_unitigs()
 {
     std::chrono::high_resolution_clock::time_point t_start = std::chrono::high_resolution_clock::now();
 
@@ -133,7 +134,8 @@ void CdBG::output_maximal_unitigs()
 }
 
 
-void CdBG::output_off_substring(const uint16_t thread_id, const char* const seq, const size_t seq_len, const size_t left_end, const size_t right_end, cuttlefish::logger_t output)
+template <uint16_t k>
+void CdBG<k>::output_off_substring(const uint16_t thread_id, const char* const seq, const size_t seq_len, const size_t left_end, const size_t right_end, cuttlefish::logger_t output)
 {
     size_t kmer_idx = left_end;
     while(kmer_idx <= right_end)
@@ -150,13 +152,14 @@ void CdBG::output_off_substring(const uint16_t thread_id, const char* const seq,
 }
 
 
-size_t CdBG::output_maximal_unitigs(const uint16_t thread_id, const char* const seq, const size_t seq_len, const size_t right_end, const size_t start_idx, cuttlefish::logger_t output)
+template <uint16_t k>
+size_t CdBG<k>::output_maximal_unitigs(const uint16_t thread_id, const char* const seq, const size_t seq_len, const size_t right_end, const size_t start_idx, cuttlefish::logger_t output)
 {
     size_t kmer_idx = start_idx;
 
     // assert(kmer_idx <= seq_len - k);
 
-    Annotated_Kmer curr_kmer(cuttlefish::kmer_t(seq, kmer_idx), kmer_idx, Vertices);
+    Annotated_Kmer<k> curr_kmer(Kmer<k>(seq, kmer_idx), kmer_idx, Vertices);
 
     // The subsequence contains only an isolated k-mer, i.e. there's no valid left or right
     // neighboring k-mer to this k-mer. So it's a maximal unitig by itself.
@@ -169,7 +172,7 @@ size_t CdBG::output_maximal_unitigs(const uint16_t thread_id, const char* const 
         if(kmer_idx + k == seq_len || seq[kmer_idx + k] == cuttlefish::PLACEHOLDER_NUCLEOTIDE)
         {
             // A valid left neighbor exists as it's not an isolated k-mer.
-            Annotated_Kmer prev_kmer(cuttlefish::kmer_t(seq, kmer_idx - 1), kmer_idx, Vertices);
+            Annotated_Kmer<k> prev_kmer(Kmer<k>(seq, kmer_idx - 1), kmer_idx, Vertices);
             
             if(is_unipath_start(curr_kmer.vertex_class(), curr_kmer.dir(), prev_kmer.vertex_class(), prev_kmer.dir()))
                 // A maximal unitig ends at the ending of a maximal valid subsequence.
@@ -181,12 +184,12 @@ size_t CdBG::output_maximal_unitigs(const uint16_t thread_id, const char* const 
 
 
         // A valid right neighbor exists for the k-mer.
-        Annotated_Kmer next_kmer = curr_kmer;
+        Annotated_Kmer<k> next_kmer = curr_kmer;
         next_kmer.roll_to_next_kmer(seq[kmer_idx + k], Vertices);
 
         bool on_unipath = false;
-        Annotated_Kmer unipath_start_kmer;
-        Annotated_Kmer prev_kmer;
+        Annotated_Kmer<k> unipath_start_kmer;
+        Annotated_Kmer<k> prev_kmer;
 
         // No valid left neighbor exists for the k-mer.
         if(kmer_idx == 0 || seq[kmer_idx - 1] == cuttlefish::PLACEHOLDER_NUCLEOTIDE)
@@ -198,7 +201,7 @@ size_t CdBG::output_maximal_unitigs(const uint16_t thread_id, const char* const 
         // Both left and right valid neighbors exist for this k-mer.
         else
         {
-            prev_kmer = Annotated_Kmer(cuttlefish::kmer_t(seq, kmer_idx - 1), kmer_idx, Vertices);
+            prev_kmer = Annotated_Kmer<k>(Kmer<k>(seq, kmer_idx - 1), kmer_idx, Vertices);
             if(is_unipath_start(curr_kmer.vertex_class(), curr_kmer.dir(), prev_kmer.vertex_class(), prev_kmer.dir()))
             {
                 on_unipath = true;
@@ -258,7 +261,8 @@ size_t CdBG::output_maximal_unitigs(const uint16_t thread_id, const char* const 
 }
 
 
-bool CdBG::is_unipath_start(const cuttlefish::Vertex_Class vertex_class, const cuttlefish::dir_t dir, const cuttlefish::Vertex_Class prev_kmer_class, const cuttlefish::dir_t prev_kmer_dir) const
+template <uint16_t k>
+bool CdBG<k>::is_unipath_start(const cuttlefish::Vertex_Class vertex_class, const cuttlefish::dir_t dir, const cuttlefish::Vertex_Class prev_kmer_class, const cuttlefish::dir_t prev_kmer_dir) const
 {
     if(vertex_class == cuttlefish::Vertex_Class::multi_in_multi_out)
         return true;
@@ -293,7 +297,8 @@ bool CdBG::is_unipath_start(const cuttlefish::Vertex_Class vertex_class, const c
 }
 
 
-bool CdBG::is_unipath_end(const cuttlefish::Vertex_Class vertex_class, const cuttlefish::dir_t dir, const cuttlefish::Vertex_Class next_kmer_class, const cuttlefish::dir_t next_kmer_dir) const
+template <uint16_t k>
+bool CdBG<k>::is_unipath_end(const cuttlefish::Vertex_Class vertex_class, const cuttlefish::dir_t dir, const cuttlefish::Vertex_Class next_kmer_class, const cuttlefish::dir_t next_kmer_dir) const
 {
     if(vertex_class == cuttlefish::Vertex_Class::multi_in_multi_out)
         return true;
@@ -328,14 +333,15 @@ bool CdBG::is_unipath_end(const cuttlefish::Vertex_Class vertex_class, const cut
 }
 
 
-void CdBG::output_unitig(const uint16_t thread_id, const char* const seq, const Annotated_Kmer& start_kmer, const Annotated_Kmer& end_kmer, cuttlefish::logger_t output)
+template <uint16_t k>
+void CdBG<k>::output_unitig(const uint16_t thread_id, const char* const seq, const Annotated_Kmer<k>& start_kmer, const Annotated_Kmer<k>& end_kmer, cuttlefish::logger_t output)
 {
     // This is to avoid race conditions that may arise while multi-threading.
     // If two threads try to output the same unitig at the same time but
     // encounter it in the opposite orientations, then data races may arise.
     // For a particular unitig, always query the same well-defined canonical flanking
     // k-mer, irrespective of which direction the unitig may be traversed at.
-    const cuttlefish::kmer_t min_flanking_kmer = std::min(start_kmer.canonical(), end_kmer.canonical());
+    const Kmer<k> min_flanking_kmer = std::min(start_kmer.canonical(), end_kmer.canonical());
     Kmer_Hash_Entry_API hash_table_entry = Vertices[min_flanking_kmer];
     State& state = hash_table_entry.get_state();
 
@@ -351,7 +357,8 @@ void CdBG::output_unitig(const uint16_t thread_id, const char* const seq, const 
 }
 
 
-void CdBG::write_path(const uint16_t thread_id, const char* const seq, const size_t start_kmer_idx, const size_t end_kmer_idx, const cuttlefish::dir_t dir, cuttlefish::logger_t output) 
+template <uint16_t k>
+void CdBG<k>::write_path(const uint16_t thread_id, const char* const seq, const size_t start_kmer_idx, const size_t end_kmer_idx, const cuttlefish::dir_t dir, cuttlefish::logger_t output) 
 {
     std::stringstream& buffer = output_buffer[thread_id];
     const size_t path_len = end_kmer_idx - start_kmer_idx + k;
@@ -361,7 +368,7 @@ void CdBG::write_path(const uint16_t thread_id, const char* const seq, const siz
             buffer << seq[start_kmer_idx + offset];
     else    // dir == cuttlefish::BWD
         for(size_t offset = 0; offset < path_len; ++offset)
-            buffer << cuttlefish::kmer_t::complement(seq[end_kmer_idx + k - 1 - offset]);
+            buffer << Kmer<k>::complement(seq[end_kmer_idx + k - 1 - offset]);
 
     // End the path.
     buffer << "\n";
@@ -373,7 +380,8 @@ void CdBG::write_path(const uint16_t thread_id, const char* const seq, const siz
 }
 
 
-void CdBG::fill_buffer(const uint16_t thread_id, const uint64_t fill_amount, cuttlefish::logger_t output)
+template <uint16_t k>
+void CdBG<k>::fill_buffer(const uint16_t thread_id, const uint64_t fill_amount, cuttlefish::logger_t output)
 {
     buffer_size[thread_id] += fill_amount;
 
@@ -393,13 +401,15 @@ void CdBG::fill_buffer(const uint16_t thread_id, const uint64_t fill_amount, cut
 }
 
 
-void CdBG::write(cuttlefish::logger_t output, const std::string& str)
+template <uint16_t k>
+void CdBG<k>::write(cuttlefish::logger_t output, const std::string& str)
 {
     output->info("{}", str);
 }
 
 
-void CdBG::flush_buffers(cuttlefish::logger_t output)
+template <uint16_t k>
+void CdBG<k>::flush_buffers(cuttlefish::logger_t output)
 {
     const uint16_t thread_count = params.thread_count();
 
@@ -411,3 +421,8 @@ void CdBG::flush_buffers(cuttlefish::logger_t output)
             buffer_size[t_id] = 0;
         }
 }
+
+
+
+// Template instantiation for the required specializations.
+template class CdBG<cuttlefish::MAX_K>;

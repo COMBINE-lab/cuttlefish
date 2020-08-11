@@ -8,13 +8,14 @@
 
 
 // K-mer and its reverse complement, canonical form, and direction.
+template <uint16_t k>
 class Directed_Kmer
 {
 protected:
 
-    cuttlefish::kmer_t kmer_;
-    cuttlefish::kmer_t rev_compl_;
-    cuttlefish::kmer_t canonical_;
+    Kmer<k> kmer_;
+    Kmer<k> rev_compl_;
+    Kmer<k> canonical_;
     cuttlefish::dir_t dir_;
 
 
@@ -24,10 +25,10 @@ public:
     {}
 
     // Constructs a k-mer with its reverse complement, canonical form, and direction.
-    Directed_Kmer(const cuttlefish::kmer_t& kmer);
+    Directed_Kmer(const Kmer<k>& kmer);
 
     // Copy constructs the directed k-mer from `rhs`.
-    Directed_Kmer(const Directed_Kmer& rhs) = default;
+    Directed_Kmer(const Directed_Kmer<k>& rhs) = default;
 
     // Transforms this k-mer by chopping off the first nucleotide and
     // appending the next nucleotide `next_nucl` to the end, i.e.
@@ -35,24 +36,24 @@ public:
     // information accordingly.
     void roll_to_next_kmer(cuttlefish::nucleotide_t next_nucl);
 
-    void operator=(const Directed_Kmer& rhs);
+    void operator=(const Directed_Kmer<k>& rhs);
 
     // Returns the k-mer.
-    cuttlefish::kmer_t kmer() const;
+    Kmer<k> kmer() const;
 
     // Returns the reverse complement.
-    cuttlefish::kmer_t rev_compl() const;
+    Kmer<k> rev_compl() const;
 
     // Returns the canonical form of the k-mer.
-    cuttlefish::kmer_t canonical() const;
+    Kmer<k> canonical() const;
 
     // Returns the direction of the k-mer.
     cuttlefish::dir_t dir() const;
 };
 
 
-
-inline Directed_Kmer::Directed_Kmer(const cuttlefish::kmer_t& kmer):
+template <uint16_t k>
+inline Directed_Kmer<k>::Directed_Kmer(const Kmer<k>& kmer):
     kmer_(kmer)
 {
     rev_compl_ = kmer.reverse_complement();
@@ -61,7 +62,8 @@ inline Directed_Kmer::Directed_Kmer(const cuttlefish::kmer_t& kmer):
 }
 
 
-inline void Directed_Kmer::roll_to_next_kmer(const cuttlefish::nucleotide_t next_nucl)
+template <uint16_t k>
+inline void Directed_Kmer<k>::roll_to_next_kmer(const cuttlefish::nucleotide_t next_nucl)
 {
     kmer_.roll_to_next_kmer(next_nucl, rev_compl_);
     
@@ -70,7 +72,8 @@ inline void Directed_Kmer::roll_to_next_kmer(const cuttlefish::nucleotide_t next
 }
 
 
-inline void Directed_Kmer::operator=(const Directed_Kmer& rhs)
+template <uint16_t k>
+inline void Directed_Kmer<k>::operator=(const Directed_Kmer<k>& rhs)
 {
     kmer_ = rhs.kmer_;
     rev_compl_ = rhs.rev_compl_;
@@ -79,28 +82,33 @@ inline void Directed_Kmer::operator=(const Directed_Kmer& rhs)
 }
 
 
-inline cuttlefish::kmer_t Directed_Kmer::kmer() const
+template <uint16_t k>
+inline Kmer<k> Directed_Kmer<k>::kmer() const
 {
     return kmer_;
 }
 
 
-inline cuttlefish::kmer_t Directed_Kmer::rev_compl() const
+template <uint16_t k>
+inline Kmer<k> Directed_Kmer<k>::rev_compl() const
 {
     return rev_compl_;
 }
 
 
-inline cuttlefish::kmer_t Directed_Kmer::canonical() const
+template <uint16_t k>
+inline Kmer<k> Directed_Kmer<k>::canonical() const
 {
     return canonical_;
 }
 
 
-inline cuttlefish::dir_t Directed_Kmer::dir() const
+template <uint16_t k>
+inline cuttlefish::dir_t Directed_Kmer<k>::dir() const
 {
     return dir_;
 }
+
 
 
 #endif

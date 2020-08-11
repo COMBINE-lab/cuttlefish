@@ -11,11 +11,12 @@
 #include <iostream>
 
 
-class CdBG;
+template <uint16_t k> class CdBG;
 
 
 class Vertex
 {
+    template <uint16_t k>
     friend class CdBG;
 
 private:

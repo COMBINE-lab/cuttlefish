@@ -8,12 +8,13 @@
 #include "State.hpp"
 
 
-class Kmer_Hash_Table;
+template <uint16_t k> class Kmer_Hash_Table;
 
 
 // Wrapper class acting as an API to the entries of the bitvector used as hash table for k-mers.
 class Kmer_Hash_Entry_API
 {
+    template <uint16_t k>
     friend class Kmer_Hash_Table;
 
 
@@ -30,16 +31,10 @@ private:
 
 
     // Constructs an API to the bitvector entry `bv_entry`.
-    Kmer_Hash_Entry_API(const cuttlefish::bitvector_entry_t& bv_entry):
-        bv_entry(bv_entry), state_read(bv_entry)
-    {
-        state = state_read;
-    }
-
+    Kmer_Hash_Entry_API(const cuttlefish::bitvector_entry_t& bv_entry);
 
     // Returns the state value read when the object was constructed.
     cuttlefish::state_code_t get_read_state() const;
-
     
     // Returns the value of the mutable state value wrapped inside the API,
     // i.e. the state value that had been read at the object creation, and then
@@ -53,6 +48,12 @@ public:
     State& get_state();
 };
 
+
+inline Kmer_Hash_Entry_API::Kmer_Hash_Entry_API(const cuttlefish::bitvector_entry_t& bv_entry):
+    bv_entry(bv_entry), state_read(bv_entry)
+{
+    state = state_read;
+}
 
 
 inline cuttlefish::state_code_t Kmer_Hash_Entry_API::get_read_state() const

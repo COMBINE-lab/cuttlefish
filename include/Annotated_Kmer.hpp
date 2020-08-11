@@ -10,7 +10,8 @@
 
 // Complete k-mer information: k-mer itself and its reverse complement,
 // canonical form, direction, index in corresponding sequence, and its class.
-class Annotated_Kmer: public Directed_Kmer
+template <uint16_t k>
+class Annotated_Kmer: public Directed_Kmer<k>
 {
 private:
 
@@ -24,7 +25,7 @@ public:
     {}
 
     // Constructs an annotated k-mer with its complete information.
-    Annotated_Kmer(const cuttlefish::kmer_t& kmer, size_t kmer_idx, const Kmer_Hash_Table& hash);
+    Annotated_Kmer(const Kmer<k>& kmer, size_t kmer_idx, const Kmer_Hash_Table<k>& hash);
 
     // Copy constructs the annotated k-mer from `rhs`.
     Annotated_Kmer(const Annotated_Kmer& rhs) = default;
@@ -33,9 +34,9 @@ public:
     // appending the next nucleotide `next_nucl` to the end, i.e.
     // rolls the k-mer by one nucleotide, sets all the relevant k-mer
     // information accordingly (k-mer state is set using the `hash`).
-    void roll_to_next_kmer(cuttlefish::nucleotide_t next_nucl, const Kmer_Hash_Table& hash);
+    void roll_to_next_kmer(cuttlefish::nucleotide_t next_nucl, const Kmer_Hash_Table<k>& hash);
 
-    void operator=(const Annotated_Kmer& rhs);
+    void operator=(const Annotated_Kmer<k>& rhs);
 
     // Returns the index of the k-mer.
     size_t idx() const;
@@ -45,40 +46,44 @@ public:
 };
 
 
-
-inline Annotated_Kmer::Annotated_Kmer(const cuttlefish::kmer_t& kmer, const size_t kmer_idx, const Kmer_Hash_Table& hash):
-    Directed_Kmer(kmer), idx_(kmer_idx), vertex_class_(hash[canonical_].vertex_class())
+template <uint16_t k>
+inline Annotated_Kmer<k>::Annotated_Kmer(const Kmer<k>& kmer, const size_t kmer_idx, const Kmer_Hash_Table<k>& hash):
+    Directed_Kmer<k>(kmer), idx_(kmer_idx), vertex_class_(hash[this->canonical_].vertex_class())
 {}
 
 
-inline void Annotated_Kmer::roll_to_next_kmer(const cuttlefish::nucleotide_t next_nucl, const Kmer_Hash_Table& hash)
+template <uint16_t k>
+inline void Annotated_Kmer<k>::roll_to_next_kmer(const cuttlefish::nucleotide_t next_nucl, const Kmer_Hash_Table<k>& hash)
 {
-    Directed_Kmer::roll_to_next_kmer(next_nucl);
+    Directed_Kmer<k>::roll_to_next_kmer(next_nucl);
 
     idx_++;
-    vertex_class_ = hash[canonical_].vertex_class();
+    vertex_class_ = hash[this->canonical_].vertex_class();
 }
 
 
-inline void Annotated_Kmer::operator=(const Annotated_Kmer& rhs)
+template <uint16_t k>
+inline void Annotated_Kmer<k>::operator=(const Annotated_Kmer<k>& rhs)
 {
-    kmer_ = rhs.kmer_;
-    rev_compl_ = rhs.rev_compl_;
-    canonical_ = rhs.canonical_;
-    dir_ = rhs.dir_;
+    this->kmer_ = rhs.kmer_;
+    this->rev_compl_ = rhs.rev_compl_;
+    this->canonical_ = rhs.canonical_;
+    this->dir_ = rhs.dir_;
     
     idx_ = rhs.idx_;
     vertex_class_ = rhs.vertex_class_;
 }
 
 
-inline size_t Annotated_Kmer::idx() const
+template <uint16_t k>
+inline size_t Annotated_Kmer<k>::idx() const
 {
     return idx_;
 }
 
 
-inline cuttlefish::Vertex_Class Annotated_Kmer::vertex_class() const
+template <uint16_t k>
+inline cuttlefish::Vertex_Class Annotated_Kmer<k>::vertex_class() const
 {
     return vertex_class_;
 }

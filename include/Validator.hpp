@@ -5,6 +5,7 @@
 
 
 #include "globals.hpp"
+#include "Kmer_Hasher.hpp"
 #include "Validation_Params.hpp"
 
 #include <string>
@@ -12,13 +13,15 @@
 #include <iostream>
 
 
+template <uint16_t k>
 class Validator
 {
+    typedef boomphf::mphf<Kmer<k>, Kmer_Hasher<k>> mphf_t;    // The MPH function type.
+
 private:
 
     const Validation_Params params; // Required parameters wrapped in one object.
-    const uint16_t k;   // The k-parameter of the compacted edge-centric de Bruijn graph. To be removed.
-    cuttlefish::mphf_t* mph;    // Minimal perfect hash function over the set of canonical k-mers of the reference.
+    mphf_t* mph = NULL; // Minimal perfect hash function over the set of canonical k-mers of the reference.
 
     constexpr static size_t PROGRESS_GRAIN_SIZE = 1000000;  // 1M
     
@@ -108,6 +111,8 @@ public:
 
     // Constructs a `CdBG` object with the parameters wrapped at `params`.
     Validator(const Validation_Params& params, cuttlefish::logger_t console);
+
+    ~Validator();
 
     // Performs validation of the uniqueness and completeness of the k-mer set present at the
     // unitigs produced by the compaction algorithm, and also the validation of the complete

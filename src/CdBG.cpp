@@ -64,5 +64,5 @@ size_t CdBG<k>::search_valid_kmer(const char* const seq, const size_t left_end, 
 
 
 
-// Template instantiation for the required specializations.
-template class CdBG<cuttlefish::MAX_K>;
+// Template instantiations for the required specializations.
+ENUMERATE(INSTANCE_COUNT, INSTANTIATE, CdBG)

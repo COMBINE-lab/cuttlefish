@@ -547,5 +547,5 @@ void CdBG<k>::print_vertex_class_dist() const
 
 
 
-// Template instantiation for the required specializations.
-template class CdBG<cuttlefish::MAX_K>;
+// Template instantiations for the required specializations.
+ENUMERATE(INSTANCE_COUNT, INSTANTIATE, CdBG)

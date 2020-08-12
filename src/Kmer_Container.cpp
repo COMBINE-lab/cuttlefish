@@ -60,5 +60,5 @@ typename Kmer_Container<k>::iterator Kmer_Container<k>::end() const
 
 
 
-// Template instantiation for the required specializations.
-template class Kmer_Container<cuttlefish::MAX_K>;
+// Template instantiations for the required specializations.
+ENUMERATE(INSTANCE_COUNT, INSTANTIATE, Kmer_Container)

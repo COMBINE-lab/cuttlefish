@@ -128,5 +128,5 @@ void Kmer_Hash_Table<k>::clear()
 
 
 
-// Template instantiation for the required specializations.
-template class Kmer_Hash_Table<cuttlefish::MAX_K>;
+// Template instantiations for the required specializations.
+ENUMERATE(INSTANCE_COUNT, INSTANTIATE, Kmer_Hash_Table)

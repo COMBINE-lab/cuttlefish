@@ -473,5 +473,5 @@ bool Validator<k>::walk_unitig(const char* const seq, const size_t seq_len, cons
 
 
 
-// Template instantiation for the required specializations.
-template class Validator<cuttlefish::MAX_K>;
+// Template instantiations for the required specializations.
+ENUMERATE(INSTANCE_COUNT, INSTANTIATE, Validator)

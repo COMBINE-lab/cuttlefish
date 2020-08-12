@@ -12,7 +12,7 @@
 
 // The macro `INSTANCE_COUNT` must be set exactly to `(MAX_K + 1) / 2` for a required maximum k-value.
 // Also, the `MAX_K` value must be odd (as the k-values used in the algorithm) for correct results.
-#define INSTANCE_COUNT 16
+#define INSTANCE_COUNT 64
 #define INSTANTIATE(z, k, class_name) template class class_name<2 * k + 1>;
 #define ENUMERATE(count, instantiator, class_name) BOOST_PP_REPEAT(count, instantiator, class_name)
 // BOOST_PP_REPEAT reference: https://www.boost.org/doc/libs/1_55_0/libs/preprocessor/doc/ref/repeat.html
@@ -44,7 +44,7 @@ namespace spdlog
 
 namespace cuttlefish
 {
-    constexpr uint16_t MAX_K = 31;
+    constexpr uint16_t MAX_K = 127;
 
 
     typedef bool dir_t;

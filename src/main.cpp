@@ -3,6 +3,7 @@
 #include "Validator.hpp"
 #include "Build_Params.hpp"
 #include "Validation_Params.hpp"
+#include "Application.hpp"
 #include "cxxopts/cxxopts.hpp"
 #include "spdlog/sinks/stdout_color_sinks.h"
 
@@ -63,9 +64,11 @@ void build(int argc, char** argv)
         std::cout << "Constructing compacted de Bruijn graph for the reference at " << ref << ", with k = " << k << "\n";
 
         const Build_Params params(ref, k, kmer_database, thread_count, output_file, format, working_dir, bbhash_file);
-        CdBG<cuttlefish::MAX_K> cdbg(params);
+        // CdBG<cuttlefish::MAX_K> cdbg(params);
 
-        cdbg.construct();
+        // cdbg.construct();
+        Application<cuttlefish::MAX_K> app(params);
+        app.execute();
 
         std::cout << "Constructed the compacted de Bruijn graph at " << output_file << "\n";
     }

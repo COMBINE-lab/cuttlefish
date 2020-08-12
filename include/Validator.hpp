@@ -109,8 +109,11 @@ private:
 
 public:
 
-    // Constructs a `CdBG` object with the parameters wrapped at `params`.
+    // Constructs a `CdBG` object with the parameters wrapped at `params`, and uses `console` for logging.
     Validator(const Validation_Params& params, cuttlefish::logger_t console);
+
+    // Constructs a `CdBG` object with the parameters wrapped at `params`.
+    Validator(const Validation_Params& params);
 
     ~Validator();
 

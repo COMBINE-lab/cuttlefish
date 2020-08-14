@@ -113,14 +113,21 @@ private:
     // should only be used with the canonical versions of two adjacent k-mers.
     bool is_self_loop(const Kmer<k>& kmer_hat, const Kmer<k>& next_kmer_hat) const;
 
-    // Outputs all the distinct maximal unitigs of the compacted de Bruijn graph
-    // (in canonical form).
+    // Outputs the compacted de Bruijn graph.
     void output_maximal_unitigs();
+
+    // Outputs all the distinct maximal unitigs of the compacted de Bruijn graph
+    // (in canonical form) in a plain text format.
+    void output_maximal_unitigs_plain();
+
+    // Outputs the distinct maximal unitigs (in canonical form) of the compacted de
+    // Bruijn graph in GFA format.
+    void output_maximal_unitigs_gfa();
 
     // Writes the maximal unitigs at the sequence `seq` (of length `seq_len`) that
     // have their starting indices between (inclusive) `left_end` and `right_end`,
     // to the stream `output`.
-    void output_off_substring(uint16_t thread_id, const char* seq, size_t seq_len, size_t left_end, size_t right_end, cuttlefish::logger_t output);
+    void output_plain_off_substring(uint16_t thread_id, const char* seq, size_t seq_len, size_t left_end, size_t right_end, cuttlefish::logger_t output);
 
     // Outputs the distinct maximal unitigs of the sequence `seq` (of length
     // `seq_len`) to the stream `output`, that are present at its contiguous
@@ -129,7 +136,7 @@ private:
     // up-to the first encountered placeholder nucleotide 'N'. Also, returns
     // the non-inclusive point of termination of the processed subsequence,
     // i.e. the index following the end of it.
-    size_t output_maximal_unitigs(uint16_t thread_id, const char* seq, size_t seq_len, size_t right_end, size_t start_idx, cuttlefish::logger_t output);
+    size_t output_maximal_unitigs_plain(uint16_t thread_id, const char* seq, size_t seq_len, size_t right_end, size_t start_idx, cuttlefish::logger_t output);
 
     // Returns a Boolean denoting whether a k-mer with state `state` traversed in
     // the direction `dir` starts a maximal unitig, where `prev_kmer_state` and
@@ -146,7 +153,7 @@ private:
     // Outputs the unitig at the k-mer range between the annotated k-mers
     // `start_kmer` and `end_kmer` of the sequence `seq` (if the unitig had not
     // been output already), to the stream `output`.
-    void output_unitig(uint16_t thread_id, const char* seq, const Annotated_Kmer<k>& start_kmer, const Annotated_Kmer<k>& end_kmer, cuttlefish::logger_t output);
+    void output_plain_unitig(uint16_t thread_id, const char* seq, const Annotated_Kmer<k>& start_kmer, const Annotated_Kmer<k>& end_kmer, cuttlefish::logger_t output);
     
     // Writes the path in the sequence `seq` with its starting and ending k-mers
     // located at the indices `start_kmer_idx` and `end_kmer_idx` respectively to
@@ -168,10 +175,6 @@ private:
     // Flushes the output buffers (one for each thread) to the stream `output`.
     void flush_buffers(cuttlefish::logger_t output);
 
-    // Outputs the distinct maximal unitigs (in canonical form) of the compacted de
-    // Bruijn graph in GFA format.
-    void output_maximal_unitigs_gfa();
-
     // Resets the path output streams (depending on the GFA version) for each
     // thread. Needs to be invoked before processing each new sequence.
     void reset_path_streams();
@@ -192,7 +195,7 @@ private:
     // Outputs the unitig at the k-mer range between the annotated k-mers `start_kmer` and
     // `end_kmer` of the sequence `seq` (if the unitig had not been output already), to the
     // stream `output`.
-    void output_unitig_gfa(uint16_t thread_id, const char* ref, const Annotated_Kmer<k>& start_kmer, const Annotated_Kmer<k>& end_kmer, cuttlefish::logger_t output);
+    void output_gfa_unitig(uint16_t thread_id, const char* ref, const Annotated_Kmer<k>& start_kmer, const Annotated_Kmer<k>& end_kmer, cuttlefish::logger_t output);
 
     // Writes the GFA header record to the stream `output`.
     void write_gfa_header(std::ofstream& output) const;

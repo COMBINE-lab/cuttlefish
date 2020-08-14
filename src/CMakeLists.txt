@@ -12,6 +12,7 @@ set(PROJECT_SRC
         Kmer_Hash_Table.cpp
         CdBG.cpp
         CdBG_Builder.cpp
+        CdBG_Writer.cpp
         CdBG_Plain_Writer.cpp
         CdBG_GFA_Writer.cpp
         Validator.cpp

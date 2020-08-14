@@ -27,7 +27,7 @@ void CdBG<k>::construct()
     classify_vertices();
 
     std::cout << "Outputting the maximal unitigs.\n";
-    params.output_format() == 0 ? output_maximal_unitigs() : output_maximal_unitigs_gfa();
+    output_maximal_unitigs();
 
     Vertices.clear();
 }

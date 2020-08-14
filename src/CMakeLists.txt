@@ -13,8 +13,12 @@ set(PROJECT_SRC
         CdBG.cpp
         CdBG_Builder.cpp
         CdBG_Writer.cpp
+        CdBG_Plain_Writer.cpp
         CdBG_GFA_Writer.cpp
         Validator.cpp
+        Validator_Hash_Table.cpp
+        Sequence_Validator.cpp
+        Kmers_Validator.cpp
         utility.cpp
     )
 
@@ -74,6 +78,6 @@ install(TARGETS ${PROJECT_NAME}
         )
 
 
-add_executable(test test.cpp Validator.cpp)
+add_executable(test test.cpp)
 target_link_libraries(test PRIVATE core)
 target_compile_options(test PRIVATE ${WARNING_FLAGS})

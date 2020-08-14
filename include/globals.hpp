@@ -4,13 +4,19 @@
 
 
 
-#include "Kmer_u64.hpp"
+#include "Kmer.hpp"
 
 #include <memory>
+#include <boost/preprocessor/repetition/repeat.hpp>
 
 
-// Forward declaration of the k-mer hasher type.
-class Kmer_Hasher;
+// The macro `INSTANCE_COUNT` must be set exactly to `(MAX_K + 1) / 2` for a required maximum k-value.
+// Also, the `MAX_K` value must be odd (as the k-values used in the algorithm) for correct results.
+#define INSTANCE_COUNT 64
+#define INSTANTIATE(z, k, class_name) template class class_name<2 * k + 1>;
+#define ENUMERATE(count, instantiator, class_name) BOOST_PP_REPEAT(count, instantiator, class_name)
+// BOOST_PP_REPEAT reference: https://www.boost.org/doc/libs/1_55_0/libs/preprocessor/doc/ref/repeat.html
+
 
 // Forward declaration of the minimal perfect hash function type.
 namespace boomphf
@@ -38,15 +44,18 @@ namespace spdlog
 
 namespace cuttlefish
 {
-    typedef Kmer_u64 kmer_t;
+    constexpr uint16_t MAX_K = 127;
+
+
     typedef bool dir_t;
     typedef char nucleotide_t;
     typedef uint8_t state_code_t;
 
-    constexpr nucleotide_t PLACEHOLDER_NUCLEOTIDE = 'N';
 
+    constexpr nucleotide_t PLACEHOLDER_NUCLEOTIDE = 'N';
     constexpr dir_t FWD = true;
     constexpr dir_t BWD = false;
+
 
     enum class Vertex_Class: uint8_t
     {
@@ -56,11 +65,11 @@ namespace cuttlefish
         multi_in_multi_out = 3
     };
 
-    typedef boomphf::mphf<cuttlefish::kmer_t, Kmer_Hasher> mphf_t;    // The MPH function type.
 
     constexpr uint8_t BITS_PER_KMER = 5;
     typedef compact::ts_vector<state_code_t, BITS_PER_KMER, uint64_t, std::allocator<uint64_t>> bitvector_t;
     typedef compact::iterator_imp::lhs_setter<state_code_t, BITS_PER_KMER, uint64_t, true, 64U> bitvector_entry_t;
+
 
     typedef std::shared_ptr<spdlog::logger> logger_t;
 }

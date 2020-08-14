@@ -20,12 +20,6 @@
 #include <set>
 #include <map>
 
-//#include "Validator.cpp"
-
-
-// Debug
-// #include "Validator.cpp"
-
 
 // STEP 1: declare the type of file handler and the read() function
 KSEQ_INIT(int, read);
@@ -115,39 +109,39 @@ void check_repeated_kmers(const char* file_name)
 }
 
 
-void check_N_base(const char* file_name, uint16_t k)
-{
-    Kmer_u64::set_k(k);
+// void check_N_base(const char* file_name, uint16_t k)
+// {
+//     Kmer_u64::set_k(k);
 
-    std::ifstream input(file_name, std::ifstream::in);
-    if(!input)
-    {
-        std::cerr << "Cannot open file " << file_name <<". Aborting.\n";
-        std::exit(EXIT_FAILURE);
-    }
-
-
-    std::string label;
-    uint64_t count;
-    uint64_t kmer_count = 0;
-    while(input >> label >> count)
-    {
-        kmer_count++;
-
-        if(label.find_first_of('N') != std::string::npos)
-            std::cout << "N nucleotide found in " << label << "\n";
-
-        if(kmer_count % 10000000 == 0)
-            std::cout << "Kmer-count: " << kmer_count << "\n";
-        // if(label.find_first_of("N") != std::string::npos)
-        //     std::cout << "N is present\n";
-    }
-
-    std::cout << "\nDone k-mers coding.\n"; 
+//     std::ifstream input(file_name, std::ifstream::in);
+//     if(!input)
+//     {
+//         std::cerr << "Cannot open file " << file_name <<". Aborting.\n";
+//         std::exit(EXIT_FAILURE);
+//     }
 
 
-    input.close();
-}
+//     std::string label;
+//     uint64_t count;
+//     uint64_t kmer_count = 0;
+//     while(input >> label >> count)
+//     {
+//         kmer_count++;
+
+//         if(label.find_first_of('N') != std::string::npos)
+//             std::cout << "N nucleotide found in " << label << "\n";
+
+//         if(kmer_count % 10000000 == 0)
+//             std::cout << "Kmer-count: " << kmer_count << "\n";
+//         // if(label.find_first_of("N") != std::string::npos)
+//         //     std::cout << "N is present\n";
+//     }
+
+//     std::cout << "\nDone k-mers coding.\n"; 
+
+
+//     input.close();
+// }
 
 
 void check_absent_nucleotide(const char* file_name)
@@ -232,37 +226,37 @@ void test_unipaths(const char* file_name)
 }
 
 
-void test_kmer_iterator(const char* file_name)
-{
-    const std::string kmc_file(file_name);
+// void test_kmer_iterator(const char* file_name)
+// {
+//     const std::string kmc_file(file_name);
 
-    // Open the k-mers container.
-    Kmer_Container kmers(kmc_file);
+//     // Open the k-mers container.
+//     Kmer_Container kmers(kmc_file);
 
-    Kmer_u64::set_k(kmers.kmer_length());
+//     Kmer_u64::set_k(kmers.kmer_length());
 
-    std::cout << "k-mers length: " << kmers.kmer_length() << "\n";
-    std::cout << "k-mers count: " << kmers.size() << "\n";
+//     std::cout << "k-mers length: " << kmers.kmer_length() << "\n";
+//     std::cout << "k-mers count: " << kmers.size() << "\n";
 
 
-    // Iterating over the k-mers on the database from disk.
+//     // Iterating over the k-mers on the database from disk.
 
-    std::cout << "\nPerforming some non-trivial task with dereferenced iterators.\n";
-    auto it_beg = kmers.begin();
-    auto it_end = kmers.end();
-    uint64_t count = 0;
-    cuttlefish::kmer_t max_kmer = cuttlefish::kmer_t();
-    for(auto it = it_beg; it != it_end; ++it)
-    {
-        // Use the iterator from here
-        // std::cout << *it << "\n";
-        max_kmer = std::max(max_kmer, *it);
-        count++;
-    }
+//     std::cout << "\nPerforming some non-trivial task with dereferenced iterators.\n";
+//     auto it_beg = kmers.begin();
+//     auto it_end = kmers.end();
+//     uint64_t count = 0;
+//     cuttlefish::kmer_t max_kmer = cuttlefish::kmer_t();
+//     for(auto it = it_beg; it != it_end; ++it)
+//     {
+//         // Use the iterator from here
+//         // std::cout << *it << "\n";
+//         max_kmer = std::max(max_kmer, *it);
+//         count++;
+//     }
 
-    std::cout << "Max k-mer: " << max_kmer.string_label() << "\n";
-    std::cout << "k-mers count found using iterators: " << count << "\n";
-}
+//     std::cout << "Max k-mer: " << max_kmer.string_label() << "\n";
+//     std::cout << "k-mers count found using iterators: " << count << "\n";
+// }
 
 
 void check_uint64_BBHash(const char* file_name, uint16_t thread_count)
@@ -355,6 +349,7 @@ void count_kmers_in_unitigs(const char* file_name, uint16_t k)
 int main(int argc, char** argv)
 {
     (void)argc;
+    (void)argv;
     // const char* fileName = argv[1];
 
     // test_kseq(argv[1]);

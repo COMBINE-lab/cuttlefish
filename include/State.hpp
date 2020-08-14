@@ -10,13 +10,15 @@
 #include <cstdint>
 
 
-class Kmer_Hash_Table;
+template <uint16_t k> class Kmer_Hash_Table;
 class Kmer_Hash_Entry_API;
 
 
 class State
 {
+    template <uint16_t k>
     friend class Kmer_Hash_Table;
+
     friend class Kmer_Hash_Entry_API;
 
 private:

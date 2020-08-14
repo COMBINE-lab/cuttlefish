@@ -3,13 +3,14 @@
 #include "Kmer_Iterator.hpp"
 
 
-Kmer_Container::Kmer_Container(const std::string& kmc_file_name):
-    kmc_file_name(kmc_file_name)
+template <uint16_t k>
+Kmer_Container<k>::Kmer_Container(const std::string& kmc_file_path):
+    kmc_file_path(kmc_file_path)
 {
     CKMCFile kmer_database;
-    if(!kmer_database.OpenForListing(kmc_file_name))
+    if(!kmer_database.OpenForListing(kmc_file_path))
     {
-        std::cout << "Error opening KMC database files with prefix " << kmc_file_name << ". Aborting.\n";
+        std::cout << "Error opening KMC database files with prefix " << kmc_file_path << ". Aborting.\n";
         std::exit(EXIT_FAILURE);
     }
 
@@ -23,31 +24,41 @@ Kmer_Container::Kmer_Container(const std::string& kmc_file_name):
 }
 
 
-std::string Kmer_Container::container_location() const
+template <uint16_t k>
+const std::string& Kmer_Container<k>::container_location() const
 {
-    return kmc_file_name;
+    return kmc_file_path;
 }
 
 
-uint32_t Kmer_Container::kmer_length() const
+template <uint16_t k>
+uint32_t Kmer_Container<k>::kmer_length() const
 {
     return kmer_database_info.kmer_length;
 }
 
 
-uint64_t Kmer_Container::size() const
+template <uint16_t k>
+uint64_t Kmer_Container<k>::size() const
 {
    return kmer_database_info.total_kmers;
 }
 
 
-Kmer_Container::iterator Kmer_Container::begin() const
+template <uint16_t k>
+typename Kmer_Container<k>::iterator Kmer_Container<k>::begin() const
 {
     return iterator(this);
 }
 
 
-Kmer_Container::iterator Kmer_Container::end() const
+template <uint16_t k>
+typename Kmer_Container<k>::iterator Kmer_Container<k>::end() const
 {
     return iterator(this, false);
 }
+
+
+
+// Template instantiations for the required specializations.
+ENUMERATE(INSTANCE_COUNT, INSTANTIATE, Kmer_Container)

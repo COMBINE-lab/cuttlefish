@@ -8,10 +8,6 @@
 #include "Kmer_Hasher.hpp"
 #include "Validation_Params.hpp"
 
-#include <string>
-#include <vector>
-#include <iostream>
-
 
 template <uint16_t k>
 class Validator
@@ -106,6 +102,9 @@ private:
     // can be spelled out completely with unitigs at collection `U`, using up-to `thread_count` threads.
     void validate_sequence_completion(bool& result);
 
+    // Clears the hash table used.
+    void clear();
+
 
 public:
 
@@ -115,7 +114,7 @@ public:
     // Constructs a `CdBG` object with the parameters wrapped at `params`.
     Validator(const Validation_Params& params);
 
-    ~Validator();
+    // ~Validator();
 
     // Performs validation of the uniqueness and completeness of the k-mer set present at the
     // unitigs produced by the compaction algorithm, and also the validation of the complete

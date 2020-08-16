@@ -1,16 +1,9 @@
 
 #include "CdBG.hpp"
-#include "kseq/kseq.h"
+#include "Parser.hpp"
 #include "spdlog/spdlog.h"
 #include "spdlog/async.h"
 #include "spdlog/sinks/basic_file_sink.h"
-
-#include "zlib.h"
-
-
-// Declare the type of file handler and the read() function.
-// Required for FASTA/FASTQ file reading using the kseq library.
-KSEQ_INIT(int, read);
 
 
 template <uint16_t k>
@@ -36,16 +29,8 @@ void CdBG<k>::output_maximal_unitigs_plain()
     const uint16_t thread_count = params.thread_count();
     const std::string& output_file_path = params.output_file_path();
 
-    // Open the file handler for the FASTA / FASTQ file containing the reference.
-    FILE* const input = fopen(ref_file_path.c_str(), "r");
-    if(input == NULL)
-    {
-        std::cerr << "Error opening input file " << ref_file_path << ". Aborting.\n";
-        std::exit(EXIT_FAILURE);
-    }
-
-    // Initialize the parser.
-    kseq_t* const parser = kseq_init(fileno(input));
+    // Open a parser for the FASTA / FASTQ file containing the reference.
+    Parser parser(ref_file_path);
 
 
     // Clear the output file.
@@ -74,16 +59,16 @@ void CdBG<k>::output_maximal_unitigs_plain()
     size_t max_buf_sz = 0;
 
     // Parse sequences one-by-one, and output each unique maximal unitig encountered through them.
-    uint32_t seqCount = 0;
-    while(kseq_read(parser) >= 0)
+    uint32_t seq_count = 0;
+    while(parser.read_next_seq())
     {
-        const char* const seq = parser->seq.s;
-        const size_t seq_len = parser->seq.l;
-        const size_t seq_buf_sz = parser->seq.m;
+        const char* const seq = parser.seq();
+        const size_t seq_len = parser.seq_len();
+        const size_t seq_buf_sz = parser.buff_sz();
 
         max_buf_sz = std::max(max_buf_sz, seq_buf_sz);
 
-        std::cout << "Processing sequence " << ++seqCount << ", with length " << seq_len << ".\n";
+        std::cout << "Processing sequence " << ++seq_count << ", with length " << seq_len << ".\n";
 
         // Nothing to process for sequences with length shorter than `k`.
         if(seq_len < k)
@@ -134,9 +119,8 @@ void CdBG<k>::output_maximal_unitigs_plain()
     spdlog::drop_all();
 
 
-    // Close the parser and the input file.
-    kseq_destroy(parser);
-    fclose(input);
+    // Close the parser.
+    parser.close();
 
 
     std::chrono::high_resolution_clock::time_point t_end = std::chrono::high_resolution_clock::now();
@@ -156,16 +140,8 @@ void CdBG<k>::output_maximal_unitigs_gfa()
     const std::string& output_file_path = params.output_file_path();
     const std::string& working_dir_path = params.working_dir_path();
 
-    // Open the file handler for the FASTA / FASTQ file containing the reference.
-    FILE* const input = fopen(ref_file_path.c_str(), "r");
-    if(input == NULL)
-    {
-        std::cerr << "Error opening input file " << params.ref_file_path() << ". Aborting.\n";
-        std::exit(EXIT_FAILURE);
-    }
-
-    // Initialize the parser.
-    kseq_t* const parser = kseq_init(fileno(input));
+    // Open a parser for the FASTA / FASTQ file containing the reference.
+    Parser parser(ref_file_path);
 
 
     // Clear the output file and write the GFA header.
@@ -200,11 +176,11 @@ void CdBG<k>::output_maximal_unitigs_gfa()
     // Parse sequences one-by-one, and output each unique maximal unitig encountered through them.
     // uint32_t seq_count = 0;
     seq_count = 0;
-    while(kseq_read(parser) >= 0)
+    while(parser.read_next_seq())
     {
-        const char* const seq = parser->seq.s;
-        const size_t seq_len = parser->seq.l;
-        const size_t seq_buf_sz = parser->seq.m;
+        const char* const seq = parser.seq();
+        const size_t seq_len = parser.seq_len();
+        const size_t seq_buf_sz = parser.buff_sz();
 
         max_buf_sz = std::max(max_buf_sz, seq_buf_sz);
 
@@ -297,9 +273,8 @@ void CdBG<k>::output_maximal_unitigs_gfa()
     spdlog::drop_all();
 
 
-    // Close the parser and the input file.
-    kseq_destroy(parser);
-    fclose(input);
+    // Close the parser.
+    parser.close();
 
 
     std::chrono::high_resolution_clock::time_point t_end = std::chrono::high_resolution_clock::now();

@@ -29,6 +29,10 @@ add_definitions(-D__STDC_FORMAT_MACROS -DSPDLOG_FMT_EXTERNAL_HO)
 find_package(Threads REQUIRED)  # The threads package is required for the BBHash library used in the project.
 set(THREADS_PREFER_PTHREAD_FLAG TRUE)   # The BBHash library uses `pthread`.
 
+# Search and load setting for the `zlib` library. The library is required to seamlessly adapt
+# the `kseq` library to gzipped compressed files.
+find_package(ZLIB REQUIRED)
+
 
 # The `Debug` configuration optimizes the program for debugging and enables full debug information.
 # The `Release` configuration enables most compiler optimizations for speed and defines `NDEBUG`

@@ -1,18 +1,12 @@
 
 #include "Validator.hpp"
+#include "Parser.hpp"
 #include "Directed_Kmer.hpp"
 #include "Kmer_Container.hpp"
-#include "kseq/kseq.h"
 #include "BBHash/BooPHF.h"
 #include "spdlog/sinks/stdout_color_sinks.h"
 
 #include <fstream>
-#include "zlib.h"
-
-
-// Declare the type of file handler and the read() function.
-// Required for FASTA/FASTQ file reading using the kseq library.
-KSEQ_INIT(int, read);
 
 
 template <uint16_t k>
@@ -43,16 +37,8 @@ void Validator<k>::validate_sequence_completion(bool& result)
     build_unitig_tables();
 
 
-    // Open the file handler for the FASTA / FASTQ file containing the reference.
-    FILE* const input = fopen(ref_file_path.c_str(), "r");
-    if(input == NULL)
-    {
-        console->error("Error opening the reference file {}. Aborting.\n", ref_file_path);
-        std::exit(EXIT_FAILURE);
-    }
-    
-    // Initialize the parser.
-    kseq_t* const parser = kseq_init(fileno(input));
+    // Open a parser for the FASTA / FASTQ file containing the reference.
+    Parser parser(ref_file_path);
 
 
     std::vector<std::thread> th(thread_count);  // Thread-pool (round-robin) to validate the sequences parallelly.
@@ -62,10 +48,10 @@ void Validator<k>::validate_sequence_completion(bool& result)
     bool* thread_result = new bool[thread_count];   // Validation result produced by the threads.
     
     // Parse sequences one-by-one, and continue spelling them using the resultant unitigs of the compaction algorithm.
-    while(kseq_read(parser) >= 0)
+    while(parser.read_next_seq())
     {
-        const char* const seq = parser->seq.s;
-        const size_t seq_len = parser->seq.l;
+        const char* const seq = parser.seq();
+        const size_t seq_len = parser.seq_len();
 
         console->info("Spelling out sequence {}, with length {}.\n", seqCount, seq_len);
 
@@ -111,9 +97,8 @@ void Validator<k>::validate_sequence_completion(bool& result)
         }
 
 
-    // Close the parser and the input file.
-    kseq_destroy(parser);
-    fclose(input);
+    // Close the parser.
+    parser.close();
 
     result = success;
 }

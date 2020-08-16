@@ -5,6 +5,7 @@ set(PROJECT_SRC
         kmc_api/kmer_api.cpp
         kmc_api/mmer.cpp
         smhasher/MurmurHash3.cpp
+        Parser.cpp
         Kmer_u64.cpp
         Vertex.cpp
         State.cpp
@@ -48,8 +49,8 @@ add_executable(${PROJECT_NAME} main.cpp)
 # Link the core library to the threads package in the platform.
 target_link_libraries(core PRIVATE ${CMAKE_THREAD_LIBS_INIT})
 
-# Link the core library to the `std::experimental::filesystem` library.
-# target_link_libraries(core PRIVATE stdc++fs)
+# Link the core library to the `zlib` library.
+target_link_libraries(core PRIVATE ZLIB::ZLIB)
 
 
 # Link the executable to the required libraries.

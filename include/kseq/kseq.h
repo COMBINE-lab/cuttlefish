@@ -209,7 +209,7 @@ typedef struct __kstring_t {
 	}
 
 #define __KSEQ_TYPE(type_t)						\
-	typedef struct {							\
+	typedef struct _KSEQ_DATA {					\
 		kstring_t name, comment, seq, qual;		\
 		int last_char;							\
 		kstream_t *f;							\

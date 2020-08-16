@@ -1,18 +1,12 @@
 
 #include "CdBG.hpp"
 #include "Kmer_Iterator.hpp"
-#include "kseq/kseq.h"
+#include "Parser.hpp"
 
 #include <fstream>
 #include <thread>
 #include <cassert>
 #include <chrono>
-#include "zlib.h"
-
-
-// Declare the type of file handler and the read() function.
-// Required for FASTA/FASTQ file reading using the kseq library.
-KSEQ_INIT(int, read);
 
 
 template <uint16_t k>
@@ -21,33 +15,24 @@ void CdBG<k>::classify_vertices()
     std::chrono::high_resolution_clock::time_point t_start = std::chrono::high_resolution_clock::now();
 
 
-    // Open the file handler for the FASTA / FASTQ file containing the reference.
+    // Open a parser for the FASTA / FASTQ file containing the reference.
     const std::string& ref_file_path =  params.ref_file_path();
-    FILE* const input = fopen(ref_file_path.c_str(), "r");
-    if(input == NULL)
-    {
-        std::cerr << "Error opening input file " << ref_file_path << ". Aborting.\n";
-        std::exit(EXIT_FAILURE);
-    }
-
-    
-    // Initialize the parser.
-    kseq_t* const parser = kseq_init(fileno(input));
+    Parser parser(ref_file_path);
 
     // Track the maximum sequence buffer size used.
     size_t max_buf_sz = 0;
 
     // Parse sequences one-by-one, and continue partial classification of the k-mers through them.
-    uint32_t seqCount = 0;
-    while(kseq_read(parser) >= 0)
+    uint32_t seq_count = 0;
+    while(parser.read_next_seq())
     {
-        const char* const seq = parser->seq.s;
-        const size_t seq_len = parser->seq.l;
-        const size_t seq_buf_sz = parser->seq.m;
+        const char* const seq = parser.seq();
+        const size_t seq_len = parser.seq_len();
+        const size_t seq_buf_sz = parser.buff_sz();
 
         max_buf_sz = std::max(max_buf_sz, seq_buf_sz);
 
-        std::cout << "Processing sequence " << ++seqCount << ", with length " << seq_len << ".\n";
+        std::cout << "Processing sequence " << ++seq_count << ", with length " << seq_len << ".\n";
 
         // Nothing to process for sequences with length shorter than `k`.
         if(seq_len < k)
@@ -91,9 +76,8 @@ void CdBG<k>::classify_vertices()
     std::cout << "Maximum buffer size used (in MB): " << max_buf_sz / (1024 * 1024) << "\n";
 
 
-    // Close the parser and the input file.
-    kseq_destroy(parser);
-    fclose(input);
+    // Close the parser.
+    parser.close();
 
 
     std::chrono::high_resolution_clock::time_point t_end = std::chrono::high_resolution_clock::now();

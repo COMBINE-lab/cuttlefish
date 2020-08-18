@@ -44,7 +44,7 @@ namespace spdlog
 
 namespace cuttlefish
 {
-    constexpr uint16_t MAX_K = 127;
+    constexpr uint16_t MAX_K = (2 * INSTANCE_COUNT - 1);
 
 
     typedef bool dir_t;

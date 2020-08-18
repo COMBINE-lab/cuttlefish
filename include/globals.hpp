@@ -18,12 +18,6 @@
 // BOOST_PP_REPEAT reference: https://www.boost.org/doc/libs/1_55_0/libs/preprocessor/doc/ref/repeat.html
 
 
-// Forward declaration of the minimal perfect hash function type.
-namespace boomphf
-{
-    template<typename elem_t, typename Hasher_t> class mphf;
-}
-
 // Forward declarations of the type of the bitvector used and the type to access its entries (mutable).
 namespace compact
 {
@@ -48,11 +42,10 @@ namespace cuttlefish
 
 
     typedef bool dir_t;
-    typedef char nucleotide_t;
+    typedef DNA_Base base_t;
     typedef uint8_t state_code_t;
 
 
-    constexpr nucleotide_t PLACEHOLDER_NUCLEOTIDE = 'N';
     constexpr dir_t FWD = true;
     constexpr dir_t BWD = false;
 

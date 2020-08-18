@@ -30,11 +30,11 @@ public:
     // Copy constructs the directed k-mer from `rhs`.
     Directed_Kmer(const Directed_Kmer<k>& rhs) = default;
 
-    // Transforms this k-mer by chopping off the first nucleotide and
-    // appending the next nucleotide `next_nucl` to the end, i.e.
-    // rolls the k-mer by one nucleotide and sets all the relevant
+    // Transforms this k-mer by chopping off the first base and
+    // appending the next base `next_base` to the end, i.e.
+    // rolls the k-mer by one base and sets all the relevant
     // information accordingly.
-    void roll_to_next_kmer(cuttlefish::nucleotide_t next_nucl);
+    void roll_to_next_kmer(char next_base);
 
     void operator=(const Directed_Kmer<k>& rhs);
 
@@ -63,9 +63,9 @@ inline Directed_Kmer<k>::Directed_Kmer(const Kmer<k>& kmer):
 
 
 template <uint16_t k>
-inline void Directed_Kmer<k>::roll_to_next_kmer(const cuttlefish::nucleotide_t next_nucl)
+inline void Directed_Kmer<k>::roll_to_next_kmer(const char next_base)
 {
-    kmer_.roll_to_next_kmer(next_nucl, rev_compl_);
+    kmer_.roll_to_next_kmer(next_base, rev_compl_);
     
     canonical_ = kmer_.canonical(rev_compl_);
     dir_ = kmer_.in_forward(canonical_);

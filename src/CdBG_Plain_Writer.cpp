@@ -33,13 +33,13 @@ size_t CdBG<k>::output_maximal_unitigs_plain(const uint16_t thread_id, const cha
 
     // The subsequence contains only an isolated k-mer, i.e. there's no valid left or right
     // neighboring k-mer to this k-mer. So it's a maximal unitig by itself.
-    if((kmer_idx == 0 || seq[kmer_idx - 1] == cuttlefish::PLACEHOLDER_NUCLEOTIDE) &&
-        (kmer_idx + k == seq_len || seq[kmer_idx + k] == cuttlefish::PLACEHOLDER_NUCLEOTIDE))
+    if((kmer_idx == 0 || Kmer<k>::is_placeholder(seq[kmer_idx - 1])) &&
+        (kmer_idx + k == seq_len || Kmer<k>::is_placeholder(seq[kmer_idx + k])))
         output_plain_unitig(thread_id, seq, curr_kmer, curr_kmer, output);
     else    // At least one valid neighbor exists, either to the left or to the right, or on both sides.
     {
         // No valid right neighbor exists for the k-mer.
-        if(kmer_idx + k == seq_len || seq[kmer_idx + k] == cuttlefish::PLACEHOLDER_NUCLEOTIDE)
+        if(kmer_idx + k == seq_len || Kmer<k>::is_placeholder(seq[kmer_idx + k]))
         {
             // A valid left neighbor exists as it's not an isolated k-mer.
             Annotated_Kmer<k> prev_kmer(Kmer<k>(seq, kmer_idx - 1), kmer_idx, Vertices);
@@ -62,7 +62,7 @@ size_t CdBG<k>::output_maximal_unitigs_plain(const uint16_t thread_id, const cha
         Annotated_Kmer<k> prev_kmer;
 
         // No valid left neighbor exists for the k-mer.
-        if(kmer_idx == 0 || seq[kmer_idx - 1] == cuttlefish::PLACEHOLDER_NUCLEOTIDE)
+        if(kmer_idx == 0 || Kmer<k>::is_placeholder(seq[kmer_idx - 1]))
         {
             // A maximal unitig starts at the beginning of a maximal valid subsequence.
             on_unipath = true;
@@ -100,7 +100,7 @@ size_t CdBG<k>::output_maximal_unitigs_plain(const uint16_t thread_id, const cha
 
 
             // No valid right neighbor exists for the k-mer.
-            if(kmer_idx + k == seq_len || seq[kmer_idx + k] == cuttlefish::PLACEHOLDER_NUCLEOTIDE)
+            if(kmer_idx + k == seq_len || Kmer<k>::is_placeholder(seq[kmer_idx + k]))
             {
                 // A maximal unitig ends at the ending of a maximal valid subsequence.
                 if(on_unipath)
@@ -163,7 +163,7 @@ void CdBG<k>::write_path(const uint16_t thread_id, const char* const seq, const 
 
     if(dir == cuttlefish::FWD)
         for(size_t offset = 0; offset < path_len; ++offset)
-            buffer << seq[start_kmer_idx + offset];
+            buffer << Kmer<k>::upper(seq[start_kmer_idx + offset]);
     else    // dir == cuttlefish::BWD
         for(size_t offset = 0; offset < path_len; ++offset)
             buffer << Kmer<k>::complement(seq[end_kmer_idx + k - 1 - offset]);

@@ -57,21 +57,33 @@ private:
 public:
 
     // Returns the mapping integer value of the given character `base`.
-    static DNA_Base map_base(char base)
+    static DNA_Base map_base(const char base)
     {
         return MAPPED_BASE[uint8_t(base)];
     }
 
     // Returns the mapping integer value of the complement of `base`.
-    static DNA_Base complement(DNA_Base base)
+    static DNA_Base complement(const DNA_Base base)
     {
         return COMPLEMENTED_BASE[base];
     }
         
-    // Returns the DNA-complement character of the character `base`.
-    static char complement(char base)
+    // Returns the DNA-complement (upper-case) character of the character `base`.
+    static char complement(const char base)
     {
         return COMPLEMENTED_CHAR[uint8_t(base)];
+    }
+
+    // Returns `true` iff the character `base` is a placeholder character.
+    static bool is_placeholder(const char base)
+    {
+        return base == 'N' || base == 'n';
+    }
+
+    // Returns the upper-case equivalent of the character `base`.
+    static char upper(const char base)
+    {
+        return base <= 'T' ? base : (base - ('a' - 'A'));
     }
 };
 

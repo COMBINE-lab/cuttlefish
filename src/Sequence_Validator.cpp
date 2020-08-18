@@ -212,7 +212,7 @@ size_t Validator<k>::walk_first_unitig(const char* const seq, const size_t seq_l
 
     if(!walk_unitig(seq, seq_len, start_idx, unitig, dir))
     {
-        console->error("Mismatching nucleotide(s) found during walking a resultant unitig. Aborting.\n");
+        console->error("Mismatching base(s) found during walking a resultant unitig. Aborting.\n");
         return std::numeric_limits<size_t>::max();
     }
 
@@ -236,7 +236,7 @@ bool Validator<k>::walk_unitig(const char* const seq, const size_t seq_len, cons
     if(in_forward)
     {
         for(size_t idx = 0; idx < unitig.length(); ++idx)
-            if(start_idx + idx >= seq_len || seq[start_idx + idx] != unitig[idx])
+            if(start_idx + idx >= seq_len || Kmer<k>::upper(seq[start_idx + idx]) != unitig[idx])
                 return false;
 
         return true;
@@ -245,7 +245,7 @@ bool Validator<k>::walk_unitig(const char* const seq, const size_t seq_len, cons
 
     const size_t len = unitig.length();
     for(size_t idx = 0; idx < len; ++idx)
-        if(start_idx + idx >= seq_len || seq[start_idx + idx] != Kmer<k>::complement(unitig[len - 1 - idx]))
+        if(start_idx + idx >= seq_len || Kmer<k>::upper(seq[start_idx + idx]) != Kmer<k>::complement(unitig[len - 1 - idx]))
             return false;
             
     return true;

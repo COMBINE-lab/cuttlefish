@@ -30,11 +30,11 @@ public:
     // Copy constructs the annotated k-mer from `rhs`.
     Annotated_Kmer(const Annotated_Kmer& rhs) = default;
 
-    // Transforms this k-mer by chopping off the first nucleotide and
-    // appending the next nucleotide `next_nucl` to the end, i.e.
-    // rolls the k-mer by one nucleotide, sets all the relevant k-mer
+    // Transforms this k-mer by chopping off the first base and
+    // appending the next base `next_base` to the end, i.e. rolls
+    // the k-mer by one base, sets all the relevant k-mer
     // information accordingly (k-mer state is set using the `hash`).
-    void roll_to_next_kmer(cuttlefish::nucleotide_t next_nucl, const Kmer_Hash_Table<k>& hash);
+    void roll_to_next_kmer(char next_base, const Kmer_Hash_Table<k>& hash);
 
     void operator=(const Annotated_Kmer<k>& rhs);
 
@@ -53,9 +53,9 @@ inline Annotated_Kmer<k>::Annotated_Kmer(const Kmer<k>& kmer, const size_t kmer_
 
 
 template <uint16_t k>
-inline void Annotated_Kmer<k>::roll_to_next_kmer(const cuttlefish::nucleotide_t next_nucl, const Kmer_Hash_Table<k>& hash)
+inline void Annotated_Kmer<k>::roll_to_next_kmer(const char next_base, const Kmer_Hash_Table<k>& hash)
 {
-    Directed_Kmer<k>::roll_to_next_kmer(next_nucl);
+    Directed_Kmer<k>::roll_to_next_kmer(next_base);
 
     idx_++;
     vertex_class_ = hash[this->canonical_].vertex_class();

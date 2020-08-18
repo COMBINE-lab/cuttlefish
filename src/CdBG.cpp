@@ -37,23 +37,23 @@ template <uint16_t k>
 size_t CdBG<k>::search_valid_kmer(const char* const seq, const size_t left_end, const size_t right_end) const
 {
     size_t valid_start_idx;
-    uint16_t nucl_count;
+    uint16_t base_count;
     
 
     size_t idx = left_end;
     while(idx <= right_end)
     {
         // Go over the contiguous subsequence of 'N's.
-        for(; idx <= right_end && seq[idx] == cuttlefish::PLACEHOLDER_NUCLEOTIDE; idx++);
+        for(; idx <= right_end && Kmer<k>::is_placeholder(seq[idx]); idx++);
 
         // Go over the contiguous subsequence of non-'N's.
         if(idx <= right_end)
         {
             valid_start_idx = idx;
-            nucl_count = 0;
+            base_count = 0;
 
-            for(; idx <= right_end + k - 1 && seq[idx] != cuttlefish::PLACEHOLDER_NUCLEOTIDE; ++idx)
-                if(++nucl_count == k)
+            for(; idx <= right_end + k - 1 && !Kmer<k>::is_placeholder(seq[idx]); ++idx)
+                if(++base_count == k)
                     return valid_start_idx;
         }
     }

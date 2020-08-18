@@ -65,22 +65,22 @@ template <uint16_t k>
 size_t Validator<k>::search_valid_kmer(const char* const seq, const size_t seq_len, const size_t start_idx) const
 {
     size_t valid_start_idx;
-    uint16_t nucl_count;
+    uint16_t base_count;
 
     size_t idx = start_idx;
     while(idx <= seq_len - k)
     {
         // Go over the contiguous subsequence of 'N's.
-        for(; idx <= seq_len - k && seq[idx] == cuttlefish::PLACEHOLDER_NUCLEOTIDE; idx++);
+        for(; idx <= seq_len - k && Kmer<k>::is_placeholder(seq[idx]); idx++);
 
         // Go over the contiguous subsequence of non-'N's.
         if(idx <= seq_len - k)
         {
             valid_start_idx = idx;
-            nucl_count = 0;
+            base_count = 0;
 
-            for(; idx < seq_len && seq[idx] != cuttlefish::PLACEHOLDER_NUCLEOTIDE; ++idx)
-                if(++nucl_count == k)
+            for(; idx < seq_len && !Kmer<k>::is_placeholder(seq[idx]); ++idx)
+                if(++base_count == k)
                     return valid_start_idx;
         }
     }

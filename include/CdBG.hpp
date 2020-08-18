@@ -67,8 +67,8 @@ private:
     void process_substring(const char* seq, size_t seq_len, size_t left_end, size_t right_end);
 
     // Returns the index of the first valid k-mer, i.e. the first k-mer without
-    // the placeholder nucleotide 'N', in the index range `[left_end, right_end]`
-    // of the sequence `seq`. If no such k-mer is found, returns the first invalid
+    // a placeholder base, in the index range `[left_end, right_end]` of the
+    // sequence `seq`. If no such k-mer is found, returns the first invalid
     // index after its assigned range, i.e. `right_end + 1`.
     size_t search_valid_kmer(const char* seq, size_t left_end, size_t right_end) const;
 
@@ -77,7 +77,7 @@ private:
     // subsequence starting from the index `start_idx` and have their starting
     // indices at most up-to the index `right_end`. The processing goes up-to
     // either the ending of the assigned range itself (i.e. `right_end`), or to the
-    // last k-mer before the first encountered placeholder nucleotide 'N', whichever
+    // last k-mer before the first encountered placeholder base, whichever
     // comes first. Also, returns the non-inclusive point of termination of the
     // processed subsequence, i.e. the index following the end of it.
     size_t process_contiguous_subseq(const char* seq, size_t seq_len, size_t right_end, size_t start_idx);
@@ -90,23 +90,23 @@ private:
     // Processes classification (partially) for the canonical version `kmer_hat` of
     // the first k-mer of some sequence, where the k-mer is encountered in the
     // direction `dir`, the canonical version of the next k-mer in the sequence is
-    // `next_kmer_hat`, and the nucletiode succeeding the first k-mer is `next_nucl`.
+    // `next_kmer_hat`, and the base character succeeding the first k-mer is `next_char`.
     // Returns `false` iff an attempted state transition for the k-mer failed.
-    bool process_leftmost_kmer(const Kmer<k>& kmer_hat, cuttlefish::dir_t dir, const Kmer<k>& next_kmer_hat, cuttlefish::nucleotide_t next_nucl);
+    bool process_leftmost_kmer(const Kmer<k>& kmer_hat, cuttlefish::dir_t dir, const Kmer<k>& next_kmer_hat, char next_char);
 
     // Processes classification (partially) for the canonical version `kmer_hat` of
     // the last k-mer of some sequence, where the k-mer is encountered in the
-    // direction `dir`, and the nucletiode preceding the last k-mer is `prev_nucl`.
+    // direction `dir`, and the base character preceding the last k-mer is `prev_char`.
     // Returns `false` iff an attempted state transition for the k-mer failed.
-    bool process_rightmost_kmer(const Kmer<k>& kmer_hat, cuttlefish::dir_t dir, cuttlefish::nucleotide_t prev_nucl);
+    bool process_rightmost_kmer(const Kmer<k>& kmer_hat, cuttlefish::dir_t dir, char prev_char);
 
     // Processes classification (partially) for the canonical version `kmer_hat` of
     // some internal k-mer of some sequence, where the k-mer is encountered in the
     // direction `dir`, the canoninal version of the next k-mer in the sequence is
-    // `next_kmer_hat`, the nucletiode preceding the k-mer is `prev_nucl`, and the
-    // nucletiode succeeding the k-mer is `next_nucl`.
+    // `next_kmer_hat`, the base character preceding the k-mer is `prev_char`, and
+    // the base character succeeding the k-mer is `next_char`.
     // Returns `false` iff an attempted state transition for the k-mer failed.
-    bool process_internal_kmer(const Kmer<k>& kmer_hat, cuttlefish::dir_t dir, const Kmer<k>& next_kmer_hat, cuttlefish::nucleotide_t prev_nucl, cuttlefish::nucleotide_t next_nucl);
+    bool process_internal_kmer(const Kmer<k>& kmer_hat, cuttlefish::dir_t dir, const Kmer<k>& next_kmer_hat, char prev_char, char next_char);
 
     // Returns a Boolean denoting whether the canonical k-mer `kmer_hat` forms a
     // self loop with the canonical k-mer `next_kmer_hat` in the sequence. This
@@ -133,9 +133,9 @@ private:
     // `seq_len`) to the stream `output`, that are present at its contiguous
     // subsequence starting from the index `start_idx`, going up-to either
     // the ending of the maximal unitig containing the index `right_end`, or
-    // up-to the first encountered placeholder nucleotide 'N'. Also, returns
-    // the non-inclusive point of termination of the processed subsequence,
-    // i.e. the index following the end of it.
+    // up-to the first encountered placeholder base. Also, returns the
+    // non-inclusive point of termination of the processed subsequence, i.e.
+    // the index following the end of it.
     size_t output_maximal_unitigs_plain(uint16_t thread_id, const char* seq, size_t seq_len, size_t right_end, size_t start_idx, cuttlefish::logger_t output);
 
     // Returns a Boolean denoting whether a k-mer with state `state` traversed in
@@ -188,8 +188,8 @@ private:
     // to the stream `output`, that are present at its contiguous subsequence starting
     // from the index `start_idx`, going up-to either the ending of the maximal unitig
     // containing the index `right_end`, or up-to the first encountered placeholder
-    // nucleotide 'N'. Also, returns the non-inclusive point of termination of the
-    // processed subsequence, i.e. the index following the end of it.
+    // base. Also, returns the non-inclusive point of termination of the processed
+    // subsequence, i.e. the index following the end of it.
     size_t output_maximal_unitigs_gfa(uint16_t thread_id, const char* seq, size_t seq_len, size_t right_end, size_t start_idx, cuttlefish::logger_t output);
 
     // Outputs the unitig at the k-mer range between the annotated k-mers `start_kmer` and

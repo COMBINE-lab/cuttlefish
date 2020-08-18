@@ -22,8 +22,8 @@ class Vertex
 private:
 
     cuttlefish::Vertex_Class vertex_class_;
-    cuttlefish::nucleotide_t enter_;
-    cuttlefish::nucleotide_t exit_;
+    cuttlefish::base_t enter_;
+    cuttlefish::base_t exit_;
     bool visited_;
     bool outputted_;
 
@@ -35,10 +35,10 @@ public:
     {}
 
     // Constructs a vertex of class `single_in_single_out`.
-    Vertex(cuttlefish::Vertex_Class vertex_class, cuttlefish::nucleotide_t enter, cuttlefish::nucleotide_t exit);
+    Vertex(cuttlefish::Vertex_Class vertex_class, cuttlefish::base_t enter, cuttlefish::base_t exit);
 
     // Constructs a vertex of class either `multi_in_single_out` or `single_in_multi_out`.
-    Vertex(cuttlefish::Vertex_Class vertex_class, cuttlefish::nucleotide_t nucl);
+    Vertex(cuttlefish::Vertex_Class vertex_class, cuttlefish::base_t base);
 
     // Constructs a vertex of class `vertex_class`, with the provided outputted status.
     Vertex(cuttlefish::Vertex_Class vertex_class, bool outputted = false);
@@ -46,11 +46,11 @@ public:
     // Returns the vertex class.
     cuttlefish::Vertex_Class vertex_class() const;
 
-    // Returns the entering nucleotide.
-    cuttlefish::nucleotide_t enter() const;
+    // Returns the entering base.
+    cuttlefish::base_t enter() const;
 
-    // Returns the exitting nucleotide.
-    cuttlefish::nucleotide_t exit() const;
+    // Returns the exitting base.
+    cuttlefish::base_t exit() const;
 
     // Returns the outputted status.
     bool outputted() const;
@@ -67,13 +67,13 @@ inline cuttlefish::Vertex_Class Vertex::vertex_class() const
 }
 
 
-inline cuttlefish::nucleotide_t Vertex::enter() const
+inline cuttlefish::base_t Vertex::enter() const
 {
     return enter_;
 }
 
 
-inline cuttlefish::nucleotide_t Vertex::exit() const
+inline cuttlefish::base_t Vertex::exit() const
 {
     return exit_;
 }

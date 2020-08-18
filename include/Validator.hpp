@@ -7,6 +7,7 @@
 #include "globals.hpp"
 #include "Kmer_Hasher.hpp"
 #include "Validation_Params.hpp"
+#include "BBHash/BooPHF.h"
 
 
 template <uint16_t k>
@@ -62,8 +63,8 @@ private:
     // spelled out by the unitigs at `U`. Returns `true` iff the spelling is successful.
     void walk_sequence(const char* seq, size_t seq_len, bool& result) const;
 
-    // Returns the index of the first valid k-mer, i.e. the first k-mer without the placeholder
-    // nucleotide 'N', of the sequence `seq` (of length `seq_len`), searching onwards from the
+    // Returns the index of the first valid k-mer, i.e. the first k-mer without a placeholder
+    // base, of the sequence `seq` (of length `seq_len`), searching onwards from the
     // index `start_idx`. If no such k-mer is found, returns `seq_len`.
     size_t search_valid_kmer(const char* seq, size_t seq_len, size_t start_idx) const;
 

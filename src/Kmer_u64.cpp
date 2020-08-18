@@ -42,19 +42,19 @@ std::string Kmer_u64::string_label() const
     {
         switch(kmer & 0b11)
         {
-        case DNA_Base::A:
+        case DNA::A:
             label[idx] = 'A';
             break;
 
-        case DNA_Base::C:
+        case DNA::C:
             label[idx] = 'C';
             break;
 
-        case DNA_Base::G:
+        case DNA::G:
             label[idx] = 'G';
             break;
 
-        case DNA_Base::T:
+        case DNA::T:
             label[idx] = 'T';
             break;
 

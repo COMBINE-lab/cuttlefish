@@ -18,13 +18,13 @@ Vertex::Vertex(const cuttlefish::Vertex_Class vertex_class, const cuttlefish::ba
 
     if(vertex_class == cuttlefish::Vertex_Class::multi_in_single_out)
     {
-        enter_ = DNA_Base::N;
+        enter_ = DNA::N;
         exit_ = base;
     }
     else
     {
         enter_ = base;
-        exit_ = DNA_Base::N;
+        exit_ = DNA::N;
     }
 }
 
@@ -32,8 +32,8 @@ Vertex::Vertex(const cuttlefish::Vertex_Class vertex_class, const cuttlefish::ba
 Vertex::Vertex(const cuttlefish::Vertex_Class vertex_class, const bool outputted):
     vertex_class_(vertex_class), visited_(true), outputted_(outputted)
 {
-    enter_ = DNA_Base::N;
-    exit_ = DNA_Base::N;
+    enter_ = DNA::N;
+    exit_ = DNA::N;
 }
 
 

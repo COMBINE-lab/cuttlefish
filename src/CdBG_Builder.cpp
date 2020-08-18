@@ -202,7 +202,7 @@ bool CdBG<k>::process_leftmost_kmer(const Kmer<k>& kmer_hat, const cuttlefish::d
 
 
     const State old_state = state;
-    const DNA_Base next_base = Kmer<k>::map_base(next_char);
+    const cuttlefish::base_t next_base = Kmer<k>::map_base(next_char);
 
     
     // The k-mer forms a self-loop with the next k-mer.
@@ -301,7 +301,7 @@ bool CdBG<k>::process_rightmost_kmer(const Kmer<k>& kmer_hat, const cuttlefish::
 
 
     const State old_state = state;
-    const DNA_Base prev_base = Kmer<k>::map_base(prev_char);
+    const cuttlefish::base_t prev_base = Kmer<k>::map_base(prev_char);
 
 
     if(dir == cuttlefish::FWD)
@@ -397,8 +397,8 @@ bool CdBG<k>::process_internal_kmer(const Kmer<k>& kmer_hat, const cuttlefish::d
 
     
     const State old_state = state;
-    const DNA_Base prev_base = Kmer<k>::map_base(prev_char);
-    const DNA_Base next_base = Kmer<k>::map_base(next_char);
+    const cuttlefish::base_t prev_base = Kmer<k>::map_base(prev_char);
+    const cuttlefish::base_t next_base = Kmer<k>::map_base(next_char);
 
 
     // The k-mer forms a self-loop with the next k-mer.

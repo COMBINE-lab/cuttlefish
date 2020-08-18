@@ -1,18 +1,24 @@
 
-#ifndef DNA_BASE_UTILITY_HPP
-#define DNA_BASE_UTILITY_HPP
+#ifndef DNA_UTILITY_HPP
+#define DNA_UTILITY_HPP
 
 
 
-#include "DNA_Base.hpp"
+#include "DNA.hpp"
 
 
-class DNA_Base_Utility
+class DNA_Utility
 {
 private:
 
-    // Mapped `DNA_Base` for the ASCII characters in the range [0, 127].
-    static constexpr DNA_Base MAPPED_BASE[128] =
+    static constexpr DNA::Base A = DNA::A;
+    static constexpr DNA::Base C = DNA::C;
+    static constexpr DNA::Base G = DNA::G;
+    static constexpr DNA::Base T = DNA::T;
+    static constexpr DNA::Base N = DNA::N;
+
+    // Mapped `DNA::Base` for the ASCII characters in the range [0, 127].
+    static constexpr DNA::Base MAPPED_BASE[128] =
     {
         N, N, N, N, N, N, N, N, N, N,   // 0 - 9
         N, N, N, N, N, N, N, N, N, N,   // 10 - 19
@@ -29,8 +35,8 @@ private:
         N, N, N, N, N, N, N, N          // 120 - 127
     };
 
-    // Mapped complement `DNA_Base` for the ASCII characters in the range [0, 127].
-    static constexpr DNA_Base COMPLEMENTED_BASE[5] =
+    // Mapped complement `DNA::Base` for the ASCII characters in the range [0, 127].
+    static constexpr DNA::Base COMPLEMENTED_BASE[5] =
     {
         T, G, C, A, N
     };
@@ -57,13 +63,13 @@ private:
 public:
 
     // Returns the mapping integer value of the given character `base`.
-    static DNA_Base map_base(const char base)
+    static DNA::Base map_base(const char base)
     {
         return MAPPED_BASE[uint8_t(base)];
     }
 
     // Returns the mapping integer value of the complement of `base`.
-    static DNA_Base complement(const DNA_Base base)
+    static DNA::Base complement(const DNA::Base base)
     {
         return COMPLEMENTED_BASE[base];
     }

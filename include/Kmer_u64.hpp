@@ -4,7 +4,7 @@
 
 
 
-#include "DNA_Base_Utility.hpp"
+#include "DNA_Utility.hpp"
 #include "kmc_api/kmc_file.h"
 
 #include <string>
@@ -14,7 +14,7 @@
 class Kmer_Hasher;
 
 
-class Kmer_u64: public DNA_Base_Utility
+class Kmer_u64: public DNA_Utility
 {
     friend class Kmer_Hasher;
 
@@ -108,7 +108,7 @@ inline Kmer_u64::Kmer_u64(const char* const label, const size_t kmer_idx):
 {
     for(size_t idx = kmer_idx; idx < kmer_idx + k; ++idx)
     {
-        const DNA_Base base = map_base(label[idx]);
+        const DNA::Base base = map_base(label[idx]);
         kmer = (kmer << 2) | base;
     }
 }
@@ -131,7 +131,7 @@ inline Kmer_u64 Kmer_u64::reverse_complement() const
 
     for(uint16_t idx = 0; idx < k; ++idx)
     {
-        rev_comp.kmer = ((rev_comp.kmer << 2) | complement(DNA_Base(kmer_val & 0b11)));
+        rev_comp.kmer = ((rev_comp.kmer << 2) | complement(DNA::Base(kmer_val & 0b11)));
 
         kmer_val >>= 2;
     }
@@ -173,7 +173,7 @@ inline bool Kmer_u64::in_forward(const Kmer_u64& kmer_hat) const
 
 inline void Kmer_u64::roll_to_next_kmer(const char next_base, Kmer_u64& rev_compl)
 {
-    const DNA_Base mapped_base = map_base(next_base);
+    const DNA::Base mapped_base = map_base(next_base);
 
     kmer = ((kmer & bitmask_MSN) << 2) | mapped_base;
     rev_compl.kmer = (rev_compl.kmer >> 2) | (uint64_t(complement(mapped_base)) << (2 * (k - 1)));

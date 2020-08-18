@@ -4,7 +4,7 @@
 
 
 
-#include "DNA_Base_Utility.hpp"
+#include "DNA_Utility.hpp"
 #include "smhasher/MurmurHash3.h"
 #include "kmc_api/kmc_file.h"
 
@@ -13,7 +13,7 @@
 
 
 template <uint16_t k>
-class Kmer: public DNA_Base_Utility
+class Kmer: public DNA_Utility
 {
 private:
 
@@ -165,7 +165,7 @@ inline Kmer<k>::Kmer(const char* const label, const size_t kmer_idx):
 {
     for(size_t idx = kmer_idx; idx < kmer_idx + k; ++idx)
     {
-        const DNA_Base base = map_base(label[idx]);
+        const DNA::Base base = map_base(label[idx]);
 
         left_shift();
         kmer_data[0] |= base;
@@ -246,7 +246,7 @@ inline Kmer<k> Kmer<k>::reverse_complement() const
     for(uint16_t idx = 0; idx < k; ++idx)
     {
         rev_compl.left_shift();
-        rev_compl.kmer_data[0] |= complement(DNA_Base(kmer.kmer_data[0] & mask_LSN));
+        rev_compl.kmer_data[0] |= complement(DNA::Base(kmer.kmer_data[0] & mask_LSN));
 
         kmer.right_shift();
     }
@@ -288,7 +288,7 @@ inline bool Kmer<k>::in_forward(const Kmer<k>& kmer_hat) const
 template <uint16_t k>
 inline void Kmer<k>::roll_to_next_kmer(const char next_base, Kmer<k>& rev_compl)
 {
-    const DNA_Base mapped_base = map_base(next_base);
+    const DNA::Base mapped_base = map_base(next_base);
 
     kmer_data[NUM_INTS - 1] &= CLEAR_MSN_MASK;
     left_shift();
@@ -323,19 +323,19 @@ inline std::string Kmer<k>::string_label() const
     {
         switch(kmer.kmer_data[0] & 0b11)
         {
-        case DNA_Base::A:
+        case DNA::A:
             label[idx] = 'A';
             break;
         
-        case DNA_Base::C:
+        case DNA::C:
             label[idx] = 'C';
             break;
 
-        case DNA_Base::G:
+        case DNA::G:
             label[idx] = 'G';
             break;
 
-        case DNA_Base::T:
+        case DNA::T:
             label[idx] = 'T';
             break;
 

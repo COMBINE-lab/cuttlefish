@@ -165,7 +165,7 @@ inline Kmer<k>::Kmer(const char* const label, const size_t kmer_idx):
 {
     for(size_t idx = kmer_idx; idx < kmer_idx + k; ++idx)
     {
-        const uint8_t base = map_base(label[idx]);
+        const DNA_Base base = map_base(label[idx]);
 
         left_shift();
         kmer_data[0] |= base;

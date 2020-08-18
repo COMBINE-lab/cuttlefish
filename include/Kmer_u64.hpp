@@ -108,7 +108,7 @@ inline Kmer_u64::Kmer_u64(const char* const label, const size_t kmer_idx):
 {
     for(size_t idx = kmer_idx; idx < kmer_idx + k; ++idx)
     {
-        const uint8_t base = map_base(label[idx]);
+        const DNA_Base base = map_base(label[idx]);
         kmer = (kmer << 2) | base;
     }
 }

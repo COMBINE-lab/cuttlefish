@@ -4,7 +4,7 @@
 
 
 
-#include "Kmer_Utility.hpp"
+#include "DNA_Base_Utility.hpp"
 #include "kmc_api/kmc_file.h"
 
 #include <string>
@@ -14,7 +14,7 @@
 class Kmer_Hasher;
 
 
-class Kmer_u64: public Kmer_Utility
+class Kmer_u64: public DNA_Base_Utility
 {
     friend class Kmer_Hasher;
 
@@ -22,7 +22,7 @@ private:
 
     static uint16_t k;  // The k-parameter.
     uint64_t kmer = 0;  // The 64-bit encoding of the underlying k-mer.
-    static uint64_t bitmask_MSN;    // Bitmask used to clear the most significant nucleotide character, i.e. the first nucleotide of the k-mer which is at the bits `2k-1 : 2k-2`.
+    static uint64_t bitmask_MSN;    // Bitmask used to clear the most significant DNA base character, i.e. the first base of the k-mer which is at the bits `2k-1 : 2k-2`.
 
 
     // Returns the 64-bit encoding of the k-mer.
@@ -71,11 +71,11 @@ public:
     // the other k-mer `kmer_hat`.
     bool in_forward(const Kmer_u64& kmer_hat) const;
 
-    // Transforms this k-mer by chopping off the first nucleotide and
-    // appending the next nucleotide `next_nucl` to the end, i.e.
-    // rolls the k-mer by one nucleotide. Also sets the passed reverse
+    // Transforms this k-mer by chopping off the first base and
+    // appending the next base `next_base` to the end, i.e.
+    // rolls the k-mer by one base. Also sets the passed reverse
     // complement `rev_compl` of the k-mer accordingly.
-    void roll_to_next_kmer(char next_nucl, Kmer_u64& rev_compl);
+    void roll_to_next_kmer(char next_base, Kmer_u64& rev_compl);
 
     // Returns the canonical version of the k-mer, comparing it to its
     // reverse complement `rev_compl`.
@@ -108,26 +108,14 @@ inline Kmer_u64::Kmer_u64(const char* const label, const size_t kmer_idx):
 {
     for(size_t idx = kmer_idx; idx < kmer_idx + k; ++idx)
     {
-        const uint8_t nucleotide = map_nucleotide(label[idx]);
-        kmer = (kmer << 2) | nucleotide;
+        const uint8_t base = map_base(label[idx]);
+        kmer = (kmer << 2) | base;
     }
 }
 
 
 inline Kmer_u64::Kmer_u64(const CKmerAPI& kmer_api)
 {
-    /*
-    kmer = 0;
-
-    for(uint16_t idx = 0; idx < k; ++idx)
-    {
-        // uint8_t nucleotide = map_nucleotide(kmer_api.get_asci_symbol(idx));
-        uint8_t nucleotide = kmer_api.get_num_symbol(idx);  // Works as long as our nucleotide-to-integer mapping is the same as KMC.
-
-        kmer = (kmer << 2) | nucleotide;
-    }
-    */
-
    from_CKmerAPI(kmer_api);
 }
 
@@ -143,7 +131,7 @@ inline Kmer_u64 Kmer_u64::reverse_complement() const
 
     for(uint16_t idx = 0; idx < k; ++idx)
     {
-        rev_comp.kmer = ((rev_comp.kmer << 2) | complement_nucleotide(DNA_Base(kmer_val & 0b11)));
+        rev_comp.kmer = ((rev_comp.kmer << 2) | complement(DNA_Base(kmer_val & 0b11)));
 
         kmer_val >>= 2;
     }
@@ -183,12 +171,12 @@ inline bool Kmer_u64::in_forward(const Kmer_u64& kmer_hat) const
 }
 
 
-inline void Kmer_u64::roll_to_next_kmer(const char next_nucl, Kmer_u64& rev_compl)
+inline void Kmer_u64::roll_to_next_kmer(const char next_base, Kmer_u64& rev_compl)
 {
-    const DNA_Base mapped_nucl = map_nucleotide(next_nucl);
+    const DNA_Base mapped_base = map_base(next_base);
 
-    kmer = ((kmer & bitmask_MSN) << 2) | mapped_nucl;
-    rev_compl.kmer = (rev_compl.kmer >> 2) | (uint64_t(complement_nucleotide(mapped_nucl)) << (2 * (k - 1)));
+    kmer = ((kmer & bitmask_MSN) << 2) | mapped_base;
+    rev_compl.kmer = (rev_compl.kmer >> 2) | (uint64_t(complement(mapped_base)) << (2 * (k - 1)));
 }
 
 

@@ -6,6 +6,7 @@ set(PROJECT_SRC
         kmc_api/mmer.cpp
         smhasher/MurmurHash3.cpp
         Parser.cpp
+        DNA_Base_Utility.cpp
         Kmer_u64.cpp
         Vertex.cpp
         State.cpp

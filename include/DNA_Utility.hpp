@@ -59,6 +59,24 @@ private:
         'N', 'N', 'N', 'N', 'N', 'N', 'N', 'N'              // 120 - 127
     };
 
+    // Booleans denoting a ASCII character is to be considered a placeholder base or not.
+    static constexpr bool IS_PLACEHOLDER[128] =
+    {
+        1, 1, 1, 1, 1, 1, 1, 1, 1, 1,       // 0 - 9
+        1, 1, 1, 1, 1, 1, 1, 1, 1, 1,       // 10 - 19
+        1, 1, 1, 1, 1, 1, 1, 1, 1, 1,       // 20 - 29
+        1, 1, 1, 1, 1, 1, 1, 1, 1, 1,       // 30 - 39
+        1, 1, 1, 1, 1, 1, 1, 1, 1, 1,       // 40 - 49
+        1, 1, 1, 1, 1, 1, 1, 1, 1, 1,       // 50 - 59
+        1, 1, 1, 1, 1, 0, 1, 0, 1, 1,       // 60 - 69
+        1, 0, 1, 1, 1, 1, 1, 1, 1, 1,       // 70 - 79
+        1, 1, 1, 1, 0, 1, 1, 1, 1, 1,       // 80 - 89
+        1, 1, 1, 1, 1, 1, 1, 0, 1, 0,       // 90 - 99
+        1, 1, 1, 0, 1, 1, 1, 1, 1, 1,       // 100 - 109
+        1, 1, 1, 1, 1, 1, 0, 1, 1, 1,       // 110 - 119
+        1, 1, 1, 1, 1, 1, 1, 1              // 120 - 127
+    };
+
 
 public:
 
@@ -83,7 +101,7 @@ public:
     // Returns `true` iff the character `base` is a placeholder character.
     static bool is_placeholder(const char base)
     {
-        return base == 'N' || base == 'n';
+        return IS_PLACEHOLDER[uint8_t(base)];
     }
 
     // Returns the upper-case equivalent of the character `base`.

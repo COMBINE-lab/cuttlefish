@@ -4,15 +4,19 @@
 
 
 
+#include "Reference_Input.hpp"
+#include "Output_Format.hpp"
+
 #include <string>
+#include <vector>
+#include <thread>
 
 
 class Build_Params
 {
 private:
 
-    const std::string input_file_path_;   // Path to the file containing the reference or list of references.
-    const bool is_list_;    // Whether the input file corresponds to list of multiple references, or is a reference by itself.
+    const Reference_Input reference_input_; // Collection of the input references.
     const uint16_t k_;   // The k parameter for the edge-centric de Bruijn graph to be compacted.
     const std::string kmc_db_path_; // Path to the KMC database containing the k-mer set.
     const uint16_t thread_count_;    // Number of threads to work with.
@@ -25,8 +29,9 @@ private:
 public:
 
     // Constructs a parameters wrapper object with the self-explanatory parameters.
-    Build_Params(   const std::string& input_file_path,
-                    const bool is_list,
+    Build_Params(   const std::vector<std::string>& ref_paths,
+                    const std::vector<std::string>& list_paths,
+                    const std::vector<std::string>& dir_paths,
                     uint16_t k,
                     const std::string& kmc_db_path,
                     uint16_t thread_count,
@@ -34,8 +39,7 @@ public:
                     uint8_t output_format,
                     const std::string& working_dir_path,
                     const std::string& mph_file_path):
-        input_file_path_(input_file_path),
-        is_list_(is_list),
+        reference_input_(ref_paths, list_paths, dir_paths),
         k_(k),
         kmc_db_path_(kmc_db_path),
         thread_count_(thread_count),
@@ -46,17 +50,10 @@ public:
     {}
 
 
-    // Returns the path to the reference file.
-    const std::string& input_file_path() const
+    // Returns the reference input collections.
+    const Reference_Input& reference_input() const
     {
-        return input_file_path_;
-    }
-
-
-    // Returns whether the input file corresponds to list of multiple references, or is a reference by itself.
-    bool is_list() const
-    {
-        return is_list_;
+        return reference_input_;
     }
 
 
@@ -107,7 +104,43 @@ public:
     {
         return mph_file_path_;
     }
+
+
+    // Returns `true` iff the parameters selections are valid.
+    bool is_valid() const;
 };
+
+
+inline bool Build_Params::is_valid() const
+{
+    // Even `k` values are not consistent with the theory.
+    // Also, `k` needs to be in the range `[1, MAX_K]`.
+    if((k_ & 1) == 0 || (k_ > cuttlefish::MAX_K))
+    {
+        std::cout << "The k-mer length (k) needs to be odd and within " << cuttlefish::MAX_K << ".\n";
+        return false;
+    }
+
+
+    // Discard unsupported thread counts.
+    const auto num_threads = std::thread::hardware_concurrency();
+    if(num_threads > 0 && thread_count_ > num_threads)
+    {
+        std::cout << "At most " << num_threads << " concurrent threads are supported at the machine.\n";
+        return false;
+    }
+
+
+    // Discard invalid output formats.
+    if(output_format_ >= cuttlefish::num_op_formats)
+    {
+        std::cout << "Invalid output file format.\n";
+        return false;
+    }
+
+
+    return true;
+}
 
 
 

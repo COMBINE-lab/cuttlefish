@@ -7,6 +7,8 @@
 #include "cxxopts/cxxopts.hpp"
 #include "spdlog/sinks/stdout_color_sinks.h"
 
+#include <string>
+#include <vector>
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
@@ -20,10 +22,11 @@ void build(int argc, char** argv)
 {
     cxxopts::Options options("cuttlefish build", "Efficiently construct the compacted de Bruijn graph from references");
     options.add_options()
-        ("r,ref", "reference (in FASTA) file path", cxxopts::value<std::string>())
-        ("l,is_list", "whether the input file is a list of references (default: no)", cxxopts::value<bool>()->default_value("false"))
+        ("r,refs", "reference files", cxxopts::value<std::vector<std::string>>()->default_value(""))
+        ("l,lists", "reference file lists", cxxopts::value<std::vector<std::string>>()->default_value(""))
+        ("d,dirs", "reference file directories", cxxopts::value<std::vector<std::string>>()->default_value(""))
         ("k,kmer_len", "k-mer length", cxxopts::value<uint16_t>())
-        ("d,kmc_db", "KMC database prefix", cxxopts::value<std::string>())
+        ("s,kmc_db", "set of k-mers (KMC database) prefix", cxxopts::value<std::string>())
         ("t,threads", "number of threads to use", cxxopts::value<uint16_t>()->default_value("1"))
         ("o,output", "output file", cxxopts::value<std::string>())
         ("f,format", "output format (0: txt, 1: GFAv1, 2: GFAv2)", cxxopts::value<uint16_t>()->default_value("0"))
@@ -40,32 +43,27 @@ void build(int argc, char** argv)
             return;
         }
 
-        auto ref = result["ref"].as<std::string>();
-        auto is_list = result["is_list"].as<bool>();
-        auto k = result["kmer_len"].as<uint16_t>();
-        auto kmer_database = result["kmc_db"].as<std::string>();
-        auto thread_count = result["threads"].as<uint16_t>();
-        auto output_file = result["output"].as<std::string>();
-        auto format = result["format"].as<uint16_t>();
-        auto working_dir = result["work_dir"].as<std::string>();
-        auto bbhash_file = result["bbhash"].as<std::string>();
+        const auto refs = result["refs"].as<std::vector<std::string>>();
+        const auto lists = result["lists"].as<std::vector<std::string>>();
+        const auto dirs = result["dirs"].as<std::vector<std::string>>();
+        const auto k = result["kmer_len"].as<uint16_t>();
+        const auto kmer_database = result["kmc_db"].as<std::string>();
+        const auto thread_count = result["threads"].as<uint16_t>();
+        const auto output_file = result["output"].as<std::string>();
+        const auto format = result["format"].as<uint16_t>();
+        const auto working_dir = result["work_dir"].as<std::string>();
+        const auto bbhash_file = result["bbhash"].as<std::string>();
 
-        if((k & 1) == 0)  // Discard even `k`.
+        const Build_Params params(refs, lists, dirs, k, kmer_database, thread_count, output_file, format, working_dir, bbhash_file);
+        if(!params.is_valid())
         {
-            std::cout << "The k-mer length (k) needs to be odd." << std::endl;
-            return;
+            std::cerr << "Invalid input configuration. Aborting.\n";
+            std::exit(EXIT_FAILURE);
         }
-
-        if(format > 2)  // Discard invalid output formats.
-        {
-            std::cout << "Invalid output file format." << std::endl;
-            return;
-        }
-
         
-        std::cout << "Constructing compacted de Bruijn graph for the reference at " << ref << ", with k = " << k << "\n";
+        // std::cout << "Constructing compacted de Bruijn graph for the reference at " << refs << ", with k = " << k << "\n";
+        std::cout << "Constructing the compacted de Bruijn graph for k = " << k << "\n";
 
-        const Build_Params params(ref, is_list, k, kmer_database, thread_count, output_file, format, working_dir, bbhash_file);
         const Application<cuttlefish::MAX_K> app(params);
         app.execute();
 
@@ -85,10 +83,11 @@ void validate(int argc, char** argv)
 {
     cxxopts::Options options("cuttlefish validate", "Validate a compacted de Bruijn graph constructed by cuttlefish");
     options.add_options()
-        ("r,ref", "reference (in FASTA) file path", cxxopts::value<std::string>())
-        ("l,is_list", "whether the input file is a list of references (default: no)", cxxopts::value<bool>()->default_value("false"))
+        ("r,refs", "reference files", cxxopts::value<std::vector<std::string>>()->default_value(""))
+        ("l,lists", "reference file lists", cxxopts::value<std::vector<std::string>>()->default_value(""))
+        ("d,dirs", "reference file directories", cxxopts::value<std::vector<std::string>>()->default_value(""))
         ("k,kmer_len", "k-mer length", cxxopts::value<uint16_t>())
-        ("d,kmc_db", "KMC database prefix", cxxopts::value<std::string>())
+        ("s,kmc_db", "set of k-mers (KMC database) prefix", cxxopts::value<std::string>())
         ("g,cdbg", "compacted de Bruijn graph file", cxxopts::value<std::string>())
         ("t,threads", "number of threads to use", cxxopts::value<uint16_t>()->default_value("1"))
         ("b,bbhash", "BBHash file (optional)", cxxopts::value<std::string>()->default_value(""))
@@ -103,16 +102,25 @@ void validate(int argc, char** argv)
             return;
         }
 
-        auto ref = result["ref"].as<std::string>();
-        auto is_list = result["is_list"].as<bool>();
-        auto k = result["kmer_len"].as<uint16_t>();
-        auto kmer_database = result["kmc_db"].as<std::string>();
-        auto cdbg = result["cdbg"].as<std::string>();
-        auto thread_count = result["threads"].as<uint16_t>();
-        auto bbhash_file = result["bbhash"].as<std::string>();
+        const auto refs = result["refs"].as<std::vector<std::string>>();
+        const auto lists = result["lists"].as<std::vector<std::string>>();
+        const auto dirs = result["dirs"].as<std::vector<std::string>>();
+        const auto k = result["kmer_len"].as<uint16_t>();
+        const auto kmer_database = result["kmc_db"].as<std::string>();
+        const auto cdbg = result["cdbg"].as<std::string>();
+        const auto thread_count = result["threads"].as<uint16_t>();
+        const auto bbhash_file = result["bbhash"].as<std::string>();
 
 
-        const Validation_Params params(ref, is_list, k, kmer_database, cdbg, thread_count, bbhash_file);
+        const Validation_Params params(refs, lists, dirs, k, kmer_database, cdbg, thread_count, bbhash_file);
+        if(!params.is_valid())
+        {
+            std::cerr << "Invalid input configuration. Aborting.\n";
+            std::exit(EXIT_FAILURE);
+        }
+
+        std::cout << "Validating the compacted de Bruijn graph for k = " << k << "\n";
+
         const Application<cuttlefish::MAX_K> app(params);
         std::cout << "Validation " << (app.validate() ? "successful" : "failed") << std::endl;
     }

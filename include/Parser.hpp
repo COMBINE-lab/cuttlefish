@@ -4,6 +4,8 @@
 
 
 
+#include "Reference_Input.hpp"
+
 #include <string>
 #include <queue>
 #include "zlib.h"
@@ -19,9 +21,12 @@ class Parser
 
 private:
 
-    std::queue<std::string> ref_file_paths;    // Collection of the reference file paths.
+    std::queue<std::string> ref_paths;  // Collection of the reference file paths.
     gzFile file_ptr;  // Pointer to the reference file being parsed.
     kseq_t* parser;   // The kseq parser for the reference file being parsed.
+
+    std::string curr_ref_path;  // Path to the reference currently being parsed.
+    uint64_t ref_count = 0; // Number of the reference currently being parsed.
 
 
     // Opens the reference at path `reference_path`.
@@ -33,9 +38,11 @@ private:
 
 public:
 
-    // Constructs a parser for the file at path `file_path`. Iff `is_list`
-    // is `true`, then the file is treated as a collection of reference paths.
-    Parser(const std::string& file_path, const bool is_list);
+    // Constructs a parser for the reference input collection present at `ref_input`.
+    Parser(const Reference_Input& ref_input);
+
+    // Returns the path to the reference currently being parsed.
+    const std::string& curr_ref() const;
 
     // If sequences are remaining to be read, reads the next one
     // into memory and returns `true`. Returns `false` otherwise.

@@ -1,5 +1,6 @@
 
 #include "CdBG.hpp"
+#include "Output_Format.hpp"
 #include "utility.hpp"
 
 #include <chrono>
@@ -38,14 +39,14 @@ void CdBG<k>::reset_path_streams()
     const uint16_t thread_count = params.thread_count();
 
     path_output.clear();
-    if(gfa_v == 1)
+    if(gfa_v == cuttlefish::gfa1)
         overlap_output.clear();
 
     for(uint16_t t_id = 0; t_id < thread_count; ++t_id)
     {
         path_output.emplace_back((PATH_OUTPUT_PREFIX + std::to_string(t_id)).c_str(), std::ofstream::out);
 
-        if(gfa_v == 1)
+        if(gfa_v == cuttlefish::gfa1)
             overlap_output.emplace_back((OVERLAP_OUTPUT_PREFIX + std::to_string(t_id)).c_str(), std::ofstream::out);
     }
 }
@@ -230,9 +231,9 @@ void CdBG<k>::write_gfa_header(std::ofstream& output) const
     const uint8_t gfa_v = params.output_format();
 
     // The GFA header record.
-    if(gfa_v == 1)
+    if(gfa_v == cuttlefish::gfa1)
         output << GFA1_HEADER;
-    else    // `gfa_v == 2`
+    else    // `gfa_v == cuttlefish::gfa2`
         output << GFA2_HEADER;
 
     // End the header line.
@@ -255,7 +256,7 @@ void CdBG<k>::write_gfa_segment(const uint16_t thread_id, const char* const seq,
     buffer << "\t" << segment_name;
 
     // The 'SegmentLength' field (required for GFA2).
-    if(gfa_v == 2)
+    if(gfa_v == cuttlefish::gfa2)
         buffer << "\t" << segment_len;
     
     // The segment field.
@@ -269,7 +270,7 @@ void CdBG<k>::write_gfa_segment(const uint16_t thread_id, const char* const seq,
 
 
     // Write some optional fields that are trivially inferrable here.
-    if(gfa_v == 1)  // No need of the length tag for GFA2 here.
+    if(gfa_v == cuttlefish::gfa1)  // No need of the length tag for GFA2 here.
         buffer << "\tLN:i:" << segment_len; // The segment length.
 
     buffer << "\tKC:i:" << (end_kmer_idx - start_kmer_idx + 1); // The k-mer count.
@@ -289,7 +290,7 @@ void CdBG<k>::write_gfa_connection(const uint16_t thread_id, const Oriented_Unit
 {
     const uint8_t gfa_v = params.output_format();
 
-    if(gfa_v == 1)
+    if(gfa_v == cuttlefish::gfa1)
         write_gfa_link(thread_id, left_unitig, right_unitig, output);
     else    // GFA2
         if(right_unitig.start_kmer_idx == left_unitig.end_kmer_idx + 1)
@@ -704,7 +705,7 @@ void CdBG<k>::remove_temp_files() const
         const std::string path_file_name = PATH_OUTPUT_PREFIX + std::to_string(t_id);
         const std::string overlap_file_name = OVERLAP_OUTPUT_PREFIX + std::to_string(t_id);
 
-        if(remove(path_file_name.c_str()) != 0 || (gfa_v == 1 && remove(overlap_file_name.c_str()) != 0))
+        if(remove(path_file_name.c_str()) != 0 || (gfa_v == cuttlefish::gfa1 && remove(overlap_file_name.c_str()) != 0))
         {
             std::cerr << "Error deleting temporary files. Aborting\n";
             std::exit(EXIT_FAILURE);

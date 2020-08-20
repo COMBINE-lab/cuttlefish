@@ -1,6 +1,7 @@
 
 #include "CdBG.hpp"
 #include "Parser.hpp"
+#include "Output_Format.hpp"
 #include "spdlog/spdlog.h"
 #include "spdlog/async.h"
 #include "spdlog/sinks/basic_file_sink.h"
@@ -11,8 +12,7 @@ void CdBG<k>::output_maximal_unitigs()
 {
     const uint8_t output_format = params.output_format();
 
-    // TODO: enum.
-    if(output_format == 0)
+    if(output_format == cuttlefish::txt)
         output_maximal_unitigs_plain();
     else
         output_maximal_unitigs_gfa();
@@ -25,13 +25,11 @@ void CdBG<k>::output_maximal_unitigs_plain()
     std::chrono::high_resolution_clock::time_point t_start = std::chrono::high_resolution_clock::now();
 
     
-    const std::string& ref_file_path = params.input_file_path();
-    const bool is_list = params.is_list();
     const uint16_t thread_count = params.thread_count();
     const std::string& output_file_path = params.output_file_path();
 
     // Open a parser for the FASTA / FASTQ file containing the reference.
-    Parser parser(ref_file_path, is_list);
+    Parser parser(params.reference_input());
 
 
     // Clear the output file.
@@ -136,14 +134,12 @@ void CdBG<k>::output_maximal_unitigs_gfa()
     std::chrono::high_resolution_clock::time_point t_start = std::chrono::high_resolution_clock::now();
 
 
-    const std::string& ref_file_path = params.input_file_path();
-    const bool is_list = params.is_list();
     const uint16_t thread_count = params.thread_count();
     const std::string& output_file_path = params.output_file_path();
     const std::string& working_dir_path = params.working_dir_path();
 
     // Open a parser for the FASTA / FASTQ file containing the reference.
-    Parser parser(ref_file_path, is_list);
+    Parser parser(params.reference_input());
 
 
     // Clear the output file and write the GFA header.

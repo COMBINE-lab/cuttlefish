@@ -1,6 +1,7 @@
 
 #include "Parser.hpp"
 #include "kseq/kseq.h"
+#include "ghc/filesystem.hpp"
 
 #include <fstream>
 #include <iostream>
@@ -11,55 +12,76 @@
 KSEQ_INIT(gzFile, gzread);
 
 
-void Parser::open_reference(const std::string& reference_path)
+Parser::Parser(const Reference_Input& ref_input)
 {
-    file_ptr = gzopen(reference_path.c_str(), "r");  // Open the file handler.
-    if(file_ptr == nullptr)
+    // Collect references from the raw reference paths provided.
+    for(const std::string& ref_path: ref_input.ref_paths())
+        ref_paths.push(ref_path);
+
+
+    // Collect references from the provided reference lists.
+    for(const std::string& list_path: ref_input.list_paths())
     {
-        std::cerr << "Error opening input file " << reference_path << ". Aborting.\n";
-        std::exit(EXIT_FAILURE);
-    }
-
-    parser = kseq_init(file_ptr);   // Initialize the kseq parser.
-}
-
-
-bool Parser::open_next_reference()
-{
-    if(ref_file_paths.empty())
-        return false;
-
-
-    open_reference(ref_file_paths.front());
-    ref_file_paths.pop();
-
-    return true;
-}
-
-
-Parser::Parser(const std::string& file_path, const bool is_list)
-{
-    if(!is_list)
-        ref_file_paths.push(file_path);
-    else
-    {
-        std::ifstream input(file_path.c_str(), std::ifstream::in);
+        std::ifstream input(list_path.c_str(), std::ifstream::in);
         if(input.fail())
         {
-            std::cerr << "Error opening input file " << file_path << ". Aborting.\n";
+            std::cerr << "Error opening reference list file " << list_path << ". Aborting.\n";
             std::exit(EXIT_FAILURE);
         }
 
-
         std::string ref_path;
         while(input >> ref_path)
-            ref_file_paths.push(ref_path);
+            ref_paths.push(ref_path);
 
         input.close();
     }
 
 
+    // Collect references from the provided reference directories.
+    for(const std::string& dir_path: ref_input.dir_paths())
+        for(const auto& entry: ghc::filesystem::directory_iterator(dir_path))
+            ref_paths.push(entry.path());
+
+
+    // Open the first reference for subsequent parsing.
     open_next_reference();
+}
+
+
+void Parser::open_reference(const std::string& reference_path)
+{
+    file_ptr = gzopen(reference_path.c_str(), "r");  // Open the file handler.
+    if(file_ptr == nullptr)
+    {
+        std::cerr << "Error opening reference file " << reference_path << ". Aborting.\n";
+        std::exit(EXIT_FAILURE);
+    }
+
+    parser = kseq_init(file_ptr);   // Initialize the kseq parser.
+
+    curr_ref_path = reference_path;
+    ref_count++;
+
+    std::cout << "Opened reference number " << ref_count << " from " << curr_ref_path << "\n";
+}
+
+
+bool Parser::open_next_reference()
+{
+    if(ref_paths.empty())
+        return false;
+
+
+    open_reference(ref_paths.front());
+    ref_paths.pop();
+
+    return true;
+}
+
+
+const std::string& Parser::curr_ref() const
+{
+    return curr_ref_path;
 }
 
 

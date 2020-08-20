@@ -14,8 +14,6 @@ void Validator<k>::validate_sequence_completion(bool& result)
 {
     console->info("Testing validation of the completeness of coverage of the sequence by the produced unitigs.\n");
 
-    const std::string& ref_file_path = params.input_file_path();
-    const bool is_list = params.is_list();
     const std::string& kmc_db_path = params.kmc_db_path();
     const uint16_t thread_count = params.thread_count();
 
@@ -39,7 +37,7 @@ void Validator<k>::validate_sequence_completion(bool& result)
 
 
     // Open a parser for the FASTA / FASTQ file containing the reference.
-    Parser parser(ref_file_path, is_list);
+    Parser parser(params.reference_input());
 
 
     std::vector<std::thread> th(thread_count);  // Thread-pool (round-robin) to validate the sequences parallelly.

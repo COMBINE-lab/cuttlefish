@@ -16,8 +16,9 @@ void CdBG<k>::classify_vertices()
 
 
     // Open a parser for the FASTA / FASTQ file containing the reference.
-    const std::string& ref_file_path =  params.ref_file_path();
-    Parser parser(ref_file_path);
+    const std::string& input_file_path =  params.input_file_path();
+    const bool is_list = params.is_list();
+    Parser parser(input_file_path, is_list);
 
     // Track the maximum sequence buffer size used.
     size_t max_buf_sz = 0;

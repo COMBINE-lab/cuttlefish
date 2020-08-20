@@ -11,7 +11,8 @@ class Build_Params
 {
 private:
 
-    const std::string ref_file_path_;   // Path to the file containing the reference.
+    const std::string input_file_path_;   // Path to the file containing the reference or list of references.
+    const bool is_list_;    // Whether the input file corresponds to list of multiple references, or is a reference by itself.
     const uint16_t k_;   // The k parameter for the edge-centric de Bruijn graph to be compacted.
     const std::string kmc_db_path_; // Path to the KMC database containing the k-mer set.
     const uint16_t thread_count_;    // Number of threads to work with.
@@ -24,7 +25,8 @@ private:
 public:
 
     // Constructs a parameters wrapper object with the self-explanatory parameters.
-    Build_Params( const std::string& ref_file_path,
+    Build_Params(   const std::string& input_file_path,
+                    const bool is_list,
                     uint16_t k,
                     const std::string& kmc_db_path,
                     uint16_t thread_count,
@@ -32,7 +34,8 @@ public:
                     uint8_t output_format,
                     const std::string& working_dir_path,
                     const std::string& mph_file_path):
-        ref_file_path_(ref_file_path),
+        input_file_path_(input_file_path),
+        is_list_(is_list),
         k_(k),
         kmc_db_path_(kmc_db_path),
         thread_count_(thread_count),
@@ -44,9 +47,16 @@ public:
 
 
     // Returns the path to the reference file.
-    const std::string& ref_file_path() const
+    const std::string& input_file_path() const
     {
-        return ref_file_path_;
+        return input_file_path_;
+    }
+
+
+    // Returns whether the input file corresponds to list of multiple references, or is a reference by itself.
+    bool is_list() const
+    {
+        return is_list_;
     }
 
 

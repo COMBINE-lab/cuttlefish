@@ -15,7 +15,8 @@ void Kmer_Hash_Table<k>::build_mph_function(const Kmer_Container<k>& kmer_contai
     struct stat buffer;
     if(!mph_file_path.empty() && stat(mph_file_path.c_str(), &buffer) == 0)
     {
-        std::cout << "Loading the MPH function from file " << mph_file_path << "\n";
+        std::cout << "Found the MPH function at file " << mph_file_path << "\n";
+        std::cout << "Loading the MPH function.\n";
 
         load_mph_function(mph_file_path);
 
@@ -86,7 +87,8 @@ void Kmer_Hash_Table<k>::construct(const std::string& kmc_db_path, const uint16_
 
     // Open a container over the k-mer database.
     Kmer_Container<k> kmer_container(kmc_db_path);
-    uint64_t kmer_count = kmer_container.size();
+    const uint64_t kmer_count = kmer_container.size();
+    std::cout << "Total number of k-mers in the set (KMC database): " << kmer_count << ".\n";
     
     lock_range_size = uint64_t(std::ceil(double(kmer_count) / lock_count));
 
@@ -94,14 +96,14 @@ void Kmer_Hash_Table<k>::construct(const std::string& kmc_db_path, const uint16_
     // Build the minimal perfect hash function.
     build_mph_function(kmer_container, thread_count, mph_file_path);
     const uint64_t total_bits = mph->totalBitSize();
-    std::cout << "Total MPH size (in MB): " << total_bits / (8 * 1024 * 1024) << "\n";
-    std::cout << "MPH table size in bits / elem: " << (float)(total_bits) / kmer_count << "\n";
+    std::cout << "Total MPH size (in MB): " << total_bits / (8 * 1024 * 1024);
+    std::cout << "; in bits / k-mer: " << (float)(total_bits) / kmer_count << "\n";
 
     // Allocate the hash table buckets.
     hash_table.resize(kmer_count);
     hash_table.clear_mem();
-    std::cout << "Allocated hash table buckets for " << kmer_count << " k-mers. ";
-    std::cout << "Total memory taken (in MB): " << hash_table.bytes() / (1024 * 1024) << "\n";
+    std::cout << "Allocated hash table buckets for the k-mers. Total memory taken (in MB): " <<
+        hash_table.bytes() / (1024 * 1024) << "\n";
 
     uint64_t total_mem = (total_bits / 8) + hash_table.bytes();   // in bytes
     std::cout << "Total memory usage by the hash table: " << total_mem / (1024 * 1024)  << " MB.\n";

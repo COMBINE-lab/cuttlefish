@@ -1028,11 +1028,11 @@ we need this 2-functors scheme because HashFunctors won't work with unordered_ma
 
 			uint64_t totalsize =  totalsizeBitset +  _final_hash.size()*42*8 ;  // unordered map takes approx 42B per elem [personal test] (42B with uint64_t key, would be larger for other type of elem)
 
-			printf("Bitarray    %12" PRId64 "  bits (%.2f %%)   (array + ranks )\n",
-				   totalsizeBitset, 100*(float)totalsizeBitset/totalsize);
-			printf("Last level hash  %12" PRId64 "  bits (%.2f %%) (nb in last level hash %lu)\n",
-				   _final_hash.size()*42*8, 100*(float)(_final_hash.size()*42*8)/totalsize,
-				   _final_hash.size() );
+			// printf("Bitarray    %12" PRId64 "  bits (%.2f %%)   (array + ranks )\n",
+			// 	   totalsizeBitset, 100*(float)totalsizeBitset/totalsize);
+			// printf("Last level hash  %12" PRId64 "  bits (%.2f %%) (nb in last level hash %lu)\n",
+			// 	   _final_hash.size()*42*8, 100*(float)(_final_hash.size()*42*8)/totalsize,
+			// 	   _final_hash.size() );
 			return totalsize;
 		}
 

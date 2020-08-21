@@ -61,13 +61,13 @@ void build(int argc, char** argv)
             std::exit(EXIT_FAILURE);
         }
         
-        // std::cout << "Constructing compacted de Bruijn graph for the reference at " << refs << ", with k = " << k << "\n";
-        std::cout << "Constructing the compacted de Bruijn graph for k = " << k << "\n";
+
+        std::cout << "\nConstructing the compacted de Bruijn graph for k = " << k << ".\n";
 
         const Application<cuttlefish::MAX_K> app(params);
         app.execute();
 
-        std::cout << "Constructed the compacted de Bruijn graph at " << output_file << "\n";
+        std::cout << "\nConstructed the compacted de Bruijn graph at " << output_file << "\n";
     }
     catch(const std::exception& e)
     {
@@ -119,10 +119,10 @@ void validate(int argc, char** argv)
             std::exit(EXIT_FAILURE);
         }
 
-        std::cout << "Validating the compacted de Bruijn graph for k = " << k << "\n";
+        std::cout << "\nValidating the compacted de Bruijn graph for k = " << k << "\n";
 
         const Application<cuttlefish::MAX_K> app(params);
-        std::cout << "Validation " << (app.validate() ? "successful" : "failed") << std::endl;
+        std::cout << "\nValidation " << (app.validate() ? "successful" : "failed") << std::endl;
     }
     catch(const std::exception& e)
     {

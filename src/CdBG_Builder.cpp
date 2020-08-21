@@ -3,7 +3,7 @@
 #include "Kmer_Iterator.hpp"
 #include "Parser.hpp"
 
-#include <fstream>
+#include <iomanip>
 #include <thread>
 #include <cassert>
 #include <chrono>
@@ -23,15 +23,17 @@ void CdBG<k>::classify_vertices()
 
     // Parse sequences one-by-one, and continue partial classification of the k-mers through them.
     uint32_t seq_count = 0;
+    uint64_t ref_len = 0;
     while(parser.read_next_seq())
     {
         const char* const seq = parser.seq();
         const size_t seq_len = parser.seq_len();
         const size_t seq_buf_sz = parser.buff_sz();
 
+        seq_count++;
+        ref_len += seq_len;
         max_buf_sz = std::max(max_buf_sz, seq_buf_sz);
-
-        std::cout << "Processing sequence " << ++seq_count << ", with length " << seq_len << ".\n";
+        std::cerr << "\rProcessing sequence " << seq_count << ", with length " << std::setw(10) << seq_len << ".";
 
         // Nothing to process for sequences with length shorter than `k`.
         if(seq_len < k)
@@ -72,6 +74,7 @@ void CdBG<k>::classify_vertices()
         } 
     }
 
+    std::cerr << "\rProcessed " << seq_count << " sequences. Total reference length is " << ref_len << " bases.\n";
     std::cout << "Maximum buffer size used (in MB): " << max_buf_sz / (1024 * 1024) << "\n";
 
 

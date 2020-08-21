@@ -20,13 +20,13 @@ CdBG<k>::CdBG(const Build_Params& params):
 template <uint16_t k> 
 void CdBG<k>::construct()
 {
-    std::cout << "Constructing the minimal perfect hash function.\n";
+    std::cout << "\nConstructing the minimal perfect hash function.\n";
     Vertices.construct(params.kmc_db_path(), params.thread_count(), params.mph_file_path());
 
-    std::cout << "Classifying the vertices.\n";
+    std::cout << "\nClassifying the vertices.\n";
     classify_vertices();
 
-    std::cout << "Outputting the maximal unitigs.\n";
+    std::cout << "\nOutputting the maximal unitigs.\n";
     output_maximal_unitigs();
 
     Vertices.clear();

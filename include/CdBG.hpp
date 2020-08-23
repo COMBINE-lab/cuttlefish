@@ -9,19 +9,26 @@
 #include "Annotated_Kmer.hpp"
 #include "Oriented_Unitig.hpp"
 #include "Build_Params.hpp"
+#include "Thread_Pool.hpp"
 
 #include <sstream>
 
 
+// De Bruijn graph class to support the compaction algorithm.
 template <uint16_t k>
 class CdBG
 {
+    friend class Thread_Pool<k>;
+
 private:
 
     const Build_Params params;    // Required parameters wrapped in one object.
     Kmer_Hash_Table<k> Vertices;   // The hash table for the vertices (canonical k-mers) of the de Bruijn graph.
     
     uint32_t seq_count = 0; // Running counter to track the number of sequence being processed.
+
+    // Minimum size of a partition to be processed by one thread.
+    static constexpr uint16_t PARTITION_SIZE_THRESHOLD = 1;
 
     // `output_buffer[t_id]` holds output lines yet to be written to the disk from thread number `t_id`.
     std::vector<std::stringstream> output_buffer;
@@ -60,6 +67,10 @@ private:
 
     // Classifies the vertices into different types (or, classes).
     void classify_vertices();
+
+    // Distributes the classification task for the sequence `seq` of length
+    // `seq_len` to the thread pool `thread_pool`.
+    void distribute_classification(const char* seq, size_t seq_len, Thread_Pool<k>& thread_pool);
 
     // Processes classification of the valid k-mers present at the sequence `seq`
     // (of length `seq_len`) that have their starting indices between (inclusive)

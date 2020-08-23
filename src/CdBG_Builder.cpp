@@ -18,6 +18,12 @@ void CdBG<k>::classify_vertices()
     // Open a parser for the FASTA / FASTQ file containing the reference.
     Parser parser(params.reference_input());
 
+
+    // Construct a thread pool.
+    const uint16_t thread_count = params.thread_count();
+    Thread_Pool<k> thread_pool(thread_count, this, Thread_Pool<k>::Task_Type::classification);
+
+
     // Track the maximum sequence buffer size used.
     size_t max_buf_sz = 0;
 
@@ -45,38 +51,15 @@ void CdBG<k>::classify_vertices()
 
 
         // Multi-threaded classification.
-        const uint16_t thread_count = params.thread_count();
-        size_t task_size = (seq_len - k + 1) / thread_count;
-
-        if(!task_size)
-            process_substring(seq, seq_len, 0, seq_len - k);
-        else
-        {
-            std::vector<std::thread> task;
-            size_t left_end = 0;
-            size_t right_end;
-
-            for(uint16_t task_id = 0; task_id < thread_count; ++task_id)
-            {
-                right_end = (task_id == thread_count - 1 ? seq_len - k : left_end + task_size - 1);
-                task.emplace_back(&CdBG::process_substring, this, seq, seq_len, left_end, right_end);
-                left_end += task_size;
-            }
-
-            for(std::thread& t: task)
-                if(t.joinable())
-                    t.join();
-                else
-                {
-                    std::cerr << "Early termination of a worker thread encountered. Aborting.\n";
-                    std::exit(EXIT_FAILURE);
-                }
-        } 
+        distribute_classification(seq, seq_len, thread_pool);
+        thread_pool.wait_completion();
     }
 
     std::cerr << "\rProcessed " << seq_count << " sequences. Total reference length is " << ref_len << " bases.\n";
     std::cout << "Maximum buffer size used (in MB): " << max_buf_sz / (1024 * 1024) << "\n";
 
+    // Close the thread-pool.
+    thread_pool.close();
 
     // Close the parser.
     parser.close();
@@ -85,6 +68,28 @@ void CdBG<k>::classify_vertices()
     std::chrono::high_resolution_clock::time_point t_end = std::chrono::high_resolution_clock::now();
     double elapsed_seconds = std::chrono::duration_cast<std::chrono::duration<double>>(t_end - t_start).count();
     std::cout << "Done classifying the vertices. Time taken = " << elapsed_seconds << " seconds.\n";
+}
+
+
+template <uint16_t k>
+void CdBG<k>::distribute_classification(const char* seq, const size_t seq_len, Thread_Pool<k>& thread_pool)
+{
+    const uint16_t thread_count = params.thread_count();
+    const size_t task_size = (seq_len - k + 1) / thread_count;
+    const uint16_t partition_count = (task_size < PARTITION_SIZE_THRESHOLD ? 1 : thread_count);
+
+    size_t left_end = 0;
+    size_t right_end;
+
+    for(uint16_t t_id = 0; t_id < partition_count; ++t_id)
+    {
+        right_end = (t_id == partition_count - 1 ? seq_len - k : left_end + task_size - 1);
+
+        const uint16_t idle_thread_id = thread_pool.get_idle_thread();
+        thread_pool.assign_classification_task(idle_thread_id, seq, seq_len, left_end, right_end);
+
+        left_end += task_size;
+    }
 }
 
 

@@ -56,6 +56,11 @@ void CdBG<k>::output_maximal_unitigs_plain()
     output_buffer.resize(thread_count);
     buffer_size.resize(thread_count);
 
+
+    // Construct a thread pool.
+    Thread_Pool<k> thread_pool(thread_count, this, Thread_Pool<k>::Task_Type::output_plain);
+
+
     // Track the maximum sequence buffer size used.
     size_t max_buf_sz = 0;
 
@@ -83,36 +88,16 @@ void CdBG<k>::output_maximal_unitigs_plain()
 
 
         // Multi-threaded writing.
-        size_t task_size = (seq_len - k + 1) / thread_count;
-        if(!task_size)
-            output_plain_off_substring(0, seq, seq_len, 0, seq_len - k, output);
-        else
-        {
-            std::vector<std::thread> task;
-            size_t left_end = 0;
-            size_t right_end;
-
-            for(uint16_t task_id = 0; task_id < thread_count; ++task_id)
-            {
-                right_end = (task_id == thread_count - 1 ? seq_len - k : left_end + task_size - 1);
-                task.emplace_back(&CdBG::output_plain_off_substring, this, task_id, seq, seq_len, left_end, right_end, output);
-                left_end += task_size;
-            }
-
-            for(std::thread& t: task){
-                if(t.joinable())
-                    t.join();
-                else
-                {
-                    std::cerr << "Early termination of a worker thread encountered during writing of maximal unitigs. Aborting.\n";
-                    std::exit(EXIT_FAILURE);
-                }
-            }
-        }
+        distribute_output_plain(seq, seq_len, output,thread_pool);
+        thread_pool.wait_completion();
     }
 
     std::cerr << "\rProcessed " << seq_count << " sequences. Total reference length is " << ref_len << " bases.\n";
     std::cout << "Maximum buffer size used (in MB): " << max_buf_sz / (1024 * 1024) << "\n";
+
+
+    // Close the thread-pool.
+    thread_pool.close();
 
 
     // Flush the buffers.
@@ -130,6 +115,28 @@ void CdBG<k>::output_maximal_unitigs_plain()
     std::chrono::high_resolution_clock::time_point t_end = std::chrono::high_resolution_clock::now();
     double elapsed_seconds = std::chrono::duration_cast<std::chrono::duration<double>>(t_end - t_start).count();
     std::cout << "Done outputting the maximal unitigs. Time taken = " << elapsed_seconds << " seconds.\n";
+}
+
+
+template <uint16_t k>
+void CdBG<k>::distribute_output_plain(const char* seq, size_t seq_len, cuttlefish::logger_t output, Thread_Pool<k>& thread_pool)
+{
+    uint16_t thread_count = params.thread_count();
+    const size_t task_size = (seq_len - k + 1) / thread_count;
+    const uint16_t partition_count = (task_size < PARTITION_SIZE_THRESHOLD ? 1 : thread_count);
+
+    size_t left_end = 0;
+    size_t right_end;
+
+    for(uint16_t task_id = 0; task_id < partition_count; ++task_id)
+    {
+        right_end = (task_id == partition_count - 1 ? seq_len - k : left_end + task_size - 1);
+        
+        const uint16_t idle_thread_id = thread_pool.get_idle_thread();
+        thread_pool.assign_output_task(idle_thread_id, seq, seq_len, left_end, right_end, output);
+
+        left_end += task_size;
+    }
 }
 
 

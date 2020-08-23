@@ -131,6 +131,10 @@ private:
     // (in canonical form) in a plain text format.
     void output_maximal_unitigs_plain();
 
+    // Distributes the outputting task of the maximal unitigs in plain format for
+    // the sequence `seq` of length `seq_len` to the thread pool `thread_pool`.
+    void distribute_output_plain(const char* seq, size_t seq_len, cuttlefish::logger_t output, Thread_Pool<k>& thread_pool);
+
     // Outputs the distinct maximal unitigs (in canonical form) of the compacted de
     // Bruijn graph in GFA format.
     void output_maximal_unitigs_gfa();

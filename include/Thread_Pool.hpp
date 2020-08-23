@@ -85,6 +85,9 @@ public:
     // Returns the id (number) of an idle thread from the pool.
     uint16_t get_idle_thread() const;
 
+    // Waits until the thread number `thread_id` becomes idle.
+    void get_thread(uint16_t thread_id) const;
+
     // Assigns a classification task to the thread number `thread_id` with the provided parameters.
     void assign_classification_task(uint16_t thread_id, const char* seq, size_t seq_len, size_t left_end, size_t right_end);
 

@@ -139,6 +139,10 @@ private:
     // Bruijn graph in GFA format.
     void output_maximal_unitigs_gfa();
 
+    // Distributes the outputting task of the maximal unitigs in GFA format for
+    // the sequence `seq` of length `seq_len` to the thread pool `thread_pool`.
+    void distribute_output_gfa(const char* seq, size_t seq_len, cuttlefish::logger_t output, Thread_Pool<k>& thread_pool);
+
     // Writes the maximal unitigs at the sequence `seq` (of length `seq_len`) that
     // have their starting indices between (inclusive) `left_end` and `right_end`,
     // to the stream `output`.

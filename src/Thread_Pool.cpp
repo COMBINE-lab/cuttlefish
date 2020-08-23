@@ -85,6 +85,13 @@ uint16_t Thread_Pool<k>::get_idle_thread() const
 
 
 template <uint16_t k>
+void Thread_Pool<k>::get_thread(const uint16_t thread_id) const
+{
+    while(task_status[thread_id] != Task_Status::pending);
+}
+
+
+template <uint16_t k>
 void Thread_Pool<k>::assign_classification_task(const uint16_t thread_id, const char* const seq, const size_t seq_len, const size_t left_end, const size_t right_end)
 {
     classify_params[thread_id] = Classification_Task_Params(seq, seq_len, left_end, right_end);

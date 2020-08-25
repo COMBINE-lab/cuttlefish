@@ -165,6 +165,11 @@ void CdBG<k>::output_maximal_unitigs_gfa()
     write_gfa_header(op_stream);
     op_stream.close();
 
+    // Open an asynchronous logger to write into the output file, and set its log message pattern.
+    // Note: `spdlog` appends to the output file by default, so the results for the sequences are accumulated into the same output file.
+    cuttlefish::logger_t output = spdlog::basic_logger_mt<spdlog::async_factory>("async_file_logger", output_file_path);
+    output->set_pattern("%v");
+
 
     // Allocate the output buffers for each thread.
     output_buffer.resize(thread_count);
@@ -211,8 +216,8 @@ void CdBG<k>::output_maximal_unitigs_gfa()
 
         // Open an asynchronous logger to write into the output file, and set its log message pattern.
         // Note: `spdlog` appends to the output file by default, so the results for the sequences are accumulated into the same output file.
-        cuttlefish::logger_t output = spdlog::basic_logger_mt<spdlog::async_factory>("async_file_logger", output_file_path);
-        output->set_pattern("%v");
+        // cuttlefish::logger_t output = spdlog::basic_logger_mt<spdlog::async_factory>("async_file_logger", output_file_path);
+        // output->set_pattern("%v");
 
         
         // Reset the first, the second, and the last unitigs seen for each thread.
@@ -221,7 +226,7 @@ void CdBG<k>::output_maximal_unitigs_gfa()
         std::fill(last_unitig.begin(), last_unitig.end(), Oriented_Unitig());
 
         // Reset the path output streams for each thread.
-        reset_path_streams();
+        // reset_path_streams();
         
 
         // Single-threaded writing.
@@ -242,12 +247,12 @@ void CdBG<k>::output_maximal_unitigs_gfa()
         // the same output sink file is written in a different way than using the `spdlog` logger.
         // Note: If using an async logger, `logger->flush()` posts a message to the queue requesting the flush
         // operation, so the function returns immediately. Hence a forceful eviction is necessary by shutdown.
-        output->flush();
-        spdlog::shutdown();
+        // output->flush();
+        // spdlog::shutdown();
         
 
         // Write the GFA path for this sequence.
-        params.output_format() == 1 ? write_gfa_path() : write_gfa_ordered_group();
+        // params.output_format() == 1 ? write_gfa_path() : write_gfa_ordered_group();
     }
 
     std::cerr << "\rProcessed " << seq_count << " sequences. Total reference length is " << ref_len << " bases.\n";
@@ -259,12 +264,12 @@ void CdBG<k>::output_maximal_unitigs_gfa()
 
 
     // Flush the buffers.
-    cuttlefish::logger_t output = spdlog::basic_logger_mt<spdlog::async_factory>("async_file_logger", output_file_path);
-    output->set_pattern("%v");
+    // cuttlefish::logger_t output = spdlog::basic_logger_mt<spdlog::async_factory>("async_file_logger", output_file_path);
+    // output->set_pattern("%v");
     flush_buffers(output);
 
     // Remove the temporary files.
-    remove_temp_files();
+    // remove_temp_files();
 
     
     // Close the loggers?

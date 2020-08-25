@@ -327,7 +327,7 @@ void CdBG<k>::write_gfa_link(const uint16_t thread_id, const Oriented_Unitig& le
 
     
     // Append a link to the growing path for this thread.
-    append_link_to_path(thread_id, left_unitig, right_unitig);
+    // append_link_to_path(thread_id, left_unitig, right_unitig);
 }
 
 

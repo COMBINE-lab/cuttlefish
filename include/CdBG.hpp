@@ -43,6 +43,10 @@ private:
     // underlying sequence, by the thread number `t_id`.
     std::vector<std::ofstream> path_output, overlap_output;
 
+    // `path_buffer[t_id]` and `overlap_buffer[t_id]` (applicable for GFA1) holds path and overlap
+    // output content yet to be written to the disk from the thread number `t_id`.
+    std::vector<std::string> path_buffer, overlap_buffer;
+
     // After all the threads finish the parallel GFA outputting, `first_unitig[t_id]`,
     // `second_unitig[t_id]`, and `last_unitig[t_id]` contain the first unitig, the
     // second unitig, and the last unitig respectively, seen in their entirety by the
@@ -58,6 +62,15 @@ private:
     static std::string PATH_OUTPUT_PREFIX;
     static std::string OVERLAP_OUTPUT_PREFIX;
     constexpr static size_t TEMP_FILE_PREFIX_LEN = 10;
+
+    // Debug
+    std::vector<double> seg_write_time;
+    std::vector<double> link_write_time;
+    std::vector<double> buff_flush_time;
+    std::vector<double> path_write_time;
+    std::vector<double> path_flush_time;
+    double path_concat_time = 0;
+    double logger_flush_time = 0;
 
 
     // Sets a unique prefix for the temporary files to be used during GFA output.
@@ -147,6 +160,9 @@ private:
     // Allocates memory for the output buffer of each thread.
     void allocate_output_buffers();
 
+    // Allocate memory for the path (and overlap for GFA1) buffer of each thread.
+    void allocate_path_buffers();
+
     // Writes the maximal unitigs at the sequence `seq` (of length `seq_len`) that
     // have their starting indices between (inclusive) `left_end` and `right_end`,
     // to the stream `output`.
@@ -191,11 +207,22 @@ private:
     // buffer content is dumped into the stream `output` and the buffer is emptied.
     void check_output_buffer(uint16_t thread_id, cuttlefish::logger_t output);
 
+    // Checks the path buffer `path_buffer[thread_id]` (and `overlap_buffer[thread_id]`
+    // if using GFA1). If the buffer size overflows `BUFFER_THRESHOLD`, then the
+    // buffer content is dumped into the stream `output` and the buffer is emptied.
+    void check_path_buffer(uint16_t thread_id);
+
     // Writes the string `str` to the output stream `output`.
     static void write(cuttlefish::logger_t output, const std::string& str);
+
+    // Writes the string `str` to the output stream `output`.
+    static void write(std::ofstream& output, const std::string& str);
     
     // Flushes the output buffers (one for each thread) to the stream `output`.
     void flush_output_buffers(cuttlefish::logger_t output);
+
+    // Flushes the output buffers (one for each thread) to the stream `output`.
+    void flush_path_buffers();
 
     // Resets the path output streams (depending on the GFA version) for each
     // thread. Needs to be invoked before processing each new sequence.

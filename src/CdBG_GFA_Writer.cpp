@@ -245,6 +245,8 @@ void CdBG<k>::write_gfa_header(std::ofstream& output) const
 template <uint16_t k>
 void CdBG<k>::write_gfa_segment(const uint16_t thread_id, const char* const seq, const uint64_t segment_name, const size_t start_kmer_idx, const size_t end_kmer_idx, const cuttlefish::dir_t dir, cuttlefish::logger_t output)
 {
+    std::chrono::high_resolution_clock::time_point t_start = std::chrono::high_resolution_clock::now();
+
     const uint8_t gfa_v = params.output_format();
 
     std::string& buffer = output_buffer[thread_id];
@@ -290,6 +292,11 @@ void CdBG<k>::write_gfa_segment(const uint16_t thread_id, const char* const seq,
     // End the segment line.
     buffer += "\n";
 
+    std::chrono::high_resolution_clock::time_point t_end = std::chrono::high_resolution_clock::now();
+    double elapsed_seconds = std::chrono::duration_cast<std::chrono::duration<double>>(t_end - t_start).count();
+
+    seg_write_time[thread_id] += elapsed_seconds;
+
 
     // Mark buffer size increment.
     check_output_buffer(thread_id, output);
@@ -314,6 +321,8 @@ void CdBG<k>::write_gfa_connection(const uint16_t thread_id, const Oriented_Unit
 template <uint16_t k>
 void CdBG<k>::write_gfa_link(const uint16_t thread_id, const Oriented_Unitig& left_unitig, const Oriented_Unitig& right_unitig, cuttlefish::logger_t output)
 {
+    std::chrono::high_resolution_clock::time_point t_start = std::chrono::high_resolution_clock::now();
+
     std::string& buffer = output_buffer[thread_id];
 
     // The 'RecordType' field for link lines.
@@ -340,13 +349,18 @@ void CdBG<k>::write_gfa_link(const uint16_t thread_id, const Oriented_Unitig& le
     // End the link line.
     buffer += "\n";
 
+    std::chrono::high_resolution_clock::time_point t_end = std::chrono::high_resolution_clock::now();
+    double elapsed_seconds = std::chrono::duration_cast<std::chrono::duration<double>>(t_end - t_start).count();
+
+    link_write_time[thread_id] += elapsed_seconds;
+
 
     // Mark buffer size increment.
     check_output_buffer(thread_id, output);
 
     
     // Append a link to the growing path for this thread.
-    // append_link_to_path(thread_id, left_unitig, right_unitig);
+    append_link_to_path(thread_id, left_unitig, right_unitig);
 }
 
 
@@ -467,11 +481,28 @@ void CdBG<k>::write_gfa_gap(const uint16_t thread_id, const Oriented_Unitig& lef
 template <uint16_t k>
 void CdBG<k>::append_link_to_path(const uint16_t thread_id, const Oriented_Unitig& left_unitig, const Oriented_Unitig& right_unitig)
 {
+    std::chrono::high_resolution_clock::time_point t_start = std::chrono::high_resolution_clock::now();
+
     // The destination vertex (unitig) is written for each link.
     // Note that, the very first vertex of the path tiling for the sequence is thus missing in the path outputs.
 
-    path_output[thread_id] << "," << right_unitig.unitig_id << (right_unitig.dir == cuttlefish::FWD ? "+" : "-");
-    overlap_output[thread_id] << "," << (right_unitig.start_kmer_idx == left_unitig.end_kmer_idx + 1 ? k - 1 : 0) << "M";
+    std::string& p_buffer = path_buffer[thread_id];
+    p_buffer += ",";
+    p_buffer += fmt::format_int(right_unitig.unitig_id).c_str();
+    p_buffer += (right_unitig.dir == cuttlefish::FWD ? "+" : "-");
+
+    std::string& o_buffer = overlap_buffer[thread_id];
+    o_buffer += ",";
+    o_buffer += fmt::format_int(right_unitig.start_kmer_idx == left_unitig.end_kmer_idx + 1 ? k - 1 : 0).c_str();
+    o_buffer += "M";
+
+    std::chrono::high_resolution_clock::time_point t_end = std::chrono::high_resolution_clock::now();
+    double elapsed_seconds = std::chrono::duration_cast<std::chrono::duration<double>>(t_end - t_start).count();
+
+    path_write_time[thread_id] += elapsed_seconds;
+
+
+    check_path_buffer(thread_id);
 
     // Error checking for writing failures is done while closing the streams.
 }
@@ -484,7 +515,13 @@ void CdBG<k>::append_edge_to_path(const uint16_t thread_id, const Oriented_Uniti
     // Note that, the very first vertex of the path tiling for the sequence is thus missing in the path outputs.
 
     (void)left_unitig;
-    path_output[thread_id] << " " << right_unitig.unitig_id << (right_unitig.dir == cuttlefish::FWD ? "+" : "-");
+
+    std::string& buffer = path_buffer[thread_id];
+    buffer += " ";
+    buffer += fmt::format_int(right_unitig.unitig_id).c_str();
+    buffer += (right_unitig.dir == cuttlefish::FWD ? "+" : "-");
+
+    check_path_buffer(thread_id);
 
     // Error checking for writing failures is done while closing the streams.
 }
@@ -661,8 +698,9 @@ void CdBG<k>::write_gfa_path()
 
     std::chrono::high_resolution_clock::time_point t_end = std::chrono::high_resolution_clock::now();
     double elapsed_seconds = std::chrono::duration_cast<std::chrono::duration<double>>(t_end - t_start).count();
-    (void)elapsed_seconds;
     // std::cout << "Time taken to write paths = " << elapsed_seconds << " seconds.\n";
+
+    path_concat_time += elapsed_seconds;
 }
 
 

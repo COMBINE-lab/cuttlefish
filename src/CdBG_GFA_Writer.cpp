@@ -2,6 +2,7 @@
 #include "CdBG.hpp"
 #include "Output_Format.hpp"
 #include "utility.hpp"
+#include "fmt/format.h"
 
 #include <chrono>
 
@@ -246,42 +247,52 @@ void CdBG<k>::write_gfa_segment(const uint16_t thread_id, const char* const seq,
 {
     const uint8_t gfa_v = params.output_format();
 
-    std::stringstream& buffer = output_buffer[thread_id];
+    std::string& buffer = output_buffer[thread_id];
     const size_t segment_len = end_kmer_idx - start_kmer_idx + k;
 
     // The 'RecordType' field for segment lines.
-    buffer << "S";
+    buffer += "S";
     
     // The 'Name' field.
-    buffer << "\t" << segment_name;
+    buffer += "\t";
+    buffer += fmt::format_int(segment_name).c_str();
 
     // The 'SegmentLength' field (required for GFA2).
     if(gfa_v == cuttlefish::gfa2)
-        buffer << "\t" << segment_len;
+    {
+        buffer += "\t";
+        buffer += fmt::format_int(segment_len).c_str();
+    }
     
     // The segment field.
-    buffer << "\t";
+    buffer += "\t";
     if(dir == cuttlefish::FWD)
         for(size_t offset = 0; offset < segment_len; ++offset)
-            buffer << Kmer<k>::upper(seq[start_kmer_idx + offset]);
+            buffer += Kmer<k>::upper(seq[start_kmer_idx + offset]);
     else
         for(size_t offset = 0; offset < segment_len; ++offset)
-            buffer << Kmer<k>::complement(seq[end_kmer_idx + k - 1 - offset]);
+            buffer += Kmer<k>::complement(seq[end_kmer_idx + k - 1 - offset]);
 
 
     // Write some optional fields that are trivially inferrable here.
     if(gfa_v == cuttlefish::gfa1)  // No need of the length tag for GFA2 here.
-        buffer << "\tLN:i:" << segment_len; // The segment length.
+    {
+        // The segment length.
+        buffer += "\tLN:i:";
+        buffer += fmt::format_int(segment_len).c_str();
+    }
 
-    buffer << "\tKC:i:" << (end_kmer_idx - start_kmer_idx + 1); // The k-mer count.
+    // The k-mer count.
+    buffer += "\tKC:i:";
+    buffer += fmt::format_int(end_kmer_idx - start_kmer_idx + 1).c_str();
 
 
     // End the segment line.
-    buffer << "\n";
+    buffer += "\n";
 
 
     // Mark buffer size increment.
-    fill_buffer(thread_id, 1, output);
+    check_output_buffer(thread_id, output);
 }
 
 
@@ -303,27 +314,35 @@ void CdBG<k>::write_gfa_connection(const uint16_t thread_id, const Oriented_Unit
 template <uint16_t k>
 void CdBG<k>::write_gfa_link(const uint16_t thread_id, const Oriented_Unitig& left_unitig, const Oriented_Unitig& right_unitig, cuttlefish::logger_t output)
 {
-    std::stringstream& buffer = output_buffer[thread_id];
+    std::string& buffer = output_buffer[thread_id];
 
     // The 'RecordType' field for link lines.
-    buffer << "L";
+    buffer += "L";
 
     // The 'From' fields.
-    buffer << "\t" << left_unitig.unitig_id << "\t" << (left_unitig.dir == cuttlefish::FWD ? "+" : "-");
+    buffer += "\t";
+    buffer += fmt::format_int(left_unitig.unitig_id).c_str();
+    buffer += "\t";
+    buffer += (left_unitig.dir == cuttlefish::FWD ? "+" : "-");
 
     // The 'To' fields.
-    buffer << "\t" << right_unitig.unitig_id << "\t" << (right_unitig.dir == cuttlefish::FWD ? "+" : "-");
+    buffer += "\t";
+    buffer += fmt::format_int(right_unitig.unitig_id).c_str();
+    buffer += "\t";
+    buffer += (right_unitig.dir == cuttlefish::FWD ? "+" : "-");
 
     // The 'Overlap' field.
     const uint16_t overlap = (right_unitig.start_kmer_idx == left_unitig.end_kmer_idx + 1 ? k - 1 : 0);
-    buffer << "\t" << overlap << "M";
+    buffer += "\t";
+    buffer += fmt::format_int(overlap).c_str();
+    buffer += "M";
 
     // End the link line.
-    buffer << "\n";
+    buffer += "\n";
 
 
     // Mark buffer size increment.
-    fill_buffer(thread_id, 1, output);
+    check_output_buffer(thread_id, output);
 
     
     // Append a link to the growing path for this thread.
@@ -334,43 +353,70 @@ void CdBG<k>::write_gfa_link(const uint16_t thread_id, const Oriented_Unitig& le
 template <uint16_t k>
 void CdBG<k>::write_gfa_edge(const uint16_t thread_id, const Oriented_Unitig& left_unitig, const Oriented_Unitig& right_unitig, cuttlefish::logger_t output)
 {
-    std::stringstream& buffer = output_buffer[thread_id];
+    std::string& buffer = output_buffer[thread_id];
 
     // The 'RecordType' field for edge lines.
-    buffer << "E";
+    buffer += "E";
 
     // The 'Edge-ID' field.
-    buffer << "\t*";
+    buffer += "\t*";
 
     // The 'Segment-ID' fields.
-    buffer << "\t" << left_unitig.unitig_id << (left_unitig.dir == cuttlefish::FWD ? "+" : "-");
-    buffer << "\t" << right_unitig.unitig_id << (right_unitig.dir == cuttlefish::FWD ? "+" : "-");
+    buffer += "\t";
+    buffer += fmt::format_int(left_unitig.unitig_id).c_str();
+    buffer += (left_unitig.dir == cuttlefish::FWD ? "+" : "-");
+
+    buffer += "\t";
+    buffer += fmt::format_int(right_unitig.unitig_id).c_str();
+    buffer += (right_unitig.dir == cuttlefish::FWD ? "+" : "-");
 
 
     // The 'Begin' and 'End' fields for the first segment.
     size_t unitig_len = left_unitig.length(k);
     if(left_unitig.dir == cuttlefish::FWD)
-        buffer << "\t" << (unitig_len - (k - 1)) << "\t" << unitig_len << "$";
+    {
+        buffer += "\t";
+        buffer += fmt::format_int(unitig_len - (k - 1)).c_str();
+        buffer += "\t";
+        buffer += fmt::format_int(unitig_len).c_str();
+        buffer += "$";
+    }
     else
-        buffer << "\t" << 0 << "\t" << (k - 1);
+    {
+        buffer += "\t";
+        buffer += "0";
+        buffer += "\t";
+        buffer += fmt::format_int(k - 1).c_str();
+    }
 
     // The 'Begin' and 'End' fields for the second segment.
     unitig_len = right_unitig.length(k);
     if(right_unitig.dir == cuttlefish::FWD)
-        buffer << "\t" << 0 << "\t" << (k - 1);
+    {
+        buffer += "\t";
+        buffer += "0";
+        buffer += "\t";
+        buffer += fmt::format_int(k - 1).c_str();
+    }
     else
-        buffer << "\t" << (unitig_len - (k - 1)) << "\t" << unitig_len << "$";
+    {
+        buffer += "\t";
+        fmt::format_int(unitig_len - (k - 1)).c_str();
+        buffer += "\t";
+        buffer += fmt::format_int(unitig_len).c_str();
+        buffer += "$";
+    }
 
     
     // The 'Alignment' field.
-    buffer << "\t*";
+    buffer += "\t*";
 
     // End the edge line.
-    buffer << "\n";
+    buffer += "\n";
 
 
     // Mark buffer size increment.
-    fill_buffer(thread_id, 1, output);
+    check_output_buffer(thread_id, output);
 
     
     // Append an edge to the growing path for this thread.
@@ -381,30 +427,36 @@ void CdBG<k>::write_gfa_edge(const uint16_t thread_id, const Oriented_Unitig& le
 template <uint16_t k>
 void CdBG<k>::write_gfa_gap(const uint16_t thread_id, const Oriented_Unitig& left_unitig, const Oriented_Unitig& right_unitig, cuttlefish::logger_t output)
 {
-    std::stringstream& buffer = output_buffer[thread_id];
+    std::string& buffer = output_buffer[thread_id];
 
     // The 'RecordType' field for gap lines.
-    buffer << "G";
+    buffer += "G";
 
     // The 'Gap-ID' field.
-    buffer << "\t*";
+    buffer += "\t*";
 
     // The 'Segment-ID' fields.
-    buffer << "\t" << left_unitig.unitig_id << (left_unitig.dir == cuttlefish::FWD ? "+" : "-");
-    buffer << "\t" << right_unitig.unitig_id << (right_unitig.dir == cuttlefish::FWD ? "+" : "-");
+    buffer += "\t";
+    buffer += fmt::format_int(left_unitig.unitig_id).c_str();
+    buffer += (left_unitig.dir == cuttlefish::FWD ? "+" : "-");
+
+    buffer += "\t";
+    buffer += fmt::format_int(right_unitig.unitig_id).c_str();
+    buffer += (right_unitig.dir == cuttlefish::FWD ? "+" : "-");
 
     // Write the 'Distance' field.
-    buffer << "\t" << (right_unitig.start_kmer_idx - (left_unitig.end_kmer_idx + k));
+    buffer += "\t";
+    buffer += fmt::format_int(right_unitig.start_kmer_idx - (left_unitig.end_kmer_idx + k)).c_str();
 
     // Write the `Variance` field.
-    buffer << "\t*";
+    buffer += "\t*";
 
     // End the gap line.
-    buffer << "\n";
+    buffer += "\n";
 
 
     // Mark buffer size increment.
-    fill_buffer(thread_id, 1, output);
+    check_output_buffer(thread_id, output);
 
 
     // Append an edge to the growing path for this thread.

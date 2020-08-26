@@ -27,35 +27,24 @@ void CdBG<k>::output_maximal_unitigs_plain()
     std::chrono::high_resolution_clock::time_point t_start = std::chrono::high_resolution_clock::now();
 
     
+    const Reference_Input& reference_input = params.reference_input();
     const uint16_t thread_count = params.thread_count();
     const std::string& output_file_path = params.output_file_path();
 
     // Open a parser for the FASTA / FASTQ file containing the reference.
-    Parser parser(params.reference_input());
+    Parser parser(reference_input);
 
 
     // Clear the output file.
-    std::ofstream op_stream(output_file_path.c_str(), std::ofstream::out);
-    if(!op_stream)
-    {
-        std::cerr << "Error opening output file " << output_file_path << ". Aborting.\n";
-        std::exit(EXIT_FAILURE);
-    }
+    clear_output_file();
 
-    op_stream.close();
-
-
-    // Open an asynchronous logger to write into the output file.
+    // Open an asynchronous logger to write into the output file, and set its log message pattern.
     cuttlefish::logger_t output = spdlog::basic_logger_mt<spdlog::async_factory>("async_file_logger", output_file_path);
-
-    // Set the log message pattern for the writer.
     output->set_pattern("%v");
 
     
     // Allocate output buffers for each thread.
-    output_buffer.resize(thread_count);
-    buffer_size.resize(thread_count);
-
+    allocate_output_buffers();
 
     // Construct a thread pool.
     Thread_Pool<k> thread_pool(thread_count, this, Thread_Pool<k>::Task_Type::output_plain);
@@ -86,7 +75,6 @@ void CdBG<k>::output_maximal_unitigs_plain()
         // Single-threaded writing.
         // output_off_substring(0, seq, seq_len, 0, seq_len - k, output);
 
-
         // Multi-threaded writing.
         distribute_output_plain(seq, seq_len, output,thread_pool);
         thread_pool.wait_completion();
@@ -101,10 +89,9 @@ void CdBG<k>::output_maximal_unitigs_plain()
 
 
     // Flush the buffers.
-    flush_buffers(output);
+    flush_output_buffers(output);
 
-    
-    // Close the loggers?
+    // Clear and close the loggers.
     spdlog::drop_all();
 
 
@@ -119,9 +106,9 @@ void CdBG<k>::output_maximal_unitigs_plain()
 
 
 template <uint16_t k>
-void CdBG<k>::distribute_output_plain(const char* seq, size_t seq_len, cuttlefish::logger_t output, Thread_Pool<k>& thread_pool)
+void CdBG<k>::distribute_output_plain(const char* const seq, const size_t seq_len, cuttlefish::logger_t output, Thread_Pool<k>& thread_pool)
 {
-    uint16_t thread_count = params.thread_count();
+    const uint16_t thread_count = params.thread_count();
     const size_t task_size = (seq_len - k + 1) / thread_count;
     const uint16_t partition_count = (task_size < PARTITION_SIZE_THRESHOLD ? 1 : thread_count);
 
@@ -146,12 +133,13 @@ void CdBG<k>::output_maximal_unitigs_gfa()
     std::chrono::high_resolution_clock::time_point t_start = std::chrono::high_resolution_clock::now();
 
 
+    const Reference_Input& reference_input = params.reference_input();
     const uint16_t thread_count = params.thread_count();
     const std::string& output_file_path = params.output_file_path();
     const std::string& working_dir_path = params.working_dir_path();
 
     // Open a parser for the FASTA / FASTQ file containing the reference.
-    Parser parser(params.reference_input());
+    Parser parser(reference_input);
 
 
     // Clear the output file and write the GFA header.
@@ -170,20 +158,18 @@ void CdBG<k>::output_maximal_unitigs_gfa()
     cuttlefish::logger_t output = spdlog::basic_logger_mt<spdlog::async_factory>("async_file_logger", output_file_path);
     output->set_pattern("%v");
 
+    // Set the prefixes of the temporary path output files. This is to avoid possible name
+    // conflicts in the file system.
+    set_temp_file_prefixes(working_dir_path);
+
 
     // Allocate the output buffers for each thread.
-    output_buffer.resize(thread_count);
-    buffer_size.resize(thread_count);
+    allocate_output_buffers();
 
     // Allocate entries for the first, the second, and the last unitigs seen by each thread.
     first_unitig.resize(thread_count);
     second_unitig.resize(thread_count);
     last_unitig.resize(thread_count);
-
-    // Set the prefixes of the temporary path output files. This is to avoid possible name
-    // conflicts in the file system.
-    set_temp_file_prefixes(working_dir_path);
-
 
     // Construct a thread pool.
     Thread_Pool<k> thread_pool(thread_count, this, Thread_Pool<k>::Task_Type::output_gfa);
@@ -194,6 +180,7 @@ void CdBG<k>::output_maximal_unitigs_gfa()
 
     // Parse sequences one-by-one, and output each unique maximal unitig encountered through them.
     // uint32_t seq_count = 0;
+    // TODO: replace usage of `seq_count` with a parser method.
     seq_count = 0;
     uint64_t ref_len = 0;
     while(parser.read_next_seq())
@@ -202,7 +189,6 @@ void CdBG<k>::output_maximal_unitigs_gfa()
         const size_t seq_len = parser.seq_len();
         const size_t seq_buf_sz = parser.buff_sz();
 
-        std::chrono::high_resolution_clock::time_point t_s = std::chrono::high_resolution_clock::now();
 
         seq_count++;
         ref_len += seq_len;
@@ -219,14 +205,14 @@ void CdBG<k>::output_maximal_unitigs_gfa()
         // cuttlefish::logger_t output = spdlog::basic_logger_mt<spdlog::async_factory>("async_file_logger", output_file_path);
         // output->set_pattern("%v");
 
+        // Reset the path output streams for each thread.
+        // reset_path_streams();
+
         
         // Reset the first, the second, and the last unitigs seen for each thread.
         std::fill(first_unitig.begin(), first_unitig.end(), Oriented_Unitig());
         std::fill(second_unitig.begin(), second_unitig.end(), Oriented_Unitig());
         std::fill(last_unitig.begin(), last_unitig.end(), Oriented_Unitig());
-
-        // Reset the path output streams for each thread.
-        // reset_path_streams();
         
 
         // Single-threaded writing.
@@ -237,11 +223,6 @@ void CdBG<k>::output_maximal_unitigs_gfa()
         thread_pool.wait_completion();
         write_inter_thread_connections(output);
 
-
-        std::chrono::high_resolution_clock::time_point t_e = std::chrono::high_resolution_clock::now();
-        double elapsed_seconds = std::chrono::duration_cast<std::chrono::duration<double>>(t_e - t_s).count();
-        (void)elapsed_seconds;
-        // std::cout << "Time taken to write segments and links = " << elapsed_seconds << " seconds.\n";
         
         // Flush all the buffered content (segments and links), as the GFA path to be appended to
         // the same output sink file is written in a different way than using the `spdlog` logger.
@@ -266,12 +247,11 @@ void CdBG<k>::output_maximal_unitigs_gfa()
     // Flush the buffers.
     // cuttlefish::logger_t output = spdlog::basic_logger_mt<spdlog::async_factory>("async_file_logger", output_file_path);
     // output->set_pattern("%v");
-    flush_buffers(output);
+    flush_output_buffers(output);
 
     // Remove the temporary files.
     // remove_temp_files();
 
-    
     // Close the loggers?
     spdlog::drop_all();
 
@@ -287,9 +267,9 @@ void CdBG<k>::output_maximal_unitigs_gfa()
 
 
 template <uint16_t k>
-void CdBG<k>::distribute_output_gfa(const char* seq, size_t seq_len, cuttlefish::logger_t output, Thread_Pool<k>& thread_pool)
+void CdBG<k>::distribute_output_gfa(const char* const seq, const size_t seq_len, cuttlefish::logger_t output, Thread_Pool<k>& thread_pool)
 {
-    uint16_t thread_count = params.thread_count();
+    const uint16_t thread_count = params.thread_count();
     const size_t task_size = (seq_len - k + 1) / thread_count;
     const uint16_t partition_count = (task_size < PARTITION_SIZE_THRESHOLD ? 1 : thread_count);
 
@@ -305,6 +285,33 @@ void CdBG<k>::distribute_output_gfa(const char* seq, size_t seq_len, cuttlefish:
 
         left_end += task_size;
     }
+}
+
+
+template <uint16_t k>
+void CdBG<k>::clear_output_file() const
+{
+    const std::string& output_file_path = params.output_file_path();
+
+    std::ofstream output(output_file_path.c_str(), std::ofstream::out);
+    if(!output)
+    {
+        std::cerr << "Error opening output file " << output_file_path << ". Aborting.\n";
+        std::exit(EXIT_FAILURE);
+    }
+
+    output.close();
+}
+
+
+template <uint16_t k>
+void CdBG<k>::allocate_output_buffers()
+{
+    const uint16_t thread_count = params.thread_count();
+
+    output_buffer.resize(thread_count);
+    for(uint16_t t_id = 0; t_id < thread_count; ++t_id)
+        output_buffer[t_id].reserve(BUFFER_CAPACITY);
 }
 
 
@@ -381,22 +388,19 @@ bool CdBG<k>::is_unipath_end(const cuttlefish::Vertex_Class vertex_class, const 
 
 
 template <uint16_t k>
-void CdBG<k>::fill_buffer(const uint16_t thread_id, const uint64_t fill_amount, cuttlefish::logger_t output)
+void CdBG<k>::check_output_buffer(const uint16_t thread_id, cuttlefish::logger_t output)
 {
-    buffer_size[thread_id] += fill_amount;
-
-    if(buffer_size[thread_id] > MAX_BUFF_SIZE)
+    if(output_buffer[thread_id].size() >= BUFFER_THRESHOLD)
     {
         // TODO: Avoid the presence of the same content in the memory simultaneously.
+        // Done, by replacing `stringstream` with `string`.
         // E.g. skipping this line results in consuming memory:
         // "fixed" HG38: 176 instead of 346 MB;
         // HG38: 17 instead of 93 MB;
         // Gorgor3: 0.5 instead of 40MB.
 
-        write(output, output_buffer[thread_id].str());
-        
-        output_buffer[thread_id].str("");
-        buffer_size[thread_id] = 0;
+        write(output, output_buffer[thread_id]);
+        output_buffer[thread_id].clear();
     }
 }
 
@@ -409,16 +413,15 @@ void CdBG<k>::write(cuttlefish::logger_t output, const std::string& str)
 
 
 template <uint16_t k>
-void CdBG<k>::flush_buffers(cuttlefish::logger_t output)
+void CdBG<k>::flush_output_buffers(cuttlefish::logger_t output)
 {
     const uint16_t thread_count = params.thread_count();
 
     for (uint16_t t_id = 0; t_id < thread_count; ++t_id)
-        if(buffer_size[t_id] > 0)
+        if(!output_buffer[t_id].empty())
         {
-            write(output, output_buffer[t_id].str());
-            output_buffer[t_id].str("");
-            buffer_size[t_id] = 0;
+            write(output, output_buffer[t_id]);
+            output_buffer[t_id].clear();
         }
 }
 

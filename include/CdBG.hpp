@@ -30,15 +30,13 @@ private:
     // Minimum size of a partition to be processed by one thread.
     static constexpr uint16_t PARTITION_SIZE_THRESHOLD = 1;
 
-    // `output_buffer[t_id]` holds output lines yet to be written to the disk from thread number `t_id`.
-    std::vector<std::stringstream> output_buffer;
+    // `output_buffer[t_id]` holds output content yet to be written to the disk from thread number `t_id`.
+    std::vector<std::string> output_buffer;
 
-    // `buffer_size[t_id]` holds the count of lines currently stored at the buffer of thread number `t_id`.
-    std::vector<uint64_t> buffer_size;
-
-    // Maximum output buffer size that triggers a flush. Currently, the size is measured with line counts. 
-    // TODO: Do better.
-    const static uint64_t MAX_BUFF_SIZE = 128;
+    // Capacities for the memory pre-allocation of each output buffer, and the threshold buffer size
+    // that triggers a disk-flush.
+    static constexpr size_t BUFFER_CAPACITY = 2UL * 1024 * 1024;  // 2 MB
+    static constexpr size_t BUFFER_THRESHOLD = 0.9 * BUFFER_CAPACITY;   // 90%
 
     // `path_output[t_id]` and `overlap_output[t_id]` are the output streams for the paths
     // and the overlaps between the links in the paths respectively, produced from the
@@ -143,6 +141,12 @@ private:
     // the sequence `seq` of length `seq_len` to the thread pool `thread_pool`.
     void distribute_output_gfa(const char* seq, size_t seq_len, cuttlefish::logger_t output, Thread_Pool<k>& thread_pool);
 
+    // Clears the output file content.
+    void clear_output_file() const;
+
+    // Allocates memory for the output buffer of each thread.
+    void allocate_output_buffers();
+
     // Writes the maximal unitigs at the sequence `seq` (of length `seq_len`) that
     // have their starting indices between (inclusive) `left_end` and `right_end`,
     // to the stream `output`.
@@ -182,17 +186,16 @@ private:
     // Note that, the output operation appends a newline at the end.
     void write_path(uint16_t thread_id, const char* seq, size_t start_kmer_idx, size_t end_kmer_idx, cuttlefish::dir_t dir, cuttlefish::logger_t output);
 
-    // Increases the buffer size for this thread, i.e. `buffer_size[thread_id]`
-    // by `fill_amount`. If the resulting buffer size overflows `MAX_BUFF_SIZE`,
-    // then the buffer content at `output_buffer[thread_id]` are dumped into the
-    // stream `output` and the buffer is emptied.
-    void fill_buffer(uint16_t thread_id, uint64_t fill_amount, cuttlefish::logger_t output);
+    // Checks the output buffer `output_buffer[thread_id]` for the thread number
+    // `thread_id`. If the buffer size overflows `BUFFER_THRESHOLD`, then the
+    // buffer content is dumped into the stream `output` and the buffer is emptied.
+    void check_output_buffer(uint16_t thread_id, cuttlefish::logger_t output);
 
-    // Writes the string `str` to the output object `output`.
+    // Writes the string `str` to the output stream `output`.
     static void write(cuttlefish::logger_t output, const std::string& str);
     
     // Flushes the output buffers (one for each thread) to the stream `output`.
-    void flush_buffers(cuttlefish::logger_t output);
+    void flush_output_buffers(cuttlefish::logger_t output);
 
     // Resets the path output streams (depending on the GFA version) for each
     // thread. Needs to be invoked before processing each new sequence.

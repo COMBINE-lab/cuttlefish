@@ -158,23 +158,22 @@ void CdBG<k>::output_plain_unitig(const uint16_t thread_id, const char* const se
 template <uint16_t k>
 void CdBG<k>::write_path(const uint16_t thread_id, const char* const seq, const size_t start_kmer_idx, const size_t end_kmer_idx, const cuttlefish::dir_t dir, cuttlefish::logger_t output) 
 {
-    std::stringstream& buffer = output_buffer[thread_id];
+    std::string& buffer = output_buffer[thread_id];
     const size_t path_len = end_kmer_idx - start_kmer_idx + k;
 
     if(dir == cuttlefish::FWD)
         for(size_t offset = 0; offset < path_len; ++offset)
-            buffer << Kmer<k>::upper(seq[start_kmer_idx + offset]);
+            buffer += Kmer<k>::upper(seq[start_kmer_idx + offset]);
     else    // dir == cuttlefish::BWD
         for(size_t offset = 0; offset < path_len; ++offset)
-            buffer << Kmer<k>::complement(seq[end_kmer_idx + k - 1 - offset]);
+            buffer += Kmer<k>::complement(seq[end_kmer_idx + k - 1 - offset]);
 
     // End the path.
-    buffer << "\n";
+    buffer += "\n";
 
     
-    // TODO: Fix a max memory scheme for buffers instead of a fixed line count.
     // Mark buffer size increment.
-    fill_buffer(thread_id, 1, output);
+    check_output_buffer(thread_id, output);
 }
 
 

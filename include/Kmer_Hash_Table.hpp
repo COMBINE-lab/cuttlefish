@@ -52,11 +52,17 @@ private:
     // using `thread_count` number of threads.
     void build_mph_function(const Kmer_Container<k>& kmer_container, uint16_t thread_count, const std::string& mph_file_path);
 
-    // Loads an MPH function stored at the file named `file_path` into `mph`.
+    // Loads an MPH function from the file at `file_path` into `mph`.
     void load_mph_function(const std::string& file_path);
 
-    // Saves the MPH function `mph` into a file named `file_path`.
+    // Saves the MPH function `mph` into a file at `file_path`.
     void save_mph_function(const std::string& file_path) const;
+
+    // Saves the hash table buckets `hash_table` into a file at `file_path`.
+    void save_hash_buckets(const std::string& file_path) const;
+
+    // Loads the hash table buckets `hash_table` from the file at `file_path`.
+    void load_hash_buckets(const std::string& file_path);
 
     // Returns the id / number of the bucket in the hash table that is
     // supposed to store value items for the key `kmer`.

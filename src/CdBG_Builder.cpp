@@ -15,54 +15,81 @@ void CdBG<k>::classify_vertices()
     std::chrono::high_resolution_clock::time_point t_start = std::chrono::high_resolution_clock::now();
 
 
-    // Open a parser for the FASTA / FASTQ file containing the reference.
-    Parser parser(params.reference_input());
+    const std::string& buckets_file_path = params.buckets_file_path();
 
-
-    // Construct a thread pool.
-    const uint16_t thread_count = params.thread_count();
-    Thread_Pool<k> thread_pool(thread_count, this, Thread_Pool<k>::Task_Type::classification);
-
-
-    // Track the maximum sequence buffer size used.
-    size_t max_buf_sz = 0;
-
-    // Parse sequences one-by-one, and continue partial classification of the k-mers through them.
-    uint32_t seq_count = 0;
-    uint64_t ref_len = 0;
-    while(parser.read_next_seq())
+    // The serialized hash table buckets (saved from some earlier execution) exists.
+    struct stat buffer;
+    if(!buckets_file_path.empty() && stat(buckets_file_path.c_str(), &buffer) == 0)
     {
-        const char* const seq = parser.seq();
-        const size_t seq_len = parser.seq_len();
-        const size_t seq_buf_sz = parser.buff_sz();
+        std::cout << "Found the hash table buckets at file " << buckets_file_path << "\n";
+        std::cout << "Loading the buckets.\n";
 
-        seq_count++;
-        ref_len += seq_len;
-        max_buf_sz = std::max(max_buf_sz, seq_buf_sz);
-        std::cerr << "\rProcessing sequence " << seq_count << ", with length " << std::setw(10) << seq_len << ".";
+        Vertices.load_hash_buckets(buckets_file_path);
 
-        // Nothing to process for sequences with length shorter than `k`.
-        if(seq_len < k)
-            continue;
-
-
-        // Single-threaded classification.
-        // process_substring(seq, seq_len, 0, seq_len - k);
-
-
-        // Multi-threaded classification.
-        distribute_classification(seq, seq_len, thread_pool);
-        thread_pool.wait_completion();
+        std::cout << "Loaded the buckets into memory.\n";
     }
+    else    // No buckets file name provided, or does not exist. Build and save (if specified) one now.
+    {
+        // Open a parser for the FASTA / FASTQ file containing the reference.
+        Parser parser(params.reference_input());
 
-    std::cerr << "\rProcessed " << seq_count << " sequences. Total reference length is " << ref_len << " bases.\n";
-    std::cout << "Maximum buffer size used (in MB): " << max_buf_sz / (1024 * 1024) << "\n";
 
-    // Close the thread-pool.
-    thread_pool.close();
+        // Construct a thread pool.
+        const uint16_t thread_count = params.thread_count();
+        Thread_Pool<k> thread_pool(thread_count, this, Thread_Pool<k>::Task_Type::classification);
 
-    // Close the parser.
-    parser.close();
+
+        // Track the maximum sequence buffer size used.
+        size_t max_buf_sz = 0;
+
+        // Parse sequences one-by-one, and continue partial classification of the k-mers through them.
+        uint32_t seq_count = 0;
+        uint64_t ref_len = 0;
+        while(parser.read_next_seq())
+        {
+            const char* const seq = parser.seq();
+            const size_t seq_len = parser.seq_len();
+            const size_t seq_buf_sz = parser.buff_sz();
+
+            seq_count++;
+            ref_len += seq_len;
+            max_buf_sz = std::max(max_buf_sz, seq_buf_sz);
+            std::cerr << "\rProcessing sequence " << seq_count << ", with length " << std::setw(10) << seq_len << ".";
+
+            // Nothing to process for sequences with length shorter than `k`.
+            if(seq_len < k)
+                continue;
+
+
+            // Single-threaded classification.
+            // process_substring(seq, seq_len, 0, seq_len - k);
+
+
+            // Multi-threaded classification.
+            distribute_classification(seq, seq_len, thread_pool);
+            thread_pool.wait_completion();
+        }
+
+        std::cerr << "\rProcessed " << seq_count << " sequences. Total reference length is " << ref_len << " bases.\n";
+        std::cout << "Maximum buffer size used (in MB): " << max_buf_sz / (1024 * 1024) << "\n";
+
+        // Close the thread-pool.
+        thread_pool.close();
+
+        // Close the parser.
+        parser.close();
+
+
+        // Save the hash table buckets, if a file path is provided.
+        if(!buckets_file_path.empty())
+        {
+            std::cout << "Saving the hash table buckets into file " << buckets_file_path << "\n";
+
+            Vertices.save_hash_buckets(buckets_file_path);
+            
+            std::cout << "Saved the buckets in disk.\n";
+        }
+    }
 
 
     std::chrono::high_resolution_clock::time_point t_end = std::chrono::high_resolution_clock::now();

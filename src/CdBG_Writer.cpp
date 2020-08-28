@@ -50,6 +50,10 @@ void CdBG<k>::output_maximal_unitigs_plain()
     // Construct a thread pool.
     Thread_Pool<k> thread_pool(thread_count, this, Thread_Pool<k>::Task_Type::output_plain);
 
+    // Debug
+    seg_write_time.resize(thread_count);
+    buff_flush_time.resize(thread_count);
+
 
     // Track the maximum sequence buffer size used.
     size_t max_buf_sz = 0;
@@ -98,6 +102,13 @@ void CdBG<k>::output_maximal_unitigs_plain()
 
     // Close the parser.
     parser.close();
+
+
+    // Debug
+    std::cout << "Unitigs writing time to in-memory buffers (avg): " <<
+        std::accumulate(seg_write_time.begin(), seg_write_time.end(), 0) / thread_count << "\n";
+    std::cout << "Unitigs flush time to disk (avg): " <<
+        std::accumulate(buff_flush_time.begin(), buff_flush_time.end(), 0) / thread_count << "\n";
 
 
     std::chrono::high_resolution_clock::time_point t_end = std::chrono::high_resolution_clock::now();

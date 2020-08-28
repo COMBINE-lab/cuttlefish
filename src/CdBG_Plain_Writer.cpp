@@ -158,6 +158,8 @@ void CdBG<k>::output_plain_unitig(const uint16_t thread_id, const char* const se
 template <uint16_t k>
 void CdBG<k>::write_path(const uint16_t thread_id, const char* const seq, const size_t start_kmer_idx, const size_t end_kmer_idx, const cuttlefish::dir_t dir, cuttlefish::logger_t output) 
 {
+    std::chrono::high_resolution_clock::time_point t_start = std::chrono::high_resolution_clock::now();
+
     std::string& buffer = output_buffer[thread_id];
     const size_t path_len = end_kmer_idx - start_kmer_idx + k;
 
@@ -170,6 +172,12 @@ void CdBG<k>::write_path(const uint16_t thread_id, const char* const seq, const 
 
     // End the path.
     buffer += "\n";
+
+
+    std::chrono::high_resolution_clock::time_point t_end = std::chrono::high_resolution_clock::now();
+    double elapsed_seconds = std::chrono::duration_cast<std::chrono::duration<double>>(t_end - t_start).count();
+
+    seg_write_time[thread_id] += elapsed_seconds;
 
     
     // Mark buffer size increment.

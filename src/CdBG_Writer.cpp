@@ -30,22 +30,19 @@ void CdBG<k>::output_maximal_unitigs_plain()
     
     const Reference_Input& reference_input = params.reference_input();
     const uint16_t thread_count = params.thread_count();
-    const std::string& output_file_path = params.output_file_path();
+    // const std::string& output_file_path = params.output_file_path();
 
     // Open a parser for the FASTA / FASTQ file containing the reference.
     Parser parser(reference_input);
 
 
-    // Clear the output file.
+    // Clear the output file and initialize the output loggers.
     clear_output_file();
-
-    // Open an asynchronous logger to write into the output file, and set its log message pattern.
-    cuttlefish::logger_t output = spdlog::basic_logger_mt<spdlog::async_factory>("async_file_logger", output_file_path);
-    output->set_pattern("%v");
-
+    init_output_loggers(); 
     
     // Allocate output buffers for each thread.
     allocate_output_buffers();
+
 
     // Construct a thread pool.
     Thread_Pool<k> thread_pool(thread_count, this, Thread_Pool<k>::Task_Type::output_plain);
@@ -81,7 +78,7 @@ void CdBG<k>::output_maximal_unitigs_plain()
         // output_off_substring(0, seq, seq_len, 0, seq_len - k, output);
 
         // Multi-threaded writing.
-        distribute_output_plain(seq, seq_len, output,thread_pool);
+        distribute_output_plain(seq, seq_len, thread_pool);
         thread_pool.wait_completion();
     }
 
@@ -94,7 +91,7 @@ void CdBG<k>::output_maximal_unitigs_plain()
 
 
     // Flush the buffers.
-    flush_output_buffers(output);
+    flush_output_buffers();
 
     // Clear and close the loggers.
     spdlog::drop_all();
@@ -105,10 +102,10 @@ void CdBG<k>::output_maximal_unitigs_plain()
 
 
     // Debug
-    std::cout << "Unitigs writing time to in-memory buffers (avg): " <<
-        std::accumulate(seg_write_time.begin(), seg_write_time.end(), 0) / thread_count << "\n";
-    std::cout << "Unitigs flush time to disk (avg): " <<
-        std::accumulate(buff_flush_time.begin(), buff_flush_time.end(), 0) / thread_count << "\n";
+    std::cout << "Unitigs writing time to in-memory buffers (total): " <<
+        std::accumulate(seg_write_time.begin(), seg_write_time.end(), 0) << "\n";
+    std::cout << "Unitigs flush time to disk (total): " <<
+        std::accumulate(buff_flush_time.begin(), buff_flush_time.end(), 0) << "\n";
 
 
     std::chrono::high_resolution_clock::time_point t_end = std::chrono::high_resolution_clock::now();
@@ -118,7 +115,7 @@ void CdBG<k>::output_maximal_unitigs_plain()
 
 
 template <uint16_t k>
-void CdBG<k>::distribute_output_plain(const char* const seq, const size_t seq_len, cuttlefish::logger_t output, Thread_Pool<k>& thread_pool)
+void CdBG<k>::distribute_output_plain(const char* const seq, const size_t seq_len, Thread_Pool<k>& thread_pool)
 {
     const uint16_t thread_count = params.thread_count();
     const size_t task_size = (seq_len - k + 1) / thread_count;
@@ -132,7 +129,7 @@ void CdBG<k>::distribute_output_plain(const char* const seq, const size_t seq_le
         right_end = (task_id == partition_count - 1 ? seq_len - k : left_end + task_size - 1);
         
         const uint16_t idle_thread_id = thread_pool.get_idle_thread();
-        thread_pool.assign_output_task(idle_thread_id, seq, seq_len, left_end, right_end, output);
+        thread_pool.assign_output_task(idle_thread_id, seq, seq_len, left_end, right_end);
 
         left_end += task_size;
     }
@@ -147,28 +144,17 @@ void CdBG<k>::output_maximal_unitigs_gfa()
 
     const Reference_Input& reference_input = params.reference_input();
     const uint16_t thread_count = params.thread_count();
-    const std::string& output_file_path = params.output_file_path();
+    // const std::string& output_file_path = params.output_file_path();
     const std::string& working_dir_path = params.working_dir_path();
+
 
     // Open a parser for the FASTA / FASTQ file containing the reference.
     Parser parser(reference_input);
 
 
     // Clear the output file and write the GFA header.
-    std::ofstream op_stream(output_file_path.c_str(), std::ofstream::out);
-    if(!op_stream)
-    {
-        std::cerr << "Error opening output file " << output_file_path << ". Aborting.\n";
-        std::exit(EXIT_FAILURE);
-    }
-
-    write_gfa_header(op_stream);
-    op_stream.close();
-
-    // Open an asynchronous logger to write into the output file, and set its log message pattern.
-    // Note: `spdlog` appends to the output file by default, so the results for the sequences are accumulated into the same output file.
-    // cuttlefish::logger_t output = spdlog::basic_logger_mt<spdlog::async_factory>("async_file_logger", output_file_path);
-    // output->set_pattern("%v");
+    clear_output_file();
+    write_gfa_header();
 
     // Set the prefixes of the temporary path output files. This is to avoid possible name
     // conflicts in the file system.
@@ -185,6 +171,7 @@ void CdBG<k>::output_maximal_unitigs_gfa()
     first_unitig.resize(thread_count);
     second_unitig.resize(thread_count);
     last_unitig.resize(thread_count);
+
 
     // Construct a thread pool.
     Thread_Pool<k> thread_pool(thread_count, this, Thread_Pool<k>::Task_Type::output_gfa);
@@ -222,15 +209,14 @@ void CdBG<k>::output_maximal_unitigs_gfa()
             continue;
 
 
-        // Open an asynchronous logger to write into the output file, and set its log message pattern.
-        // Note: `spdlog` appends to the output file by default, so the results for the sequences are accumulated into the same output file.
-        cuttlefish::logger_t output = spdlog::basic_logger_mt<spdlog::async_factory>("async_file_logger", output_file_path);
-        output->set_pattern("%v");
+        // Initialize the output loggers.
+        // Note: `spdlog` appends to the output file by default, so the results are accumulated into the
+        // same output file; thus repeated initializations do not result in clearing out the output file.
+        init_output_loggers();
 
         // Reset the path output streams for each thread.
         reset_path_streams();
 
-        
         // Reset the first, the second, and the last unitigs seen for each thread.
         std::fill(first_unitig.begin(), first_unitig.end(), Oriented_Unitig());
         std::fill(second_unitig.begin(), second_unitig.end(), Oriented_Unitig());
@@ -241,26 +227,23 @@ void CdBG<k>::output_maximal_unitigs_gfa()
         // output_gfa_off_substring(0, seq, seq_len, 0, seq_len - k, output);
 
         // Multi-threaded writing.
-        distribute_output_gfa(seq, seq_len, output, thread_pool);
+        distribute_output_gfa(seq, seq_len, thread_pool);
         thread_pool.wait_completion();
-        write_inter_thread_connections(output);
+        write_inter_thread_connections();
 
         
         // Flush all the buffered content (segments and links), as the GFA path to be appended to
         // the same output sink file is written in a different way than using the `spdlog` logger.
-        // Note: If using an async logger, `logger->flush()` posts a message to the queue requesting the flush
-        // operation, so the function returns immediately. Hence a forceful eviction is necessary by shutdown.
         std::chrono::high_resolution_clock::time_point t_s = std::chrono::high_resolution_clock::now();
-        output->flush();
-        spdlog::shutdown();
+        close_output_loggers();
         std::chrono::high_resolution_clock::time_point t_e = std::chrono::high_resolution_clock::now();
         double elapsed_seconds = std::chrono::duration_cast<std::chrono::duration<double>>(t_e - t_s).count();
         logger_flush_time += elapsed_seconds;
         
 
         // Write the GFA path for this sequence.
-        flush_path_buffers();
-        params.output_format() == 1 ? write_gfa_path() : write_gfa_ordered_group();
+        // flush_path_buffers();
+        // params.output_format() == 1 ? write_gfa_path() : write_gfa_ordered_group();
     }
 
     std::cerr << "\rProcessed " << seq_count << " sequences. Total reference length is " << ref_len << " bases.\n";
@@ -272,14 +255,13 @@ void CdBG<k>::output_maximal_unitigs_gfa()
 
 
     // Flush the buffers.
-    cuttlefish::logger_t output = spdlog::basic_logger_mt<spdlog::async_factory>("async_file_logger", output_file_path);
-    output->set_pattern("%v");
-    flush_output_buffers(output);
+    init_output_loggers();
+    flush_output_buffers();
 
     // Remove the temporary files.
     remove_temp_files();
 
-    // Close the loggers?
+    // Close `spdlog`.
     spdlog::drop_all();
 
 
@@ -288,16 +270,16 @@ void CdBG<k>::output_maximal_unitigs_gfa()
 
 
     // Debug
-    std::cout << "Segments writing time to in-memory buffers (avg): " <<
-        std::accumulate(seg_write_time.begin(), seg_write_time.end(), 0) / thread_count << "\n";
-    std::cout << "Links writing time to in-memory buffers (avg): " <<
-        std::accumulate(link_write_time.begin(), link_write_time.end(), 0) / thread_count << "\n";
-    std::cout << "Segments and links flush time to disk (avg): " <<
-        std::accumulate(buff_flush_time.begin(), buff_flush_time.end(), 0) / thread_count << "\n";
-    std::cout << "Paths writing time to in-memory buffers (avg): " <<
-        std::accumulate(path_write_time.begin(), path_write_time.end(), 0) / thread_count << "\n";
-    std::cout << "Paths flush time to disk (avg): " <<
-        std::accumulate(path_flush_time.begin(), path_flush_time.end(), 0) / thread_count << "\n";
+    std::cout << "Segments writing time to in-memory buffers (total): " <<
+        std::accumulate(seg_write_time.begin(), seg_write_time.end(), 0) << "\n";
+    std::cout << "Links writing time to in-memory buffers (total): " <<
+        std::accumulate(link_write_time.begin(), link_write_time.end(), 0) << "\n";
+    std::cout << "Segments and links flush time to disk (total): " <<
+        std::accumulate(buff_flush_time.begin(), buff_flush_time.end(), 0) << "\n";
+    std::cout << "Paths writing time to in-memory buffers (total): " <<
+        std::accumulate(path_write_time.begin(), path_write_time.end(), 0) << "\n";
+    std::cout << "Paths flush time to disk (total): " <<
+        std::accumulate(path_flush_time.begin(), path_flush_time.end(), 0) << "\n";
     std::cout << "Total paths concatenation time: " << path_concat_time << "\n";
     std::cout << "Total logger shutdown time: " << logger_flush_time << "\n";
 
@@ -309,7 +291,7 @@ void CdBG<k>::output_maximal_unitigs_gfa()
 
 
 template <uint16_t k>
-void CdBG<k>::distribute_output_gfa(const char* const seq, const size_t seq_len, cuttlefish::logger_t output, Thread_Pool<k>& thread_pool)
+void CdBG<k>::distribute_output_gfa(const char* const seq, const size_t seq_len, Thread_Pool<k>& thread_pool)
 {
     const uint16_t thread_count = params.thread_count();
     const size_t task_size = (seq_len - k + 1) / thread_count;
@@ -323,7 +305,7 @@ void CdBG<k>::distribute_output_gfa(const char* const seq, const size_t seq_len,
         right_end = (task_id == partition_count - 1 ? seq_len - k : left_end + task_size - 1);
         
         thread_pool.get_thread(task_id);
-        thread_pool.assign_output_task(task_id, seq, seq_len, left_end, right_end, output);
+        thread_pool.assign_output_task(task_id, seq, seq_len, left_end, right_end);
 
         left_end += task_size;
     }
@@ -343,6 +325,32 @@ void CdBG<k>::clear_output_file() const
     }
 
     output.close();
+}
+
+
+template <uint16_t k>
+void CdBG<k>::init_output_loggers()
+{
+    const std::string& output_file_path = params.output_file_path();
+    const uint16_t thread_count = params.thread_count();
+
+    // Open an asynchronous logger to write into the output file, and set its log message pattern.
+    output = spdlog::basic_logger_mt<spdlog::async_factory>("async_file_logger", output_file_path);
+    output->set_pattern("%v");
+
+    output_.resize(thread_count);
+    for(uint16_t t_id = 0; t_id < thread_count; ++t_id)
+        output_[t_id] = output;
+}
+
+
+template <uint16_t k>
+void CdBG<k>::close_output_loggers()
+{
+    // Note: If using an async logger, `logger->flush()` posts a message to the queue requesting the flush
+    // operation, so the function returns immediately. Hence a forceful eviction is necessary by shutdown.
+    output->flush();
+    spdlog::shutdown();
 }
 
 
@@ -450,20 +458,13 @@ bool CdBG<k>::is_unipath_end(const cuttlefish::Vertex_Class vertex_class, const 
 
 
 template <uint16_t k>
-void CdBG<k>::check_output_buffer(const uint16_t thread_id, cuttlefish::logger_t output)
+void CdBG<k>::check_output_buffer(const uint16_t thread_id)
 {
     std::chrono::high_resolution_clock::time_point t_start = std::chrono::high_resolution_clock::now();
 
     if(output_buffer[thread_id].size() >= BUFFER_THRESHOLD)
     {
-        // TODO: Avoid the presence of the same content in the memory simultaneously.
-        // Done, by replacing `stringstream` with `string`.
-        // E.g. skipping this line results in consuming memory:
-        // "fixed" HG38: 176 instead of 346 MB;
-        // HG38: 17 instead of 93 MB;
-        // Gorgor3: 0.5 instead of 40MB.
-
-        write(output, output_buffer[thread_id]);
+        write(thread_id, output_buffer[thread_id]);
         output_buffer[thread_id].clear();
     }
 
@@ -501,21 +502,21 @@ void CdBG<k>::check_path_buffer(const uint16_t thread_id)
 
 
 template <uint16_t k>
-void CdBG<k>::write(cuttlefish::logger_t output, const std::string& str)
+void CdBG<k>::write(const uint16_t thread_id, const std::string& str)
 {
-    output->info("{}", str);
+    output_[thread_id]->info("{}", str);
 }
 
 
 template <uint16_t k>
-void CdBG<k>::write(std::ofstream& output, const std::string& str)
+void CdBG<k>::write(std::ofstream& op, const std::string& str)
 {
-    output.write(str.c_str(), str.size());
+    op.write(str.c_str(), str.size());
 }
 
 
 template <uint16_t k>
-void CdBG<k>::flush_output_buffers(cuttlefish::logger_t output)
+void CdBG<k>::flush_output_buffers()
 {
     const uint16_t thread_count = params.thread_count();
 
@@ -524,7 +525,7 @@ void CdBG<k>::flush_output_buffers(cuttlefish::logger_t output)
         {
             std::chrono::high_resolution_clock::time_point t_start = std::chrono::high_resolution_clock::now();
 
-            write(output, output_buffer[t_id]);
+            write(t_id, output_buffer[t_id]);
             output_buffer[t_id].clear();
 
             std::chrono::high_resolution_clock::time_point t_end = std::chrono::high_resolution_clock::now();

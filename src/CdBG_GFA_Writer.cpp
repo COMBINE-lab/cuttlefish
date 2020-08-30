@@ -3,15 +3,23 @@
 #include "Output_Format.hpp"
 #include "utility.hpp"
 #include "fmt/format.h"
+#include "spdlog/spdlog.h"
+#include "spdlog/async.h"
+#include "spdlog/sinks/basic_file_sink.h"
 
 #include <chrono>
+
+
+// Initialize the static fields required for the GFA output.
+template <uint16_t k> const std::string CdBG<k>::GFA1_HEADER = "H\tVN:Z:1.0";
+template <uint16_t k> const std::string CdBG<k>::GFA2_HEADER = "H\tVN:Z:2.0";
 
 
 template <uint16_t k>
 void CdBG<k>::set_temp_file_prefixes(const std::string& working_dir)
 {
     // Check if temporary files can be created with random names.
-    const uint64_t RETRY_COUNT = 10;
+    constexpr uint64_t RETRY_COUNT = 10;
     std::string temp_file_prefix;
     
     for(uint64_t attempt = 0; attempt < RETRY_COUNT; ++attempt)
@@ -19,10 +27,10 @@ void CdBG<k>::set_temp_file_prefixes(const std::string& working_dir)
         temp_file_prefix = get_random_string(TEMP_FILE_PREFIX_LEN);
         if(!file_prefix_exists(working_dir, temp_file_prefix))
         {
-            PATH_OUTPUT_PREFIX = working_dir + "/" + PATH_OUTPUT_PREFIX + temp_file_prefix;
-            OVERLAP_OUTPUT_PREFIX = working_dir + "/" + OVERLAP_OUTPUT_PREFIX + temp_file_prefix;
+            path_file_prefix = working_dir + "/" + path_file_prefix + temp_file_prefix;
+            overlap_file_prefix = working_dir + "/" + overlap_file_prefix + temp_file_prefix;
 
-            std::cout << "Temporary file name prefixes: " << PATH_OUTPUT_PREFIX << "\n";
+            std::cout << "Temporary path file name prefixes: " << path_file_prefix << "\n";
 
             return;
         }
@@ -34,22 +42,81 @@ void CdBG<k>::set_temp_file_prefixes(const std::string& working_dir)
 
 
 template <uint16_t k>
-void CdBG<k>::reset_path_streams()
+void CdBG<k>::reset_path_loggers()
 {
     const uint8_t gfa_v = params.output_format();
     const uint16_t thread_count = params.thread_count();
 
-    path_output.clear();
+    path_output_.clear();
     if(gfa_v == cuttlefish::gfa1)
-        overlap_output.clear();
+        overlap_output_.clear();
+
+    path_output_.resize(thread_count);
+    if(gfa_v == cuttlefish::gfa1)
+        overlap_output_.resize(thread_count);
+
 
     for(uint16_t t_id = 0; t_id < thread_count; ++t_id)
     {
-        path_output.emplace_back((PATH_OUTPUT_PREFIX + std::to_string(t_id)).c_str(), std::ofstream::out);
+        const std::string path_file_name = path_file_prefix + std::to_string(t_id);
+
+        // Clear the thread-specific path output file.
+        std::ofstream op(path_file_name.c_str(), std::ofstream::out | std::ofstream::trunc);
+        op.close();
+
+        std::string logger_name("async_path_logger_");
+        logger_name += std::to_string(t_id);
+        path_output_[t_id] = spdlog::basic_logger_mt<spdlog::async_factory>(logger_name, path_file_name);
+        path_output_[t_id]->set_pattern("%v");
 
         if(gfa_v == cuttlefish::gfa1)
-            overlap_output.emplace_back((OVERLAP_OUTPUT_PREFIX + std::to_string(t_id)).c_str(), std::ofstream::out);
+        {
+            const std::string overlap_file_name = overlap_file_prefix + std::to_string(t_id);
+        
+            // Clear the thread-specific overlap output file.
+            std::ofstream op(overlap_file_name.c_str(), std::ofstream::out | std::ofstream::trunc);
+            op.close();
+
+            logger_name = std::string("async_overlap_logger_") + std::to_string(t_id);
+            overlap_output_[t_id] = spdlog::basic_logger_mt<spdlog::async_factory>(logger_name, overlap_file_name);
+            overlap_output_[t_id]->set_pattern("%v");
+        }
     }
+}
+
+
+template <uint16_t k>
+void CdBG<k>::allocate_path_buffers()
+{
+    const uint16_t thread_count = params.thread_count();
+    const uint8_t gfa_v = params.output_format();
+
+
+    path_buffer.resize(thread_count);
+    if(gfa_v == cuttlefish::gfa1)
+        overlap_buffer.resize(thread_count);
+
+    for(uint16_t t_id = 0; t_id < thread_count; ++t_id)
+    {
+        path_buffer[t_id].reserve(BUFFER_CAPACITY);
+        if(gfa_v == cuttlefish::gfa1)
+            overlap_buffer[t_id].reserve(BUFFER_CAPACITY);
+    }
+}
+
+
+template <uint16_t k>
+void CdBG<k>::reset_extreme_unitigs()
+{
+    const uint16_t thread_count = params.thread_count();
+
+    first_unitig.resize(thread_count);
+    second_unitig.resize(thread_count);
+    last_unitig.resize(thread_count);
+
+    std::fill(first_unitig.begin(), first_unitig.end(), Oriented_Unitig());
+    std::fill(second_unitig.begin(), second_unitig.end(), Oriented_Unitig());
+    std::fill(last_unitig.begin(), last_unitig.end(), Oriented_Unitig());
 }
 
 
@@ -259,6 +326,9 @@ void CdBG<k>::write_gfa_segment(const uint16_t thread_id, const char* const seq,
     std::string& buffer = output_buffer[thread_id];
     const size_t segment_len = end_kmer_idx - start_kmer_idx + k;
 
+    
+    ensure_buffer_space(buffer, segment_len + 49, output_[thread_id]);
+
     // The 'RecordType' field for segment lines.
     buffer += "S";
     
@@ -292,6 +362,7 @@ void CdBG<k>::write_gfa_segment(const uint16_t thread_id, const char* const seq,
     }
 
     // The k-mer count.
+    // TODO: remove this redundant info.
     buffer += "\tKC:i:";
     buffer += fmt::format_int(end_kmer_idx - start_kmer_idx + 1).c_str();
 
@@ -367,7 +438,7 @@ void CdBG<k>::write_gfa_link(const uint16_t thread_id, const Oriented_Unitig& le
 
     
     // Append a link to the growing path for this thread.
-    // append_link_to_path(thread_id, left_unitig, right_unitig);
+    append_link_to_path(thread_id, left_unitig, right_unitig);
 }
 
 
@@ -441,7 +512,7 @@ void CdBG<k>::write_gfa_edge(const uint16_t thread_id, const Oriented_Unitig& le
 
     
     // Append an edge to the growing path for this thread.
-    // append_edge_to_path(thread_id, left_unitig, right_unitig);
+    append_edge_to_path(thread_id, left_unitig, right_unitig);
 }
 
 
@@ -481,7 +552,7 @@ void CdBG<k>::write_gfa_gap(const uint16_t thread_id, const Oriented_Unitig& lef
 
 
     // Append an edge to the growing path for this thread.
-    // append_edge_to_path(thread_id, left_unitig, right_unitig);
+    append_edge_to_path(thread_id, left_unitig, right_unitig);
 }
 
 
@@ -531,6 +602,27 @@ void CdBG<k>::append_edge_to_path(const uint16_t thread_id, const Oriented_Uniti
     check_path_buffer(thread_id);
 
     // Error checking for writing failures is done while closing the streams.
+}
+
+
+template <uint16_t k>
+void CdBG<k>::check_path_buffer(const uint16_t thread_id)
+{
+    std::chrono::high_resolution_clock::time_point t_start = std::chrono::high_resolution_clock::now();
+
+
+    if(path_buffer[thread_id].size() >= BUFFER_THRESHOLD)
+        flush_buffer(path_buffer[thread_id], path_output_[thread_id]);
+
+    const uint8_t gfa_v = params.output_format();
+    if(gfa_v == cuttlefish::gfa1 && overlap_buffer[thread_id].size() >= BUFFER_THRESHOLD)
+        flush_buffer(overlap_buffer[thread_id], overlap_output_[thread_id]);
+
+
+    std::chrono::high_resolution_clock::time_point t_end = std::chrono::high_resolution_clock::now();
+    double elapsed_seconds = std::chrono::duration_cast<std::chrono::duration<double>>(t_end - t_start).count();
+
+    path_flush_time[thread_id] += elapsed_seconds;
 }
 
 
@@ -598,6 +690,30 @@ void CdBG<k>::search_first_connection(Oriented_Unitig& left_unitig, Oriented_Uni
 
 
 template <uint16_t k>
+void CdBG<k>::flush_path_buffers()
+{
+    const uint16_t thread_count = params.thread_count();
+    const uint8_t gfa_v = params.output_format();
+
+    for(uint16_t t_id = 0; t_id < thread_count; ++t_id)
+    {
+        std::chrono::high_resolution_clock::time_point t_start = std::chrono::high_resolution_clock::now();
+
+        if(!path_buffer[t_id].empty())
+            flush_buffer(path_buffer[t_id], path_output_[t_id]);
+
+        if(gfa_v == cuttlefish::gfa1 && !overlap_buffer[t_id].empty())
+            flush_buffer(overlap_buffer[t_id], overlap_output_[t_id]);
+
+        std::chrono::high_resolution_clock::time_point t_end = std::chrono::high_resolution_clock::now();
+        double elapsed_seconds = std::chrono::duration_cast<std::chrono::duration<double>>(t_end - t_start).count();
+
+        path_flush_time[t_id] += elapsed_seconds;
+    }
+}
+
+
+template <uint16_t k>
 void CdBG<k>::write_gfa_path()
 {
     std::chrono::high_resolution_clock::time_point t_start = std::chrono::high_resolution_clock::now();
@@ -605,19 +721,6 @@ void CdBG<k>::write_gfa_path()
 
     const uint16_t thread_count = params.thread_count();
     const std::string& output_file_path = params.output_file_path();
-
-    // Close the path output streams.
-    for(uint16_t t_id = 0; t_id < thread_count; ++t_id)
-    {
-        if(path_output[t_id].fail() || overlap_output[t_id].fail())
-        {
-            std::cerr << "Errors encountered while writing to the temporary path output files. Aborting.\n";
-            std::exit(EXIT_FAILURE);
-        }
-
-        path_output[t_id].close();
-        overlap_output[t_id].close();
-    }
     
 
     // Search the very first GFA link in the sequence, as that is not inferrable from the path outputs.
@@ -648,7 +751,7 @@ void CdBG<k>::write_gfa_path()
     // Copy the thread-specific path output file contents to the GFA output file.
     for(uint16_t t_id = 0; t_id < thread_count; ++t_id)
     {
-        const std::string path_file_name = (PATH_OUTPUT_PREFIX + std::to_string(t_id));
+        const std::string path_file_name = (path_file_prefix + std::to_string(t_id));
         std::ifstream input(path_file_name.c_str(), std::ios_base::in);
 
         if(input.fail())
@@ -680,7 +783,7 @@ void CdBG<k>::write_gfa_path()
         // Copy the thread-specific overlap output file contents to the GFA output file.
         for(uint16_t t_id = 0; t_id < thread_count; ++t_id)
         {
-            const std::string overlap_file_name = (OVERLAP_OUTPUT_PREFIX + std::to_string(t_id));
+            const std::string overlap_file_name = (overlap_file_prefix + std::to_string(t_id));
             std::ifstream input(overlap_file_name.c_str(), std::ifstream::in);
 
             if(input.fail())
@@ -719,18 +822,6 @@ void CdBG<k>::write_gfa_ordered_group()
 
     const uint16_t thread_count = params.thread_count();
     const std::string& output_file_path = params.output_file_path();
-
-    // Close the path output streams.
-    for(uint16_t t_id = 0; t_id < thread_count; ++t_id)
-    {
-        if(path_output[t_id].fail())
-        {
-            std::cerr << "Errors encountered while writing to the temporary path output files. Aborting.\n";
-            std::exit(EXIT_FAILURE);
-        }
-
-        path_output[t_id].close();
-    }
     
 
     // Search the very first GFA edge in the sequence, as that is not inferrable from the path outputs.
@@ -761,7 +852,7 @@ void CdBG<k>::write_gfa_ordered_group()
     // Copy the thread-specific path output file contents to the GFA output file.
     for(uint16_t t_id = 0; t_id < thread_count; ++t_id)
     {
-        const std::string path_file_name = (PATH_OUTPUT_PREFIX + std::to_string(t_id));
+        const std::string path_file_name = (path_file_prefix + std::to_string(t_id));
         std::ifstream input(path_file_name.c_str(), std::ios_base::in);
 
         if(input.fail())
@@ -799,8 +890,8 @@ void CdBG<k>::remove_temp_files() const
 
     for(uint16_t t_id = 0; t_id < thread_count; ++t_id)
     {
-        const std::string path_file_name = PATH_OUTPUT_PREFIX + std::to_string(t_id);
-        const std::string overlap_file_name = OVERLAP_OUTPUT_PREFIX + std::to_string(t_id);
+        const std::string path_file_name = path_file_prefix + std::to_string(t_id);
+        const std::string overlap_file_name = overlap_file_prefix + std::to_string(t_id);
 
         if(remove(path_file_name.c_str()) != 0 || (gfa_v == cuttlefish::gfa1 && remove(overlap_file_name.c_str()) != 0))
         {

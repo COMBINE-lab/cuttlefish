@@ -163,6 +163,9 @@ void CdBG<k>::write_path(const uint16_t thread_id, const char* const seq, const 
     std::string& buffer = output_buffer[thread_id];
     const size_t path_len = end_kmer_idx - start_kmer_idx + k;
 
+
+    ensure_buffer_space(buffer, path_len, output_[thread_id]);
+
     if(dir == cuttlefish::FWD)
         for(size_t offset = 0; offset < path_len; ++offset)
             buffer += Kmer<k>::upper(seq[start_kmer_idx + offset]);

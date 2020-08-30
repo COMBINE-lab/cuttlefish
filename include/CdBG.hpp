@@ -42,16 +42,16 @@ private:
     static constexpr size_t BUFFER_THRESHOLD = 100 * 1024;  // 100 KB.
     static constexpr size_t BUFFER_CAPACITY = 1.1 * BUFFER_THRESHOLD;   // 110% of the buffer threshold.
 
-    // The asynchronous output logger.
+    // The asynchronous output logger (for GFA segments and connections).
     cuttlefish::logger_t output;
 
     // Copies of the asynchronous logger `output` for each thread.
     std::vector<cuttlefish::logger_t> output_;
 
-    // `path_output[t_id]` and `overlap_output[t_id]` are the output streams for the paths
+    // `path_output_[t_id]` and `overlap_output_[t_id]` are the output loggers for the paths
     // and the overlaps between the links in the paths respectively, produced from the
     // underlying sequence, by the thread number `t_id`.
-    std::vector<std::ofstream> path_output, overlap_output;
+    std::vector<cuttlefish::logger_t> path_output_, overlap_output_;
 
     // After all the threads finish the parallel GFA outputting, `first_unitig[t_id]`,
     // `second_unitig[t_id]`, and `last_unitig[t_id]` contain the first unitig, the
@@ -64,9 +64,9 @@ private:
     
     // The prefixes for the names of the temprorary files used to store the thread-specific
     // paths and overlaps.
-    static std::string PATH_OUTPUT_PREFIX;
-    static std::string OVERLAP_OUTPUT_PREFIX;
-    constexpr static size_t TEMP_FILE_PREFIX_LEN = 10;
+    std::string path_file_prefix = "cuttlefish-path-output-";
+    std::string overlap_file_prefix = "cuttlefish-overlap-output-";
+    static constexpr size_t TEMP_FILE_PREFIX_LEN = 10;
 
     // Debug
     std::vector<double> seg_write_time;
@@ -78,9 +78,8 @@ private:
     double logger_flush_time = 0;
 
 
-    // Sets a unique prefix for the temporary files to be used during GFA output.
-    static void set_temp_file_prefixes(const std::string& working_dir);
-
+    /* Build methods */
+    
     // Classifies the vertices into different types (or, classes).
     void classify_vertices();
 
@@ -140,11 +139,14 @@ private:
     // should only be used with the canonical versions of two adjacent k-mers.
     bool is_self_loop(const Kmer<k>& kmer_hat, const Kmer<k>& next_kmer_hat) const;
 
+
+    /* Writer methods */
+
     // Outputs the compacted de Bruijn graph.
     void output_maximal_unitigs();
 
     // Outputs all the distinct maximal unitigs of the compacted de Bruijn graph
-    // (in canonical form) in a plain text format.
+    // (in canonical form) in plain text format.
     void output_maximal_unitigs_plain();
 
     // Distributes the outputting task of the maximal unitigs in plain format for
@@ -162,11 +164,15 @@ private:
     // Clears the output file content.
     void clear_output_file() const;
 
+    // Sets a unique prefix for the temporary files to be used during GFA output.
+    void set_temp_file_prefixes(const std::string& working_dir);
+
     // Initializes the output logger of each thread.
     void init_output_loggers();
 
-    // Closes the output logger.
-    void close_output_loggers();
+    // Resets the path output streams (depending on the GFA version) for each
+    // thread. Needs to be invoked before processing each new sequence.
+    void reset_path_loggers();
 
     // Allocates memory for the output buffer of each thread.
     void allocate_output_buffers();
@@ -213,32 +219,6 @@ private:
     // Note that, the output operation appends a newline at the end.
     void write_path(uint16_t thread_id, const char* seq, size_t start_kmer_idx, size_t end_kmer_idx, cuttlefish::dir_t dir);
 
-    // Checks the output buffer `output_buffer[thread_id]` for the thread number
-    // `thread_id`. If the buffer size exceeds `BUFFER_THRESHOLD`, then the
-    // buffer content is put into the logger of the thread, and the buffer is emptied.
-    void check_output_buffer(uint16_t thread_id);
-
-    // Checks the path buffer `path_buffer[thread_id]` (and `overlap_buffer[thread_id]`
-    // if using GFA1). If the buffer size overflows `BUFFER_THRESHOLD`, then the
-    // buffer content is dumped into the stream `output` and the buffer is emptied.
-    void check_path_buffer(uint16_t thread_id);
-
-    // Puts the string `str` to the logger of the thread number `thread_id`.
-    void write(const uint16_t thread_id, const std::string& str);
-
-    // Writes the string `str` to the output stream `op`.
-    static void write(std::ofstream& op, const std::string& str);
-    
-    // Flushes the output buffers (one for each thread).
-    void flush_output_buffers();
-
-    // Flushes the output buffers (one for each thread).
-    void flush_path_buffers();
-
-    // Resets the path output streams (depending on the GFA version) for each
-    // thread. Needs to be invoked before processing each new sequence.
-    void reset_path_streams();
-
     // Writes the maximal unitigs from the sequence `seq` (of length `seq_len`) that
     // have their starting indices between (inclusive) `left_end` and `right_end`.
     // The process is executed by the thread number `thread_id`.
@@ -251,6 +231,9 @@ private:
     // point of termination of the processedsubsequence, i.e. the index following the end of
     // it. The process is executed by the thread number `thread_id`.
     size_t output_maximal_unitigs_gfa(uint16_t thread_id, const char* seq, size_t seq_len, size_t right_end, size_t start_idx);
+
+    // Resets the first, the second, and the last unitigs seen for each thread.
+    void reset_extreme_unitigs();
 
     // Outputs the unitig at the k-mer range between the annotated k-mers `start_kmer` and
     // `end_kmer` of the sequence `seq` (if the unitig had not been output already). The
@@ -312,6 +295,41 @@ private:
     // the underlying sequence being processed, at the end of the output file. It basically
     // stiches together the path and overlap outputs produced by the threads.
     void write_gfa_ordered_group();
+
+    // Ensures that the string `buf` has enough free space to append a log of length
+    // `log_len` at its end without overflowing its capacity by flushing its content
+    // to the logger `log` if necessary. The request is non-binding in the sense that
+    // if the capacity of the buffer `str` is smaller than `log_len`, then this method
+    // does not ensure enough buffer space.
+    static void ensure_buffer_space(std::string& buf, size_t log_len, const cuttlefish::logger_t& log);
+
+    // Writes the string `str` to the logger `log`, and empties `str`.
+    static void flush_buffer(std::string& str, const cuttlefish::logger_t& log);
+
+    // Puts the content of the string `str` to the logger `log`.
+    static void write(const std::string& str, const cuttlefish::logger_t& log);
+
+    // Checks the output buffer for the thread number `thread_id`. If the buffer
+    // size exceeds `BUFFER_THRESHOLD`, then the buffer content is put into the
+    // corresponding logger of the thread, and the buffer is emptied.
+    void check_output_buffer(uint16_t thread_id);
+
+    // Checks the path buffer (and overlap buffer if using GFA1). If the buffer
+    // size exceeds `BUFFER_THRESHOLD`, then the buffer content is put into the
+    // corresponding logger of the thread, and the buffer is emptied.
+    void check_path_buffer(uint16_t thread_id);
+    
+    // Flushes the output buffers (one for each thread).
+    void flush_output_buffers();
+
+    // Flushes the output buffers (one for each thread).
+    void flush_path_buffers();
+
+    // Flushes (non-blocking) all the loggers (output, path, and overlap (GFA1-specific)).
+    void flush_loggers();   // TODO: Make it const after removing timing profiles.
+
+    // Closes (shuts down) all the loggers, with required flushing as necessary.
+    void close_loggers();
 
     // Removes the temporary files used for the thread-specific path output streams
     // (depending on the GFA version) from the disk.

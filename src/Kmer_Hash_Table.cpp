@@ -80,6 +80,39 @@ void Kmer_Hash_Table<k>::save_mph_function(const std::string& file_path) const
 
 
 template <uint16_t k>
+void Kmer_Hash_Table<k>::save_hash_buckets(const std::string& file_path) const
+{
+    std::ofstream output(file_path.c_str(), std::ofstream::out);
+    if(output.fail())
+    {
+        std::cerr << "Error writing to file " << file_path << ". Aborting.\n";
+        std::exit(EXIT_FAILURE);
+    }
+
+    hash_table.serialize(output);
+    
+    output.close();
+}
+
+
+template <uint16_t k>
+void Kmer_Hash_Table<k>::load_hash_buckets(const std::string& file_path)
+{
+    std::ifstream input(file_path.c_str(), std::ifstream::in);
+    if(input.fail())
+    {
+        std::cerr << "Error opening file " << file_path << ". Aborting.\n";
+        std::exit(EXIT_FAILURE);
+    }
+
+    input.close();
+
+
+    hash_table.deserialize(file_path, false);
+}
+
+
+template <uint16_t k>
 void Kmer_Hash_Table<k>::construct(const std::string& kmc_db_path, const uint16_t thread_count, const std::string& mph_file_path)
 {
     std::chrono::high_resolution_clock::time_point t_start = std::chrono::high_resolution_clock::now();

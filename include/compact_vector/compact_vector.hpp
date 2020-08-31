@@ -216,7 +216,7 @@ namespace compact {
                 std::memset(this->get(), 0, this->capacity_bytes());
             }
 
-            void serialize(std::ofstream &of) {
+            void serialize(std::ofstream &of) const {
                 uint64_t static_flag = (static_bits() == bits()) ? 1 : 0;
                 of.write(reinterpret_cast<char *>(&static_flag), sizeof(static_flag));
                 if (static_flag != 0) {

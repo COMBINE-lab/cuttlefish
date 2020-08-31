@@ -55,9 +55,9 @@ void Thread_Pool<k>::task(const uint16_t thread_id)
             {
                 const Output_Task_Params& params = output_params[thread_id];
                 if(task_type == Task_Type::output_plain)
-                    cdbg->output_plain_off_substring(params.thread_id, params.seq, params.seq_len, params.left_end, params.right_end, params.output);
+                    cdbg->output_plain_off_substring(params.thread_id, params.seq, params.seq_len, params.left_end, params.right_end);
                 else    // `task_type == Task_Type::output_gfa`
-                    cdbg->output_gfa_off_substring(params.thread_id, params.seq, params.seq_len, params.left_end, params.right_end, params.output);
+                    cdbg->output_gfa_off_substring(params.thread_id, params.seq, params.seq_len, params.left_end, params.right_end);
             }
 
 
@@ -101,9 +101,9 @@ void Thread_Pool<k>::assign_classification_task(const uint16_t thread_id, const 
 
 
 template <uint16_t k>
-void Thread_Pool<k>::assign_output_task(const uint16_t thread_id, const char* const seq, const size_t seq_len, const size_t left_end, const size_t right_end, cuttlefish::logger_t output)
+void Thread_Pool<k>::assign_output_task(const uint16_t thread_id, const char* const seq, const size_t seq_len, const size_t left_end, const size_t right_end)
 {
-    output_params[thread_id] = Output_Task_Params(thread_id, seq, seq_len, left_end, right_end, output);
+    output_params[thread_id] = Output_Task_Params(thread_id, seq, seq_len, left_end, right_end);
 
     assign_task(thread_id);
 }

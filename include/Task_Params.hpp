@@ -35,13 +35,12 @@ struct Output_Task_Params
     size_t seq_len;
     size_t left_end;
     size_t right_end;
-    cuttlefish::logger_t output;
 
 
     Output_Task_Params() {}
 
-    Output_Task_Params(const uint16_t thread_id, const char* const seq, const size_t seq_len, const size_t left_end, const size_t right_end, cuttlefish::logger_t output):
-        thread_id(thread_id), seq(seq), seq_len(seq_len), left_end(left_end), right_end(right_end), output(output)
+    Output_Task_Params(const uint16_t thread_id, const char* const seq, const size_t seq_len, const size_t left_end, const size_t right_end):
+        thread_id(thread_id), seq(seq), seq_len(seq_len), left_end(left_end), right_end(right_end)
     {}
 };
 

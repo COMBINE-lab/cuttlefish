@@ -24,6 +24,7 @@ private:
     const uint8_t output_format_;   // Output format (0: txt, 1: GFAv1, 2: GFAv2).
     const std::string& working_dir_path_;    // Path to the working directory (for temporary files).
     const std::string& mph_file_path_;   // Optional path to file storing an MPH over the k-mer set.
+    const std::string& buckets_file_path_;  // Optional path to file storing the hash table buckets for the k-mer set.
 
 
 public:
@@ -38,7 +39,8 @@ public:
                     const std::string& output_file_path,
                     uint8_t output_format,
                     const std::string& working_dir_path,
-                    const std::string& mph_file_path):
+                    const std::string& mph_file_path,
+                    const std::string& buckets_file_path):
         reference_input_(ref_paths, list_paths, dir_paths),
         k_(k),
         kmc_db_path_(kmc_db_path),
@@ -46,7 +48,8 @@ public:
         output_file_path_(output_file_path),
         output_format_(output_format),
         working_dir_path_(working_dir_path),
-        mph_file_path_(mph_file_path)
+        mph_file_path_(mph_file_path),
+        buckets_file_path_(buckets_file_path)
     {}
 
 
@@ -103,6 +106,13 @@ public:
     const std::string& mph_file_path() const
     {
         return mph_file_path_;
+    }
+
+
+    // Returns the path to the optional file storing the hash table buckets.
+    const std::string& buckets_file_path() const
+    {
+        return buckets_file_path_;
     }
 
 

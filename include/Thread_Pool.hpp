@@ -92,7 +92,7 @@ public:
     void assign_classification_task(uint16_t thread_id, const char* seq, size_t seq_len, size_t left_end, size_t right_end);
 
     // Assigns an outputting task to the thread number `thread_id` with the provided parameters.
-    void assign_output_task(uint16_t thread_id, const char* seq, size_t seq_len, size_t left_end, size_t right_end, cuttlefish::logger_t output);
+    void assign_output_task(uint16_t thread_id, const char* seq, size_t seq_len, size_t left_end, size_t right_end);
 
     // Waits until all the threads in the pool have completed their active tasks.
     void wait_completion() const;

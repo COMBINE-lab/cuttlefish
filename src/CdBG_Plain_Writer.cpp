@@ -5,7 +5,7 @@
 
 
 template <uint16_t k>
-void CdBG<k>::output_plain_off_substring(const uint16_t thread_id, const char* const seq, const size_t seq_len, const size_t left_end, const size_t right_end, cuttlefish::logger_t output)
+void CdBG<k>::output_plain_off_substring(const uint16_t thread_id, const char* const seq, const size_t seq_len, const size_t left_end, const size_t right_end)
 {
     size_t kmer_idx = left_end;
     while(kmer_idx <= right_end)
@@ -17,13 +17,13 @@ void CdBG<k>::output_plain_off_substring(const uint16_t thread_id, const char* c
             break;
 
         // Process a maximal valid contiguous subsequence, and advance to the index following it.
-        kmer_idx = output_maximal_unitigs_plain(thread_id, seq, seq_len, right_end, kmer_idx, output);
+        kmer_idx = output_maximal_unitigs_plain(thread_id, seq, seq_len, right_end, kmer_idx);
     }
 }
 
 
 template <uint16_t k>
-size_t CdBG<k>::output_maximal_unitigs_plain(const uint16_t thread_id, const char* const seq, const size_t seq_len, const size_t right_end, const size_t start_idx, cuttlefish::logger_t output)
+size_t CdBG<k>::output_maximal_unitigs_plain(const uint16_t thread_id, const char* const seq, const size_t seq_len, const size_t right_end, const size_t start_idx)
 {
     size_t kmer_idx = start_idx;
 
@@ -35,7 +35,7 @@ size_t CdBG<k>::output_maximal_unitigs_plain(const uint16_t thread_id, const cha
     // neighboring k-mer to this k-mer. So it's a maximal unitig by itself.
     if((kmer_idx == 0 || Kmer<k>::is_placeholder(seq[kmer_idx - 1])) &&
         (kmer_idx + k == seq_len || Kmer<k>::is_placeholder(seq[kmer_idx + k])))
-        output_plain_unitig(thread_id, seq, curr_kmer, curr_kmer, output);
+        output_plain_unitig(thread_id, seq, curr_kmer, curr_kmer);
     else    // At least one valid neighbor exists, either to the left or to the right, or on both sides.
     {
         // No valid right neighbor exists for the k-mer.
@@ -46,7 +46,7 @@ size_t CdBG<k>::output_maximal_unitigs_plain(const uint16_t thread_id, const cha
             
             if(is_unipath_start(curr_kmer.vertex_class(), curr_kmer.dir(), prev_kmer.vertex_class(), prev_kmer.dir()))
                 // A maximal unitig ends at the ending of a maximal valid subsequence.
-                output_plain_unitig(thread_id, seq, curr_kmer, curr_kmer, output);
+                output_plain_unitig(thread_id, seq, curr_kmer, curr_kmer);
 
             // The contiguous sequence ends at this k-mer.
             return kmer_idx + k;
@@ -81,7 +81,7 @@ size_t CdBG<k>::output_maximal_unitigs_plain(const uint16_t thread_id, const cha
 
         if(on_unipath && is_unipath_end(curr_kmer.vertex_class(), curr_kmer.dir(), next_kmer.vertex_class(), next_kmer.dir()))
         {
-            output_plain_unitig(thread_id, seq, unipath_start_kmer, curr_kmer, output);
+            output_plain_unitig(thread_id, seq, unipath_start_kmer, curr_kmer);
             on_unipath = false;
         }
 
@@ -105,7 +105,7 @@ size_t CdBG<k>::output_maximal_unitigs_plain(const uint16_t thread_id, const cha
                 // A maximal unitig ends at the ending of a maximal valid subsequence.
                 if(on_unipath)
                 {
-                    output_plain_unitig(thread_id, seq, unipath_start_kmer, curr_kmer, output);
+                    output_plain_unitig(thread_id, seq, unipath_start_kmer, curr_kmer);
                     on_unipath = false;
                 }
 
@@ -118,7 +118,7 @@ size_t CdBG<k>::output_maximal_unitigs_plain(const uint16_t thread_id, const cha
                 
                 if(on_unipath && is_unipath_end(curr_kmer.vertex_class(), curr_kmer.dir(), next_kmer.vertex_class(), next_kmer.dir()))
                 {
-                    output_plain_unitig(thread_id, seq, unipath_start_kmer, curr_kmer, output);
+                    output_plain_unitig(thread_id, seq, unipath_start_kmer, curr_kmer);
                     on_unipath = false;
                 }
             }
@@ -132,7 +132,7 @@ size_t CdBG<k>::output_maximal_unitigs_plain(const uint16_t thread_id, const cha
 
 
 template <uint16_t k>
-void CdBG<k>::output_plain_unitig(const uint16_t thread_id, const char* const seq, const Annotated_Kmer<k>& start_kmer, const Annotated_Kmer<k>& end_kmer, cuttlefish::logger_t output)
+void CdBG<k>::output_plain_unitig(const uint16_t thread_id, const char* const seq, const Annotated_Kmer<k>& start_kmer, const Annotated_Kmer<k>& end_kmer)
 {
     // This is to avoid race conditions that may arise while multi-threading.
     // If two threads try to output the same unitig at the same time but
@@ -151,30 +151,40 @@ void CdBG<k>::output_plain_unitig(const uint16_t thread_id, const char* const se
 
     // If the hash table update is successful, only then this thread may output this unitig.
     if(Vertices.update(hash_table_entry))
-        write_path(thread_id, seq, start_kmer.idx(), end_kmer.idx(), start_kmer.kmer() < end_kmer.rev_compl(), output);
+        write_path(thread_id, seq, start_kmer.idx(), end_kmer.idx(), start_kmer.kmer() < end_kmer.rev_compl());
 }
 
 
 template <uint16_t k>
-void CdBG<k>::write_path(const uint16_t thread_id, const char* const seq, const size_t start_kmer_idx, const size_t end_kmer_idx, const cuttlefish::dir_t dir, cuttlefish::logger_t output) 
+void CdBG<k>::write_path(const uint16_t thread_id, const char* const seq, const size_t start_kmer_idx, const size_t end_kmer_idx, const cuttlefish::dir_t dir) 
 {
-    std::stringstream& buffer = output_buffer[thread_id];
+    std::chrono::high_resolution_clock::time_point t_start = std::chrono::high_resolution_clock::now();
+
+    std::string& buffer = output_buffer[thread_id];
     const size_t path_len = end_kmer_idx - start_kmer_idx + k;
+
+
+    ensure_buffer_space(buffer, path_len, output_[thread_id]);
 
     if(dir == cuttlefish::FWD)
         for(size_t offset = 0; offset < path_len; ++offset)
-            buffer << Kmer<k>::upper(seq[start_kmer_idx + offset]);
+            buffer += Kmer<k>::upper(seq[start_kmer_idx + offset]);
     else    // dir == cuttlefish::BWD
         for(size_t offset = 0; offset < path_len; ++offset)
-            buffer << Kmer<k>::complement(seq[end_kmer_idx + k - 1 - offset]);
+            buffer += Kmer<k>::complement(seq[end_kmer_idx + k - 1 - offset]);
 
     // End the path.
-    buffer << "\n";
+    buffer += "\n";
+
+
+    std::chrono::high_resolution_clock::time_point t_end = std::chrono::high_resolution_clock::now();
+    double elapsed_seconds = std::chrono::duration_cast<std::chrono::duration<double>>(t_end - t_start).count();
+
+    seg_write_time[thread_id] += elapsed_seconds;
 
     
-    // TODO: Fix a max memory scheme for buffers instead of a fixed line count.
     // Mark buffer size increment.
-    fill_buffer(thread_id, 1, output);
+    check_output_buffer(thread_id);
 }
 
 

@@ -2,13 +2,6 @@
 #include "CdBG.hpp"
 
 
-// Initialize the static fields required for the GFA output.
-template <uint16_t k> const std::string CdBG<k>::GFA1_HEADER = "H\tVN:Z:1.0";
-template <uint16_t k> const std::string CdBG<k>::GFA2_HEADER = "H\tVN:Z:2.0";
-template <uint16_t k> std::string CdBG<k>::PATH_OUTPUT_PREFIX = "cuttlefish-path-output-";
-template <uint16_t k> std::string CdBG<k>::OVERLAP_OUTPUT_PREFIX = "cuttlefish-overlap-output-";
-
-
 template <uint16_t k> 
 CdBG<k>::CdBG(const Build_Params& params):
     params(params)

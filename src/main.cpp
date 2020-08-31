@@ -14,9 +14,6 @@
 #include <iostream>
 
 
-// TODO: Replace the term 'bbhash' with 'mph' throughout to be more general.
-
-
 // Driver function for the CdBG build.
 void build(int argc, char** argv)
 {
@@ -31,7 +28,8 @@ void build(int argc, char** argv)
         ("o,output", "output file", cxxopts::value<std::string>())
         ("f,format", "output format (0: txt, 1: GFAv1, 2: GFAv2)", cxxopts::value<uint16_t>()->default_value("0"))
         ("w,work_dir", "working directory", cxxopts::value<std::string>()->default_value("."))
-        ("b,bbhash", "BBHash file (optional)", cxxopts::value<std::string>()->default_value(""))
+        ("mph", "minimal perfect hash (BBHash) file (optional)", cxxopts::value<std::string>()->default_value(""))
+        ("buckets", "hash table buckets (cuttlefish) file (optional)", cxxopts::value<std::string>()->default_value(""))
         ("h,help", "print usage");
 
     try
@@ -52,9 +50,10 @@ void build(int argc, char** argv)
         const auto output_file = result["output"].as<std::string>();
         const auto format = result["format"].as<uint16_t>();
         const auto working_dir = result["work_dir"].as<std::string>();
-        const auto bbhash_file = result["bbhash"].as<std::string>();
+        const auto mph_file = result["mph"].as<std::string>();
+        const auto buckets_file = result["buckets"].as<std::string>();
 
-        const Build_Params params(refs, lists, dirs, k, kmer_database, thread_count, output_file, format, working_dir, bbhash_file);
+        const Build_Params params(refs, lists, dirs, k, kmer_database, thread_count, output_file, format, working_dir, mph_file, buckets_file);
         if(!params.is_valid())
         {
             std::cerr << "Invalid input configuration. Aborting.\n";
@@ -90,7 +89,7 @@ void validate(int argc, char** argv)
         ("s,kmc_db", "set of k-mers (KMC database) prefix", cxxopts::value<std::string>())
         ("g,cdbg", "compacted de Bruijn graph file", cxxopts::value<std::string>())
         ("t,threads", "number of threads to use", cxxopts::value<uint16_t>()->default_value("1"))
-        ("b,bbhash", "BBHash file (optional)", cxxopts::value<std::string>()->default_value(""))
+        ("mph", "minimal perfect hash (BBHash) file (optional)", cxxopts::value<std::string>()->default_value(""))
         ("h,help", "print usage");
 
     try
@@ -109,10 +108,10 @@ void validate(int argc, char** argv)
         const auto kmer_database = result["kmc_db"].as<std::string>();
         const auto cdbg = result["cdbg"].as<std::string>();
         const auto thread_count = result["threads"].as<uint16_t>();
-        const auto bbhash_file = result["bbhash"].as<std::string>();
+        const auto mph_file = result["mph"].as<std::string>();
 
 
-        const Validation_Params params(refs, lists, dirs, k, kmer_database, cdbg, thread_count, bbhash_file);
+        const Validation_Params params(refs, lists, dirs, k, kmer_database, cdbg, thread_count, mph_file);
         if(!params.is_valid())
         {
             std::cerr << "Invalid input configuration. Aborting.\n";

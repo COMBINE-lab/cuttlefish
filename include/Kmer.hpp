@@ -7,6 +7,7 @@
 #include "DNA_Utility.hpp"
 #include "smhasher/MurmurHash3.h"
 #include "kmc_api/kmc_file.h"
+#include "xxhash/xxh3.h"
 
 #include <string>
 #include <algorithm>
@@ -18,10 +19,10 @@ class Kmer: public DNA_Utility
 private:
 
     // Number of 64-bit integers required to compactly represent the underlying k-mer with 2-bits/base encoding.
-    static constexpr uint16_t NUM_INTS = (k + 31) / 32;
+    static constexpr const uint16_t NUM_INTS = (k + 31) / 32;
 
     // Bitmask used to clear the most significant DNA base character, i.e. the first base of the k-mer which is at the bits `2k-1 : 2k-2`.
-    static constexpr uint64_t CLEAR_MSN_MASK = ~(uint64_t(0b11) << (2 * ((k - 1) % 32)));
+    static constexpr const uint64_t CLEAR_MSN_MASK = ~(uint64_t(0b11) << (2 * ((k - 1) % 32)));
 
     // The underlying k-mer represented with 2-bit encoding, as a collection of 64-bit integers.
     // A k-mer `n_{k - 1} ... n_1 n_0` is stored in the array `kmer_data` such that, `kmer_data[0]`
@@ -71,7 +72,7 @@ public:
     constexpr static uint16_t get_k();
 
     // Returns a 64-bit hash value for the k-mer.
-    uint64_t to_u64() const;
+    uint64_t to_u64(uint64_t seed=0) const;
 
     // Gets the k-mer from the KMC api object `kmer_api`.
     void from_CKmerAPI(const CKmerAPI& kmer_api);
@@ -137,19 +138,18 @@ inline void Kmer<k>::right_shift()
 
 
 template <uint16_t k>
-inline uint64_t Kmer<k>::to_u64() const
+inline uint64_t Kmer<k>::to_u64(uint64_t seed) const
 {
     // The k-mer uses just one 64-bit integer, i.e. k <= 32.
     if(NUM_INTS == 1)
         return kmer_data[0];
 
     // The k-mer uses more than one 64-bit integer, i.e. k > 32.
-    constexpr uint16_t NUM_BYTES = (k + 3) / 4;
-    uint64_t H[2];
-
-    MurmurHash3_x64_128(kmer_data, NUM_BYTES, 0, H);
-    
-    return H[0] ^ H[1];
+    constexpr const uint16_t NUM_BYTES = (k + 3) / 4;
+    return XXH3_64bits_withSeed(kmer_data, NUM_BYTES, seed);
+    //uint64_t H[2];
+    //MurmurHash3_x64_128(kmer_data, NUM_BYTES, seed, H);
+    //return H[0] ^ H[1];
 }
 
 
@@ -195,17 +195,20 @@ inline Kmer<k>::Kmer(const CKmerAPI& kmer_api)
 template <uint16_t k>
 inline Kmer<k>::Kmer(const Kmer<k>& rhs)
 {
-    for(uint16_t idx = 0; idx < NUM_INTS; ++idx)
-        kmer_data[idx] = rhs.kmer_data[idx];
+    memcpy(kmer_data, rhs.kmer_data, NUM_INTS * sizeof(uint64_t));
+    //for(uint16_t idx = 0; idx < NUM_INTS; ++idx)
+    //    kmer_data[idx] = rhs.kmer_data[idx];
 }
 
 
 template <uint16_t k>
 inline Kmer<k>& Kmer<k>::operator=(const Kmer<k>& rhs)
 {
+    memcpy(kmer_data, rhs.kmer_data, NUM_INTS * sizeof(uint64_t));
+    /*
     for(uint16_t idx = 0; idx < NUM_INTS; ++idx)
         kmer_data[idx] = rhs.kmer_data[idx];
-
+    */
     return *this;
 }
 
@@ -231,7 +234,7 @@ inline constexpr uint16_t Kmer<k>::get_k()
 template <uint16_t k>
 inline void Kmer<k>::from_CKmerAPI(const CKmerAPI& kmer_api)
 {
-    kmer_api.to_u64(kmer_data);
+    kmer_api.to_u64<NUM_INTS>(kmer_data);
 }
 
 

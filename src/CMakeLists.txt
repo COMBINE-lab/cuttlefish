@@ -5,6 +5,9 @@ set(PROJECT_SRC
         kmc_api/kmer_api.cpp
         kmc_api/mmer.cpp
         smhasher/MurmurHash3.cpp
+        xxhash.c
+        xxh_x86dispatch.c
+        xxhsum.c
         Parser.cpp
         Thread_Pool.cpp
         DNA_Utility.cpp
@@ -34,7 +37,7 @@ add_library(core STATIC ${PROJECT_SRC})
 # This controls the `-I` (include paths) switch of the compiler invocation.
 # Since `include` is declared `PUBLIC` for the library, it is propagated to all the
 # consumers of the library.
-set(INCLUDE_DIR include)
+set(INCLUDE_DIR include include/xxhash)
 target_include_directories(core PUBLIC ${CMAKE_SOURCE_DIR}/${INCLUDE_DIR})
 
 

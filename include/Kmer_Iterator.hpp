@@ -110,8 +110,8 @@ inline void Kmer_Iterator<k>::open_kmer_database()
 template <uint16_t k>
 inline void Kmer_Iterator<k>::advance()
 {
-    uint32_t count;
-    if(!kmer_database_input.ReadNextKmer(kmer_object, count))
+    //uint32_t count;
+    if(!kmer_database_input.ReadNextKmer(kmer_object))
     {
         kmer_object = CKmerAPI();
         kmer_database_input.Close();

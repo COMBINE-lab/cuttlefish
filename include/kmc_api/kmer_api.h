@@ -344,10 +344,11 @@ public:
 		
 			kmer_data = new uint64[no_of_rows];
 		}
-
+		memcpy(kmer_data, kmer.kmer_data, no_of_rows*sizeof(kmer_data[0]));
+		/*
 		for(uint32 i = 0; i < no_of_rows; i++)
 			kmer_data[i] = kmer.kmer_data[i];
-
+		*/
 		return *this;
 	};
 

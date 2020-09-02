@@ -1134,10 +1134,7 @@ we need this 2-functors scheme because HashFunctors won't work with unordered_ma
 					
 							}
 							
-							
-							
-							
-							
+						
 							
 							//computes next hash
 

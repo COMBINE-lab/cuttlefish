@@ -226,37 +226,41 @@ void test_unipaths(const char* file_name)
 }
 
 
-// void test_kmer_iterator(const char* file_name)
-// {
-//     const std::string kmc_file(file_name);
+template <uint16_t k>
+void test_kmer_iterator(const char* file_name)
+{
+    const std::string kmc_file(file_name);
 
-//     // Open the k-mers container.
-//     Kmer_Container kmers(kmc_file);
+    // Open the k-mers container.
+    Kmer_Container<k> kmers(kmc_file);
 
-//     Kmer_u64::set_k(kmers.kmer_length());
+    // Kmer_u64::set_k(kmers.kmer_length());
+    Kmer<k>::set_k(kmers.kmer_length());
 
-//     std::cout << "k-mers length: " << kmers.kmer_length() << "\n";
-//     std::cout << "k-mers count: " << kmers.size() << "\n";
+    std::cout << "k-mers length: " << kmers.kmer_length() << "\n";
+    std::cout << "k-mers count: " << kmers.size() << "\n";
 
 
-//     // Iterating over the k-mers on the database from disk.
+    // Iterating over the k-mers on the database from disk.
 
-//     std::cout << "\nPerforming some non-trivial task with dereferenced iterators.\n";
-//     auto it_beg = kmers.begin();
-//     auto it_end = kmers.end();
-//     uint64_t count = 0;
-//     cuttlefish::kmer_t max_kmer = cuttlefish::kmer_t();
-//     for(auto it = it_beg; it != it_end; ++it)
-//     {
-//         // Use the iterator from here
-//         // std::cout << *it << "\n";
-//         max_kmer = std::max(max_kmer, *it);
-//         count++;
-//     }
+    std::cout << "\nPerforming some non-trivial task with dereferenced iterators.\n";
+    auto it_beg = kmers.begin();
+    auto it_end = kmers.end();
+    uint64_t count = 0;
+    Kmer<k> max_kmer = Kmer<k>();
+    for(auto it = it_beg; it != it_end; ++it)
+    {
+        // Use the iterator from here
+        // std::cout << *it << "\n";
+        max_kmer = std::max(max_kmer, *it);
+        count++;
+        if(count % 100000000 == 0)
+            std::cout << "Processed " << count << " k-mers\n";
+    }
 
-//     std::cout << "Max k-mer: " << max_kmer.string_label() << "\n";
-//     std::cout << "k-mers count found using iterators: " << count << "\n";
-// }
+    std::cout << "Max k-mer: " << max_kmer.string_label() << "\n";
+    std::cout << "k-mers count found using iterators: " << count << "\n";
+}
 
 
 void check_uint64_BBHash(const char* file_name, uint16_t thread_count)
@@ -370,7 +374,7 @@ int main(int argc, char** argv)
 
     // check_uint64_BBHash(argv[1], atoi(argv[2]));
 
-    // test_kmer_iterator(argv[1]);
+    test_kmer_iterator<33>(argv[1]);
 
     // test_async_writer(argv[1]);
 

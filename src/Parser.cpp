@@ -62,7 +62,7 @@ void Parser::open_reference(const std::string& reference_path)
     curr_ref_path = reference_path;
     ref_count++;
 
-    std::cout << "Opened reference " << ref_count << " from " << curr_ref_path << "\n";
+    std::cout << "\nOpened reference " << ref_count << " from " << curr_ref_path << "\n";
 }
 
 

@@ -319,6 +319,15 @@ void CdBG<k>::init_output_loggers()
     const std::string& output_file_path = params.output_file_path();
     const uint16_t thread_count = params.thread_count();
 
+
+    // Initialize the global thread-pool of `spdlog` with restricting its default queue size from 8192 to
+    // a suitable one for us. This is required to restrict the memory-usage during the output step, as
+    // `spdlog` can continue on accumulating logs (each of max length `BUFFER_THRESHOLD`), i.e. `spdlog`
+    // itself can take up memory up-to (`BUFFER_THRESHOLD x #output_threads`), besides our own buffer
+    // memory of (`BUFFER_CAPACITY x #output_threads`).
+    // NB: Possibly, `spdlog::shutdown()` resets this, so it's to be invoked repeatedly after each shutdown.
+    spdlog::init_thread_pool(ASYNC_LOG_QUEUE_SZ, ASYNC_LOG_N_THREADS);
+
     // Open an asynchronous logger to write into the output file, and set its log message pattern.
     output = spdlog::basic_logger_mt<spdlog::async_factory>("async_output_logger", output_file_path);
     output->set_pattern("%v");

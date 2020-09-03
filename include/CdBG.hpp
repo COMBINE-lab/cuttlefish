@@ -42,6 +42,12 @@ private:
     static constexpr size_t BUFFER_THRESHOLD = 100 * 1024;  // 100 KB.
     static constexpr size_t BUFFER_CAPACITY = 1.1 * BUFFER_THRESHOLD;   // 110% of the buffer threshold.
 
+    // `spdlog`'s queue size, i.e. the maximum number of log units that it can contain before a flush.
+    static constexpr size_t ASYNC_LOG_QUEUE_SZ = 1024;
+
+    // Number of backing worker threads for `spdlog`, i.e. the threads that actually make the writes to sink.
+    static constexpr uint16_t ASYNC_LOG_N_THREADS = 1;
+
     // The asynchronous output logger (for GFA segments and connections).
     cuttlefish::logger_t output;
 

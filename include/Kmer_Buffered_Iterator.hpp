@@ -10,6 +10,51 @@
 #include "FastxParserThreadUtils.hpp"
 #include "readerwriterqueue.h"
 
+template <uint16_t T> class KmerChunk{
+public:
+  KmerChunk(size_t want) : group_(want), want_(want), have_(want) {}
+  inline void have(size_t num) { have_ = num; }
+  inline size_t size() { return have_; }
+  inline size_t want() const { return want_; }
+  Kmer<T>& operator[](size_t i) { return group_[i]; }
+  typename std::vector<Kmer<T>>::iterator begin() { return group_.begin(); }
+  typename std::vector<Kmer<T>>::iterator end() { return group_.begin() + have_; }
+
+private:
+  std::vector<Kmer<T>> group_;
+  size_t want_;
+  size_t have_;
+};
+
+/*
+template <uint16_t T> class KmerGroup {
+public:
+  KmerGroup(moodycamel::ProducerToken&& pt, moodycamel::ConsumerToken&& ct)
+      : pt_(std::move(pt)), ct_(std::move(ct)) {}
+  moodycamel::ConsumerToken& consumerToken() { return ct_; }
+  moodycamel::ProducerToken& producerToken() { return pt_; }
+  // get a reference to the chunk this KmerGroup owns
+  std::unique_ptr<KmerChunk<T>>& chunkPtr() { return chunk_; }
+  // get a *moveable* reference to the chunk this KmerGroup owns
+  std::unique_ptr<KmerChunk<T>>&& takeChunkPtr() { return std::move(chunk_); }
+  inline void have(size_t num) { chunk_->have(num); }
+  inline size_t size() { return chunk_->size(); }
+  inline size_t want() const { return chunk_->want(); }
+  T& operator[](size_t i) { return (*chunk_)[i]; }
+  typename std::vector<T>::iterator begin() { return chunk_->begin(); }
+  typename std::vector<T>::iterator end() {
+    return chunk_->begin() + chunk_->size();
+  }
+  void setChunkEmpty() { chunk_.release(); }
+  bool empty() const { return chunk_.get() == nullptr; }
+
+private:
+  std::unique_ptr<KmerChunk<T>> chunk_{nullptr};
+  moodycamel::ProducerToken pt_;
+  moodycamel::ConsumerToken ct_;
+};
+*/
+
 // Iterator class to iterate over KMC databases on disk.
 template <uint16_t k>
 class Kmer_Buffered_Iterator
@@ -43,11 +88,13 @@ private:
     bool started;
 
     std::unique_ptr<std::thread> parsing_thread{nullptr};
-    moodycamel::ReaderWriterQueue<Kmer<k>> rwq;//(100000);       // Reserve space for at least 100,000 elements up front
+    moodycamel::ReaderWriterQueue<KmerChunk<k>*> rwq;//(100000);       // Reserve space for at least 100,000 elements up front
     std::atomic_bool finished_parsing{false};
     int thread_result;
     bool was_advanced{false};
     uint64_t num_advances{0};
+    KmerChunk<k>* cur_chunk{nullptr};
+    typename std::vector<Kmer<k>>::iterator cur_chunk_it;
 
     // Constructs an iterator for the provided container `kmer_container`, on either
     // its beginning or its ending position based on the value of `at_begin`.
@@ -98,18 +145,39 @@ public:
 template <uint16_t k>
 int parse_kmers(const Kmer_Container<k>* const kmer_container,
                 CKMCFile& kmer_database_input,
-                moodycamel::ReaderWriterQueue<Kmer<k>>& rwq,
+                moodycamel::ReaderWriterQueue<KmerChunk<k>*>& rwq,
                 std::atomic_bool& finished_parsing) {
     
     auto kmer_object = CKmerAPI(kmer_container->kmer_length());
     Kmer<k> kmer;
     bool more_to_read = true;
+    static constexpr const size_t chunk_size = 1000;
+    KmerChunk<k> *kc = new KmerChunk<k>(chunk_size);
+    size_t cursize{0};
     while( (more_to_read = kmer_database_input.ReadNextKmer(kmer_object)) and !finished_parsing) {
-        kmer.from_CKmerAPI(kmer_object);// = cuttlefish::kmer_t(kmer_object);
-        while (!rwq.try_enqueue(kmer) and !finished_parsing) {
-            // busy wait
-        }
+        kmer.from_CKmerAPI(kmer_object);
+        if (cursize < chunk_size) {
+            (*kc)[cursize] = kmer;
+            cursize += 1;
+        } else {
+            kc->have(cursize);
+            // dump what we currently have onto the queue
+            while (!rwq.try_enqueue(kc) and !finished_parsing) {
+                // busy wait
+            }
+            kc = new KmerChunk<k>(chunk_size);
+            cursize = 0;
+        }   
     }
+
+    // if there is a remaining chunk, push it
+    if (cursize > 0) {
+        kc->have(cursize);
+        while (!rwq.try_enqueue(kc) and !finished_parsing) {
+                // busy wait
+       }
+    }
+
     //kmer_object = CKmerAPI();
     kmer_database_input.Close();
     finished_parsing = true;
@@ -127,7 +195,7 @@ template <uint16_t k>
 inline void Kmer_Buffered_Iterator<k>::start() {
     if (!started) {
     std::cerr << "\n\n actually starting to increment a unique iterator \n\n";
-        rwq = moodycamel::ReaderWriterQueue<Kmer<k>>(100000000);
+        rwq = moodycamel::ReaderWriterQueue<KmerChunk<k>*>(100);
         open_kmer_database();
         // start background thread
         parsing_thread.reset(new std::thread([this]() {
@@ -168,9 +236,28 @@ inline void Kmer_Buffered_Iterator<k>::open_kmer_database()
 template <uint16_t k>
 inline void Kmer_Buffered_Iterator<k>::advance()
 {
-    if(!rwq.try_dequeue(kmer)) {
-        while(!rwq.try_dequeue(kmer) and !finished_parsing) {}
-        if (finished_parsing) { num_advances = std::numeric_limits<uint64_t>::max(); at_end = true; kmer_object = CKmerAPI(); }
+    if (cur_chunk == nullptr || (++cur_chunk_it == cur_chunk->end())) {
+
+        // if we got here because we exhausted the current chunk,
+        // then be sure to free the memory for it.
+        if (cur_chunk != nullptr) { delete cur_chunk; }
+
+        // current chunk is exhausted, get the next chunk
+        while(!rwq.try_dequeue(cur_chunk) and !finished_parsing) {}
+        // if we failed the above while because parsing is done, then there is nothing to do
+        if (finished_parsing) { 
+            num_advances = std::numeric_limits<uint64_t>::max(); at_end = true; kmer_object = CKmerAPI(); 
+        } else { // otherwise, we "failed" the while because we got a chunk
+            // set the current chunk iterator to the begin iterator of the chunk
+            cur_chunk_it = cur_chunk->begin();
+            // set the current k-mer to be the deref of that iterator
+            kmer = *cur_chunk_it;
+        }
+    } else {
+        // deref the next kmer
+        // NOTE: we don't have to increment the iterator here b/c it 
+        // happens in the `if` statement
+        kmer = *cur_chunk_it;
     }
 }
 
@@ -204,17 +291,6 @@ inline const Kmer_Buffered_Iterator<k>& Kmer_Buffered_Iterator<k>::operator=(con
     if(at_begin)
     {
         std::cerr << "copy assigned iterator after " << rhs.num_advances << " advances! with AT_BEGIN TRUE.\n";
-        /*
-        rwq = moodycamel::ReaderWriterQueue<Kmer<k>>(100000);
-        open_kmer_database();
-        // start background thread
-        parsing_thread.reset(new std::thread([this]() {
-        this->thread_result = parse_kmers<k>(this->kmer_container, 
-                   this->kmer_database_input,
-                   this->rwq, this->finished_parsing);
-        }));
-        advance();
-        */
     } else {
         //finished_parsing = true;
         std::cerr << "copy assigned iterator after " << rhs.num_advances << " advances!";

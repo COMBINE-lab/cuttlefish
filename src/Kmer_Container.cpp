@@ -1,7 +1,7 @@
 
 #include "Kmer_Container.hpp"
 #include "Kmer_Iterator.hpp"
-
+#include "Kmer_Buffered_Iterator.hpp"
 
 template <uint16_t k>
 Kmer_Container<k>::Kmer_Container(const std::string& kmc_file_path):
@@ -58,6 +58,18 @@ typename Kmer_Container<k>::iterator Kmer_Container<k>::end() const
     return iterator(this, false);
 }
 
+template <uint16_t k>
+typename Kmer_Container<k>::buf_iterator Kmer_Container<k>::buf_begin() const
+{
+    return buf_iterator(this, true, false);
+}
+
+
+template <uint16_t k>
+typename Kmer_Container<k>::buf_iterator Kmer_Container<k>::buf_end() const
+{
+    return buf_iterator(this, false, true);
+}
 
 
 // Template instantiations for the required specializations.

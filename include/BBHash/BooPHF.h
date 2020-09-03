@@ -48,7 +48,7 @@ namespace boomphf {
 		: _is(nullptr)
 		, _pos(0) ,_inbuff (0), _cptread(0)
 		{
-			_buffsize = 10000;
+			_buffsize = 100000;
 			_buffer = (basetype *) malloc(_buffsize*sizeof(basetype));
 		}
 		
@@ -67,7 +67,7 @@ namespace boomphf {
 		bfile_iterator(FILE* is): _is(is) , _pos(0) ,_inbuff (0), _cptread(0)
 		{
 			//printf("bf it %p\n",_is);
-			_buffsize = 10000;
+			_buffsize = 100000;
 			_buffer = (basetype *) malloc(_buffsize*sizeof(basetype));
 			int reso = fseek(_is,0,SEEK_SET);
 			if (reso) {
@@ -850,7 +850,7 @@ we need this 2-functors scheme because HashFunctors won't work with unordered_ma
 ////////////////////////////////////////////////////////////////
 
 
-#define NBBUFF 10000
+#define NBBUFF 1000
 //#define NBBUFF 2
 
 	template<typename Range,typename Iterator>
@@ -972,7 +972,7 @@ we need this 2-functors scheme because HashFunctors won't work with unordered_ma
 		}
 
 
-		uint64_t lookup(const elem_t& elem)
+		uint64_t lookup(elem_t elem)
 		{
 			if(! _built) return ULLONG_MAX;
 			
@@ -1134,7 +1134,10 @@ we need this 2-functors scheme because HashFunctors won't work with unordered_ma
 					
 							}
 							
-						
+							
+							
+							
+							
 							
 							//computes next hash
 
@@ -1317,7 +1320,7 @@ we need this 2-functors scheme because HashFunctors won't work with unordered_ma
 
 
 		//compute level and returns hash of last level reached
-		uint64_t getLevel(hash_pair_t & bbhash, const elem_t& val,int * res_level, int maxlevel = 100, int minlevel =0)
+		uint64_t getLevel(hash_pair_t & bbhash, elem_t val,int * res_level, int maxlevel = 100, int minlevel =0)
 		//uint64_t getLevel(hash_pair_t & bbhash, elem_t val,int * res_level, int maxlevel = 100, int minlevel =0)
 
 		{

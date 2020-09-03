@@ -8,14 +8,16 @@
 #include "kmc_api/kmc_file.h"
 
 
-template <uint16_t k> class Kmer_Iterator;
 
+template <uint16_t k> class Kmer_Iterator;
+template <uint16_t k> class Kmer_Buffered_Iterator;
 
 // Wrapper class for KMC databases on disk.
 template <uint16_t k>
 class Kmer_Container
 {
     typedef Kmer_Iterator<k> iterator;
+    typedef Kmer_Buffered_Iterator<k> buf_iterator;
 
 
 private:
@@ -38,6 +40,15 @@ public:
 
     // Returns the number of k-mers present in the underlying k-mer database.
     uint64_t size() const;
+
+
+    // Returns an iterator pointing to the beginning of the underlying k-mer
+    // database.
+    buf_iterator buf_begin() const;
+
+    // Returns an iterator pointing to the ending (exclusive) of the underlying
+    // k-mer database.
+    buf_iterator buf_end() const;
 
     // Returns an iterator pointing to the beginning of the underlying k-mer
     // database.

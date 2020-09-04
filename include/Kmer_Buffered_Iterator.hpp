@@ -171,6 +171,8 @@ int parse_kmers(const Kmer_Container<k>* const kmer_container,
             num_pushed += cursize;
             kc = new KmerChunk<k>(chunk_size);
             cursize = 0;
+            (*kc)[cursize] = kmer;
+            cursize++;
         }   
     }
 
@@ -195,7 +197,7 @@ inline Kmer_Buffered_Iterator<k>::~Kmer_Buffered_Iterator() {
     if (was_advanced) { std::cerr << "think about what to do here\n"; }
     finished_parsing = true;
     if (parsing_thread) { parsing_thread->join(); }
-    { 
+    if (num_popped + num_pushed > 0) { 
         std::cerr << "\n\n {DESTRUCTOR\n";
         std::cerr << "\t\tTOTAL PUSHED = " << num_pushed << "\n"; 
         std::cerr << "\t\tTOTAL POPPED = " << num_popped << "\n"; 

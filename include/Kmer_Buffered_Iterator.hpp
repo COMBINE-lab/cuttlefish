@@ -185,8 +185,6 @@ int parse_kmers(const Kmer_Container<k>* const kmer_container,
        num_pushed += cursize;
     }
 
-    std::cerr << "\n\n TOTAL PUSHED = " << num_pushed << "\n\n"; 
-    //kmer_object = CKmerAPI();
     kmer_database_input.Close();
     finished_parsing = true;
     return 0;
@@ -194,21 +192,21 @@ int parse_kmers(const Kmer_Container<k>* const kmer_container,
 
 template <uint16_t k>
 inline Kmer_Buffered_Iterator<k>::~Kmer_Buffered_Iterator() {
-    if (was_advanced) { std::cerr << "think about what to do here\n"; }
     finished_parsing = true;
     if (parsing_thread) { parsing_thread->join(); }
-    if (num_popped + num_pushed > 0) { 
+    /*if (num_popped + num_pushed > 0) { 
         std::cerr << "\n\n {DESTRUCTOR\n";
         std::cerr << "\t\tTOTAL PUSHED = " << num_pushed << "\n"; 
         std::cerr << "\t\tTOTAL POPPED = " << num_popped << "\n"; 
         std::cerr << " }\n\n";
     }
+    */
 }
 
 template <uint16_t k>
 inline void Kmer_Buffered_Iterator<k>::start() {
     if (!started) {
-    std::cerr << "\n\n actually starting to increment a unique iterator \n\n";
+        //std::cerr << "\n\n actually starting to increment a unique iterator \n\n";
         rwq = moodycamel::ReaderWriterQueue<KmerChunk<k>*>(100);
         open_kmer_database();
         // start background thread
@@ -288,10 +286,10 @@ inline Kmer_Buffered_Iterator<k>::Kmer_Buffered_Iterator(const iterator& other):
     num_popped.store(other.num_popped.load());
     if(at_begin)
     {
-        std::cerr << "copy constructed iterator after " << other.num_advances << " advances! with AT_BEGIN TRUE.\n";
+        //std::cerr << "copy constructed iterator after " << other.num_advances << " advances! with AT_BEGIN TRUE.\n";
     } else {
-        std::cerr << "copy constructed iterator after " << other.num_advances << " advances!";
-        if(other.at_end) { std::cerr << " at END!\n"; } else { std::cerr << " NOT at END!\n"; }
+        //std::cerr << "copy constructed iterator after " << other.num_advances << " advances!";
+        //if(other.at_end) { std::cerr << " at END!\n"; } else { std::cerr << " NOT at END!\n"; }
     }
 }
 
@@ -310,11 +308,11 @@ inline const Kmer_Buffered_Iterator<k>& Kmer_Buffered_Iterator<k>::operator=(con
     num_popped = rhs.num_popped;
     if(at_begin)
     {
-        std::cerr << "copy assigned iterator after " << rhs.num_advances << " advances! with AT_BEGIN TRUE.\n";
+        //std::cerr << "copy assigned iterator after " << rhs.num_advances << " advances! with AT_BEGIN TRUE.\n";
     } else {
         //finished_parsing = true;
-        std::cerr << "copy assigned iterator after " << rhs.num_advances << " advances!";
-        if(rhs.at_end) { std::cerr << " at END!\n"; } else { std::cerr << " NOT at END!\n"; }
+        //std::cerr << "copy assigned iterator after " << rhs.num_advances << " advances!";
+        //if(rhs.at_end) { std::cerr << " at END!\n"; } else { std::cerr << " NOT at END!\n"; }
     }
 
     return *this;

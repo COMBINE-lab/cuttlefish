@@ -86,8 +86,8 @@ private:
     bool at_begin;  // Whether this iterator points to the beginning of the KMC database or not.
     bool at_end;  // Whether this iterator points to the beginning of the KMC database or not.
     bool started;
-    std::atomic_uint_least64_t num_pushed{0};
-    std::atomic_uint_least64_t num_popped{0};
+    uint64_t num_pushed{0};
+    uint64_t num_popped{0};
 
     std::unique_ptr<std::thread> parsing_thread{nullptr};
     moodycamel::ReaderWriterQueue<KmerChunk<k>*> rwq;//(100000);       // Reserve space for at least 100,000 elements up front
@@ -108,7 +108,7 @@ private:
     // Advances the iterator forward by offset one.
     void advance();
 
-    void start();
+    value_type start();
 
 public:
 
@@ -149,38 +149,42 @@ int parse_kmers(const Kmer_Container<k>* const kmer_container,
                 CKMCFile& kmer_database_input,
                 moodycamel::ReaderWriterQueue<KmerChunk<k>*>& rwq,
                 std::atomic_bool& finished_parsing,
-                std::atomic_uint_least64_t& num_pushed) {
-    
+                uint64_t& num_pushed) {
+    //using fastx_parser::thread_utils::MIN_BACKOFF_ITERS;
     auto kmer_object = CKmerAPI(kmer_container->kmer_length());
     Kmer<k> kmer;
     bool more_to_read = true;
     static constexpr const size_t chunk_size = 10000;
     KmerChunk<k> *kc = new KmerChunk<k>(chunk_size);
     size_t cursize{0};
-    while( (more_to_read = kmer_database_input.ReadNextKmer(kmer_object)) and !finished_parsing) {
+    //uint32_t count{0};
+    //auto curMaxDelay = MIN_BACKOFF_ITERS;
+    while( (more_to_read = kmer_database_input.ReadNextKmer(kmer_object )) and !finished_parsing) {
         kmer.from_CKmerAPI(kmer_object);
         if (cursize < chunk_size) {
-            (*kc)[cursize] = kmer;
-            ++cursize;
+            (*kc)[cursize++] = kmer;
         } else {
             kc->have(cursize);
             // dump what we currently have onto the queue
+            //curMaxDelay = MIN_BACKOFF_ITERS;
             while (!rwq.try_enqueue(kc) and !finished_parsing) {
                 // busy wait
+                //fastx_parser::thread_utils::backoffOrYield(curMaxDelay);
             }
             num_pushed += cursize;
             kc = new KmerChunk<k>(chunk_size);
             cursize = 0;
-            (*kc)[cursize] = kmer;
-            cursize++;
+            (*kc)[cursize++] = kmer;
         }   
     }
 
     // if there is a remaining chunk, push it
     if (cursize > 0) {
         kc->have(cursize);
+        //curMaxDelay = MIN_BACKOFF_ITERS;
         while (!rwq.try_enqueue(kc) and !finished_parsing) {
-                // busy wait
+            // busy wait
+            //fastx_parser::thread_utils::backoffOrYield(curMaxDelay);
        }
        num_pushed += cursize;
     }
@@ -194,20 +198,18 @@ template <uint16_t k>
 inline Kmer_Buffered_Iterator<k>::~Kmer_Buffered_Iterator() {
     finished_parsing = true;
     if (parsing_thread) { parsing_thread->join(); }
-    /*if (num_popped + num_pushed > 0) { 
+    if (num_popped + num_pushed > 0) { 
         std::cerr << "\n\n {DESTRUCTOR\n";
         std::cerr << "\t\tTOTAL PUSHED = " << num_pushed << "\n"; 
         std::cerr << "\t\tTOTAL POPPED = " << num_popped << "\n"; 
         std::cerr << " }\n\n";
     }
-    */
 }
 
 template <uint16_t k>
-inline void Kmer_Buffered_Iterator<k>::start() {
-    if (!started) {
+inline typename Kmer_Buffered_Iterator<k>::value_type Kmer_Buffered_Iterator<k>::start() {
         //std::cerr << "\n\n actually starting to increment a unique iterator \n\n";
-        rwq = moodycamel::ReaderWriterQueue<KmerChunk<k>*>(100);
+        rwq = moodycamel::ReaderWriterQueue<KmerChunk<k>*>(1000);
         open_kmer_database();
         // start background thread
         parsing_thread.reset(new std::thread([this]() {
@@ -215,9 +217,16 @@ inline void Kmer_Buffered_Iterator<k>::start() {
                    this->kmer_database_input,
                    this->rwq, this->finished_parsing, this->num_pushed);
         }));
-        advance();
+        // dequeue the first chunk to avoid a null check in advance
+        while(!rwq.try_dequeue(cur_chunk) and !finished_parsing) {
+        }
+        cur_chunk_it = cur_chunk->begin();
+        // set the current k-mer to be the deref of that iterator
+        kmer = *cur_chunk_it;
+        ++num_popped;
+        //advance();
         started=true;
-    }
+        return kmer;
 }
  
 template <uint16_t k>
@@ -226,7 +235,6 @@ inline Kmer_Buffered_Iterator<k>::Kmer_Buffered_Iterator(const Kmer_Container<k>
 {
     if(at_begin)
     {
-
     } else if(at_end) {
         num_advances = std::numeric_limits<uint64_t>::max();
         finished_parsing = true;
@@ -248,21 +256,26 @@ inline void Kmer_Buffered_Iterator<k>::open_kmer_database()
 template <uint16_t k>
 inline void Kmer_Buffered_Iterator<k>::advance()
 {
-    if (cur_chunk == nullptr || (++cur_chunk_it == cur_chunk->end())) {
+    //using fastx_parser::thread_utils::MIN_BACKOFF_ITERS;
+    if (++cur_chunk_it >= cur_chunk->end()) {
 
         // if we got here because we exhausted the current chunk,
         // then be sure to free the memory for it.
-        if (cur_chunk != nullptr) { delete cur_chunk; cur_chunk = nullptr; }
+        delete cur_chunk; cur_chunk = nullptr; 
         bool got_work{false};
         // current chunk is exhausted, get the next chunk
-        while(!(got_work = rwq.try_dequeue(cur_chunk)) and !finished_parsing) {}
+
+        //auto curMaxDelay = MIN_BACKOFF_ITERS;
+        while(!(got_work = rwq.try_dequeue(cur_chunk)) and !finished_parsing) {
+            //fastx_parser::thread_utils::backoffOrYield(curMaxDelay);
+        }
         if (got_work) { 
             // we "failed" the while because we got a chunk
             // set the current chunk iterator to the begin iterator of the chunk
             cur_chunk_it = cur_chunk->begin();
             // set the current k-mer to be the deref of that iterator
             kmer = *cur_chunk_it;
-            num_popped += 1;
+            ++num_popped;
         } else {
             // if we failed the above while because parsing is done, then there is nothing to do
             num_advances = std::numeric_limits<uint64_t>::max(); at_end = true; kmer_object = CKmerAPI(); 
@@ -271,7 +284,7 @@ inline void Kmer_Buffered_Iterator<k>::advance()
         // deref the next kmer
         // NOTE: we don't have to increment the iterator here b/c it 
         // happens in the `if` statement
-        num_popped += 1;
+        ++num_popped;
         kmer = *cur_chunk_it;
     }
 }
@@ -282,8 +295,9 @@ inline Kmer_Buffered_Iterator<k>::Kmer_Buffered_Iterator(const iterator& other):
     kmer_container(other.kmer_container), /*kmer_object(other.kmer_object),*/ kmer(other.kmer), num_advances(other.num_advances), 
     started(other.started), at_begin(other.at_begin), at_end(other.at_end)
 {
-    num_pushed.store(other.num_pushed.load());
-    num_popped.store(other.num_popped.load());
+    finished_parsing.store(other.finished_parsing);
+    num_pushed = other.num_pushed;
+    num_popped = other.num_popped;
     if(at_begin)
     {
         //std::cerr << "copy constructed iterator after " << other.num_advances << " advances! with AT_BEGIN TRUE.\n";
@@ -306,11 +320,12 @@ inline const Kmer_Buffered_Iterator<k>& Kmer_Buffered_Iterator<k>::operator=(con
     started = rhs.started;
     num_pushed = rhs.num_pushed;
     num_popped = rhs.num_popped;
+    finished_parsing = rhs.finished_parsing;
     if(at_begin)
     {
         //std::cerr << "copy assigned iterator after " << rhs.num_advances << " advances! with AT_BEGIN TRUE.\n";
     } else {
-        //finished_parsing = true;
+        finished_parsing = true;
         //std::cerr << "copy assigned iterator after " << rhs.num_advances << " advances!";
         //if(rhs.at_end) { std::cerr << " at END!\n"; } else { std::cerr << " NOT at END!\n"; }
     }
@@ -322,17 +337,18 @@ inline const Kmer_Buffered_Iterator<k>& Kmer_Buffered_Iterator<k>::operator=(con
 template <uint16_t k>
 inline typename Kmer_Buffered_Iterator<k>::value_type Kmer_Buffered_Iterator<k>::operator*() 
 {
-    if (!started) { start(); }
-    return kmer;
+    //start(); 
+    return started ? kmer : start();
 }
 
 
+/*
 template <uint16_t k>
 inline typename Kmer_Buffered_Iterator<k>::const_ptr_t Kmer_Buffered_Iterator<k>::operator->() 
 {
-    if (!started) { start(); }
     return &kmer;
 }
+*/
 
 
 template <uint16_t k>

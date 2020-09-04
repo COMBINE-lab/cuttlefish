@@ -159,7 +159,7 @@ int parse_kmers(const Kmer_Container<k>* const kmer_container,
     auto kmer_object = CKmerAPI(kmer_container->kmer_length());
     Kmer<k> kmer;
     bool more_to_read = true;
-    static constexpr const size_t chunk_size = 5000;
+    static constexpr const size_t chunk_size = 40000;
     KmerChunk<k> *kc = new KmerChunk<k>(chunk_size);
     size_t cursize{0};
     //uint32_t count{0};
@@ -214,7 +214,7 @@ inline Kmer_Buffered_Iterator<k>::~Kmer_Buffered_Iterator() {
 template <uint16_t k>
 inline typename Kmer_Buffered_Iterator<k>::value_type Kmer_Buffered_Iterator<k>::start() {
         //std::cerr << "\n\n actually starting to increment a unique iterator \n\n";
-        rwq = moodycamel::ReaderWriterQueue<KmerChunk<k>*>(1000);
+        rwq = moodycamel::ReaderWriterQueue<KmerChunk<k>*>(100);
         open_kmer_database();
         // start background thread
         parsing_thread.reset(new std::thread([this]() {

@@ -850,7 +850,7 @@ we need this 2-functors scheme because HashFunctors won't work with unordered_ma
 ////////////////////////////////////////////////////////////////
 
 
-#define NBBUFF 10000
+#define NBBUFF 20000
 //#define NBBUFF 2
 
 	template<typename Range,typename Iterator>

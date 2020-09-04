@@ -10,6 +10,10 @@
 #include "FastxParserThreadUtils.hpp"
 #include "readerwriterqueue.h"
 
+// Branch prediction hints
+#define OUR_LIKELY(x) __builtin_expect(x, 1)
+#define OUR_UNLIKELY(x) __builtin_expect(x, 0)
+
 template <uint16_t T> class KmerChunk{
 public:
   KmerChunk(size_t want) : group_(want), want_(want), have_(want) {}
@@ -257,7 +261,7 @@ template <uint16_t k>
 inline void Kmer_Buffered_Iterator<k>::advance()
 {
     //using fastx_parser::thread_utils::MIN_BACKOFF_ITERS;
-    if (++cur_chunk_it >= cur_chunk->end()) {
+    if (OUR_UNLIKELY(++cur_chunk_it >= cur_chunk->end())) {
 
         // if we got here because we exhausted the current chunk,
         // then be sure to free the memory for it.
@@ -323,11 +327,8 @@ inline const Kmer_Buffered_Iterator<k>& Kmer_Buffered_Iterator<k>::operator=(con
     finished_parsing = rhs.finished_parsing;
     if(at_begin)
     {
-        //std::cerr << "copy assigned iterator after " << rhs.num_advances << " advances! with AT_BEGIN TRUE.\n";
     } else {
         finished_parsing = true;
-        //std::cerr << "copy assigned iterator after " << rhs.num_advances << " advances!";
-        //if(rhs.at_end) { std::cerr << " at END!\n"; } else { std::cerr << " NOT at END!\n"; }
     }
 
     return *this;
@@ -337,7 +338,6 @@ inline const Kmer_Buffered_Iterator<k>& Kmer_Buffered_Iterator<k>::operator=(con
 template <uint16_t k>
 inline typename Kmer_Buffered_Iterator<k>::value_type Kmer_Buffered_Iterator<k>::operator*() 
 {
-    //start(); 
     return started ? kmer : start();
 }
 
@@ -357,9 +357,6 @@ inline const Kmer_Buffered_Iterator<k>& Kmer_Buffered_Iterator<k>::operator++()
     if (!at_end) {
         ++num_advances;
         advance();
-        //if (num_advances % 10000 == 1) {
-        //    std::cerr << "approx queue size = " << rwq.size_approx() << " \n\n";
-        //}
         at_begin = false;
     }
     return *this;
@@ -384,7 +381,6 @@ template <uint16_t k>
 inline bool Kmer_Buffered_Iterator<k>::operator==(const iterator& rhs) const
 {
     return kmer_container == rhs.kmer_container && num_advances == rhs.num_advances;
-    // kmer == rhs.kmer;
 }
 
 

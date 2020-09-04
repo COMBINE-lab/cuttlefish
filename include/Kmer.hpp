@@ -140,16 +140,8 @@ inline void Kmer<k>::right_shift()
 template <uint16_t k>
 inline uint64_t Kmer<k>::to_u64(uint64_t seed) const
 {
-    // The k-mer uses just one 64-bit integer, i.e. k <= 32.
-    //if(NUM_INTS == 1)
-    //    return kmer_data[0];
-
-    // The k-mer uses more than one 64-bit integer, i.e. k > 32.
     constexpr const uint16_t NUM_BYTES = (k + 3) / 4;
     return XXH3_64bits_withSeed(kmer_data, NUM_BYTES, seed);
-    //uint64_t H[2];
-    //MurmurHash3_x64_128(kmer_data, NUM_BYTES, seed, H);
-    //return H[0] ^ H[1];
 }
 
 
@@ -195,19 +187,18 @@ inline Kmer<k>::Kmer(const CKmerAPI& kmer_api)
 template <uint16_t k>
 inline Kmer<k>::Kmer(const Kmer<k>& rhs)
 {
-    //memcpy(kmer_data, rhs.kmer_data, NUM_INTS * sizeof(uint64_t));
-    for(uint16_t idx = 0; idx < NUM_INTS; ++idx)
-        kmer_data[idx] = rhs.kmer_data[idx];
+    memcpy(kmer_data, rhs.kmer_data, NUM_INTS * sizeof(uint64_t));
+    //for(uint16_t idx = 0; idx < NUM_INTS; ++idx)
+    //    kmer_data[idx] = rhs.kmer_data[idx];
 }
 
 
 template <uint16_t k>
 inline Kmer<k>& Kmer<k>::operator=(const Kmer<k>& rhs)
 {
-    //memcpy(kmer_data, rhs.kmer_data, NUM_INTS * sizeof(uint64_t));
-    for(uint16_t idx = 0; idx < NUM_INTS; ++idx)
-        kmer_data[idx] = rhs.kmer_data[idx];
-    
+    memcpy(kmer_data, rhs.kmer_data, NUM_INTS * sizeof(uint64_t));
+    //for(uint16_t idx = 0; idx < NUM_INTS; ++idx)
+    //    kmer_data[idx] = rhs.kmer_data[idx];
     return *this;
 }
 

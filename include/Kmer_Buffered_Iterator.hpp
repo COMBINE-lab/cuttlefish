@@ -92,6 +92,7 @@ private:
     bool started;
     uint64_t num_pushed{0};
     uint64_t num_popped{0};
+    uint64_t total_num_kmers{0};
 
     std::unique_ptr<std::thread> parsing_thread{nullptr};
     moodycamel::ReaderWriterQueue<KmerChunk<k>*> rwq;//(100000);       // Reserve space for at least 100,000 elements up front
@@ -158,12 +159,12 @@ int parse_kmers(const Kmer_Container<k>* const kmer_container,
     auto kmer_object = CKmerAPI(kmer_container->kmer_length());
     Kmer<k> kmer;
     bool more_to_read = true;
-    static constexpr const size_t chunk_size = 10000;
+    static constexpr const size_t chunk_size = 5000;
     KmerChunk<k> *kc = new KmerChunk<k>(chunk_size);
     size_t cursize{0};
     //uint32_t count{0};
     //auto curMaxDelay = MIN_BACKOFF_ITERS;
-    while( (more_to_read = kmer_database_input.ReadNextKmer(kmer_object )) and !finished_parsing) {
+    while( (more_to_read = kmer_database_input.ReadNextKmer(kmer_object )) ) {
         kmer.from_CKmerAPI(kmer_object);
         if (cursize < chunk_size) {
             (*kc)[cursize++] = kmer;
@@ -171,7 +172,7 @@ int parse_kmers(const Kmer_Container<k>* const kmer_container,
             kc->have(cursize);
             // dump what we currently have onto the queue
             //curMaxDelay = MIN_BACKOFF_ITERS;
-            while (!rwq.try_enqueue(kc) and !finished_parsing) {
+            while (!rwq.try_enqueue(kc) ) {
                 // busy wait
                 //fastx_parser::thread_utils::backoffOrYield(curMaxDelay);
             }
@@ -186,7 +187,7 @@ int parse_kmers(const Kmer_Container<k>* const kmer_container,
     if (cursize > 0) {
         kc->have(cursize);
         //curMaxDelay = MIN_BACKOFF_ITERS;
-        while (!rwq.try_enqueue(kc) and !finished_parsing) {
+        while (!rwq.try_enqueue(kc) ) {
             // busy wait
             //fastx_parser::thread_utils::backoffOrYield(curMaxDelay);
        }
@@ -222,7 +223,7 @@ inline typename Kmer_Buffered_Iterator<k>::value_type Kmer_Buffered_Iterator<k>:
                    this->rwq, this->finished_parsing, this->num_pushed);
         }));
         // dequeue the first chunk to avoid a null check in advance
-        while(!rwq.try_dequeue(cur_chunk) and !finished_parsing) {
+        while(!rwq.try_dequeue(cur_chunk) and (num_popped < total_num_kmers)) {
         }
         cur_chunk_it = cur_chunk->begin();
         // set the current k-mer to be the deref of that iterator
@@ -237,6 +238,7 @@ template <uint16_t k>
 inline Kmer_Buffered_Iterator<k>::Kmer_Buffered_Iterator(const Kmer_Container<k>* const kmer_container, const bool at_begin, const bool at_end):
     kmer_container(kmer_container), kmer_object(), at_begin(at_begin), at_end(at_end), started(false)
 {
+    total_num_kmers = kmer_container->size();
     if(at_begin)
     {
     } else if(at_end) {
@@ -270,7 +272,7 @@ inline void Kmer_Buffered_Iterator<k>::advance()
         // current chunk is exhausted, get the next chunk
 
         //auto curMaxDelay = MIN_BACKOFF_ITERS;
-        while(!(got_work = rwq.try_dequeue(cur_chunk)) and !finished_parsing) {
+        while(!(got_work = rwq.try_dequeue(cur_chunk)) and (num_popped < total_num_kmers)) {
             //fastx_parser::thread_utils::backoffOrYield(curMaxDelay);
         }
         if (got_work) { 
@@ -297,7 +299,7 @@ inline void Kmer_Buffered_Iterator<k>::advance()
 template <uint16_t k>
 inline Kmer_Buffered_Iterator<k>::Kmer_Buffered_Iterator(const iterator& other):
     kmer_container(other.kmer_container), /*kmer_object(other.kmer_object),*/ kmer(other.kmer), num_advances(other.num_advances), 
-    started(other.started), at_begin(other.at_begin), at_end(other.at_end)
+    started(other.started), at_begin(other.at_begin), at_end(other.at_end), total_num_kmers(other.total_num_kmers)
 {
     finished_parsing.store(other.finished_parsing);
     num_pushed = other.num_pushed;
@@ -325,6 +327,7 @@ inline const Kmer_Buffered_Iterator<k>& Kmer_Buffered_Iterator<k>::operator=(con
     num_pushed = rhs.num_pushed;
     num_popped = rhs.num_popped;
     finished_parsing = rhs.finished_parsing;
+    total_num_kmers = rhs.total_num_kmers;
     if(at_begin)
     {
     } else {

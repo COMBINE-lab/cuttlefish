@@ -7,8 +7,7 @@
 #include "globals.hpp"
 #include "Kmer_Container.hpp"
 #include "kmc_api/kmc_file.h"
-#include "FastxParserThreadUtils.hpp"
-#include "readerwriterqueue.h"
+#include "readerwriterqueue/readerwriterqueue.h"
 
 // Branch prediction hints
 #define OUR_LIKELY(x) __builtin_expect(x, 1)

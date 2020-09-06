@@ -41,10 +41,10 @@ set(INCLUDE_DIR include include/xxhash)
 target_include_directories(core PUBLIC ${CMAKE_SOURCE_DIR}/${INCLUDE_DIR})
 
 
-# Specify warnings flags to the compiler for the target library. As the warnings are specified as
-# `PRIVATE`, they will only be used when compiling this library. The flags will not be propagated to
-# the targets linking to it.
-target_compile_options(core PRIVATE ${WARNING_FLAGS})
+# Specify the warnings and the extra optimization flags to the compiler for the target library.
+# As the flags are specified as `PRIVATE`, they will only be used when compiling this library.
+# These will not be propagated to the targets linking to it.
+target_compile_options(core PRIVATE ${WARNING_FLAGS} ${OPTIMIZE_FLAGS})
 
 
 # Create an executable from the driver program.

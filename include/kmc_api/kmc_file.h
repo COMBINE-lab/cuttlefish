@@ -217,17 +217,6 @@ inline bool CKMCFile::ReadNextKmer(CKmerAPI &kmer)
 				
 		if(index_in_partial_buf+sufix_size < part_size) {
 			// unroll?
-			//uint64_t num_bytes = sufix_size;
-			//memcpy(reinterpret_cast<char*>(&(kmer.kmer_data[row_index]) + off/8),
-			//   reinterpret_cast<char*>(&sufix_file_buf[index_in_partial_buf]), 
-			//	   sufix_size);
-			/*
-			suf = sufix_file_buf[index_in_partial_buf];
-			suf <<= off;
-			kmer.kmer_data[row_index] = kmer.kmer_data[row_index] | suf;
-			index_in_partial_buf += sufix_size;
-			*/
-			
 			for(uint32_t a = 0; a < sufix_size; a ++) {
 				suf = sufix_file_buf[index_in_partial_buf++];
 				suf <<= off;
@@ -277,7 +266,7 @@ inline bool CKMCFile::ReadNextKmer(CKmerAPI &kmer)
 // OUT: count - kmer's counter
 // RET: true - if not EOF
 //-----------------------------------------------------------------------------------------------
-inline bool CKMCFile::ReadNextKmer(CKmerAPI &kmer, uint32 &count)
+bool CKMCFile::ReadNextKmer(CKmerAPI &kmer, uint32 &count)
 {
 	uint64 prefix_mask = (1 << 2 * lut_prefix_length) - 1; //for kmc2 db
 
@@ -311,56 +300,30 @@ inline bool CKMCFile::ReadNextKmer(CKmerAPI &kmer, uint32 &count)
 	
 		off = off - 8;
 				
-		if(index_in_partial_buf+sufix_size < part_size) {
-			// unroll?
-			
-			//uint64_t num_bytes = sufix_size;
-			//memcpy(reinterpret_cast<char*>(&(kmer.kmer_data[row_index]) + off/8),
-			//   reinterpret_cast<char*>(&sufix_file_buf[index_in_partial_buf]), 
-			//	   sufix_size);
-			/*
-			suf = sufix_file_buf[index_in_partial_buf];
-			suf <<= off;
+ 		for(uint32 a = 0; a < sufix_size; a ++)
+		{
+			if(index_in_partial_buf == part_size)
+				Reload_sufix_file_buf();
+						
+			suf = sufix_file_buf[index_in_partial_buf++];
+			suf = suf << off;
 			kmer.kmer_data[row_index] = kmer.kmer_data[row_index] | suf;
-			index_in_partial_buf += sufix_size;
-			*/
-			
-			for(uint32_t a = 0; a < sufix_size; a ++) {
-				suf = sufix_file_buf[index_in_partial_buf++];
-				suf <<= off;
-				kmer.kmer_data[row_index] |= suf;
-				if (off == 0) { //the end of a word in kmer_data 
-					off = 64 ;
-					row_index++;
-				} 
-				off -=8; 
-			}
-		} else {
-			for (uint32 a = 0; a < sufix_size; a++)
+
+			if (off == 0)				//the end of a word in kmer_data
 			{
-				if (index_in_partial_buf == part_size)
-					Reload_sufix_file_buf();
-
-				suf = sufix_file_buf[index_in_partial_buf++];
-				suf = suf << off;
-				kmer.kmer_data[row_index] = kmer.kmer_data[row_index] | suf;
-
-				if (off == 0) //the end of a word in kmer_data
-				{
 					off = 56;
 					row_index++;
-				}
-				else
-					off -= 8;
 			}
+			else
+					off -=8;
 		}
-
+	
 		//read counter:
 		if(index_in_partial_buf == part_size)
 			Reload_sufix_file_buf();
 		
 		count = sufix_file_buf[index_in_partial_buf++];
-		/*
+
 		for(uint32 b = 1; b < counter_size; b++)
 		{
 			if(index_in_partial_buf == part_size)
@@ -369,7 +332,7 @@ inline bool CKMCFile::ReadNextKmer(CKmerAPI &kmer, uint32 &count)
 			uint32 aux = 0x000000ff & sufix_file_buf[index_in_partial_buf++];
 			aux = aux << 8 * ( b);
 			count = aux | count;
-		}*/
+		}
 			
 		sufix_number++;
 	
@@ -391,7 +354,6 @@ inline bool CKMCFile::ReadNextKmer(CKmerAPI &kmer, uint32 &count)
 
 	return true;
 }
-
 
 //-----------------------------------------------------------------------------------------------
 // Read next kmer

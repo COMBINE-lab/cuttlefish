@@ -57,6 +57,9 @@ public:
     // Returns an iterator pointing to the ending (exclusive) of the underlying
     // k-mer database.
     iterator end() const;
+
+    // Loads the full k-mer set from the KMC database into the collection `kmers`.
+    void load_kmers(std::vector<Kmer<k>>& kmers) const;
 };
 
 

@@ -17,6 +17,7 @@
 #include <string.h>
 #include <memory> // for make_shared
 #include <unistd.h>
+#include <chrono>
 
 
 
@@ -880,6 +881,9 @@ we need this 2-functors scheme because HashFunctors won't work with unordered_ma
 		//typedef IndepHashFunctors<elem_t,Hasher_t> MultiHasher_t; //faster than xorshift
 
 	public:
+		// Debug
+		double data_copy_time = 0;
+
 		mphf() : _built(false)
 		{}
 
@@ -1053,11 +1057,15 @@ we need this 2-functors scheme because HashFunctors won't work with unordered_ma
 
 				//safely copy n items into buffer
 				pthread_mutex_lock(&_mutex);
+				std::chrono::high_resolution_clock::time_point t_start = std::chrono::high_resolution_clock::now();
                 for(; inbuff<NBBUFF && (*shared_it)!=until;  ++(*shared_it))
 				{
                     buffer[inbuff]= *(*shared_it); inbuff++;
 				}
 				if((*shared_it)==until) isRunning =false;
+				std::chrono::high_resolution_clock::time_point t_end = std::chrono::high_resolution_clock::now();
+    			double elapsed_seconds = std::chrono::duration_cast<std::chrono::duration<double>>(t_end - t_start).count();
+				data_copy_time += elapsed_seconds;
 				pthread_mutex_unlock(&_mutex);
 
 

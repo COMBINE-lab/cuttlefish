@@ -25,7 +25,8 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # Disable unknown pragmas, b/c bbhash uses them extensively.
 # Same with maybe-uninitialized (might want this one back later though).
 # Reference: https://gcc.gnu.org/onlinedocs/gcc/Warning-Options.html
-set(WARNING_FLAGS -Wall -Wextra -Wno-unknown-pragmas -Wno-maybe-uninitialized)
+set(WARNING_FLAGS -Wall -Wextra)
+set(SUPPRESS_WARNING_FLAGS -Wno-unknown-pragmas -Wno-maybe-uninitialized -Wno-class-memaccess -Wno-implicit-fallthrough)
 
 # Bundle the extra optimization flags (not associated with the `-O` levels)
 # that we want to pass on to the compiler.

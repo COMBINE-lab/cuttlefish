@@ -44,7 +44,7 @@ target_include_directories(core PUBLIC ${CMAKE_SOURCE_DIR}/${INCLUDE_DIR})
 # Specify the warnings and the extra optimization flags to the compiler for the target library.
 # As the flags are specified as `PRIVATE`, they will only be used when compiling this library.
 # These will not be propagated to the targets linking to it.
-target_compile_options(core PRIVATE ${WARNING_FLAGS} ${OPTIMIZE_FLAGS})
+target_compile_options(core PRIVATE ${WARNING_FLAGS} ${SUPPRESS_WARNING_FLAGS} ${OPTIMIZE_FLAGS})
 
 
 # Create an executable from the driver program.
@@ -63,7 +63,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE core)
 
 
 # Specify warnings flags to the compiler for the target executable.
-target_compile_options(${PROJECT_NAME} PRIVATE ${WARNING_FLAGS})
+target_compile_options(${PROJECT_NAME} PRIVATE ${WARNING_FLAGS} ${SUPPRESS_WARNING_FLAGS} ${OPTIMIZE_FLAGS})
 
 
 # Set the parent directory for the target binaries inside the "installation directory". The
@@ -86,4 +86,4 @@ install(TARGETS ${PROJECT_NAME}
 
 add_executable(test test.cpp)
 target_link_libraries(test PRIVATE core)
-target_compile_options(test PRIVATE ${WARNING_FLAGS})
+target_compile_options(test PRIVATE ${WARNING_FLAGS} ${SUPPRESS_WARNING_FLAGS} ${OPTIMIZE_FLAGS})

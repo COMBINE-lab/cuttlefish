@@ -14,7 +14,7 @@ template <uint16_t k>
 void CdBG<k>::construct()
 {
     std::cout << "\nConstructing the minimal perfect hash function.\n";
-    Vertices.construct(params.kmc_db_path(), params.thread_count(), params.mph_file_path());
+    Vertices.construct(params.kmc_db_path(), params.thread_count(), params.working_dir_path(), params.mph_file_path());
 
     std::cout << "\nClassifying the vertices.\n";
     classify_vertices();

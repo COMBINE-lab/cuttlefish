@@ -49,8 +49,9 @@ private:
     // Builds the minimal perfect hash function `mph` over the set of
     // k-mers present at the KMC database container `kmer_container`,
     // with `mph_file_path` being the file to use for BBHash build
-    // using `thread_count` number of threads.
-    void build_mph_function(const Kmer_Container<k>& kmer_container, uint16_t thread_count, const std::string& mph_file_path);
+    // using `thread_count` number of threads. Uses the directory
+    // at `working_dir_path` to store temporary files.
+    void build_mph_function(const Kmer_Container<k>& kmer_container, uint16_t thread_count, const std::string& working_dir_path, const std::string& mph_file_path);
 
     // Loads an MPH function from the file at `file_path` into `mph`.
     void load_mph_function(const std::string& file_path);
@@ -83,7 +84,7 @@ public:
     // using up-to `thread_count` number of threads. If a non-empty path is passed
     // with `mph_file_path`, either an MPH is loaded from there (instead of building
     // from scratch), or the newly built MPH is saved there.
-    void construct(const std::string& kmc_db_path, uint16_t thread_count, const std::string& mph_file_path);
+    void construct(const std::string& kmc_db_path, uint16_t thread_count, const std::string& working_dir_path, const std::string& mph_file_path);
 
     // Returns an API to the entry (in the hash table) for the key `kmer`. The API
     // wraps the hash table position and the state value at that position.

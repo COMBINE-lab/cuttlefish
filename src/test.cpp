@@ -278,7 +278,7 @@ void check_uint64_BBHash(const char* file_name, uint16_t thread_count)
     std::cout << "Loading k-mers done.\n";
     input.close();
     //build the mphf  
-    boophf_t * bphf = new boomphf::mphf<uint64_t, hasher_t>(input_keys.size(), input_keys, thread_count);
+    boophf_t * bphf = new boomphf::mphf<uint64_t, hasher_t>(input_keys.size(), input_keys, ".", thread_count);
     delete bphf;
 }
 
@@ -374,7 +374,7 @@ int main(int argc, char** argv)
 
     // check_uint64_BBHash(argv[1], atoi(argv[2]));
 
-    test_kmer_iterator<61>(argv[1]);
+    // test_kmer_iterator<61>(argv[1]);
 
     // test_async_writer(argv[1]);
 

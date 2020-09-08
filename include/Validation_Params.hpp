@@ -19,6 +19,7 @@ private:
     const std::string kmc_db_path_;  // Prefix of the KMC database of the k-mer set of the reference.
     const std::string cdbg_file_path_;   // Path to the file containing the maximal unitigs.
     const uint16_t thread_count_;   // Number of threads to work with.
+    const std::string& working_dir_path_;    // Path to the working directory (for temporary files).
     const std::string& mph_file_path_;   // Optional path to file storing an MPH over the k-mer set.
 
 
@@ -32,12 +33,14 @@ public:
                         const std::string& kmc_db_path,
                         const std::string& cdbg_file_path,
                         uint16_t thread_count,
+                        const std::string& working_dir_path,
                         const std::string& mph_file_path):
         reference_input_(ref_paths, list_paths, dir_paths),
         k_(k),
         kmc_db_path_(kmc_db_path),
         cdbg_file_path_(cdbg_file_path),
         thread_count_(thread_count),
+        working_dir_path_(working_dir_path),
         mph_file_path_(mph_file_path)
     {}
 
@@ -74,6 +77,13 @@ public:
     uint16_t thread_count() const
     {
         return thread_count_;
+    }
+
+
+    // Returns the path to the working directory (for temporary files).
+    const std::string& working_dir_path() const
+    {
+        return working_dir_path_;
     }
 
 

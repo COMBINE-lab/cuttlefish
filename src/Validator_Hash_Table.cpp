@@ -15,6 +15,7 @@ void Validator<k>::build_mph_function()
 {
     const std::string& kmc_db_path = params.kmc_db_path();
     const uint16_t thread_count = params.thread_count();
+    const std::string& working_dir_path = params.working_dir_path();
     const std::string& mph_file_path = params.mph_file_path();
 
     const Kmer_Container<k> kmer_container(kmc_db_path);
@@ -42,7 +43,7 @@ void Validator<k>::build_mph_function()
         //auto data_iterator = boomphf::range(&b, &e);
         //mph = new mphf_t(kmer_container.size(), data_iterator, thread_count, GAMMA_FACTOR);
         auto data_iterator = boomphf::range(kmer_container.begin(), kmer_container.end());
-        mph = new mphf_t(kmer_container.size(), data_iterator, thread_count, GAMMA_FACTOR);
+        mph = new mphf_t(kmer_container.size(), data_iterator, working_dir_path, thread_count, GAMMA_FACTOR);
 
         console->info("Built the MPH function in memory.\n");
         

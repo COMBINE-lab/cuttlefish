@@ -10,7 +10,7 @@
 
 
 template <uint16_t k>
-void Kmer_Hash_Table<k>::build_mph_function(const Kmer_Container<k>& kmer_container, const uint16_t thread_count, const std::string& mph_file_path)
+void Kmer_Hash_Table<k>::build_mph_function(const Kmer_Container<k>& kmer_container, const uint16_t thread_count, const std::string& working_dir_path, const std::string& mph_file_path)
 {
     // The serialized BBHash file (saved from some earlier execution) exists.
     struct stat buffer;
@@ -36,7 +36,7 @@ void Kmer_Hash_Table<k>::build_mph_function(const Kmer_Container<k>& kmer_contai
         // auto data_iterator = boomphf::range(kmers.begin(), kmers.end());
 
         auto data_iterator = boomphf::range(kmer_container.buf_begin(), kmer_container.buf_end());
-        mph = new mphf_t(kmer_container.size(), data_iterator, thread_count, GAMMA_FACTOR);
+        mph = new mphf_t(kmer_container.size(), data_iterator, working_dir_path, thread_count, GAMMA_FACTOR);
 
         std::cout << "Built the MPH function in memory.\n";
 
@@ -123,7 +123,7 @@ void Kmer_Hash_Table<k>::load_hash_buckets(const std::string& file_path)
 
 
 template <uint16_t k>
-void Kmer_Hash_Table<k>::construct(const std::string& kmc_db_path, const uint16_t thread_count, const std::string& mph_file_path)
+void Kmer_Hash_Table<k>::construct(const std::string& kmc_db_path, const uint16_t thread_count, const std::string& working_dir_path, const std::string& mph_file_path)
 {
     std::chrono::high_resolution_clock::time_point t_start = std::chrono::high_resolution_clock::now();
 
@@ -137,7 +137,7 @@ void Kmer_Hash_Table<k>::construct(const std::string& kmc_db_path, const uint16_
 
 
     // Build the minimal perfect hash function.
-    build_mph_function(kmer_container, thread_count, mph_file_path);
+    build_mph_function(kmer_container, thread_count, working_dir_path, mph_file_path);
     const uint64_t total_bits = mph->totalBitSize();
     std::cout << "Total MPH size (in MB): " << total_bits / (8 * 1024 * 1024);
     std::cout << "; in bits / k-mer: " << (float)(total_bits) / kmer_count << "\n";

@@ -21,6 +21,14 @@ Kmer_Container<k>::Kmer_Container(const std::string& kmc_file_path):
     }
 
     kmer_database.Close();
+
+
+    const uint16_t kmer_len = kmer_length();
+    if(kmer_len != k)
+    {
+        std::cerr << "Expected k value " << k << ", but is provided with a " << kmer_len << "-mer database. Aborting.\n";
+        std::exit(EXIT_FAILURE);
+    }
 }
 
 

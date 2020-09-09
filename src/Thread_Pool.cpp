@@ -167,7 +167,7 @@ void Thread_Pool<k>::close()
     }
 
 
-    delete task_status;
+    delete[] task_status;
 
     if(task_type == Task_Type::classification)
         classify_params.clear();

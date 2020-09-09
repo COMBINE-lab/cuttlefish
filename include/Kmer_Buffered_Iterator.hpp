@@ -84,6 +84,7 @@ private:
     const Kmer_Container<k>* const kmer_container;    // The associated k-mer container on which to iterate on.
     const uint64_t kmer_count;  // Number of k-mers present at the underlying database.
     CKMCFile kmer_database; // The KMC database associated to the container.
+    CKmerAPI kmer_object;
 
     bool at_begin;  // Whether this iterator points to the beginning of the KMC database or not.
     bool at_end;  // Whether this iterator points to the ending of the KMC database or not.

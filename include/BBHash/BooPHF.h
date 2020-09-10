@@ -39,6 +39,9 @@ namespace boomphf {
 #pragma mark utils
 ////////////////////////////////////////////////////////////////
 
+
+#define READ_BUFF_SZ 100000
+
 	
 	// iterator from disk file of u_int64_t with buffered read,   todo template
 	template <typename basetype>
@@ -49,7 +52,8 @@ namespace boomphf {
 		: _is(nullptr)
 		, _pos(0) ,_inbuff (0), _cptread(0)
 		{
-			_buffsize = 100000;
+			// _buffsize = 100000;
+			_buffsize = READ_BUFF_SZ;
 			_buffer = (basetype *) malloc(_buffsize*sizeof(basetype));
 		}
 		
@@ -68,7 +72,8 @@ namespace boomphf {
 		bfile_iterator(FILE* is): _is(is) , _pos(0) ,_inbuff (0), _cptread(0)
 		{
 			//printf("bf it %p\n",_is);
-			_buffsize = 100000;
+			// _buffsize = 100000;
+			_buffsize = READ_BUFF_SZ;
 			_buffer = (basetype *) malloc(_buffsize*sizeof(basetype));
 			int reso = fseek(_is,0,SEEK_SET);
 			if (reso) {
@@ -851,8 +856,10 @@ we need this 2-functors scheme because HashFunctors won't work with unordered_ma
 ////////////////////////////////////////////////////////////////
 
 
-#define NBBUFF 20000
-//#define NBBUFF 2
+#define WORK_CHUNK_SZ 100
+#define LARGE_CHUNK_SZ 1000
+#define WRITE_BUFF_SZ 10000
+//#define WORK_CHUNK_SZ 2
 
 	template<typename Range,typename Iterator>
 	struct thread_args
@@ -1058,10 +1065,16 @@ we need this 2-functors scheme because HashFunctors won't work with unordered_ma
 				//safely copy n items into buffer
 				pthread_mutex_lock(&_mutex);
 				std::chrono::high_resolution_clock::time_point t_start = std::chrono::high_resolution_clock::now();
-                for(; inbuff<NBBUFF && (*shared_it)!=until;  ++(*shared_it))
-				{
-                    buffer[inbuff]= *(*shared_it); inbuff++;
-				}
+                if(i < 2)
+					for(; inbuff<WORK_CHUNK_SZ && (*shared_it)!=until;  ++(*shared_it))
+					{
+						buffer[inbuff]= *(*shared_it); inbuff++;
+					}
+				else
+					for(; inbuff<LARGE_CHUNK_SZ && (*shared_it)!=until;  ++(*shared_it))
+					{
+						buffer[inbuff]= *(*shared_it); inbuff++;
+					}
 				if((*shared_it)==until) isRunning =false;
 				std::chrono::high_resolution_clock::time_point t_end = std::chrono::high_resolution_clock::now();
     			double elapsed_seconds = std::chrono::duration_cast<std::chrono::duration<double>>(t_end - t_start).count();
@@ -1128,7 +1141,8 @@ we need this 2-functors scheme because HashFunctors won't work with unordered_ma
 							
 							if(_writeEachLevel && i > 0 && i < _nb_levels -1)
 							{
-								if(writebuff>=NBBUFF)
+								// if(writebuff>=WORK_CHUNK_SZ)
+								if(writebuff>=WRITE_BUFF_SZ)
 								{
 									//flush buffer
 									flockfile(_currlevelFile);
@@ -1285,7 +1299,8 @@ we need this 2-functors scheme because HashFunctors won't work with unordered_ma
 			{
 				for(int ii=0; ii<_num_thread; ii++)
 				{
-					bufferperThread[ii].resize(NBBUFF);
+					// bufferperThread[ii].resize(WORK_CHUNK_SZ);
+					bufferperThread[ii].resize(WRITE_BUFF_SZ);
 				}
 			}
 			
@@ -1565,7 +1580,8 @@ we need this 2-functors scheme because HashFunctors won't work with unordered_ma
 		mphf<elem_t, Hasher_t>  * obw = (mphf<elem_t, Hasher_t > *) targ->boophf;
 		int level = targ->level;
 		std::vector<elem_t> buffer;
-		buffer.resize(NBBUFF);
+		// buffer.resize(WORK_CHUNK_SZ);
+		buffer.resize(level < 2 ? WORK_CHUNK_SZ : LARGE_CHUNK_SZ);
 		
 		pthread_mutex_t * mutex =  & obw->_mutex;
 

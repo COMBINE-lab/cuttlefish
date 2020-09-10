@@ -97,7 +97,7 @@ private:
     Kmer_Chunk<k>* curr_chunk{nullptr}; // Current k-mer chunk (parsed from the database) to read off k-mers from.
     typename std::vector<Kmer<k>>::iterator cur_chunk_it;   // Iterator pointing to the k-mer last read from the current chunk `curr_chunk`.
 
-    static constexpr size_t QUEUE_SIZE = 100;   // Maximum number of k-mer chunks to contain at the chunk-queue `rwq`.
+    static constexpr size_t QUEUE_SIZE = (k < 32 ? 100 : 500);   // Maximum number of k-mer chunks to contain at the chunk-queue `rwq`.
     static constexpr size_t CHUNK_CAPACITY = 40000; // Maximum number of k-mers to put in each k-mer chunk.
 
 

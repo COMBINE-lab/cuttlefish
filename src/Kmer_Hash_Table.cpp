@@ -27,13 +27,6 @@ void Kmer_Hash_Table<k>::build_mph_function(const Kmer_Container<k>& kmer_contai
     {
         // Build the MPHF.
         std::cout << "Building the MPH function from the k-mer database " << kmer_container.container_location() << "\n";
-        //auto b = kmer_container.buf_begin();
-        //auto e = kmer_container.buf_end();
-
-        // In-memory build.
-        // std::vector<Kmer<k>> kmers;
-        // kmer_container.load_kmers(kmers);
-        // auto data_iterator = boomphf::range(kmers.begin(), kmers.end());
 
         auto data_iterator = boomphf::range(kmer_container.buf_begin(), kmer_container.buf_end());
         mph = new mphf_t(kmer_container.size(), data_iterator, working_dir_path, thread_count, GAMMA_FACTOR);

@@ -2,7 +2,7 @@
 #include "Validator.hpp"
 #include "Kmer_Container.hpp"
 #include "Kmer_Iterator.hpp"
-#include "Kmer_Buffered_Iterator.hpp"
+// #include "Kmer_Buffered_Iterator.hpp"
 #include "BBHash/BooPHF.h"
 #include "spdlog/sinks/stdout_color_sinks.h"
 
@@ -38,10 +38,6 @@ void Validator<k>::build_mph_function()
         // Build the MPHF.
         console->info("Building the MPH function from the k-mer database {}\n", kmer_container.container_location());
 
-        //auto b = kmer_container.buf_begin();
-        //auto e = kmer_container.buf_end();
-        //auto data_iterator = boomphf::range(&b, &e);
-        //mph = new mphf_t(kmer_container.size(), data_iterator, thread_count, GAMMA_FACTOR);
         auto data_iterator = boomphf::range(kmer_container.begin(), kmer_container.end());
         mph = new mphf_t(kmer_container.size(), data_iterator, working_dir_path, thread_count, GAMMA_FACTOR);
 

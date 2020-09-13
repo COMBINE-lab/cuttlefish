@@ -250,7 +250,8 @@ inline bool CKMCFile::ReadNextKmer(CKmerAPI &kmer)
 		}
 
 		// counter MUST be a single byte for this to work
-		auto count = sufix_file_buf[index_in_partial_buf++];
+		// auto count = sufix_file_buf[index_in_partial_buf++];
+		index_in_partial_buf++;
 		sufix_number++;
 		if(sufix_number == total_kmers) {
 			end_of_file = true;

@@ -83,8 +83,6 @@ private:
 
     const Kmer_Container<k>* const kmer_container;    // The associated k-mer container on which to iterate on.
     const uint64_t kmer_count;  // Number of k-mers present at the underlying database.
-    CKMCFile kmer_database; // The KMC database associated to the container.
-    CKmerAPI kmer_object;
 
     bool at_begin;  // Whether this iterator points to the beginning of the KMC database or not.
     bool at_end;  // Whether this iterator points to the ending of the KMC database or not.
@@ -105,11 +103,11 @@ private:
     // its beginning or its ending position based on the values of `at_begin` and `at_end`.
     Kmer_Buffered_Iterator(const Kmer_Container<k>* kmer_container, bool at_begin = true, bool at_end = false);
 
-    // Opens the KMC database for reading.
-    void open_kmer_database();
+    // Opens the KMC database at path `db_path` into `kmer_database` for reading.
+    static void open_kmer_database(const std::string& db_path, CKMCFile& kmer_database);
 
-    // Closes the KMC database.
-    void close_kmer_database();
+    // Closes the KMC database `kmer_database`.
+    static void close_kmer_database(CKMCFile& kmer_database);
 
     // Launches background parsing of k-mers from the database, and returns the first parsed k-mer.
     value_type launch_parse();
@@ -177,23 +175,22 @@ inline Kmer_Buffered_Iterator<k>::Kmer_Buffered_Iterator(const iterator& other):
 
 
 template <uint16_t k>
-inline void Kmer_Buffered_Iterator<k>::open_kmer_database()
+inline void Kmer_Buffered_Iterator<k>::open_kmer_database(const std::string& db_path, CKMCFile& kmer_database)
 {
-    const std::string& container_location = kmer_container->container_location();
-    if(!kmer_database.OpenForListing(container_location))
+    if(!kmer_database.OpenForListing(db_path))
     {
-        std::cerr << "Error opening KMC database with prefix " << container_location << ". Aborting.\n";
+        std::cerr << "Error opening KMC database with prefix " << db_path << ". Aborting.\n";
         std::exit(EXIT_FAILURE);
     }
 }
 
 
 template <uint16_t k>
-inline void Kmer_Buffered_Iterator<k>::close_kmer_database()
+inline void Kmer_Buffered_Iterator<k>::close_kmer_database(CKMCFile& kmer_database)
 {
     if(!kmer_database.Close())
     {
-        std::cerr << "Error closing KMC database with prefix " << kmer_container->container_location() << ". Aborting.\n";
+        std::cerr << "Error closing KMC database. Aborting.\n";
         std::exit(EXIT_FAILURE);
     }
 }
@@ -205,6 +202,12 @@ void Kmer_Buffered_Iterator<k>::parse_kmers()
     CKmerAPI kmer_api(k);
     Kmer_Chunk<k>* kc = new Kmer_Chunk<k>(CHUNK_CAPACITY);
     size_t chunk_size{0};
+
+    CKMCFile kmer_database;
+    open_kmer_database(kmer_container->container_location(), kmer_database);
+
+    rwq = moodycamel::ReaderWriterQueue<Kmer_Chunk<k>*>(QUEUE_SIZE);
+
 
     while(kmer_database.ReadNextKmer(kmer_api))
     {
@@ -227,6 +230,9 @@ void Kmer_Buffered_Iterator<k>::parse_kmers()
     // If there is a remaining chunk, put it into the queue.
     if(chunk_size > 0)
         dump_chunk(kc, chunk_size);
+
+
+    close_kmer_database(kmer_database);
 }
 
 
@@ -241,11 +247,6 @@ inline void Kmer_Buffered_Iterator<k>::dump_chunk(Kmer_Chunk<k>* kc, size_t chun
 template <uint16_t k>
 typename Kmer_Buffered_Iterator<k>::value_type Kmer_Buffered_Iterator<k>::launch_parse()
 {
-    open_kmer_database();
-
-    rwq = moodycamel::ReaderWriterQueue<Kmer_Chunk<k>*>(QUEUE_SIZE);
-
-
     // Launch the background parsing thread.
     parser.reset(
         new std::thread([this]()
@@ -338,8 +339,6 @@ inline Kmer_Buffered_Iterator<k>::~Kmer_Buffered_Iterator()
         }
 
         parser->join();
-
-        close_kmer_database();
 
         std::cerr << "\nCompleted a pass over the k-mer database.\n";
     }

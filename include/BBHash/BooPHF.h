@@ -17,6 +17,7 @@
 #include <string.h>
 #include <memory> // for make_shared
 #include <unistd.h>
+#include <chrono>
 
 
 
@@ -38,6 +39,9 @@ namespace boomphf {
 #pragma mark utils
 ////////////////////////////////////////////////////////////////
 
+
+#define READ_BUFF_SZ 100000
+
 	
 	// iterator from disk file of u_int64_t with buffered read,   todo template
 	template <typename basetype>
@@ -48,8 +52,9 @@ namespace boomphf {
 		: _is(nullptr)
 		, _pos(0) ,_inbuff (0), _cptread(0)
 		{
-			_buffsize = 10000;
-			_buffer = (basetype *) malloc(_buffsize*sizeof(basetype));
+			// _buffsize = 100000;
+			_buffsize = READ_BUFF_SZ;
+			// _buffer = (basetype *) malloc(_buffsize*sizeof(basetype));
 		}
 		
 		bfile_iterator(const bfile_iterator& cr)
@@ -57,8 +62,8 @@ namespace boomphf {
 			_buffsize = cr._buffsize;
 			_pos = cr._pos;
 			_is = cr._is;
-			_buffer = (basetype *) malloc(_buffsize*sizeof(basetype));
-			 memcpy(_buffer,cr._buffer,_buffsize*sizeof(basetype) );
+			// _buffer = (basetype *) malloc(_buffsize*sizeof(basetype));
+			//  memcpy(_buffer,cr._buffer,_buffsize*sizeof(basetype) );
 			_inbuff = cr._inbuff;
 			_cptread = cr._cptread;
 			_elem = cr._elem;
@@ -67,14 +72,16 @@ namespace boomphf {
 		bfile_iterator(FILE* is): _is(is) , _pos(0) ,_inbuff (0), _cptread(0)
 		{
 			//printf("bf it %p\n",_is);
-			_buffsize = 10000;
-			_buffer = (basetype *) malloc(_buffsize*sizeof(basetype));
+			// _buffsize = 100000;
+			_buffsize = READ_BUFF_SZ;
+			// _buffer = (basetype *) malloc(_buffsize*sizeof(basetype));
 			int reso = fseek(_is,0,SEEK_SET);
 			if (reso) {
 			  fprintf(stderr, "fseek failed on FILE* %p with return code %d",
 					  is, reso);
 			}
-			advance();
+			// advance();
+			peek();
 		}
 		
 		~bfile_iterator()
@@ -83,8 +90,13 @@ namespace boomphf {
 				free(_buffer);
 		}
 		
-		
-		basetype const& operator*()  {  return _elem;  }
+		basetype const& operator*()
+		{
+			if(_buffer == NULL)
+				advance();
+
+			return _elem;
+		}
 		
 		bfile_iterator& operator++()
 		{
@@ -101,10 +113,21 @@ namespace boomphf {
 		
 		friend bool operator!=(bfile_iterator const& lhs, bfile_iterator const& rhs)  {  return !(lhs == rhs);  }
 	private:
+		void peek()
+		{
+			const int ch = fgetc(_is);
+			ungetc(ch, _is);
+
+			if(ch == EOF)
+				_is = nullptr;
+		}
+
 		void advance()
 		{
 			
 			//printf("_cptread %i _inbuff %i \n",_cptread,_inbuff);
+			if(_buffer == NULL)
+				_buffer = (basetype *) malloc(_buffsize*sizeof(basetype));
 			
 			_pos++;
 			
@@ -131,7 +154,7 @@ namespace boomphf {
 		FILE * _is;
 		unsigned long _pos;
 		
-		basetype * _buffer; // for buffered read
+		basetype * _buffer = NULL; // for buffered read
 		int _inbuff, _cptread;
 		int _buffsize;
 	};
@@ -850,8 +873,10 @@ we need this 2-functors scheme because HashFunctors won't work with unordered_ma
 ////////////////////////////////////////////////////////////////
 
 
-#define NBBUFF 10000
-//#define NBBUFF 2
+#define WORK_CHUNK_SZ 100
+#define LARGE_CHUNK_SZ 1000
+#define WRITE_BUFF_SZ 10000
+//#define WORK_CHUNK_SZ 2
 
 	template<typename Range,typename Iterator>
 	struct thread_args
@@ -880,6 +905,9 @@ we need this 2-functors scheme because HashFunctors won't work with unordered_ma
 		//typedef IndepHashFunctors<elem_t,Hasher_t> MultiHasher_t; //faster than xorshift
 
 	public:
+		// Debug
+		double data_copy_time = 0;
+
 		mphf() : _built(false)
 		{}
 
@@ -892,8 +920,8 @@ we need this 2-functors scheme because HashFunctors won't work with unordered_ma
 		
 		// allow perc_elem_loaded  elements to be loaded in ram for faster construction (default 3%), set to 0 to desactivate
 		template <typename Range>
-		mphf( size_t n, Range const& input_range,int num_thread = 1,  double gamma = 2.0 , bool writeEach = true, bool progress =true, float perc_elem_loaded = 0.03) :
-		_gamma(gamma), _hash_domain(size_t(ceil(double(n) * gamma))), _nelem(n), _num_thread(num_thread), _percent_elem_loaded_for_fastMode (perc_elem_loaded), _withprogress(progress)
+		mphf(size_t n, Range const& input_range, const std::string& working_dir, int num_thread = 1, double gamma = 2.0, bool writeEach = true, bool progress =true, float perc_elem_loaded = 0.03) :
+		_working_dir(working_dir), _gamma(gamma), _hash_domain(size_t(ceil(double(n) * gamma))), _nelem(n), _num_thread(num_thread), _percent_elem_loaded_for_fastMode (perc_elem_loaded), _withprogress(progress)
 		{
 			if(n ==0) return;
 			
@@ -963,12 +991,14 @@ we need this 2-functors scheme because HashFunctors won't work with unordered_ma
 
 			//printf("used temp ram for construction : %lli MB \n",setLevelFastmode.capacity()* sizeof(elem_t) /1024ULL/1024ULL);
 
-			std::vector<elem_t>().swap(setLevelFastmode);   // clear setLevelFastmode reallocating
+			// std::vector<elem_t>().swap(setLevelFastmode);   // clear setLevelFastmode reallocating
 
 
 			pthread_mutex_destroy(&_mutex);
 			
 			_built = true;
+
+			cleanup();
 		}
 
 
@@ -1053,11 +1083,21 @@ we need this 2-functors scheme because HashFunctors won't work with unordered_ma
 
 				//safely copy n items into buffer
 				pthread_mutex_lock(&_mutex);
-                for(; inbuff<NBBUFF && (*shared_it)!=until;  ++(*shared_it))
-				{
-                    buffer[inbuff]= *(*shared_it); inbuff++;
-				}
+				std::chrono::high_resolution_clock::time_point t_start = std::chrono::high_resolution_clock::now();
+                if(i < 2)
+					for(; inbuff<WORK_CHUNK_SZ && (*shared_it)!=until;  ++(*shared_it))
+					{
+						buffer[inbuff]= *(*shared_it); inbuff++;
+					}
+				else
+					for(; inbuff<LARGE_CHUNK_SZ && (*shared_it)!=until;  ++(*shared_it))
+					{
+						buffer[inbuff]= *(*shared_it); inbuff++;
+					}
 				if((*shared_it)==until) isRunning =false;
+				std::chrono::high_resolution_clock::time_point t_end = std::chrono::high_resolution_clock::now();
+    			double elapsed_seconds = std::chrono::duration_cast<std::chrono::duration<double>>(t_end - t_start).count();
+				data_copy_time += elapsed_seconds;
 				pthread_mutex_unlock(&_mutex);
 
 
@@ -1120,7 +1160,8 @@ we need this 2-functors scheme because HashFunctors won't work with unordered_ma
 							
 							if(_writeEachLevel && i > 0 && i < _nb_levels -1)
 							{
-								if(writebuff>=NBBUFF)
+								// if(writebuff>=WORK_CHUNK_SZ)
+								if(writebuff>=WRITE_BUFF_SZ)
 								{
 									//flush buffer
 									flockfile(_currlevelFile);
@@ -1277,7 +1318,8 @@ we need this 2-functors scheme because HashFunctors won't work with unordered_ma
 			{
 				for(int ii=0; ii<_num_thread; ii++)
 				{
-					bufferperThread[ii].resize(NBBUFF);
+					// bufferperThread[ii].resize(WORK_CHUNK_SZ);
+					bufferperThread[ii].resize(WRITE_BUFF_SZ);
 				}
 			}
 			
@@ -1316,6 +1358,23 @@ we need this 2-functors scheme because HashFunctors won't work with unordered_ma
 				 	break;
 				 }
 			}
+		}
+
+
+		void cleanup()
+		{
+			setLevelFastmode.clear();
+			setLevelFastmode.shrink_to_fit();
+
+
+			for(size_t i = 0; i < bufferperThread.size(); ++i)
+			{
+				bufferperThread[i].clear();
+				bufferperThread[i].shrink_to_fit();
+			}
+
+			bufferperThread.clear();
+			bufferperThread.shrink_to_fit();
 		}
 
 
@@ -1379,14 +1438,15 @@ we need this 2-functors scheme because HashFunctors won't work with unordered_ma
 
 			//printf("---process level %i   wr %i fast %i ---\n",i,_writeEachLevel,_fastmode);
 			
+			std::string fname_fmt = _working_dir + "/temp_p%i_level_%i";
 			char fname_old[1000];
-			sprintf(fname_old,"temp_p%i_level_%i",_pid,i-2);
+			sprintf(fname_old,fname_fmt.c_str(),_pid,i-2);
 			
 			char fname_curr[1000];
-			sprintf(fname_curr,"temp_p%i_level_%i",_pid,i);
+			sprintf(fname_curr,fname_fmt.c_str(),_pid,i);
 			
 			char fname_prev[1000];
-			sprintf(fname_prev,"temp_p%i_level_%i",_pid,i-1);
+			sprintf(fname_prev,fname_fmt.c_str(),_pid,i-1);
 			
 			if(_writeEachLevel)
 			{
@@ -1507,6 +1567,7 @@ we need this 2-functors scheme because HashFunctors won't work with unordered_ma
         MultiHasher_t _hasher;
 		bitVector * _tempBitset;
 
+		std::string _working_dir;
 		double _gamma;
 		uint64_t _hash_domain;
 		uint64_t _nelem;
@@ -1555,7 +1616,8 @@ we need this 2-functors scheme because HashFunctors won't work with unordered_ma
 		mphf<elem_t, Hasher_t>  * obw = (mphf<elem_t, Hasher_t > *) targ->boophf;
 		int level = targ->level;
 		std::vector<elem_t> buffer;
-		buffer.resize(NBBUFF);
+		// buffer.resize(WORK_CHUNK_SZ);
+		buffer.resize(level < 2 ? WORK_CHUNK_SZ : LARGE_CHUNK_SZ);
 		
 		pthread_mutex_t * mutex =  & obw->_mutex;
 

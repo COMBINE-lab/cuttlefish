@@ -89,6 +89,7 @@ void validate(int argc, char** argv)
         ("s,kmc_db", "set of k-mers (KMC database) prefix", cxxopts::value<std::string>())
         ("g,cdbg", "compacted de Bruijn graph file", cxxopts::value<std::string>())
         ("t,threads", "number of threads to use", cxxopts::value<uint16_t>()->default_value("1"))
+        ("w,work_dir", "working directory", cxxopts::value<std::string>()->default_value("."))
         ("mph", "minimal perfect hash (BBHash) file (optional)", cxxopts::value<std::string>()->default_value(""))
         ("h,help", "print usage");
 
@@ -108,10 +109,11 @@ void validate(int argc, char** argv)
         const auto kmer_database = result["kmc_db"].as<std::string>();
         const auto cdbg = result["cdbg"].as<std::string>();
         const auto thread_count = result["threads"].as<uint16_t>();
+        const auto working_dir = result["work_dir"].as<std::string>();
         const auto mph_file = result["mph"].as<std::string>();
 
 
-        const Validation_Params params(refs, lists, dirs, k, kmer_database, cdbg, thread_count, mph_file);
+        const Validation_Params params(refs, lists, dirs, k, kmer_database, cdbg, thread_count, working_dir, mph_file);
         if(!params.is_valid())
         {
             std::cerr << "Invalid input configuration. Aborting.\n";

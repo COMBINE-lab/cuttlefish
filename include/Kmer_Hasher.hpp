@@ -16,6 +16,8 @@ public:
     // Ref: https://github.com/rizkg/BBHash/blob/48a854a378bce4e2fe4d4cd63bfe5e4f8755dc6e/BooPHF.h#L393
     uint64_t operator()(const Kmer<k>& key, uint64_t seed = 0xAAAAAAAA55555555ULL) const
     {
+        return key.to_u64(seed);
+        /*
         uint64_t hash = seed;
         const uint64_t key_u64 = key.to_u64();
         hash ^= (hash <<  7) ^  key_u64 * (hash >> 3) ^ (~((hash << 11) + (key_u64 ^ (hash >> 5))));
@@ -28,6 +30,7 @@ public:
         hash = hash + (hash << 31);
 
         return hash;
+        */
     }
 };
 

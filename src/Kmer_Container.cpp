@@ -1,7 +1,7 @@
 
 #include "Kmer_Container.hpp"
 #include "Kmer_Iterator.hpp"
-
+#include "Kmer_Buffered_Iterator.hpp"
 
 template <uint16_t k>
 Kmer_Container<k>::Kmer_Container(const std::string& kmc_file_path):
@@ -21,6 +21,14 @@ Kmer_Container<k>::Kmer_Container(const std::string& kmc_file_path):
     }
 
     kmer_database.Close();
+
+
+    const uint16_t kmer_len = kmer_length();
+    if(kmer_len != k)
+    {
+        std::cerr << "Expected k value " << k << ", but is provided with a " << kmer_len << "-mer database. Aborting.\n";
+        std::exit(EXIT_FAILURE);
+    }
 }
 
 
@@ -56,6 +64,42 @@ template <uint16_t k>
 typename Kmer_Container<k>::iterator Kmer_Container<k>::end() const
 {
     return iterator(this, false);
+}
+
+template <uint16_t k>
+typename Kmer_Container<k>::buf_iterator Kmer_Container<k>::buf_begin() const
+{
+    return buf_iterator(this, true, false);
+}
+
+
+template <uint16_t k>
+typename Kmer_Container<k>::buf_iterator Kmer_Container<k>::buf_end() const
+{
+    return buf_iterator(this, false, true);
+}
+
+
+template <uint16_t k>
+void Kmer_Container<k>::load_kmers(std::vector<Kmer<k>>& kmers) const
+{
+    std::cout << "Loading k-mers into memory.\n";
+
+    std::chrono::high_resolution_clock::time_point t_start = std::chrono::high_resolution_clock::now();
+
+    kmers.reserve(size());
+
+    auto it_beg = begin();
+    auto it_end = end();
+
+    for(auto it = it_beg; it != it_end; ++it)
+        kmers.emplace_back(*it);
+
+    std::chrono::high_resolution_clock::time_point t_end = std::chrono::high_resolution_clock::now();
+    double elapsed_seconds = std::chrono::duration_cast<std::chrono::duration<double>>(t_end - t_start).count();
+
+
+    std::cout << "Loading k-mers into memory. Time taken: " << elapsed_seconds << " seconds.\n";
 }
 
 

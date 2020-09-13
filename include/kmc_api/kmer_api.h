@@ -344,10 +344,11 @@ public:
 		
 			kmer_data = new uint64[no_of_rows];
 		}
-
+		memcpy(kmer_data, kmer.kmer_data, no_of_rows*sizeof(kmer_data[0]));
+		/*
 		for(uint32 i = 0; i < no_of_rows; i++)
 			kmer_data[i] = kmer.kmer_data[i];
-
+		*/
 		return *this;
 	};
 
@@ -460,6 +461,7 @@ public:
 
 	
 	// Gets the 64-bit integer k-mer representation into the array `kmer`.
+	template <unsigned int N>
 	inline void to_u64(uint64_t* kmer) const
 	{
 		// The endianness of the k-mer data array in the KMC database is in the opposite
@@ -472,21 +474,20 @@ public:
 		// so can be all the next disjoint 64-bit substrings. The remainder substring
 		// (of < 64-bits) can be found from just the 0'th entry of `kmer_data`.
 		
-
 		uint32 offset = 62 - ((kmer_length - 1 + byte_alignment) & 31) * 2;
 		if (offset)
 		{
-			for (int32 i = no_of_rows - 1; i >= 1; --i)
+			for (int32 i = N - 1; i >= 1; --i)
 			{
-				kmer[no_of_rows - 1 - i] = kmer_data[i] >> offset;
-				kmer[no_of_rows - 1 - i] += kmer_data[i - 1] << (64 - offset);
+				kmer[N - 1 - i] = kmer_data[i] >> offset;
+				kmer[N - 1 - i] += kmer_data[i - 1] << (64 - offset);
 			}
-			kmer[no_of_rows - 1] = kmer_data[0] >> offset;
+			kmer[N - 1] = kmer_data[0] >> offset;
 		}
 		else
 		{
-			for (int32 i = no_of_rows - 1; i >= 0; --i)			
-				kmer[no_of_rows - 1 - i] = kmer_data[i];						
+			for (int32 i = N - 1; i >= 0; --i)			
+				kmer[N - 1 - i] = kmer_data[i];						
 		}
 	}
 

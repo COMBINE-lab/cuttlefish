@@ -110,9 +110,11 @@ public:
 	// Return next kmer in CKmerAPI &kmer. Return its counter in float &count. Return true if not EOF
 	bool ReadNextKmer(CKmerAPI &kmer, float &count);
 
-	bool ReadNextKmer(CKmerAPI &kmer, uint64 &count); //for small k-values when counter may be longer than 4bytes
+	inline bool ReadNextKmer(CKmerAPI &kmer, uint64 &count); //for small k-values when counter may be longer than 4bytes
 	
-	bool ReadNextKmer(CKmerAPI &kmer, uint32 &count);
+	inline bool ReadNextKmer(CKmerAPI &kmer, uint32 &count);
+
+	inline bool ReadNextKmer(CKmerAPI &kmer);
 	// Release memory and close files in case they were opened 
 	bool Close();
 
@@ -169,6 +171,274 @@ public:
 		uint32 count_for_kmer_kmc1(CKmerAPI& kmer);
 		uint32 count_for_kmer_kmc2(CKmerAPI& kmer, uint32 bin_start_pos);
 };
+
+//-----------------------------------------------------------------------------------------------
+// Read next kmer
+// OUT: kmer - next kmer
+// OUT: count - kmer's counter
+// RET: true - if not EOF
+//-----------------------------------------------------------------------------------------------
+inline bool CKMCFile::ReadNextKmer(CKmerAPI &kmer)
+{
+	uint64 prefix_mask = (1 << 2 * lut_prefix_length) - 1; //for kmc2 db
+
+	if(is_opened != opened_for_listing) {
+		return false;
+	}
+
+	//do 
+	{
+		if(end_of_file)
+			return false;
+		
+		if(sufix_number == prefix_file_buf[prefix_index + 1]) {
+			prefix_index++;
+			while (prefix_file_buf[prefix_index] == prefix_file_buf[prefix_index + 1])
+				prefix_index++;
+		}
+	
+		uint32 off = (sizeof(prefix_index) * 8) - (lut_prefix_length * 2) - kmer.byte_alignment * 2;
+			
+		uint64 temp_prefix = (prefix_index & prefix_mask) << off;	// shift prefix towards MSD. "& prefix_mask" necessary for kmc2 db format
+
+		memset(kmer.kmer_data, 0, kmer.no_of_rows * sizeof(kmer.kmer_data[0]));
+
+		kmer.kmer_data[0] = temp_prefix;			// store prefix in an object CKmerAPI
+
+		//for(uint32 i = 1; i < kmer.no_of_rows; i++) 
+		//	kmer.kmer_data[i] = 0;
+		
+
+		//read sufix:
+		uint32 row_index = 0;
+ 		uint64 suf = 0;
+	
+		off = off - 8;
+				
+		if(index_in_partial_buf+sufix_size < part_size) {
+			// unroll?
+			for(uint32_t a = 0; a < sufix_size; a ++) {
+				suf = sufix_file_buf[index_in_partial_buf++];
+				suf <<= off;
+				kmer.kmer_data[row_index] |= suf;
+				if (off == 0) { //the end of a word in kmer_data 
+					off = 64 ;
+					row_index++;
+				} 
+				off -=8; 
+			}
+		} else {
+			for (uint32 a = 0; a < sufix_size; a++) {
+				if (index_in_partial_buf == part_size)
+					Reload_sufix_file_buf();
+
+				suf = sufix_file_buf[index_in_partial_buf++];
+				suf <<= off;
+				kmer.kmer_data[row_index] |= suf;
+
+				if (off == 0) { //the end of a word in kmer_data
+					off = 64;
+					row_index++;
+				}
+				off -= 8;
+			}
+		}
+
+		//read counter:
+		if(index_in_partial_buf == part_size) {
+			Reload_sufix_file_buf();
+		}
+
+		// counter MUST be a single byte for this to work
+		auto count = sufix_file_buf[index_in_partial_buf++];
+		sufix_number++;
+		if(sufix_number == total_kmers) {
+			end_of_file = true;
+		}
+	}// while((count < min_count) || (count > max_count));
+
+	return true;
+}
+
+//-----------------------------------------------------------------------------------------------
+// Read next kmer
+// OUT: kmer - next kmer
+// OUT: count - kmer's counter
+// RET: true - if not EOF
+//-----------------------------------------------------------------------------------------------
+bool CKMCFile::ReadNextKmer(CKmerAPI &kmer, uint32 &count)
+{
+	uint64 prefix_mask = (1 << 2 * lut_prefix_length) - 1; //for kmc2 db
+
+	if(is_opened != opened_for_listing)
+		return false;
+	do
+	{
+		if(end_of_file)
+			return false;
+		
+		if(sufix_number == prefix_file_buf[prefix_index + 1]) 
+		{
+			prefix_index++;
+						
+			while (prefix_file_buf[prefix_index] == prefix_file_buf[prefix_index + 1])
+				prefix_index++;
+		}
+	
+		uint32 off = (sizeof(prefix_index) * 8) - (lut_prefix_length * 2) - kmer.byte_alignment * 2;
+			
+		uint64 temp_prefix = (prefix_index & prefix_mask) << off;	// shift prefix towards MSD. "& prefix_mask" necessary for kmc2 db format
+		
+		kmer.kmer_data[0] = temp_prefix;			// store prefix in an object CKmerAPI
+
+		for(uint32 i = 1; i < kmer.no_of_rows; i++)
+			kmer.kmer_data[i] = 0;
+
+		//read sufix:
+		uint32 row_index = 0;
+ 		uint64 suf = 0;
+	
+		off = off - 8;
+				
+ 		for(uint32 a = 0; a < sufix_size; a ++)
+		{
+			if(index_in_partial_buf == part_size)
+				Reload_sufix_file_buf();
+						
+			suf = sufix_file_buf[index_in_partial_buf++];
+			suf = suf << off;
+			kmer.kmer_data[row_index] = kmer.kmer_data[row_index] | suf;
+
+			if (off == 0)				//the end of a word in kmer_data
+			{
+					off = 56;
+					row_index++;
+			}
+			else
+					off -=8;
+		}
+	
+		//read counter:
+		if(index_in_partial_buf == part_size)
+			Reload_sufix_file_buf();
+		
+		count = sufix_file_buf[index_in_partial_buf++];
+
+		for(uint32 b = 1; b < counter_size; b++)
+		{
+			if(index_in_partial_buf == part_size)
+				Reload_sufix_file_buf();
+			
+			uint32 aux = 0x000000ff & sufix_file_buf[index_in_partial_buf++];
+			aux = aux << 8 * ( b);
+			count = aux | count;
+		}
+			
+		sufix_number++;
+	
+		if(sufix_number == total_kmers)
+			end_of_file = true;
+
+		if (mode != 0)
+		{
+			float float_counter;
+			memcpy(&float_counter, &count, counter_size);
+			if ((float_counter < min_count) || (float_counter > max_count))
+				continue;
+			else
+				break;
+		}
+
+	}
+	while((count < min_count) || (count > max_count));
+
+	return true;
+}
+
+//-----------------------------------------------------------------------------------------------
+// Read next kmer
+// OUT: kmer - next kmer
+// OUT: count - kmer's counter
+// RET: true - if not EOF
+//-----------------------------------------------------------------------------------------------
+inline bool CKMCFile::ReadNextKmer(CKmerAPI &kmer, uint64 &count)
+{
+	uint64 prefix_mask = (1 << 2 * lut_prefix_length) - 1; //for kmc2 db
+
+	if (is_opened != opened_for_listing)
+		return false;
+	do
+	{
+		if (end_of_file)
+			return false;
+
+		if (sufix_number == prefix_file_buf[prefix_index + 1])
+		{
+			prefix_index++;
+
+			while (prefix_file_buf[prefix_index] == prefix_file_buf[prefix_index + 1])
+				prefix_index++;
+		}
+
+		uint32 off = (sizeof(prefix_index)* 8) - (lut_prefix_length * 2) - kmer.byte_alignment * 2;
+
+		uint64 temp_prefix = (prefix_index & prefix_mask) << off;	// shift prefix towards MSD. "& prefix_mask" necessary for kmc2 db format
+
+		kmer.kmer_data[0] = temp_prefix;			// store prefix in an object CKmerAPI
+
+		for (uint32 i = 1; i < kmer.no_of_rows; i++)
+			kmer.kmer_data[i] = 0;
+
+		//read sufix:
+		uint32 row_index = 0;
+		uint64 suf = 0;
+
+		off = off - 8;
+
+		for (uint32 a = 0; a < sufix_size; a++)
+		{
+			if (index_in_partial_buf == part_size)
+				Reload_sufix_file_buf();
+
+			suf = sufix_file_buf[index_in_partial_buf++];
+			suf = suf << off;
+			kmer.kmer_data[row_index] = kmer.kmer_data[row_index] | suf;
+
+			if (off == 0)				//the end of a word in kmer_data
+			{
+				off = 56;
+				row_index++;
+			}
+			else
+				off -= 8;
+		}
+
+		//read counter:
+		if (index_in_partial_buf == part_size)
+			Reload_sufix_file_buf();
+
+		count = sufix_file_buf[index_in_partial_buf++];
+
+		for (uint32 b = 1; b < counter_size; b++)
+		{
+			if (index_in_partial_buf == part_size)
+				Reload_sufix_file_buf();
+
+			uint64 aux = 0x000000ff & sufix_file_buf[index_in_partial_buf++];
+			aux = aux << 8 * (b);
+			count = aux | count;
+		}
+
+		sufix_number++;
+
+		if (sufix_number == total_kmers)
+			end_of_file = true;
+
+	} while ((count < min_count) || (count > max_count));
+
+	return true;
+}
+
 
 #endif
 

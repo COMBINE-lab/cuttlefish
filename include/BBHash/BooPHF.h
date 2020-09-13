@@ -54,7 +54,7 @@ namespace boomphf {
 		{
 			// _buffsize = 100000;
 			_buffsize = READ_BUFF_SZ;
-			_buffer = (basetype *) malloc(_buffsize*sizeof(basetype));
+			// _buffer = (basetype *) malloc(_buffsize*sizeof(basetype));
 		}
 		
 		bfile_iterator(const bfile_iterator& cr)
@@ -62,8 +62,8 @@ namespace boomphf {
 			_buffsize = cr._buffsize;
 			_pos = cr._pos;
 			_is = cr._is;
-			_buffer = (basetype *) malloc(_buffsize*sizeof(basetype));
-			 memcpy(_buffer,cr._buffer,_buffsize*sizeof(basetype) );
+			// _buffer = (basetype *) malloc(_buffsize*sizeof(basetype));
+			//  memcpy(_buffer,cr._buffer,_buffsize*sizeof(basetype) );
 			_inbuff = cr._inbuff;
 			_cptread = cr._cptread;
 			_elem = cr._elem;
@@ -74,13 +74,14 @@ namespace boomphf {
 			//printf("bf it %p\n",_is);
 			// _buffsize = 100000;
 			_buffsize = READ_BUFF_SZ;
-			_buffer = (basetype *) malloc(_buffsize*sizeof(basetype));
+			// _buffer = (basetype *) malloc(_buffsize*sizeof(basetype));
 			int reso = fseek(_is,0,SEEK_SET);
 			if (reso) {
 			  fprintf(stderr, "fseek failed on FILE* %p with return code %d",
 					  is, reso);
 			}
-			advance();
+			// advance();
+			peek();
 		}
 		
 		~bfile_iterator()
@@ -89,8 +90,13 @@ namespace boomphf {
 				free(_buffer);
 		}
 		
-		
-		basetype const& operator*()  {  return _elem;  }
+		basetype const& operator*()
+		{
+			if(_buffer == NULL)
+				advance();
+
+			return _elem;
+		}
 		
 		bfile_iterator& operator++()
 		{
@@ -107,10 +113,21 @@ namespace boomphf {
 		
 		friend bool operator!=(bfile_iterator const& lhs, bfile_iterator const& rhs)  {  return !(lhs == rhs);  }
 	private:
+		void peek()
+		{
+			const int ch = fgetc(_is);
+			ungetc(ch, _is);
+
+			if(ch == EOF)
+				_is = nullptr;
+		}
+
 		void advance()
 		{
 			
 			//printf("_cptread %i _inbuff %i \n",_cptread,_inbuff);
+			if(_buffer == NULL)
+				_buffer = (basetype *) malloc(_buffsize*sizeof(basetype));
 			
 			_pos++;
 			
@@ -137,7 +154,7 @@ namespace boomphf {
 		FILE * _is;
 		unsigned long _pos;
 		
-		basetype * _buffer; // for buffered read
+		basetype * _buffer = NULL; // for buffered read
 		int _inbuff, _cptread;
 		int _buffsize;
 	};
@@ -974,12 +991,14 @@ we need this 2-functors scheme because HashFunctors won't work with unordered_ma
 
 			//printf("used temp ram for construction : %lli MB \n",setLevelFastmode.capacity()* sizeof(elem_t) /1024ULL/1024ULL);
 
-			std::vector<elem_t>().swap(setLevelFastmode);   // clear setLevelFastmode reallocating
+			// std::vector<elem_t>().swap(setLevelFastmode);   // clear setLevelFastmode reallocating
 
 
 			pthread_mutex_destroy(&_mutex);
 			
 			_built = true;
+
+			cleanup();
 		}
 
 
@@ -1339,6 +1358,23 @@ we need this 2-functors scheme because HashFunctors won't work with unordered_ma
 				 	break;
 				 }
 			}
+		}
+
+
+		void cleanup()
+		{
+			setLevelFastmode.clear();
+			setLevelFastmode.shrink_to_fit();
+
+
+			for(size_t i = 0; i < bufferperThread.size(); ++i)
+			{
+				bufferperThread[i].clear();
+				bufferperThread[i].shrink_to_fit();
+			}
+
+			bufferperThread.clear();
+			bufferperThread.shrink_to_fit();
 		}
 
 

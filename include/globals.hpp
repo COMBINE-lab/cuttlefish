@@ -7,7 +7,7 @@
 #include "Kmer.hpp"
 
 #include <memory>
-#include <boost/preprocessor/repetition/repeat.hpp>
+#include "boost/preprocessor/repetition/repeat.hpp"
 
 
 // The macro `INSTANCE_COUNT` must be set exactly to `(MAX_K + 1) / 2` for a required maximum k-value.

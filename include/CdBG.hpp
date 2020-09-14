@@ -24,8 +24,6 @@ private:
 
     const Build_Params params;    // Required parameters wrapped in one object.
     Kmer_Hash_Table<k> Vertices;   // The hash table for the vertices (canonical k-mers) of the de Bruijn graph.
-    
-    uint32_t seq_count = 0; // Running counter to track the number of sequence being processed.
 
     // Minimum size of a partition to be processed by one thread.
     static constexpr uint16_t PARTITION_SIZE_THRESHOLD = 1;
@@ -294,13 +292,14 @@ private:
 
     // Writes a GFA1 path that completely tiles the underlying sequence being processed, at
     // the end of the output file. It basically stiches together the path and overlap outputs
-    // produced by the threads.
-    void write_gfa_path();
+    // produced by the threads. The name of the path is written as provided in `path_name`.
+    void write_gfa_path(const std::string& path_name);
 
-    // Writes a GFA1 path (formally referred to as "ordered groups") that completely tiles
+    // Writes a GFA2 path (formally referred to as "ordered groups") that completely tiles
     // the underlying sequence being processed, at the end of the output file. It basically
-    // stiches together the path and overlap outputs produced by the threads.
-    void write_gfa_ordered_group();
+    // stiches together the path produced by the threads. The id of the group is written as
+    // provided in `path_id`.
+    void write_gfa_ordered_group(const std::string& path_id);
 
     // Ensures that the string `buf` has enough free space to append a log of length
     // `log_len` at its end without overflowing its capacity by flushing its content

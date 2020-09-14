@@ -16,6 +16,9 @@ bool is_prefix(const std::string& s, const std::string& pref);
 // `path` with its name being prefixed by `prefix`.
 bool file_prefix_exists(const std::string& path, const std::string& prefix);
 
+// Returns a string that is a copy of `s` but has all the whitespaces removed.
+std::string remove_whitespaces(const char* s);
+
 
 
 #endif

@@ -714,7 +714,7 @@ void CdBG<k>::flush_path_buffers()
 
 
 template <uint16_t k>
-void CdBG<k>::write_gfa_path()
+void CdBG<k>::write_gfa_path(const std::string& path_name)
 {
     std::chrono::high_resolution_clock::time_point t_start = std::chrono::high_resolution_clock::now();
 
@@ -740,7 +740,7 @@ void CdBG<k>::write_gfa_path()
     output << "P";
 
     // The 'PathName' field.
-    output << "\tP" << seq_count;
+    output << "\t" << path_name;
 
     // The 'SegmentNames' field.
     output << "\t";
@@ -815,7 +815,7 @@ void CdBG<k>::write_gfa_path()
 
 
 template <uint16_t k>
-void CdBG<k>::write_gfa_ordered_group()
+void CdBG<k>::write_gfa_ordered_group(const std::string& path_id)
 {
     std::chrono::high_resolution_clock::time_point t_start = std::chrono::high_resolution_clock::now();
 
@@ -841,7 +841,7 @@ void CdBG<k>::write_gfa_ordered_group()
     output << "O";
 
     // The 'Group-ID' field.
-    output << "\tP" << seq_count;
+    output << "\t" << path_id;
 
     // The 'Members' field.
     output << "\t";

@@ -39,12 +39,12 @@ void CdBG<k>::classify_vertices()
         Thread_Pool<k> thread_pool(thread_count, this, Thread_Pool<k>::Task_Type::classification);
 
 
-        // Track the maximum sequence buffer size used.
+        // Track the maximum sequence buffer size used and the total length of the references.
         size_t max_buf_sz = 0;
+        uint64_t ref_len = 0;
+        uint64_t seq_count = 0;
 
         // Parse sequences one-by-one, and continue partial classification of the k-mers through them.
-        uint32_t seq_count = 0;
-        uint64_t ref_len = 0;
         while(parser.read_next_seq())
         {
             const char* const seq = parser.seq();
@@ -54,7 +54,7 @@ void CdBG<k>::classify_vertices()
             seq_count++;
             ref_len += seq_len;
             max_buf_sz = std::max(max_buf_sz, seq_buf_sz);
-            std::cerr << "\rProcessing sequence " << seq_count << ", with length " << std::setw(10) << seq_len << ".";
+            std::cerr << "\rProcessing sequence " << parser.seq_id() << ", with length:\t" << std::setw(10) << seq_len << ".";
 
             // Nothing to process for sequences with length shorter than `k`.
             if(seq_len < k)

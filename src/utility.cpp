@@ -1,7 +1,11 @@
 
+#include "utility.hpp"
+#include "ghc/filesystem.hpp"
+
+#include <cctype>
+#include <cstring>
 #include <cstdlib>
 #include <ctime>
-#include "ghc/filesystem.hpp"
 
 
 std::string get_random_string(const size_t len)
@@ -46,4 +50,17 @@ bool file_prefix_exists(const std::string& path, const std::string& prefix)
             return true;
 
     return false;
+}
+
+
+std::string remove_whitespaces(const char* s)
+{
+    std::string str;
+    str.reserve(strlen(s));
+
+    for(const char* p = s; *p; ++p)
+        if(!std::isspace(*p))
+            str += *p;
+
+    return str;
 }

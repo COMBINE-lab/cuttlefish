@@ -61,6 +61,7 @@ void Parser::open_reference(const std::string& reference_path)
 
     curr_ref_path = reference_path;
     ref_count++;
+    seq_id_ = 0;
 
     std::cout << "\nOpened reference " << ref_count << " from " << curr_ref_path << "\n";
 }
@@ -89,14 +90,22 @@ bool Parser::read_next_seq()
 {
     // Sequences still remain at the current reference being parsed.
     if(kseq_read(parser) >= 0)
+    {
+        seq_id_++;
         return true;
+    }
 
     // The current reference has been parsed completely. Close its handles.
     close();
 
     // Start parsing the next reference, if exists.
     if(open_next_reference())
-        return kseq_read(parser) >= 0;
+    {
+        seq_id_++;
+        return kseq_read(parser) >= 0;  // When encountered with an empty reference, the parser signals
+                                        // the consumer of the sequences that no more sequences remain to
+                                        // be parsed, even though there might be remaining references.
+    }
 
     return false;
 }
@@ -117,6 +126,24 @@ size_t Parser::seq_len() const
 size_t Parser::buff_sz() const
 {
     return parser->seq.m;
+}
+
+
+uint64_t Parser::ref_id() const
+{
+    return ref_count;
+}
+
+
+uint64_t Parser::seq_id() const
+{
+    return seq_id_;
+}
+
+
+const char* Parser::seq_name() const
+{
+    return parser->name.s;
 }
 
 

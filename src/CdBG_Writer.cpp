@@ -2,6 +2,7 @@
 #include "CdBG.hpp"
 #include "Parser.hpp"
 #include "Output_Format.hpp"
+#include "utility.hpp"
 #include "spdlog/spdlog.h"
 #include "spdlog/async.h"
 #include "spdlog/sinks/basic_file_sink.h"
@@ -51,12 +52,12 @@ void CdBG<k>::output_maximal_unitigs_plain()
     buff_flush_time.resize(thread_count);
 
 
-    // Track the maximum sequence buffer size used.
+    // Track the maximum sequence buffer size used and the total length of the references.
     size_t max_buf_sz = 0;
+    uint64_t ref_len = 0;
+    uint64_t seq_count = 0;
 
     // Parse sequences one-by-one, and output each unique maximal unitig encountered through them.
-    uint32_t seq_count = 0;
-    uint64_t ref_len = 0;
     while(parser.read_next_seq())
     {
         const char* const seq = parser.seq();
@@ -66,7 +67,7 @@ void CdBG<k>::output_maximal_unitigs_plain()
         seq_count++;
         ref_len += seq_len;
         max_buf_sz = std::max(max_buf_sz, seq_buf_sz);
-        std::cerr << "\rProcessing sequence " << seq_count << ", with length " << std::setw(10) << seq_len << ".";
+        std::cerr << "\rProcessing sequence " << parser.seq_id() << ", with length:\t" << std::setw(10) << seq_len << ".";
 
         // Nothing to process for sequences with length shorter than `k`.
         if(seq_len < k)
@@ -175,14 +176,12 @@ void CdBG<k>::output_maximal_unitigs_gfa()
     path_flush_time.resize(thread_count);
 
 
-    // Track the maximum sequence buffer size used.
+    // Track the maximum sequence buffer size used and the total length of the references.
     size_t max_buf_sz = 0;
+    uint64_t ref_len = 0;
+    uint64_t seq_count = 0;
 
     // Parse sequences one-by-one, and output each unique maximal unitig encountered through them.
-    // uint32_t seq_count = 0;
-    // TODO: replace usage of `seq_count` with a parser method.
-    seq_count = 0;
-    uint64_t ref_len = 0;
     while(parser.read_next_seq())
     {
         const char* const seq = parser.seq();
@@ -193,7 +192,7 @@ void CdBG<k>::output_maximal_unitigs_gfa()
         seq_count++;
         ref_len += seq_len;
         max_buf_sz = std::max(max_buf_sz, seq_buf_sz);
-        std::cerr << "\rProcessing sequence " << seq_count << ", with length " << std::setw(10) << seq_len << ".";
+        std::cerr << "\rProcessing sequence " << parser.seq_id() << ", with length:\t" << std::setw(10) << seq_len << ".";
 
         // Nothing to process for sequences with length shorter than `k`.
         if(seq_len < k)
@@ -229,7 +228,9 @@ void CdBG<k>::output_maximal_unitigs_gfa()
         close_loggers();
 
         // Write the GFA path for this sequence.
-        params.output_format() == 1 ? write_gfa_path() : write_gfa_ordered_group();
+        const std::string path_name =   std::string("Reference:") + std::to_string(parser.ref_id()) +
+                                        std::string("_Sequence:") + remove_whitespaces(parser.seq_name());
+        params.output_format() == 1 ? write_gfa_path(path_name) : write_gfa_ordered_group(path_name);
     }
 
     std::cerr << "\rProcessed " << seq_count << " sequences. Total reference length is " << ref_len << " bases.\n";

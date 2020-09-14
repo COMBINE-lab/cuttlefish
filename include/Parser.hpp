@@ -27,6 +27,7 @@ private:
 
     std::string curr_ref_path;  // Path to the reference currently being parsed.
     uint64_t ref_count = 0; // Number of the reference currently being parsed.
+    uint64_t seq_id_; // Number of the current sequence (in the current reference).
 
 
     // Opens the reference at path `reference_path`.
@@ -56,6 +57,15 @@ public:
 
     // Returns the current size of the buffer.
     size_t buff_sz() const;
+
+    // Returns the id (number) of the current reference being parsed.
+    uint64_t ref_id() const;
+
+    // Returns the id (number) of the current sequence in the buffer.
+    uint64_t seq_id() const;
+
+    // Returns the name (as parsed) of the current sequence in the buffer.
+    const char* seq_name() const;
 
     // Closes the internal kseq parser for the current reference.
     void close();

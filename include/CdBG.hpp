@@ -10,6 +10,7 @@
 #include "Oriented_Unitig.hpp"
 #include "Build_Params.hpp"
 #include "Thread_Pool.hpp"
+#include "spdlog/async_logger.h"
 
 #include <string>
 
@@ -45,6 +46,12 @@ private:
 
     // Number of backing worker threads for `spdlog`, i.e. the threads that actually make the writes to sink.
     static constexpr uint16_t ASYNC_LOG_N_THREADS = 1;
+
+    // `spdlog` thread pool for outputting unitigs (or GFA segments and connections).
+    std::shared_ptr<spdlog::details::thread_pool> tp_output;
+
+    // `spdlog` thread pool for outputting GFA paths.
+    std::shared_ptr<spdlog::details::thread_pool> tp_path;
 
     // The asynchronous output logger (for GFA segments and connections).
     cuttlefish::logger_t output;

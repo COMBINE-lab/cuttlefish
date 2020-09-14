@@ -327,10 +327,15 @@ void CdBG<k>::init_output_loggers()
     // itself can take up memory up-to (`BUFFER_THRESHOLD x #output_threads`), besides our own buffer
     // memory of (`BUFFER_CAPACITY x #output_threads`).
     // NB: Possibly, `spdlog::shutdown()` resets this, so it's to be invoked repeatedly after each shutdown.
-    spdlog::init_thread_pool(ASYNC_LOG_QUEUE_SZ, ASYNC_LOG_N_THREADS);
+    // spdlog::init_thread_pool(ASYNC_LOG_QUEUE_SZ, ASYNC_LOG_N_THREADS);
+
+    // Instantiate a `spdlog` thread pool for outputting unitigs (segments) and links.
+    tp_output = std::make_shared<spdlog::details::thread_pool>(ASYNC_LOG_QUEUE_SZ, ASYNC_LOG_N_THREADS);
 
     // Open an asynchronous logger to write into the output file, and set its log message pattern.
-    output = spdlog::basic_logger_mt<spdlog::async_factory>("async_output_logger", output_file_path);
+    // output = spdlog::basic_logger_mt<spdlog::async_factory>("async_output_logger", output_file_path);
+    auto sink = std::make_shared<spdlog::sinks::basic_file_sink_mt>(output_file_path);
+    output = std::make_shared<spdlog::async_logger>("async_output_logger", sink, tp_output, spdlog::async_overflow_policy::block);
     output->set_pattern("%v");
 
     output_.resize(thread_count);
@@ -489,6 +494,10 @@ void CdBG<k>::close_loggers()
     // Note: If using an async logger, `logger->flush()` posts a message to the queue requesting the flush
     // operation, so the function returns immediately. Hence a forceful eviction is necessary by shutdown.
     spdlog::shutdown();
+
+    // Drop the `spdlog` thread pools. Required as `shutdown()` force-flushes messages from the global pool only.
+    tp_output.reset();
+    tp_path.reset();
 }
 
 

@@ -10,7 +10,11 @@
 #include <chrono>
 
 
-// Initialize the static fields required for the GFA output.
+// Define the static fields required with `spdlog` thread pools.
+template <uint16_t k> constexpr size_t CdBG<k>::ASYNC_LOG_QUEUE_SZ;
+template <uint16_t k> constexpr uint16_t CdBG<k>::ASYNC_LOG_N_THREADS;
+
+// Define the static fields required for the GFA output.
 template <uint16_t k> const std::string CdBG<k>::GFA1_HEADER = "H\tVN:Z:1.0";
 template <uint16_t k> const std::string CdBG<k>::GFA2_HEADER = "H\tVN:Z:2.0";
 
@@ -55,6 +59,10 @@ void CdBG<k>::reset_path_loggers()
     if(gfa_v == cuttlefish::gfa1)
         overlap_output_.resize(thread_count);
 
+    
+    // Instantiate a `spdlog` thread pool for outputting paths and overlaps.
+    tp_path = std::make_shared<spdlog::details::thread_pool>(ASYNC_LOG_QUEUE_SZ, ASYNC_LOG_N_THREADS);
+
 
     for(uint16_t t_id = 0; t_id < thread_count; ++t_id)
     {
@@ -66,7 +74,9 @@ void CdBG<k>::reset_path_loggers()
 
         std::string logger_name("async_path_logger_");
         logger_name += std::to_string(t_id);
-        path_output_[t_id] = spdlog::basic_logger_mt<spdlog::async_factory>(logger_name, path_file_name);
+        // path_output_[t_id] = spdlog::basic_logger_mt<spdlog::async_factory>(logger_name, path_file_name);
+        auto sink = std::make_shared<spdlog::sinks::basic_file_sink_mt>(path_file_name);
+        path_output_[t_id] = std::make_shared<spdlog::async_logger>(logger_name, sink, tp_path, spdlog::async_overflow_policy::block);
         path_output_[t_id]->set_pattern("%v");
 
         if(gfa_v == cuttlefish::gfa1)
@@ -78,7 +88,9 @@ void CdBG<k>::reset_path_loggers()
             op.close();
 
             logger_name = std::string("async_overlap_logger_") + std::to_string(t_id);
-            overlap_output_[t_id] = spdlog::basic_logger_mt<spdlog::async_factory>(logger_name, overlap_file_name);
+            // overlap_output_[t_id] = spdlog::basic_logger_mt<spdlog::async_factory>(logger_name, overlap_file_name);
+            sink = std::make_shared<spdlog::sinks::basic_file_sink_mt>(overlap_file_name);
+            overlap_output_[t_id] = std::make_shared<spdlog::async_logger>(logger_name, sink, tp_path, spdlog::async_overflow_policy::block);
             overlap_output_[t_id]->set_pattern("%v");
         }
     }

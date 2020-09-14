@@ -100,12 +100,7 @@ bool Parser::read_next_seq()
 
     // Start parsing the next reference, if exists.
     if(open_next_reference())
-    {
-        seq_id_++;
-        return kseq_read(parser) >= 0;  // When encountered with an empty reference, the parser signals
-                                        // the consumer of the sequences that no more sequences remain to
-                                        // be parsed, even though there might be remaining references.
-    }
+        return read_next_seq();
 
     return false;
 }

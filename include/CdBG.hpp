@@ -150,6 +150,13 @@ private:
     // should only be used with the canonical versions of two adjacent k-mers.
     bool is_self_loop(const Kmer<k>& kmer_hat, const Kmer<k>& next_kmer_hat) const;
 
+    // Processes (partial) classification for the directed version `kmer` of
+    // some k-mer in a sequence that forms a self-loop with its next k-mer in
+    // the sequence. The directed version of the next k-mer is `next_kmer`, and
+    // the base character preceding the k-mer is `prev_char`. Returns `false`
+    // iff an attempted state transition for the k-mer failed.
+    bool process_loop(const Directed_Kmer<k>& kmer, const Directed_Kmer<k>& next_kmer, char prev_char = 0);
+
 
     /* Writer methods */
 

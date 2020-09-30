@@ -223,6 +223,48 @@ bool CdBG<k>::is_self_loop(const Kmer<k>& kmer_hat, const Kmer<k>& next_kmer_hat
 }
 
 
+template <uint16_t k>
+bool CdBG<k>::process_loop(const Directed_Kmer<k>& kmer, const Directed_Kmer<k>& next_kmer, const char prev_char)
+{
+    // Note that, any loop that connects two different sides of a vertex makes it a
+    // complex node. This is because, from whichever side you may try to include this
+    // vertex into a non-trivial unitig, it violates the unitig-defining constraints on
+    // that side due to that loop edge incident there. The only way that a vertex having
+    // a loop incident to it may get included into a non-trivial unitig is that the loop
+    // is totally contained at one of its sides. If the opposite has only one distinct
+    // edge, then the vertex may get into a non-trivial unitig through that edge. In such
+    // cases, it also becomes an endpoint for that unitig.
+
+    // Gist: if a vertex has a loop that crosses its sides (due to an immediate direct repeat
+    // in the underlying sequence), then the vertex is a complex node. Otherwise, the loop is
+    // entirely contained at one of its sides (due to an immediate inverted repeat). In this
+    // case, the vertex might get included into a maximal unitig through its other side. The
+    // side with the loop blocks the vertex to extend the unitig any farther.
+
+
+    // It is the leftmost k-mer in some sequence. So, its left side can't have incident edges,
+    // and the loop (crossing or one-sided) blocks the other side for any unitigs-inclusion.
+    // Or, the label encountered for this and the next k-mer is seen as the same. So there is
+    // a direct repeat, that produces a crossing loop. In either case, this is a complex node.
+    if(!prev_char || kmer.kmer() == next_kmer.kmer())
+    {
+        // Fetch the entry for `kmer_hat`.
+        const Kmer<k>& kmer_hat = kmer.canonical();
+        Kmer_Hash_Entry_API hash_table_entry = Vertices[kmer_hat];
+        State& state = hash_table_entry.get_state();
+        state = State(Vertex(cuttlefish::Vertex_Class::multi_in_multi_out));
+
+        return Vertices.update(hash_table_entry);
+    }
+
+    
+    // The k-mer is internal, and the loop is one-sided. So it not possible to extend a maximal
+    // unitig through that side, so this k-mer can equivalently be treated as a rightmost k-mer
+    // (a sentinel) of some sequence.
+    return process_rightmost_kmer(kmer, prev_char);
+}
+
+
 template <uint16_t k> 
 bool CdBG<k>::process_leftmost_kmer(const Directed_Kmer<k>& kmer, const Directed_Kmer<k>& next_kmer, const char next_char)
 {
@@ -238,15 +280,15 @@ bool CdBG<k>::process_leftmost_kmer(const Directed_Kmer<k>& kmer, const Directed
     if(state.is_dead_end())
         return true;    // Early return is safe from here as this vertex is a dead-end for state transitions.
 
+    // The k-mer forms a self-loop with the next k-mer.
+    if(is_self_loop(kmer_hat, next_kmer_hat))
+        return process_loop(kmer, next_kmer);
+
 
     const State old_state = state;
     const cuttlefish::base_t next_base = Kmer<k>::map_base(next_char);
 
-    
-    // The k-mer forms a self-loop with the next k-mer.
-    if(is_self_loop(kmer_hat, next_kmer_hat))
-        state = State(Vertex(cuttlefish::Vertex_Class::multi_in_multi_out));
-    else if(dir == cuttlefish::FWD)
+    if(dir == cuttlefish::FWD)
     {
         // The sentinel k-mer is encountered for the first time, and in the forward direction.
         if(!state.is_visited())
@@ -440,16 +482,16 @@ bool CdBG<k>::process_internal_kmer(const Directed_Kmer<k>& kmer, const Directed
     if(state.is_dead_end())
         return true;    // Early return is safe from here as this vertex is a dead-end for state transitions.
 
+    // The k-mer forms a self-loop with the next k-mer.
+    if(is_self_loop(kmer_hat, next_kmer_hat))
+        return process_loop(kmer, next_kmer, prev_char);
+
     
     const State old_state = state;
     const cuttlefish::base_t prev_base = Kmer<k>::map_base(prev_char);
     const cuttlefish::base_t next_base = Kmer<k>::map_base(next_char);
 
-
-    // The k-mer forms a self-loop with the next k-mer.
-    if(is_self_loop(kmer_hat, next_kmer_hat))
-        state = State(Vertex(cuttlefish::Vertex_Class::multi_in_multi_out));
-    else if(dir == cuttlefish::FWD)
+    if(dir == cuttlefish::FWD)
     {
         // The k-mer is encountered for the first time, and in the forward direction.
         if(!state.is_visited())

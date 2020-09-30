@@ -123,7 +123,7 @@ void validate(int argc, char** argv)
         std::cout << "\nValidating the compacted de Bruijn graph for k = " << k << "\n";
 
         const Application<cuttlefish::MAX_K> app(params);
-        std::cout << "\nValidation " << (app.validate() ? "successful" : "failed") << std::endl;
+        std::cout << (app.validate() ? "\nValidation successful" : "\nValidation failed") << std::endl;
     }
     catch(const std::exception& e)
     {

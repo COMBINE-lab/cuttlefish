@@ -151,7 +151,7 @@ size_t CdBG<k>::process_contiguous_subseq(const char* const seq, const size_t se
     // i.e. there's no valid left or right neighboring k-mer to this k-mer.
     if((kmer_idx == 0 || Kmer<k>::is_placeholder(seq[kmer_idx - 1])) &&
         (kmer_idx + k == seq_len || Kmer<k>::is_placeholder(seq[kmer_idx + k])))
-        while(!process_isolated_kmer(curr_kmer.canonical()));
+        while(!process_isolated_kmer(curr_kmer));
     else    // At least one valid neighbor exists, either to the left or to the right, or on both sides.
     {
         // Process the leftmost k-mer of this contiguous subsequence.
@@ -160,7 +160,7 @@ size_t CdBG<k>::process_contiguous_subseq(const char* const seq, const size_t se
         if(kmer_idx + k == seq_len || Kmer<k>::is_placeholder(seq[kmer_idx + k]))
         {
             // A valid left neighbor exists at it's not an isolated k-mer.
-            while(!process_rightmost_kmer(curr_kmer.canonical(), curr_kmer.dir(), seq[kmer_idx - 1]));
+            while(!process_rightmost_kmer(curr_kmer, seq[kmer_idx - 1]));
 
             // The contiguous sequence ends at this k-mer.
             return kmer_idx + k;
@@ -172,10 +172,10 @@ size_t CdBG<k>::process_contiguous_subseq(const char* const seq, const size_t se
         
         // No valid left neighbor exists for the k-mer.
         if(kmer_idx == 0 || Kmer<k>::is_placeholder(seq[kmer_idx - 1]))
-            while(!process_leftmost_kmer(curr_kmer.canonical(), curr_kmer.dir(), next_kmer.canonical(), seq[kmer_idx + k]));
+            while(!process_leftmost_kmer(curr_kmer, next_kmer, seq[kmer_idx + k]));
         // Both left and right valid neighbors exist for this k-mer.
         else
-            while(!process_internal_kmer(curr_kmer.canonical(), curr_kmer.dir(), next_kmer.canonical(), seq[kmer_idx - 1], seq[kmer_idx + k]));
+            while(!process_internal_kmer(curr_kmer, next_kmer, seq[kmer_idx - 1], seq[kmer_idx + k]));
         
 
         // Process the internal k-mers of this contiguous subsequence.
@@ -185,7 +185,7 @@ size_t CdBG<k>::process_contiguous_subseq(const char* const seq, const size_t se
             curr_kmer = next_kmer;
             next_kmer.roll_to_next_kmer(seq[kmer_idx + k]);
 
-            while(!process_internal_kmer(curr_kmer.canonical(), curr_kmer.dir(), next_kmer.canonical(), seq[kmer_idx - 1], seq[kmer_idx + k]));
+            while(!process_internal_kmer(curr_kmer, next_kmer, seq[kmer_idx - 1], seq[kmer_idx + k]));
         }
 
 
@@ -197,13 +197,13 @@ size_t CdBG<k>::process_contiguous_subseq(const char* const seq, const size_t se
         
             // No valid right neighbor exists for the k-mer.
             if(kmer_idx + k == seq_len || Kmer<k>::is_placeholder(seq[kmer_idx + k]))
-                while(!process_rightmost_kmer(curr_kmer.canonical(), curr_kmer.dir(), seq[kmer_idx - 1]));
+                while(!process_rightmost_kmer(curr_kmer, seq[kmer_idx - 1]));
             // A valid right neighbor exists for the k-mer.
             else
             {
                 next_kmer.roll_to_next_kmer(seq[kmer_idx + k]);
 
-                while(!process_internal_kmer(curr_kmer.canonical(), curr_kmer.dir(), next_kmer.canonical(), seq[kmer_idx - 1], seq[kmer_idx + k]));
+                while(!process_internal_kmer(curr_kmer, next_kmer, seq[kmer_idx - 1], seq[kmer_idx + k]));
             }
         }
         else
@@ -223,9 +223,55 @@ bool CdBG<k>::is_self_loop(const Kmer<k>& kmer_hat, const Kmer<k>& next_kmer_hat
 }
 
 
-template <uint16_t k> 
-bool CdBG<k>::process_leftmost_kmer(const Kmer<k>& kmer_hat, const cuttlefish::dir_t dir, const Kmer<k>& next_kmer_hat, const char next_char)
+template <uint16_t k>
+bool CdBG<k>::process_loop(const Directed_Kmer<k>& kmer, const Directed_Kmer<k>& next_kmer, const char prev_char)
 {
+    // Note that, any loop that connects two different sides of a vertex makes it a
+    // complex node. This is because, from whichever side you may try to include this
+    // vertex into a non-trivial unitig, it violates the unitig-defining constraints on
+    // that side due to that loop edge incident there. The only way that a vertex having
+    // a loop incident to it may get included into a non-trivial unitig is that the loop
+    // is totally contained at one of its sides. If the opposite has only one distinct
+    // edge, then the vertex may get into a non-trivial unitig through that edge. In such
+    // cases, it also becomes an endpoint for that unitig.
+
+    // Gist: if a vertex has a loop that crosses its sides (due to an immediate direct repeat
+    // in the underlying sequence), then the vertex is a complex node. Otherwise, the loop is
+    // entirely contained at one of its sides (due to an immediate inverted repeat). In this
+    // case, the vertex might get included into a maximal unitig through its other side. The
+    // side with the loop blocks the vertex to extend the unitig any farther.
+
+
+    // It is the leftmost k-mer in some sequence. So, its left side can't have incident edges,
+    // and the loop (crossing or one-sided) blocks the other side for any unitigs-inclusion.
+    // Or, the label encountered for this and the next k-mer is seen as the same. So there is
+    // a direct repeat, that produces a crossing loop. In either case, this is a complex node.
+    if(!prev_char || kmer.kmer() == next_kmer.kmer())
+    {
+        // Fetch the entry for `kmer_hat`.
+        const Kmer<k>& kmer_hat = kmer.canonical();
+        Kmer_Hash_Entry_API hash_table_entry = Vertices[kmer_hat];
+        State& state = hash_table_entry.get_state();
+        state = State(Vertex(cuttlefish::Vertex_Class::multi_in_multi_out));
+
+        return Vertices.update(hash_table_entry);
+    }
+
+    
+    // The k-mer is internal, and the loop is one-sided. So it not possible to extend a maximal
+    // unitig through that side, so this k-mer can equivalently be treated as a rightmost k-mer
+    // (a sentinel) of some sequence.
+    return process_rightmost_kmer(kmer, prev_char);
+}
+
+
+template <uint16_t k> 
+bool CdBG<k>::process_leftmost_kmer(const Directed_Kmer<k>& kmer, const Directed_Kmer<k>& next_kmer, const char next_char)
+{
+    const Kmer<k>& kmer_hat = kmer.canonical();
+    const cuttlefish::dir_t dir = kmer.dir();
+    const Kmer<k>& next_kmer_hat = next_kmer.canonical();
+
     // Fetch the entry for `kmer_hat`.
     Kmer_Hash_Entry_API hash_table_entry = Vertices[kmer_hat];
     State& state = hash_table_entry.get_state();
@@ -234,15 +280,15 @@ bool CdBG<k>::process_leftmost_kmer(const Kmer<k>& kmer_hat, const cuttlefish::d
     if(state.is_dead_end())
         return true;    // Early return is safe from here as this vertex is a dead-end for state transitions.
 
+    // The k-mer forms a self-loop with the next k-mer.
+    if(is_self_loop(kmer_hat, next_kmer_hat))
+        return process_loop(kmer, next_kmer);
+
 
     const State old_state = state;
     const cuttlefish::base_t next_base = Kmer<k>::map_base(next_char);
 
-    
-    // The k-mer forms a self-loop with the next k-mer.
-    if(is_self_loop(kmer_hat, next_kmer_hat))
-        state = State(Vertex(cuttlefish::Vertex_Class::multi_in_multi_out));
-    else if(dir == cuttlefish::FWD)
+    if(dir == cuttlefish::FWD)
     {
         // The sentinel k-mer is encountered for the first time, and in the forward direction.
         if(!state.is_visited())
@@ -323,8 +369,11 @@ bool CdBG<k>::process_leftmost_kmer(const Kmer<k>& kmer_hat, const cuttlefish::d
 
 
 template <uint16_t k> 
-bool CdBG<k>::process_rightmost_kmer(const Kmer<k>& kmer_hat, const cuttlefish::dir_t dir, const char prev_char)
+bool CdBG<k>::process_rightmost_kmer(const Directed_Kmer<k>& kmer, const char prev_char)
 {
+    const Kmer<k>& kmer_hat = kmer.canonical();
+    const cuttlefish::dir_t dir = kmer.dir();
+
     // Fetch the entry for `kmer_hat`.
     Kmer_Hash_Entry_API hash_table_entry = Vertices[kmer_hat];
     State& state = hash_table_entry.get_state();
@@ -419,8 +468,12 @@ bool CdBG<k>::process_rightmost_kmer(const Kmer<k>& kmer_hat, const cuttlefish::
 
 
 template <uint16_t k> 
-bool CdBG<k>::process_internal_kmer(const Kmer<k>& kmer_hat, const cuttlefish::dir_t dir, const Kmer<k>& next_kmer_hat, const char prev_char, const char next_char)
+bool CdBG<k>::process_internal_kmer(const Directed_Kmer<k>& kmer, const Directed_Kmer<k>& next_kmer, const char prev_char, const char next_char)
 {
+    const Kmer<k>& kmer_hat = kmer.canonical();
+    const cuttlefish::dir_t dir = kmer.dir();
+    const Kmer<k>& next_kmer_hat = next_kmer.canonical();
+
     // Fetch the hash table entry for `kmer_hat`.
     Kmer_Hash_Entry_API hash_table_entry = Vertices[kmer_hat];
     State& state = hash_table_entry.get_state();
@@ -429,16 +482,16 @@ bool CdBG<k>::process_internal_kmer(const Kmer<k>& kmer_hat, const cuttlefish::d
     if(state.is_dead_end())
         return true;    // Early return is safe from here as this vertex is a dead-end for state transitions.
 
+    // The k-mer forms a self-loop with the next k-mer.
+    if(is_self_loop(kmer_hat, next_kmer_hat))
+        return process_loop(kmer, next_kmer, prev_char);
+
     
     const State old_state = state;
     const cuttlefish::base_t prev_base = Kmer<k>::map_base(prev_char);
     const cuttlefish::base_t next_base = Kmer<k>::map_base(next_char);
 
-
-    // The k-mer forms a self-loop with the next k-mer.
-    if(is_self_loop(kmer_hat, next_kmer_hat))
-        state = State(Vertex(cuttlefish::Vertex_Class::multi_in_multi_out));
-    else if(dir == cuttlefish::FWD)
+    if(dir == cuttlefish::FWD)
     {
         // The k-mer is encountered for the first time, and in the forward direction.
         if(!state.is_visited())
@@ -533,8 +586,10 @@ bool CdBG<k>::process_internal_kmer(const Kmer<k>& kmer_hat, const cuttlefish::d
 
 
 template <uint16_t k> 
-bool CdBG<k>::process_isolated_kmer(const Kmer<k>& kmer_hat)
+bool CdBG<k>::process_isolated_kmer(const Directed_Kmer<k>& kmer)
 {
+    const Kmer<k>& kmer_hat = kmer.canonical();
+
     // Fetch the hash table entry for `kmer_hat`.
     Kmer_Hash_Entry_API hash_table_entry = Vertices[kmer_hat];
     State& state = hash_table_entry.get_state();

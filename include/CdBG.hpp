@@ -119,31 +119,31 @@ private:
     // processed subsequence, i.e. the index following the end of it.
     size_t process_contiguous_subseq(const char* seq, size_t seq_len, size_t right_end, size_t start_idx);
 
-    // Process classification for the canonical version `kmer_hat` of some k-mer
+    // Processes classification for the directed version `kmer` of some k-mer
     // in the sequence that is isolated, i.e. does not have any adjacent k-mers.
     // Returns `false` iff an attempted state transition for the k-mer failed.
-    bool process_isolated_kmer(const Kmer<k>& kmer_hat);
+    bool process_isolated_kmer(const Directed_Kmer<k>& kmer);
 
-    // Processes classification (partially) for the canonical version `kmer_hat` of
-    // the first k-mer of some sequence, where the k-mer is encountered in the
-    // direction `dir`, the canonical version of the next k-mer in the sequence is
-    // `next_kmer_hat`, and the base character succeeding the first k-mer is `next_char`.
-    // Returns `false` iff an attempted state transition for the k-mer failed.
-    bool process_leftmost_kmer(const Kmer<k>& kmer_hat, cuttlefish::dir_t dir, const Kmer<k>& next_kmer_hat, char next_char);
+    // Processes classification (partially) for the directed version `kmer` of
+    // the first k-mer in some sequence, where the directed version of the next
+    // k-mer in the sequence is `next_kmer`, and the base character succeeding
+    // the first k-mer is `next_char`. Returns `false` iff an attempted state
+    // transition for the k-mer failed.
+    bool process_leftmost_kmer(const Directed_Kmer<k>& kmer, const Directed_Kmer<k>& next_kmer, char next_char);
 
-    // Processes classification (partially) for the canonical version `kmer_hat` of
-    // the last k-mer of some sequence, where the k-mer is encountered in the
-    // direction `dir`, and the base character preceding the last k-mer is `prev_char`.
-    // Returns `false` iff an attempted state transition for the k-mer failed.
-    bool process_rightmost_kmer(const Kmer<k>& kmer_hat, cuttlefish::dir_t dir, char prev_char);
+    // Processes classification (partially) for the directed version `kmer` of
+    // the last k-mer in some sequence, where the base character preceding the
+    // last k-mer is `prev_char`. Returns `false` iff an attempted state transition
+    // for the k-mer failed.
+    bool process_rightmost_kmer(const Directed_Kmer<k>& kmer, char prev_char);
 
-    // Processes classification (partially) for the canonical version `kmer_hat` of
-    // some internal k-mer of some sequence, where the k-mer is encountered in the
-    // direction `dir`, the canoninal version of the next k-mer in the sequence is
-    // `next_kmer_hat`, the base character preceding the k-mer is `prev_char`, and
-    // the base character succeeding the k-mer is `next_char`.
-    // Returns `false` iff an attempted state transition for the k-mer failed.
-    bool process_internal_kmer(const Kmer<k>& kmer_hat, cuttlefish::dir_t dir, const Kmer<k>& next_kmer_hat, char prev_char, char next_char);
+    // Processes classification (partially) for the directed version `kmer` of
+    // some internal k-mer in some sequence, where the directed version of the
+    // next k-mer in the sequence is `next_kmer`, the base character preceding
+    // the k-mer is `prev_char`, and the base character succeeding the k-mer is
+    // `next_char`. Returns `false` iff an attempted state transition for the
+    // k-mer failed.
+    bool process_internal_kmer(const Directed_Kmer<k>& kmer, const Directed_Kmer<k>& next_kmer, char prev_char, char next_char);
 
     // Returns a Boolean denoting whether the canonical k-mer `kmer_hat` forms a
     // self loop with the canonical k-mer `next_kmer_hat` in the sequence. This

@@ -151,7 +151,7 @@ size_t CdBG<k>::process_contiguous_subseq(const char* const seq, const size_t se
     // i.e. there's no valid left or right neighboring k-mer to this k-mer.
     if((kmer_idx == 0 || Kmer<k>::is_placeholder(seq[kmer_idx - 1])) &&
         (kmer_idx + k == seq_len || Kmer<k>::is_placeholder(seq[kmer_idx + k])))
-        while(!process_isolated_kmer(curr_kmer.canonical()));
+        while(!process_isolated_kmer(curr_kmer));
     else    // At least one valid neighbor exists, either to the left or to the right, or on both sides.
     {
         // Process the leftmost k-mer of this contiguous subsequence.
@@ -160,7 +160,7 @@ size_t CdBG<k>::process_contiguous_subseq(const char* const seq, const size_t se
         if(kmer_idx + k == seq_len || Kmer<k>::is_placeholder(seq[kmer_idx + k]))
         {
             // A valid left neighbor exists at it's not an isolated k-mer.
-            while(!process_rightmost_kmer(curr_kmer.canonical(), curr_kmer.dir(), seq[kmer_idx - 1]));
+            while(!process_rightmost_kmer(curr_kmer, seq[kmer_idx - 1]));
 
             // The contiguous sequence ends at this k-mer.
             return kmer_idx + k;
@@ -172,10 +172,10 @@ size_t CdBG<k>::process_contiguous_subseq(const char* const seq, const size_t se
         
         // No valid left neighbor exists for the k-mer.
         if(kmer_idx == 0 || Kmer<k>::is_placeholder(seq[kmer_idx - 1]))
-            while(!process_leftmost_kmer(curr_kmer.canonical(), curr_kmer.dir(), next_kmer.canonical(), seq[kmer_idx + k]));
+            while(!process_leftmost_kmer(curr_kmer, next_kmer, seq[kmer_idx + k]));
         // Both left and right valid neighbors exist for this k-mer.
         else
-            while(!process_internal_kmer(curr_kmer.canonical(), curr_kmer.dir(), next_kmer.canonical(), seq[kmer_idx - 1], seq[kmer_idx + k]));
+            while(!process_internal_kmer(curr_kmer, next_kmer, seq[kmer_idx - 1], seq[kmer_idx + k]));
         
 
         // Process the internal k-mers of this contiguous subsequence.
@@ -185,7 +185,7 @@ size_t CdBG<k>::process_contiguous_subseq(const char* const seq, const size_t se
             curr_kmer = next_kmer;
             next_kmer.roll_to_next_kmer(seq[kmer_idx + k]);
 
-            while(!process_internal_kmer(curr_kmer.canonical(), curr_kmer.dir(), next_kmer.canonical(), seq[kmer_idx - 1], seq[kmer_idx + k]));
+            while(!process_internal_kmer(curr_kmer, next_kmer, seq[kmer_idx - 1], seq[kmer_idx + k]));
         }
 
 
@@ -197,13 +197,13 @@ size_t CdBG<k>::process_contiguous_subseq(const char* const seq, const size_t se
         
             // No valid right neighbor exists for the k-mer.
             if(kmer_idx + k == seq_len || Kmer<k>::is_placeholder(seq[kmer_idx + k]))
-                while(!process_rightmost_kmer(curr_kmer.canonical(), curr_kmer.dir(), seq[kmer_idx - 1]));
+                while(!process_rightmost_kmer(curr_kmer, seq[kmer_idx - 1]));
             // A valid right neighbor exists for the k-mer.
             else
             {
                 next_kmer.roll_to_next_kmer(seq[kmer_idx + k]);
 
-                while(!process_internal_kmer(curr_kmer.canonical(), curr_kmer.dir(), next_kmer.canonical(), seq[kmer_idx - 1], seq[kmer_idx + k]));
+                while(!process_internal_kmer(curr_kmer, next_kmer, seq[kmer_idx - 1], seq[kmer_idx + k]));
             }
         }
         else
@@ -224,8 +224,12 @@ bool CdBG<k>::is_self_loop(const Kmer<k>& kmer_hat, const Kmer<k>& next_kmer_hat
 
 
 template <uint16_t k> 
-bool CdBG<k>::process_leftmost_kmer(const Kmer<k>& kmer_hat, const cuttlefish::dir_t dir, const Kmer<k>& next_kmer_hat, const char next_char)
+bool CdBG<k>::process_leftmost_kmer(const Directed_Kmer<k>& kmer, const Directed_Kmer<k>& next_kmer, const char next_char)
 {
+    const Kmer<k>& kmer_hat = kmer.canonical();
+    const cuttlefish::dir_t dir = kmer.dir();
+    const Kmer<k>& next_kmer_hat = next_kmer.canonical();
+
     // Fetch the entry for `kmer_hat`.
     Kmer_Hash_Entry_API hash_table_entry = Vertices[kmer_hat];
     State& state = hash_table_entry.get_state();
@@ -323,8 +327,11 @@ bool CdBG<k>::process_leftmost_kmer(const Kmer<k>& kmer_hat, const cuttlefish::d
 
 
 template <uint16_t k> 
-bool CdBG<k>::process_rightmost_kmer(const Kmer<k>& kmer_hat, const cuttlefish::dir_t dir, const char prev_char)
+bool CdBG<k>::process_rightmost_kmer(const Directed_Kmer<k>& kmer, const char prev_char)
 {
+    const Kmer<k>& kmer_hat = kmer.canonical();
+    const cuttlefish::dir_t dir = kmer.dir();
+
     // Fetch the entry for `kmer_hat`.
     Kmer_Hash_Entry_API hash_table_entry = Vertices[kmer_hat];
     State& state = hash_table_entry.get_state();
@@ -419,8 +426,12 @@ bool CdBG<k>::process_rightmost_kmer(const Kmer<k>& kmer_hat, const cuttlefish::
 
 
 template <uint16_t k> 
-bool CdBG<k>::process_internal_kmer(const Kmer<k>& kmer_hat, const cuttlefish::dir_t dir, const Kmer<k>& next_kmer_hat, const char prev_char, const char next_char)
+bool CdBG<k>::process_internal_kmer(const Directed_Kmer<k>& kmer, const Directed_Kmer<k>& next_kmer, const char prev_char, const char next_char)
 {
+    const Kmer<k>& kmer_hat = kmer.canonical();
+    const cuttlefish::dir_t dir = kmer.dir();
+    const Kmer<k>& next_kmer_hat = next_kmer.canonical();
+
     // Fetch the hash table entry for `kmer_hat`.
     Kmer_Hash_Entry_API hash_table_entry = Vertices[kmer_hat];
     State& state = hash_table_entry.get_state();
@@ -533,8 +544,10 @@ bool CdBG<k>::process_internal_kmer(const Kmer<k>& kmer_hat, const cuttlefish::d
 
 
 template <uint16_t k> 
-bool CdBG<k>::process_isolated_kmer(const Kmer<k>& kmer_hat)
+bool CdBG<k>::process_isolated_kmer(const Directed_Kmer<k>& kmer)
 {
+    const Kmer<k>& kmer_hat = kmer.canonical();
+
     // Fetch the hash table entry for `kmer_hat`.
     Kmer_Hash_Entry_API hash_table_entry = Vertices[kmer_hat];
     State& state = hash_table_entry.get_state();

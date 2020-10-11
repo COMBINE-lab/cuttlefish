@@ -22,8 +22,8 @@ class Parser
 private:
 
     std::queue<std::string> ref_paths;  // Collection of the reference file paths.
-    gzFile file_ptr;  // Pointer to the reference file being parsed.
-    kseq_t* parser;   // The kseq parser for the reference file being parsed.
+    gzFile file_ptr = nullptr;  // Pointer to the reference file being parsed.
+    kseq_t* parser = nullptr;   // The kseq parser for the reference file being parsed.
 
     std::string curr_ref_path;  // Path to the reference currently being parsed.
     uint64_t ref_count = 0; // Number of the reference currently being parsed.

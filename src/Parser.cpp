@@ -89,7 +89,7 @@ const std::string& Parser::curr_ref() const
 bool Parser::read_next_seq()
 {
     // Sequences still remain at the current reference being parsed.
-    if(kseq_read(parser) >= 0)
+    if(parser != nullptr && kseq_read(parser) >= 0)
     {
         seq_id_++;
         return true;
@@ -149,6 +149,7 @@ void Parser::close()
         kseq_destroy(parser);   // Close the kseq parser.
         gzclose(file_ptr);  // Close the file handler.
 
+        parser = nullptr;
         file_ptr = nullptr;
     }
 }

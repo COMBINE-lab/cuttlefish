@@ -257,7 +257,7 @@ typename Kmer_Buffered_Iterator<k>::value_type Kmer_Buffered_Iterator<k>::launch
 
 
     // Dequeue the first chunk to avoid a null check at dereferencing in advance.
-    while(!rwq.try_dequeue(curr_chunk));   // busy-wait
+    while(!rwq.try_dequeue(curr_chunk) || curr_chunk == nullptr);   // busy-wait
 
     cur_chunk_it = curr_chunk->begin();
     kmer = *cur_chunk_it;
@@ -277,7 +277,7 @@ inline void Kmer_Buffered_Iterator<k>::advance()
         
         if(offset < kmer_count) // k-mer chunks are available.
         {
-            while(!rwq.try_dequeue(curr_chunk));    // busy-wait
+            while(!rwq.try_dequeue(curr_chunk) || curr_chunk == nullptr);    // busy-wait
 
             // Update the last-read k-mer iterator and read off the k-mer.
             cur_chunk_it = curr_chunk->begin();

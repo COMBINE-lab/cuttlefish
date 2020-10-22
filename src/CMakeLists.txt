@@ -4,7 +4,14 @@ set(PROJECT_SRC
         kmc_api/kmc_file.cpp
         kmc_api/kmer_api.cpp
         kmc_api/mmer.cpp
-        Kmer.cpp
+        smhasher/MurmurHash3.cpp
+        xxHash/xxhash.c
+        xxHash/xxh_x86dispatch.c
+        xxHash/xxhsum.c
+        Parser.cpp
+        Thread_Pool.cpp
+        DNA_Utility.cpp
+        Kmer_u64.cpp
         Vertex.cpp
         State.cpp
         Kmer_Container.cpp
@@ -12,8 +19,12 @@ set(PROJECT_SRC
         CdBG.cpp
         CdBG_Builder.cpp
         CdBG_Writer.cpp
+        CdBG_Plain_Writer.cpp
         CdBG_GFA_Writer.cpp
         Validator.cpp
+        Validator_Hash_Table.cpp
+        Sequence_Validator.cpp
+        Kmers_Validator.cpp
         utility.cpp
     )
 
@@ -30,10 +41,10 @@ set(INCLUDE_DIR include)
 target_include_directories(core PUBLIC ${CMAKE_SOURCE_DIR}/${INCLUDE_DIR})
 
 
-# Specify warnings flags to the compiler for the target library. As the warnings are specified as
-# `PRIVATE`, they will only be used when compiling this library. The flags will not be propagated to
-# the targets linking to it.
-target_compile_options(core PRIVATE ${WARNING_FLAGS})
+# Specify the warnings and the extra optimization flags to the compiler for the target library.
+# As the flags are specified as `PRIVATE`, they will only be used when compiling this library.
+# These will not be propagated to the targets linking to it.
+target_compile_options(core PRIVATE ${WARNING_FLAGS} ${SUPPRESS_WARNING_FLAGS} ${OPTIMIZE_FLAGS})
 
 
 # Create an executable from the driver program.
@@ -43,8 +54,8 @@ add_executable(${PROJECT_NAME} main.cpp)
 # Link the core library to the threads package in the platform.
 target_link_libraries(core PRIVATE ${CMAKE_THREAD_LIBS_INIT})
 
-# Link the core library to the `std::experimental::filesystem` library.
-target_link_libraries(core PRIVATE stdc++fs)
+# Link the core library to the `zlib` library.
+target_link_libraries(core PRIVATE ZLIB::ZLIB)
 
 
 # Link the executable to the required libraries.
@@ -52,7 +63,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE core)
 
 
 # Specify warnings flags to the compiler for the target executable.
-target_compile_options(${PROJECT_NAME} PRIVATE ${WARNING_FLAGS})
+target_compile_options(${PROJECT_NAME} PRIVATE ${WARNING_FLAGS} ${SUPPRESS_WARNING_FLAGS} ${OPTIMIZE_FLAGS})
 
 
 # Set the parent directory for the target binaries inside the "installation directory". The
@@ -65,7 +76,7 @@ target_compile_options(${PROJECT_NAME} PRIVATE ${WARNING_FLAGS})
 set(DEFAULT_INSTALL_DIR ${CMAKE_SOURCE_DIR}/bin)        # Set our default installation directory as a `bin` directory inside the top level of the source tree.
 set(INSTALL_DIR .)      # Set the installation directory to what CMake has recieved, i.e. either the system default or the user-provided one.
 if(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT) # If it's set to the system default, then set it to our defined default directory.
-        set(INSTALL_DIR ${CMAKE_SOURCE_DIR}/bin)
+        set(INSTALL_DIR ${DEFAULT_INSTALL_DIR})
 endif()
 
 install(TARGETS ${PROJECT_NAME}
@@ -73,6 +84,6 @@ install(TARGETS ${PROJECT_NAME}
         )
 
 
-add_executable(test test.cpp Validator.cpp)
+add_executable(test test.cpp)
 target_link_libraries(test PRIVATE core)
-target_compile_options(test PRIVATE ${WARNING_FLAGS})
+target_compile_options(test PRIVATE ${WARNING_FLAGS} ${SUPPRESS_WARNING_FLAGS} ${OPTIMIZE_FLAGS})

@@ -1,7 +1,11 @@
 
+#include "utility.hpp"
+#include "ghc/filesystem.hpp"
+
+#include <cctype>
+#include <cstring>
 #include <cstdlib>
 #include <ctime>
-#include <experimental/filesystem>
 
 
 std::string get_random_string(const size_t len)
@@ -20,7 +24,10 @@ std::string get_random_string(const size_t len)
     s[len] = '\0';
 
 
-    return std::string(s);
+    const std::string str(s);
+    delete s;
+
+    return str;
 }
 
 
@@ -38,9 +45,22 @@ bool is_prefix(const std::string& s, const std::string& pref)
 
 bool file_prefix_exists(const std::string& path, const std::string& prefix)
 {
-    for(const auto& entry: std::experimental::filesystem::directory_iterator(path))
+    for(const auto& entry: ghc::filesystem::directory_iterator(path))
         if(is_prefix(entry.path(), prefix))
             return true;
 
     return false;
+}
+
+
+std::string remove_whitespaces(const char* s)
+{
+    std::string str;
+    str.reserve(strlen(s));
+
+    for(const char* p = s; *p; ++p)
+        if(!std::isspace(*p))
+            str += *p;
+
+    return str;
 }

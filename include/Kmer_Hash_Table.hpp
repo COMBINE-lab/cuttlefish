@@ -5,7 +5,6 @@
 
 
 #include "globals.hpp"
-#include "Kmer.hpp"
 #include "State.hpp"
 #include "Kmer_Container.hpp"
 #include "BBHash/BooPHF.h"
@@ -15,27 +14,30 @@
 #include "SpinLock/SpinLock.hpp"
 
 
-class CdBG;
+template <uint16_t k> class CdBG;
 
 
+template <uint16_t k>
 class Kmer_Hash_Table
 {
-    friend class CdBG;
+    friend class CdBG<k>;
+
+    typedef boomphf::mphf<Kmer<k>, Kmer_Hasher<k>> mphf_t;    // The MPH function type.
 
 private:
 
     // Lowest bits/elem is achieved with gamma = 1, higher values lead to larger mphf but faster construction/query.
-    constexpr static double gamma_factor = 2.0;
+    constexpr static double GAMMA_FACTOR = 2.0;
 
     // The MPH function.
-    cuttlefish::mphf_t* mph = NULL;
+    mphf_t* mph = NULL;
 
     // The values (`State`) collection for the hash table;
     // keys (`kmer_t`) are passed to the MPHF, and the resulting function-value is used as index in the values table.
     cuttlefish::bitvector_t hash_table;
 
     // Number of locks for thread-safe access to the bitvector `hash_table`.
-    constexpr static const uint64_t lock_count{65536};
+    constexpr static uint64_t lock_count{65536};
 
     // Number of contiguous entries of the bitvector that each lock is assigned to.
     uint64_t lock_range_size;
@@ -46,18 +48,31 @@ private:
 
     // Builds the minimal perfect hash function `mph` over the set of
     // k-mers present at the KMC database container `kmer_container`,
-    // with `bbhash_file_name` being the file to use for BBHash build
-    // using `thread_count` number of threads.
-    void build_mph_function(const Kmer_Container& kmer_container, const std::string& bbhash_file_name, const uint16_t thread_count);
+    // with `mph_file_path` being the file to use for BBHash build
+    // using `thread_count` number of threads. Uses the directory
+    // at `working_dir_path` to store temporary files.
+    void build_mph_function(const Kmer_Container<k>& kmer_container, uint16_t thread_count, const std::string& working_dir_path, const std::string& mph_file_path);
+
+    // Loads an MPH function from the file at `file_path` into `mph`.
+    void load_mph_function(const std::string& file_path);
+
+    // Saves the MPH function `mph` into a file at `file_path`.
+    void save_mph_function(const std::string& file_path) const;
+
+    // Saves the hash table buckets `hash_table` into a file at `file_path`.
+    void save_hash_buckets(const std::string& file_path) const;
+
+    // Loads the hash table buckets `hash_table` from the file at `file_path`.
+    void load_hash_buckets(const std::string& file_path);
 
     // Returns the id / number of the bucket in the hash table that is
     // supposed to store value items for the key `kmer`.
-    uint64_t bucket_id(const cuttlefish::kmer_t& kmer) const;
+    uint64_t bucket_id(const Kmer<k>& kmer) const;
 
     // Returns an API to the entry (in the hash table) for a k-mer hashing
     // to the bucket number `bucket_id` of the hash table. The API wraps
     // the hash table position and the state value at that position.
-    Kmer_Hash_Entry_API operator[](const uint64_t bucket_id);
+    Kmer_Hash_Entry_API operator[](uint64_t bucket_id);
 
 public:
 
@@ -65,15 +80,18 @@ public:
     {}
 
     // Constructs a minimal perfect hash function (specifically, the BBHash) for
-    // the collection of k-mers present at the KMC database named `kmc_file_name`.
-    void construct(const std::string& kmc_file_name, const std::string& bbhash_file_name, const uint16_t thread_count);
+    // the collection of k-mers present at the KMC database at path `kmc_db_path`,
+    // using up-to `thread_count` number of threads. If a non-empty path is passed
+    // with `mph_file_path`, either an MPH is loaded from there (instead of building
+    // from scratch), or the newly built MPH is saved there.
+    void construct(const std::string& kmc_db_path, uint16_t thread_count, const std::string& working_dir_path, const std::string& mph_file_path);
 
     // Returns an API to the entry (in the hash table) for the key `kmer`. The API
     // wraps the hash table position and the state value at that position.
-    Kmer_Hash_Entry_API operator[](const cuttlefish::kmer_t& kmer);
+    Kmer_Hash_Entry_API operator[](const Kmer<k>& kmer);
 
     // Returns the value (in the hash-table) for the key `kmer`.
-    const State operator[](const cuttlefish::kmer_t& kmer) const;
+    State operator[](const Kmer<k>& kmer) const;
 
     // Attempts to update the entry (in the hash-table) for the API object according
     // to its wrapped state values, and returns true or false as per success
@@ -86,14 +104,15 @@ public:
 };
 
 
-
-inline uint64_t Kmer_Hash_Table::bucket_id(const cuttlefish::kmer_t& kmer) const
+template <uint16_t k>
+inline uint64_t Kmer_Hash_Table<k>::bucket_id(const Kmer<k>& kmer) const
 {
     return mph->lookup(kmer);
 }
 
 
-inline Kmer_Hash_Entry_API Kmer_Hash_Table::operator[](const uint64_t bucket_id)
+template <uint16_t k>
+inline Kmer_Hash_Entry_API Kmer_Hash_Table<k>::operator[](const uint64_t bucket_id)
 {
     uint64_t lidx = bucket_id / lock_range_size; 
     locks_[lidx].lock();
@@ -103,13 +122,15 @@ inline Kmer_Hash_Entry_API Kmer_Hash_Table::operator[](const uint64_t bucket_id)
 }
 
 
-inline Kmer_Hash_Entry_API Kmer_Hash_Table::operator[](const cuttlefish::kmer_t& kmer)
+template <uint16_t k>
+inline Kmer_Hash_Entry_API Kmer_Hash_Table<k>::operator[](const Kmer<k>& kmer)
 {
     return operator[](mph->lookup(kmer));
 }
 
 
-inline const State Kmer_Hash_Table::operator[](const cuttlefish::kmer_t& kmer) const
+template <uint16_t k>
+inline State Kmer_Hash_Table<k>::operator[](const Kmer<k>& kmer) const
 {
     // NOTE: this makes the `const` a lie.  Should be a better solution here.
     auto v = mph->lookup(kmer);
@@ -122,7 +143,8 @@ inline const State Kmer_Hash_Table::operator[](const cuttlefish::kmer_t& kmer) c
 }
 
 
-inline bool Kmer_Hash_Table::update(Kmer_Hash_Entry_API& api)
+template <uint16_t k>
+inline bool Kmer_Hash_Table<k>::update(Kmer_Hash_Entry_API& api)
 {
     auto it = &(api.bv_entry);
     uint64_t lidx = (std::distance(hash_table.begin(), it)) / lock_range_size;

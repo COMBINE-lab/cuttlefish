@@ -3,14 +3,14 @@
 #include <cassert>
 
 
-Vertex::Vertex(const cuttlefish::Vertex_Class vertex_class, const cuttlefish::nucleotide_t enter, const cuttlefish::nucleotide_t exit):
+Vertex::Vertex(const cuttlefish::Vertex_Class vertex_class, const cuttlefish::base_t enter, const cuttlefish::base_t exit):
     vertex_class_(vertex_class), enter_(enter), exit_(exit), visited_(true), outputted_(false)
 {
     assert(vertex_class == cuttlefish::Vertex_Class::single_in_single_out);
 }
 
 
-Vertex::Vertex(const cuttlefish::Vertex_Class vertex_class, const cuttlefish::nucleotide_t nucl):
+Vertex::Vertex(const cuttlefish::Vertex_Class vertex_class, const cuttlefish::base_t base):
     vertex_class_(vertex_class), visited_(true), outputted_(false)
 {
     assert(vertex_class == cuttlefish::Vertex_Class::multi_in_single_out || vertex_class == cuttlefish::Vertex_Class::single_in_multi_out);
@@ -18,13 +18,13 @@ Vertex::Vertex(const cuttlefish::Vertex_Class vertex_class, const cuttlefish::nu
 
     if(vertex_class == cuttlefish::Vertex_Class::multi_in_single_out)
     {
-        enter_ = cuttlefish::PLACEHOLDER_NUCLEOTIDE;
-        exit_ = nucl;
+        enter_ = DNA::N;
+        exit_ = base;
     }
     else
     {
-        enter_ = nucl;
-        exit_ = cuttlefish::PLACEHOLDER_NUCLEOTIDE;
+        enter_ = base;
+        exit_ = DNA::N;
     }
 }
 
@@ -32,8 +32,8 @@ Vertex::Vertex(const cuttlefish::Vertex_Class vertex_class, const cuttlefish::nu
 Vertex::Vertex(const cuttlefish::Vertex_Class vertex_class, const bool outputted):
     vertex_class_(vertex_class), visited_(true), outputted_(outputted)
 {
-    enter_ = cuttlefish::PLACEHOLDER_NUCLEOTIDE;
-    exit_ = cuttlefish::PLACEHOLDER_NUCLEOTIDE;
+    enter_ = DNA::N;
+    exit_ = DNA::N;
 }
 
 

@@ -1,15 +1,16 @@
 
 #include "Kmer_Container.hpp"
 #include "Kmer_Iterator.hpp"
+#include "Kmer_Buffered_Iterator.hpp"
 
-
-Kmer_Container::Kmer_Container(const std::string& kmc_file_name):
-    kmc_file_name(kmc_file_name)
+template <uint16_t k>
+Kmer_Container<k>::Kmer_Container(const std::string& kmc_file_path):
+    kmc_file_path(kmc_file_path)
 {
     CKMCFile kmer_database;
-    if(!kmer_database.OpenForListing(kmc_file_name))
+    if(!kmer_database.OpenForListing(kmc_file_path))
     {
-        std::cout << "Error opening KMC database files with prefix " << kmc_file_name << ". Aborting.\n";
+        std::cout << "Error opening KMC database files with prefix " << kmc_file_path << ". Aborting.\n";
         std::exit(EXIT_FAILURE);
     }
 
@@ -20,34 +21,88 @@ Kmer_Container::Kmer_Container(const std::string& kmc_file_name):
     }
 
     kmer_database.Close();
+
+
+    const uint16_t kmer_len = kmer_length();
+    if(kmer_len != k)
+    {
+        std::cerr << "Expected k value " << k << ", but is provided with a " << kmer_len << "-mer database. Aborting.\n";
+        std::exit(EXIT_FAILURE);
+    }
 }
 
 
-std::string Kmer_Container::container_location() const
+template <uint16_t k>
+const std::string& Kmer_Container<k>::container_location() const
 {
-    return kmc_file_name;
+    return kmc_file_path;
 }
 
 
-uint32_t Kmer_Container::kmer_length() const
+template <uint16_t k>
+uint32_t Kmer_Container<k>::kmer_length() const
 {
     return kmer_database_info.kmer_length;
 }
 
 
-uint64_t Kmer_Container::size() const
+template <uint16_t k>
+uint64_t Kmer_Container<k>::size() const
 {
    return kmer_database_info.total_kmers;
 }
 
 
-Kmer_Container::iterator Kmer_Container::begin() const
+template <uint16_t k>
+typename Kmer_Container<k>::iterator Kmer_Container<k>::begin() const
 {
     return iterator(this);
 }
 
 
-Kmer_Container::iterator Kmer_Container::end() const
+template <uint16_t k>
+typename Kmer_Container<k>::iterator Kmer_Container<k>::end() const
 {
     return iterator(this, false);
 }
+
+template <uint16_t k>
+typename Kmer_Container<k>::buf_iterator Kmer_Container<k>::buf_begin() const
+{
+    return buf_iterator(this, true, false);
+}
+
+
+template <uint16_t k>
+typename Kmer_Container<k>::buf_iterator Kmer_Container<k>::buf_end() const
+{
+    return buf_iterator(this, false, true);
+}
+
+
+template <uint16_t k>
+void Kmer_Container<k>::load_kmers(std::vector<Kmer<k>>& kmers) const
+{
+    std::cout << "Loading k-mers into memory.\n";
+
+    std::chrono::high_resolution_clock::time_point t_start = std::chrono::high_resolution_clock::now();
+
+    kmers.reserve(size());
+
+    auto it_beg = begin();
+    auto it_end = end();
+
+    for(auto it = it_beg; it != it_end; ++it)
+        kmers.emplace_back(*it);
+
+    std::chrono::high_resolution_clock::time_point t_end = std::chrono::high_resolution_clock::now();
+    double elapsed_seconds = std::chrono::duration_cast<std::chrono::duration<double>>(t_end - t_start).count();
+
+
+    std::cout << "Loading k-mers into memory. Time taken: " << elapsed_seconds << " seconds.\n";
+}
+
+
+
+// Template instantiations for the required specializations.
+ENUMERATE(INSTANCE_COUNT, INSTANTIATE, Kmer_Container)

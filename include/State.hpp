@@ -10,13 +10,15 @@
 #include <cstdint>
 
 
-class Kmer_Hash_Table;
+template <uint16_t k> class Kmer_Hash_Table;
 class Kmer_Hash_Entry_API;
 
 
 class State
 {
+    template <uint16_t k>
     friend class Kmer_Hash_Table;
+
     friend class Kmer_Hash_Entry_API;
 
 private:
@@ -26,18 +28,18 @@ private:
 
 
     // Constructs a `State` with the provided code `state`.
-    State(const cuttlefish::state_code_t code);
+    State(cuttlefish::state_code_t code);
 
     // Constructs a `State` from the state stored at the bitvector entry `bv_entry`.
     State(const cuttlefish::bitvector_entry_t& bv_entry);
 
-    // Sets the nucleotide 2-bit encoding at the bits b1 and b0 of `code`.
+    // Sets the DNA base 2-bit encoding at the bits b1 and b0 of `code`.
     // Requirement: the two bits must be zero before the call, for consistent behavior.
-    void set_nibble_lower_half(const cuttlefish::nucleotide_t nucl);
+    void set_nibble_lower_half(cuttlefish::base_t base);
 
-    // Sets the nucleotide 2-bit encoding at the bits b3 and b2 of `code`.
+    // Sets the DNA base 2-bit encoding at the bits b3 and b2 of `code`.
     // Requirement: the two bits must be zero before the call, for consistent behavior.
-    void set_nibble_upper_half(const cuttlefish::nucleotide_t nucl);
+    void set_nibble_upper_half(cuttlefish::base_t base);
 
     // Returns the wrapped state code value.
     cuttlefish::state_code_t get_state() const;

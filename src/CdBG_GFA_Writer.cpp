@@ -505,7 +505,7 @@ void CdBG<k>::write_gfa_edge(const uint16_t thread_id, const Oriented_Unitig& le
     else
     {
         buffer += "\t";
-        fmt::format_int(unitig_len - (k - 1)).c_str();
+        buffer += fmt::format_int(unitig_len - (k - 1)).c_str();
         buffer += "\t";
         buffer += fmt::format_int(unitig_len).c_str();
         buffer += "$";

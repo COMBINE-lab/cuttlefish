@@ -36,7 +36,9 @@ set(OPTIMIZE_FLAGS -funroll-loops)
 
 # Add the required preprocessor definitions (`#define`s) to pass on.
 add_definitions(-D__STDC_FORMAT_MACROS -DSPDLOG_FMT_EXTERNAL_HO -DFMT_HEADER_ONLY -DXXH_INLINE_ALL)
-add_definitions(-DINSTANCE_COUNT=${INSTANCE_COUNT})
+if(INSTANCE_COUNT)
+    add_definitions(-DINSTANCE_COUNT=${INSTANCE_COUNT})
+endif()
 
 
 # Search the file system for the appropriate threads package for this platform, and then set

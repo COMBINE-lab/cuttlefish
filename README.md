@@ -53,7 +53,6 @@ Cuttlefish also makes use of [KMC3](https://github.com/refresh-bio/KMC), which i
 ```bash
   git clone https://github.com/refresh-bio/KMC.git
   cd KMC && make
-  cd ..
 ```
 
 ## Installation
@@ -62,8 +61,7 @@ To install Cuttlefish from the source, you may use the following:
 
 ```bash
   git clone https://github.com/COMBINE-lab/cuttlefish.git
-  cd cuttlefish
-  mkdir build && cd build
+  cd cuttlefish && mkdir build && cd build
   cmake ..
   make -j 8 install
   cd ..
@@ -97,12 +95,12 @@ Then to build the compacted de Bruijn graph, use Cuttlefish as following (from t
 
 The arguments are set as following:
 
-- The input references can be passed in any of the following ways (and the options can also be mixed together). Each input reference should be in the FASTA format, possible gzipped.
+- The input references can be passed in any of the following ways (and the options can also be mixed together). Each input reference should be in the FASTA format, possibly gzipped.
   - `-r <comma-separated list of refs>`
-  - `-l <newline-separated list file of the refs>`
+  - `-l <newline-separated list file of refs>`
   - `-d <directory containing only the refs>`
 - The _k_-mer length `k` must be odd and within 63 (see the [section](#larger-k-mer-sizes) on _k_-mer sizes to increase the capacity beyond this). The default value is 25.
-- The _k_-mer set prefix `s` must match exactly the output value used in the `kmc` invocation, i.e. it should be `<output_set>` from the `kmc` invocation.
+- The _k_-mer set prefix `s` must match exactly the output value used in the `kmc` invocation, i.e. it should be the `<output_set>` argument from the `kmc` invocation.
 - Number of threads `t` is set to `1` by default, and the use of higher values is recommended.
 - The output formats (`f`) are —
   - `0`: only the maximal unitig (non-branching path) fragments;
@@ -121,9 +119,9 @@ Cuttlefish works with the canonical representations of the _k_-mers, i.e. each _
 
 ### ''Colored'' output
 
-In the [GFA](https://github.com/GFA-spec/GFA-spec) output format for the compacted de Bruijn graph, the graph is represented as a list of the vertices (i.e. the maximal unitigs) and the adjacencies between them. The output also includes a path-tiling for each individual sequence in the input references, i.e. an ordered list of the maximal unitig ids that completely tile that sequence. Put differently, the GFA outputs describe a colored de Bruijn graph in the sense that the color information is encoded in the `P` (GFA 1.0) or the `O` (GFA 2.0) entries.
+In the [GFA](https://github.com/GFA-spec/GFA-spec) output format for the compacted de Bruijn graph, the graph is represented as a list of the vertices (i.e. the maximal unitigs) and the adjacencies between them. The output also includes a path-tiling for each individual sequence in the input references, i.e. an ordered list of the maximal unitig ids that completely tile that sequence. Put differently, the GFA outputs describe a colored de Bruijn graph in the sense that the color information for each vertex (maximal unitig) is encoded in the `P` (GFA 1.0) or the `O` (GFA 2.0) entries.
 
-Throughout the [manuscript](https://doi.org/10.1101/2020.10.21.349605), when we mention the colored de Bruijn graph, we refer to a very specific definition of colors. While this definition is intuitive and natural when constructing the compacted colored de Bruijn graph from a set of reference genomes, it is not the case that the Cuttlefish algorithm allows arbitrary coloring of the _k_-mers in the de Bruijn graph, at least not without another post-processing step. Specifically, in the definition adopted herein, the color set of a unitig is the subset of input reference strings s<sub> i <sub> 1 </sub> </sub>, s<sub> i <sub> 2 </sub> </sub>, ..., s<sub> i <sub> l </sub> </sub> in which the unitig appears. This color information is implicitly encoded in the path entries of the output GFA files (the `P` entries in GFA 1.0 and the `O` entries in GFA 2.0 files). As a result, all unitigs produced by Cuttlefish are "monochromatic" under this coloring definition, as a change to the color set internally to a unitig would imply either a branch (which would terminate the unitig) or the start or end of some reference string and a sentinel _k_-mer (which would also terminate the unitig). If one were constructing the compacted colored de Bruijn graph from raw sequencing reads or from highly-fractured assemblies, then one may wish to adopt a different notion of color, wherein color sets may vary across an individual unitig.
+Throughout the [manuscript](https://doi.org/10.1101/2020.10.21.349605), when we mention the colored de Bruijn graph, we refer to a very specific definition of colors. While this definition is intuitive and natural when constructing the compacted colored de Bruijn graph from a set of reference genomes, it is not the case that the Cuttlefish algorithm allows arbitrary coloring of the _k_-mers in the de Bruijn graph. Specifically, in the definition adopted herein, the color set of a unitig is the subset of input references s<sub> i <sub> 1 </sub> </sub>, s<sub> i <sub> 2 </sub> </sub>, ..., s<sub> i <sub> l </sub> </sub> in which the unitig appears. This color information is implicitly encoded in the path entries of the output GFA files (the `P` entries in GFA 1.0 and the `O` entries in GFA 2.0). As a result, all unitigs produced by Cuttlefish are "monochromatic" under this coloring definition, as a change to the color set internally to a unitig would imply either a branch (which would terminate the unitig) or the start or end of some reference string and a sentinel _k_-mer (which would also terminate the unitig). If one were constructing the compacted colored de Bruijn graph from raw sequencing reads or from highly-fractured assemblies, then one may wish to adopt a different notion of color, wherein color sets may vary across an individual unitig.
 <!-- Adding such color information to the compacted de Bruijn graph produced by Cuttlefish would be possible, but would require further post-processing which we do not consider in this work. -->
 
 ## Example usage
@@ -143,7 +141,7 @@ Please use the `kmc` and the `cuttlefish` binaries from their respective paths i
   - Build a hash function over `kmers`, compute the states of the graph vertices, and output the compacted graph (in GFA 1.0):
 
     ```bash
-      cuttlefish build -r refs1.fa -k 3 -s kmers -t 4 -o cdbg.gfa2 -f 1 -w temp/
+      cuttlefish build -r refs1.fa -k 3 -s kmers -t 4 -o cdbg.gfa1 -f 1 -w temp/
     ```
 
       To get only the maximal unitig fragments (which is `-f 0` by default):

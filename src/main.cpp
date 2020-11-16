@@ -1,4 +1,5 @@
 
+#include "Input_Defaults.hpp"
 #include "CdBG.hpp"
 #include "Validator.hpp"
 #include "Build_Params.hpp"
@@ -19,17 +20,17 @@ void build(int argc, char** argv)
 {
     cxxopts::Options options("cuttlefish build", "Efficiently construct the compacted de Bruijn graph from references");
     options.add_options()
-        ("r,refs", "reference files", cxxopts::value<std::vector<std::string>>()->default_value(""))
-        ("l,lists", "reference file lists", cxxopts::value<std::vector<std::string>>()->default_value(""))
-        ("d,dirs", "reference file directories", cxxopts::value<std::vector<std::string>>()->default_value(""))
-        ("k,kmer_len", "k-mer length", cxxopts::value<uint16_t>())
+        ("r,refs", "reference files", cxxopts::value<std::vector<std::string>>()->default_value(cuttlefish::_default::EMPTY))
+        ("l,lists", "reference file lists", cxxopts::value<std::vector<std::string>>()->default_value(cuttlefish::_default::EMPTY))
+        ("d,dirs", "reference file directories", cxxopts::value<std::vector<std::string>>()->default_value(cuttlefish::_default::EMPTY))
+        ("k,kmer_len", "k-mer length", cxxopts::value<uint16_t>()->default_value(std::to_string(cuttlefish::_default::K)))
         ("s,kmc_db", "set of k-mers (KMC database) prefix", cxxopts::value<std::string>())
-        ("t,threads", "number of threads to use", cxxopts::value<uint16_t>()->default_value("1"))
+        ("t,threads", "number of threads to use", cxxopts::value<uint16_t>()->default_value(std::to_string(cuttlefish::_default::THREAD_COUNT)))
         ("o,output", "output file", cxxopts::value<std::string>())
-        ("f,format", "output format (0: txt, 1: GFAv1, 2: GFAv2)", cxxopts::value<uint16_t>()->default_value("0"))
-        ("w,work_dir", "working directory", cxxopts::value<std::string>()->default_value("."))
-        ("mph", "minimal perfect hash (BBHash) file (optional)", cxxopts::value<std::string>()->default_value(""))
-        ("buckets", "hash table buckets (cuttlefish) file (optional)", cxxopts::value<std::string>()->default_value(""))
+        ("f,format", "output format (0: txt, 1: GFA 1.0, 2: GFA 2.0)", cxxopts::value<uint16_t>()->default_value(std::to_string(cuttlefish::_default::OP_FORMAT)))
+        ("w,work_dir", "working directory", cxxopts::value<std::string>()->default_value(cuttlefish::_default::WORK_DIR))
+        ("mph", "minimal perfect hash (BBHash) file (optional)", cxxopts::value<std::string>()->default_value(cuttlefish::_default::EMPTY))
+        ("buckets", "hash table buckets (cuttlefish) file (optional)", cxxopts::value<std::string>()->default_value(cuttlefish::_default::EMPTY))
         ("h,help", "print usage");
 
     try

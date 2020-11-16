@@ -4,17 +4,17 @@ Cuttlefish is a fast, parallel, and very lightweight memory tool to construct th
 
 ## Table of contents
 
-  - [Overview](#overview)
-  - [Dependencies](#dependencies)
-  - [Installation](#installation)
-  - [Usage](#usage)
-  - [I/O formats](#io-formats)
-    - [''Colored'' output](#colored-output)
-  - [Example usage](#example-usage)
-  - [Larger _k_-mer sizes](#larger-k-mer-sizes)
-  - [Intermediate disk usage](#intermediate-disk-usage)
-  - [Acknowledgements](#acknowledgements)
-  - [Licenses](#licenses)
+- [Overview](#overview)
+- [Dependencies](#dependencies)
+- [Installation](#installation)
+- [Usage](#usage)
+- [I/O formats](#io-formats)
+  - [''Colored'' output](#colored-output)
+- [Example usage](#example-usage)
+- [Larger _k_-mer sizes](#larger-k-mer-sizes)
+- [Intermediate disk usage](#intermediate-disk-usage)
+- [Acknowledgements](#acknowledgements)
+- [Licenses](#licenses)
 
 
 ## Overview

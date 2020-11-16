@@ -16,11 +16,14 @@ void CdBG<k>::construct()
     std::cout << "\nConstructing the minimal perfect hash function.\n";
     Vertices.construct(params.kmc_db_path(), params.thread_count(), params.working_dir_path(), params.mph_file_path());
 
-    std::cout << "\nClassifying the vertices.\n";
-    classify_vertices();
+    if(!params.output_file_path().empty())
+    {
+        std::cout << "\nClassifying the vertices.\n";
+        classify_vertices();
 
-    std::cout << "\nOutputting the maximal unitigs.\n";
-    output_maximal_unitigs();
+        std::cout << "\nOutputting the maximal unitigs.\n";
+        output_maximal_unitigs();
+    }
 
     Vertices.clear();
 }

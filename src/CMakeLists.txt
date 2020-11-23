@@ -4,7 +4,6 @@ set(PROJECT_SRC
         kmc_api/kmc_file.cpp
         kmc_api/kmer_api.cpp
         kmc_api/mmer.cpp
-        smhasher/MurmurHash3.cpp
         xxHash/xxhash.c
         xxHash/xxh_x86dispatch.c
         xxHash/xxhsum.c

@@ -29,6 +29,7 @@ public:
         classification,
         output_plain,
         output_gfa,
+        output_gfa_reduced,
     };
 
 

@@ -79,6 +79,9 @@ private:
     std::string overlap_file_prefix = "cuttlefish-overlap-output-";
     static constexpr size_t TEMP_FILE_PREFIX_LEN = 10;
 
+    // File extensions for the GFA-reduced output format files.
+    const static std::string SEG_FILE_EXT, SEQ_FILE_EXT;
+
     // Debug
     std::vector<double> seg_write_time;
     std::vector<double> link_write_time;
@@ -179,6 +182,14 @@ private:
     // the sequence `seq` of length `seq_len` to the thread pool `thread_pool`.
     void distribute_output_gfa(const char* seq, size_t seq_len, Thread_Pool<k>& thread_pool);
 
+    // Outputs the distinct maximal unitigs (in canonical form) of the compacted de
+    // Bruijn graph in a GFA-reduced format.
+    void output_maximal_unitigs_gfa_reduced();
+
+    // Distributes the outputting task of the maximal unitigs in a GFA-reduced
+    // format for the sequence `seq` of length `seq_len` to the thread pool `thread_pool`.
+    void distribute_output_gfa_reduced(const char* seq, size_t seq_len, Thread_Pool<k>& thread_pool);
+
     // Clears the output file content.
     void clear_output_file() const;
 
@@ -246,7 +257,7 @@ private:
     // that are present at its contiguous subsequence starting from the index `start_idx`,
     // going up-to either the ending of the maximal unitig containing the index `right_end`,
     // or up-to the first encountered placeholder base. Also, returns the non-inclusive
-    // point of termination of the processedsubsequence, i.e. the index following the end of
+    // point of termination of the processed subsequence, i.e. the index following the end of
     // it. The process is executed by the thread number `thread_id`.
     size_t output_maximal_unitigs_gfa(uint16_t thread_id, const char* seq, size_t seq_len, size_t right_end, size_t start_idx);
 
@@ -315,6 +326,20 @@ private:
     // provided in `path_id`.
     void write_gfa_ordered_group(const std::string& path_id);
 
+    // Writes the maximal unitig of the sequence `seq` having its starting and ending k-mers
+    // located at the indices `start_kmer_idx` and `end_kmer_idx` respectively. The unitig is
+    // named as `segment_name`. If `dir` is `cuttlefish::FWD`, then the string spelled by the
+    // path is written; otherwise its reverse complement is written. The process is executed
+    // by the thread number `thread_id`. Note that, the output operation appends a newline at
+    // the end.
+    void write_segment(uint16_t thread_id, const char* seq, uint64_t segment_name, size_t start_kmer_idx, size_t end_kmer_idx, cuttlefish::dir_t dir);
+
+    // Writes the order of the maximal unitigs that completely tiles the underlying sequence
+    // being processed, at the end of the sequence-tiling file. It basically stiches together
+    // the disjoint tilings produced by the threads. The id of the group is written as `path_id`.
+    void write_sequence_tiling(const std::string& path_id);
+
+
     // Ensures that the string `buf` has enough free space to append a log of length
     // `log_len` at its end without overflowing its capacity by flushing its content
     // to the logger `log` if necessary. The request is non-binding in the sense that
@@ -341,14 +366,23 @@ private:
     // Flushes the output buffers (one for each thread).
     void flush_output_buffers();
 
-    // Flushes the output buffers (one for each thread).
+    // Flushes the path buffers (one for each thread).
     void flush_path_buffers();
 
     // Flushes (non-blocking) all the loggers (output, path, and overlap (GFA1-specific)).
     void flush_loggers();   // TODO: Make it const after removing timing profiles.
 
+    // Flushes (non-blocking) the output (segments and connections) logger.
+    void flush_output_logger();
+
+    // Flushes (non-blocking) GFA path-output specific loggers.
+    void flush_path_loggers();
+
     // Closes (shuts down) all the loggers, with required flushing as necessary.
     void close_loggers();
+
+    // Closes the path-output specific loggers, with required flushing as necessary.
+    void close_path_loggers();
 
     // Removes the temporary files used for the thread-specific path output streams
     // (depending on the GFA version) from the disk.

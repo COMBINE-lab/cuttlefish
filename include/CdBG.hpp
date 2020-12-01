@@ -10,6 +10,7 @@
 #include "Oriented_Unitig.hpp"
 #include "Build_Params.hpp"
 #include "Thread_Pool.hpp"
+#include "Job_Queue.hpp"
 #include "spdlog/async_logger.h"
 
 #include <string>
@@ -200,8 +201,15 @@ private:
     void init_output_loggers();
 
     // Resets the path output streams (depending on the GFA version) for each
-    // thread. Needs to be invoked before processing each new sequence.
-    void reset_path_loggers();
+    // thread. Needs to be invoked before processing each new sequence. The
+    // thread-specific output file names are appended with a `file_id` if a
+    // non-zero value is provided for such.
+    void reset_path_loggers(uint64_t file_id = 0);
+
+    // Returns the name of the thread-specific path-output file for the thread
+    // number `thread_id`. The file names have a suffix `file_id` if a non-zero
+    // value is provided for such.
+    std::string path_file_name(const uint16_t thread_id, const uint64_t file_id = 0) const;
 
     // Allocates memory for the output buffer of each thread.
     void allocate_output_buffers();
@@ -339,6 +347,14 @@ private:
     // the disjoint tilings produced by the threads. The id of the group is written as `path_id`.
     void write_sequence_tiling(const std::string& path_id);
 
+    // Writes the orders of the maximal unitigs that completely tile the input sequences, at the
+    // sequence-tiling file (in the same order as the input sequences). It basically stiches
+    // together the disjoint tilings produced by the threads for each input sequence. A producer
+    // thread puts a job into the queue `job_queue` after the completion of writings (of disjoint
+    // tilings) into the thread-specific files for an input sequence; a consumer thread (executing
+    // this method) fetches the jobs from `job_queue`, concatenates the tilings into the output
+    // file, and deletes the tiling files.
+    void write_sequence_tiling(Job_Queue<std::string, Oriented_Unitig>& job_queue);
 
     // Ensures that the string `buf` has enough free space to append a log of length
     // `log_len` at its end without overflowing its capacity by flushing its content
@@ -385,8 +401,9 @@ private:
     void close_path_loggers();
 
     // Removes the temporary files used for the thread-specific path output streams
-    // (depending on the GFA version) from the disk.
-    void remove_temp_files() const;
+    // (depending on the GFA version) from the disk. The thread-specific output file
+    // names have a suffix `file_id` if a non-zero value is provided.
+    void remove_temp_files(uint64_t file_id = 0) const;
 
     // Prints the distribution of the vertex classes for the canonical k-mers present
     // at the database named `kmc_file_name`.

@@ -46,7 +46,7 @@ void CdBG<k>::set_temp_file_prefixes(const std::string& working_dir)
 
 
 template <uint16_t k>
-void CdBG<k>::reset_path_loggers()
+void CdBG<k>::reset_path_loggers(const uint64_t file_id)
 {
     const cuttlefish::Output_Format gfa_v = params.output_format();
     const uint16_t thread_count = params.thread_count();
@@ -66,16 +66,16 @@ void CdBG<k>::reset_path_loggers()
 
     for(uint16_t t_id = 0; t_id < thread_count; ++t_id)
     {
-        const std::string path_file_name = path_file_prefix + std::to_string(t_id);
+        const std::string path_file_name_(path_file_name(t_id, file_id));
 
         // Clear the thread-specific path output file.
-        std::ofstream op(path_file_name.c_str(), std::ofstream::out | std::ofstream::trunc);
+        std::ofstream op(path_file_name_.c_str(), std::ofstream::out | std::ofstream::trunc);
         op.close();
 
         std::string logger_name("async_path_logger_");
         logger_name += std::to_string(t_id);
         // path_output_[t_id] = spdlog::basic_logger_mt<spdlog::async_factory>(logger_name, path_file_name);
-        auto sink = std::make_shared<spdlog::sinks::basic_file_sink_mt>(path_file_name);
+        auto sink = std::make_shared<spdlog::sinks::basic_file_sink_mt>(path_file_name_);
         path_output_[t_id] = std::make_shared<spdlog::async_logger>(logger_name, sink, tp_path, spdlog::async_overflow_policy::block);
         path_output_[t_id]->set_pattern("%v");
 
@@ -94,6 +94,14 @@ void CdBG<k>::reset_path_loggers()
             overlap_output_[t_id]->set_pattern("%v");
         }
     }
+}
+
+
+template <uint16_t k>
+std::string CdBG<k>::path_file_name(const uint16_t thread_id, const uint64_t file_id) const
+{
+    return  path_file_prefix + std::to_string(thread_id) +
+            (file_id ? ("_" + std::to_string(file_id)) : "");
 }
 
 
@@ -374,11 +382,6 @@ void CdBG<k>::write_gfa_segment(const uint16_t thread_id, const char* const seq,
         buffer += "\tLN:i:";
         buffer += fmt::format_int(segment_len).c_str();
     }
-
-    // The k-mer count.
-    // TODO: remove this redundant info.
-    buffer += "\tKC:i:";
-    buffer += fmt::format_int(end_kmer_idx - start_kmer_idx + 1).c_str();
 
 
     // End the segment line.
@@ -894,13 +897,14 @@ void CdBG<k>::write_gfa_ordered_group(const std::string& path_id)
 
     std::chrono::high_resolution_clock::time_point t_end = std::chrono::high_resolution_clock::now();
     double elapsed_seconds = std::chrono::duration_cast<std::chrono::duration<double>>(t_end - t_start).count();
-    (void)elapsed_seconds;
+    // (void)elapsed_seconds;
+    path_concat_time += elapsed_seconds;
     // std::cout << "Time taken to write paths = " << elapsed_seconds << " seconds.\n";
 }
 
 
 template <uint16_t k>
-void CdBG<k>::remove_temp_files() const
+void CdBG<k>::remove_temp_files(const uint64_t file_id) const
 {
     const uint16_t thread_count = params.thread_count();
     const cuttlefish::Output_Format gfa_v = params.output_format();
@@ -908,10 +912,11 @@ void CdBG<k>::remove_temp_files() const
 
     for(uint16_t t_id = 0; t_id < thread_count; ++t_id)
     {
-        const std::string path_file_name = path_file_prefix + std::to_string(t_id);
-        const std::string overlap_file_name = overlap_file_prefix + std::to_string(t_id);
+        const std::string path_file_name_ =  path_file_name(t_id, file_id);
+        const std::string overlap_file_name =   overlap_file_prefix + std::to_string(t_id) +
+                                                (file_id ? "_" + std::to_string(file_id) : "");
 
-        if(remove(path_file_name.c_str()) != 0 || (gfa_v == cuttlefish::Output_Format::gfa1 && remove(overlap_file_name.c_str()) != 0))
+        if(remove(path_file_name_.c_str()) != 0 || (gfa_v == cuttlefish::Output_Format::gfa1 && remove(overlap_file_name.c_str()) != 0))
         {
             std::cerr << "Error deleting temporary files. Aborting\n";
             std::exit(EXIT_FAILURE);

@@ -345,6 +345,18 @@ void CdBG<k>::output_maximal_unitigs_gfa_reduced()
     // Construct a thread pool.
     Thread_Pool<k> thread_pool(thread_count, this, Thread_Pool<k>::Task_Type::output_gfa_reduced);
 
+    // Dedicated thread and job-queue to concatenate thread-specific tilings.
+    std::unique_ptr<std::thread> concatenator{nullptr};
+    Job_Queue<std::string, Oriented_Unitig> job_queue;
+
+    // Launch the background tilings-concatenator thread.
+    concatenator.reset(
+        new std::thread([this, &job_queue]()
+        {
+            write_sequence_tiling(job_queue);
+        })
+    );
+
 
     // Track the maximum sequence buffer size used and the total length of the references.
     size_t max_buf_sz = 0;
@@ -370,7 +382,7 @@ void CdBG<k>::output_maximal_unitigs_gfa_reduced()
 
 
         // Reset the path output streams for each thread.
-        reset_path_loggers();
+        reset_path_loggers(job_queue.next_job_to_post());
 
         // Reset the first, the second, and the last unitigs seen for each thread.
         reset_extreme_unitigs();
@@ -393,10 +405,19 @@ void CdBG<k>::output_maximal_unitigs_gfa_reduced()
         // thus exploding the limits of the underlying file system.
         close_path_loggers();
 
+        
         // Write the GFA path for this sequence.
         const std::string path_name =   std::string("Reference:") + std::to_string(parser.ref_id()) +
                                         std::string("_Sequence:") + remove_whitespaces(parser.seq_name());
-        write_sequence_tiling(path_name);
+        
+
+        // Post a tiling-concatenation job.
+        
+        // Search the very first GFA edge in the sequence, as that is not inferrable from the path outputs.
+        Oriented_Unitig left_unitig, right_unitig;
+        search_first_connection(left_unitig, right_unitig);
+
+        job_queue.post_job(path_name, left_unitig);
     }
 
     std::cerr << "\rProcessed " << seq_count << " sequences. Total reference length is " << ref_len << " bases.\n";
@@ -406,15 +427,22 @@ void CdBG<k>::output_maximal_unitigs_gfa_reduced()
     // Close the thread pool.
     thread_pool.close();
 
+    // Signal the end of the tiling concatenations.
+    job_queue.signal_end();
+    if(!concatenator->joinable())
+    {
+        std::cerr << "Early termination encountered for the sequence-tilings concatenator thread. Aborting.\n";
+        std::exit(EXIT_FAILURE);
+    }
+
+    concatenator->join();
+
 
     // Flush the buffers.
     flush_output_buffers();
 
     // Close `spdlog`.
     spdlog::drop_all();
-
-    // Remove the temporary files.
-    remove_temp_files();
 
     // Close the parser.
     parser.close();
@@ -437,7 +465,7 @@ void CdBG<k>::output_maximal_unitigs_gfa_reduced()
 
     std::chrono::high_resolution_clock::time_point t_end = std::chrono::high_resolution_clock::now();
     double elapsed_seconds = std::chrono::duration_cast<std::chrono::duration<double>>(t_end - t_start).count();
-    std::cout << "Done outputting the maximal unitigs (in GFA format). Time taken = " << elapsed_seconds << " seconds.\n";
+    std::cout << "Done outputting the maximal unitigs (in GFA-reduced format). Time taken = " << elapsed_seconds << " seconds.\n";
 }
 
 

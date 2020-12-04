@@ -104,8 +104,9 @@ The arguments are set as following:
 - Number of threads `t` is set to `1` by default, and the use of higher values is recommended.
 - The output formats (`f`) are —
   - `0`: only the maximal unitig (non-branching path) fragments;
-  - `1`: GFA 1.0; and
-  - `2`: GFA 2.0.
+  - `1`: GFA 1.0;
+  - `2`: GFA 2.0; and
+  - `3`: GFA-reduced (see [I/O formats](#io-formats)).
 - The working directory `-w` is used for temporary files created by the process — it is not created by Cuttlefish, and must exist beforehand. The current directory is set as the default working directory.
 
 ## I/O formats
@@ -114,8 +115,37 @@ The input references should be in the FASTA format, possibly gzipped. The curren
 
 - The set of maximal unitigs (non-branching paths) from the original de Bruijn graph;
 - The compacted de Bruijn graph in the [GFA 1.0](https://github.com/GFA-spec/GFA-spec/blob/master/GFA1.md) and the [GFA 2.0](https://github.com/GFA-spec/GFA-spec/blob/master/GFA2.md) format.
+- The compacted de Bruijn graph in a ''reduced'' GFA format. It consists of two files, with extensions — `.cf_seg` and `.cf_seq`.
+  - The `.cf_seg` file contains all the maximal unitig fragments of the graph (the segment outputs from GFA, i.e. the `S`-tagged entries), each one with a unique id. This file is a list of pairs `<id segment>`.
+  - The `.cf_seq` file contains the ''tiling'' of each input sequence, made by the maximal unitig fragments (the paths (GFA 1) / ordered groups (GFA 2), i.e. the `P`- / `O`-tagged entries). Each line of the file is of the format `<id tiling>`, where `id` is a unique identifier (name) of this sequence, and `tiling` is a space-separated list of the unitig ids, completely covering the sequence. Each unitig id also has a `+` or `-` sign following it, depending on whether the corresponding unitig is present in the canonical or the reverse-complemented form in this tiling order.
 
-Cuttlefish works with the canonical representations of the _k_-mers, i.e. each _k_-mer and its reverse complement are treated as the same vertex in the original graph. The maximal unitig fragments (the segments in the GFA output, i.e. the `S`-tagged entries) are always output in their canonical forms — the orientations are guaranteed to be the same across identical executions.
+  For the example reference files `refs1.fa` (provided in the data directory), the output files _may_ look like the following.
+
+  <table>
+  <tr><th>Reference file</th></tr>
+  <td>
+    >ref1
+
+    CGACATGTCTTAG
+  </td>
+
+  <table>
+  <tr><th>Segments file</th><th>Sequence tilings file</th></tr>
+  <tr>
+  <td>
+  1	CGA
+
+  3	ATGTC
+
+  6	CTAAGA
+  </td>
+  <td>
+
+  Reference:1_Sequence:ref1	1+ 3- 3+ 6-
+
+</td></tr> </table>
+
+Cuttlefish works with the canonical representations of the _k_-mers, i.e. each _k_-mer and its reverse complement are treated as the same vertex in the original graph. The maximal unitig fragments (the ''segments'' in the GFA-terminology) are always output in their canonical forms — the orientations are guaranteed to be the same across identical executions.
 
 ### ''Colored'' output
 

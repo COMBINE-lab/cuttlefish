@@ -16,7 +16,6 @@ Cuttlefish is a fast, parallel, and very lightweight memory tool to construct th
 - [Acknowledgements](#acknowledgements)
 - [Licenses](#licenses)
 
-
 ## Overview
 
 The construction of the compacted de Bruijn graph from a large collection of reference genomes is a task of increasing interest in genomic analyses. For example, compacted colored reference de Bruijn graphs are increasingly used as sequence indices for the purposes of alignment of short and long reads. Also, as we sequence and assemble a greater diversity of individual genomes, the compacted colored de Bruijn graph can be used as the basis for methods aiming to perform comparative genomic analyses on these genomes. While algorithms have been developed to construct the compacted colored de Bruijn graph from reference sequences, there is still room for improvement, especially in the memory and the runtime performance as the number and the scale of the genomes over which the de Bruijn graph is built grow.
@@ -146,6 +145,10 @@ The input references should be in the FASTA format, possibly gzipped. The curren
 
   </td></tr>
   </table>
+
+  The only GFA information missing _explictly_ in this format is the links (GFA 1) / edges and gaps (GFA 2), i.e. the `L`- or the `E`- and the `G`-tagged entries. These can be readily inferred from the sequence-tilings. For example, a tiling <code><seq_id u<sub>0</sub> u<sub>1</sub> ... u<sub>n</sub>></code> corresponds to the edge and gap multi-set <code>{(u<sub>0</sub>, u<sub>1</sub>), (u<sub>1</sub> u<sub>2</sub>), ... , (u<sub>n-1</sub>, u<sub>n</sub>)}</code>. Whether a pair <code>(u<sub>i</sub>, u<sub>i+1</sub>)</code> is an edge or a gap can be inferred by checking the suffix and the prefix (of length `k - 1`) of the unitigs <code>u<sub>i</sub></code> and <code>u<sub>i+1</sub></code>, respectively (in their correct orientations, based on their following `+`/`-` signs). Note that, a gap is possible in a sequence-tiling only if the sequence contains characters outside of `A`, `C`, `G`, and `T`.
+  
+  For moderate to large sized genomes, this output format is preferrable to the GFA ones — the GFA formats can be quite verbose for this particular scenario, while the reduced representation provides effitively the same information, while taking much lesser space. For example, for the 7-human genomes (experimented with in the manuscript) and using `k` = 31, the compacted graph takes 112GB in GFA2, while 29.3GB in this reduced format.
 
 Cuttlefish works with the canonical representations of the _k_-mers, i.e. each _k_-mer and its reverse complement are treated as the same vertex in the original graph. The maximal unitig fragments (the ''segments'' in the GFA-terminology) are always output in their canonical forms — the orientations are guaranteed to be the same across identical executions.
 

@@ -15,6 +15,7 @@ namespace cuttlefish
         txt = 0,
         gfa1 = 1,
         gfa2 = 2,
+        gfa_reduced = 3,
         num_op_formats
     };
 }

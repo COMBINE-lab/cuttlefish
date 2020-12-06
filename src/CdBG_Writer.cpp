@@ -11,6 +11,12 @@
 #include <numeric>
 
 
+
+// Define the static fields required for the GFA-reduced output.
+template <uint16_t k> const std::string CdBG<k>::SEG_FILE_EXT = ".cf_seg";
+template <uint16_t k> const std::string CdBG<k>::SEQ_FILE_EXT = ".cf_seq";
+
+
 template <uint16_t k>
 void CdBG<k>::output_maximal_unitigs()
 {
@@ -18,8 +24,10 @@ void CdBG<k>::output_maximal_unitigs()
 
     if(output_format == cuttlefish::txt)
         output_maximal_unitigs_plain();
-    else    // GFA1 or GFA2
+    else if(output_format == cuttlefish::gfa1 || output_format == cuttlefish::gfa2)
         output_maximal_unitigs_gfa();
+    else if(output_format == cuttlefish::gfa_reduced)
+        output_maximal_unitigs_gfa_reduced();
 }
 
 
@@ -299,37 +307,224 @@ void CdBG<k>::distribute_output_gfa(const char* const seq, const size_t seq_len,
 
 
 template <uint16_t k>
-void CdBG<k>::clear_output_file() const
+void CdBG<k>::output_maximal_unitigs_gfa_reduced()
 {
-    const std::string& output_file_path = params.output_file_path();
+    std::chrono::high_resolution_clock::time_point t_start = std::chrono::high_resolution_clock::now();
 
-    std::ofstream output(output_file_path.c_str(), std::ofstream::out | std::ofstream::trunc);
-    if(!output)
+
+    const Reference_Input& reference_input = params.reference_input();
+    const uint16_t thread_count = params.thread_count();
+    const std::string& working_dir_path = params.working_dir_path();
+
+
+    // Open a parser for the FASTA / FASTQ file containing the reference.
+    Parser parser(reference_input);
+
+
+    // Clear the output file and initilize the output loggers.
+    clear_output_file();
+    init_output_loggers();
+
+    // Set the prefixes of the temporary path output files. This is to avoid possible name
+    // conflicts in the file system.
+    set_temp_file_prefixes(working_dir_path);
+
+
+    // Allocate the output buffers and the path buffers for each thread.
+    allocate_output_buffers();
+    allocate_path_buffers();
+
+
+    seg_write_time.resize(thread_count);
+    link_write_time.resize(thread_count);
+    buff_flush_time.resize(thread_count);
+    path_write_time.resize(thread_count);
+    path_flush_time.resize(thread_count);
+
+
+    // Construct a thread pool.
+    Thread_Pool<k> thread_pool(thread_count, this, Thread_Pool<k>::Task_Type::output_gfa_reduced);
+
+    // Dedicated thread and job-queue to concatenate thread-specific tilings.
+    std::unique_ptr<std::thread> concatenator{nullptr};
+    Job_Queue<std::string, Oriented_Unitig> job_queue;
+
+    // Launch the background tilings-concatenator thread.
+    concatenator.reset(
+        new std::thread([this, &job_queue]()
+        {
+            write_sequence_tiling(job_queue);
+        })
+    );
+
+
+    // Track the maximum sequence buffer size used and the total length of the references.
+    size_t max_buf_sz = 0;
+    uint64_t ref_len = 0;
+    uint64_t seq_count = 0;
+
+    // Parse sequences one-by-one, and output each unique maximal unitig encountered through them.
+    while(parser.read_next_seq())
     {
-        std::cerr << "Error opening output file " << output_file_path << ". Aborting.\n";
+        const char* const seq = parser.seq();
+        const size_t seq_len = parser.seq_len();
+        const size_t seq_buf_sz = parser.buff_sz();
+
+
+        seq_count++;
+        ref_len += seq_len;
+        max_buf_sz = std::max(max_buf_sz, seq_buf_sz);
+        std::cerr << "\rProcessing sequence " << parser.seq_id() << ", with length:\t" << std::setw(10) << seq_len << ".";
+
+        // Nothing to process for sequences with length shorter than `k`.
+        if(seq_len < k)
+            continue;
+
+
+        // Reset the path output streams for each thread.
+        reset_path_loggers(job_queue.next_job_to_post());
+
+        // Reset the first, the second, and the last unitigs seen for each thread.
+        reset_extreme_unitigs();
+        
+
+        // Single-threaded writing.
+        // output_gfa_off_substring(0, seq, seq_len, 0, seq_len - k, output);
+
+        // Multi-threaded writing.
+        distribute_output_gfa(seq, seq_len, thread_pool);
+        thread_pool.wait_completion();
+
+        write_inter_thread_connections();
+
+        flush_path_buffers();
+
+        // Force-flush all the path loggers, as the thread-specific files for the path outputs are to be reused
+        // for the next sequence. A problem with having a new set of files for the next sequence (and thus avoiding
+        // this force-flush) is that an input reference collection may have millions of sequences (e.g. the conifers),
+        // thus exploding the limits of the underlying file system.
+        close_path_loggers();
+
+        
+        // Write the GFA path for this sequence.
+        const std::string path_name =   std::string("Reference:") + std::to_string(parser.ref_id()) +
+                                        std::string("_Sequence:") + remove_whitespaces(parser.seq_name());
+        
+
+        // Post a tiling-concatenation job.
+        
+        // Search the very first GFA edge in the sequence, as that is not inferrable from the path outputs.
+        Oriented_Unitig left_unitig, right_unitig;
+        search_first_connection(left_unitig, right_unitig);
+
+        job_queue.post_job(path_name, left_unitig);
+    }
+
+    std::cerr << "\rProcessed " << seq_count << " sequences. Total reference length is " << ref_len << " bases.\n";
+    std::cout << "Maximum seqeunce buffer size used (in MB): " << max_buf_sz / (1024 * 1024) << "\n";
+
+    
+    // Close the thread pool.
+    thread_pool.close();
+
+    // Signal the end of the tiling concatenations.
+    job_queue.signal_end();
+    if(!concatenator->joinable())
+    {
+        std::cerr << "Early termination encountered for the sequence-tilings concatenator thread. Aborting.\n";
         std::exit(EXIT_FAILURE);
     }
 
-    output.close();
+    concatenator->join();
+
+
+    // Flush the buffers.
+    flush_output_buffers();
+
+    // Close `spdlog`.
+    spdlog::drop_all();
+
+    // Close the parser.
+    parser.close();
+
+
+    // Debug
+    std::cout << "Segments writing time to in-memory buffers (total): " <<
+        std::accumulate(seg_write_time.begin(), seg_write_time.end(), 0) << "\n";
+    std::cout << "Links writing time to in-memory buffers (total): " <<
+        std::accumulate(link_write_time.begin(), link_write_time.end(), 0) << "\n";
+    std::cout << "Segments and links flush time to disk (total): " <<
+        std::accumulate(buff_flush_time.begin(), buff_flush_time.end(), 0) << "\n";
+    std::cout << "Paths writing time to in-memory buffers (total): " <<
+        std::accumulate(path_write_time.begin(), path_write_time.end(), 0) << "\n";
+    std::cout << "Paths flush time to disk (total): " <<
+        std::accumulate(path_flush_time.begin(), path_flush_time.end(), 0) << "\n";
+    std::cout << "Total paths concatenation time: " << path_concat_time << "\n";
+    std::cout << "Total logger shutdown time: " << logger_flush_time << "\n";
+
+
+    std::chrono::high_resolution_clock::time_point t_end = std::chrono::high_resolution_clock::now();
+    double elapsed_seconds = std::chrono::duration_cast<std::chrono::duration<double>>(t_end - t_start).count();
+    std::cout << "Done outputting the maximal unitigs (in GFA-reduced format). Time taken = " << elapsed_seconds << " seconds.\n";
+}
+
+
+template <uint16_t k>
+void CdBG<k>::clear_output_file() const
+{
+    const cuttlefish::Output_Format op_format = params.output_format();
+    const std::string& output_file_path = params.output_file_path();
+
+    if(op_format == cuttlefish::txt || op_format == cuttlefish::gfa1 || op_format == cuttlefish::gfa2)
+    {
+        std::ofstream output(output_file_path.c_str(), std::ofstream::out | std::ofstream::trunc);
+        if(!output)
+        {
+            std::cerr << "Error opening output file " << output_file_path << ". Aborting.\n";
+            std::exit(EXIT_FAILURE);
+        }
+
+        output.close();
+    }
+    else if(op_format == cuttlefish::gfa_reduced)
+    {
+        const std::string seg_file_path(output_file_path + SEG_FILE_EXT);
+        const std::string seq_file_path(output_file_path + SEQ_FILE_EXT);
+
+        std::ofstream   output_seg(seg_file_path.c_str(), std::ofstream::out | std::ofstream::trunc),
+                        output_seq(seq_file_path.c_str(), std::ofstream::out | std::ofstream::trunc);
+        if(!output_seg || !output_seq)
+        {
+            std::cerr << "Error opening output files " << seg_file_path << " and " << seq_file_path << ". Aborting.\n";
+            std::exit(EXIT_FAILURE);
+        }
+    }
 }
 
 
 template <uint16_t k>
 void CdBG<k>::init_output_loggers()
 {
-    const std::string& output_file_path = params.output_file_path();
+    const cuttlefish::Output_Format gfa_v = params.output_format();
+    const std::string& output_file_path = (gfa_v == cuttlefish::Output_Format::gfa_reduced ?
+                                            params.output_file_path() + SEG_FILE_EXT : params.output_file_path());
     const uint16_t thread_count = params.thread_count();
 
 
     // Initialize the global thread-pool of `spdlog` with restricting its default queue size from 8192 to
     // a suitable one for us. This is required to restrict the memory-usage during the output step, as
     // `spdlog` can continue on accumulating logs (each of max length `BUFFER_THRESHOLD`), i.e. `spdlog`
-    // itself can take up memory up-to (`BUFFER_THRESHOLD x #output_threads`), besides our own buffer
+    // itself can take up memory up-to (`BUFFER_THRESHOLD x #pending_log_message`), besides our own buffer
     // memory of (`BUFFER_CAPACITY x #output_threads`).
-    // NB: Possibly, `spdlog::shutdown()` resets this, so it's to be invoked repeatedly after each shutdown.
+    
+    // NB: Possibly, `spdlog::shutdown()` resets the global `spdlog` thread pool — so if using the global
+    // thread pool, the following initializer needs to be invoked repeatedly after each shutdown.
+    // In the current GFA (and -reduced) scheme, the segments and edges logger and the thread-specific
+    // path loggers use separate thread pool instances, so we do not drop (and initialize) the global one.
+    // The global pool was used in an earlier implementation.
     // spdlog::init_thread_pool(ASYNC_LOG_QUEUE_SZ, ASYNC_LOG_N_THREADS);
 
-    // Instantiate a `spdlog` thread pool for outputting unitigs (segments) and links.
+    // Instantiate a `spdlog` thread pool for outputting unitigs (segments) and links / edges (for GFA).
     tp_output = std::make_shared<spdlog::details::thread_pool>(ASYNC_LOG_QUEUE_SZ, ASYNC_LOG_N_THREADS);
 
     // Open an asynchronous logger to write into the output file, and set its log message pattern.
@@ -502,7 +697,32 @@ void CdBG<k>::close_loggers()
 
 
 template <uint16_t k>
+void CdBG<k>::close_path_loggers()
+{
+    flush_path_loggers();
+
+    // Note: If using an async logger, `logger->flush()` posts a message to the queue requesting the flush
+    // operation, so the function returns immediately. Hence a forceful eviction is necessary by shutdown.
+    // The following shuts down the global thread pool — which is no longer used in the current implementation.
+    // spdlog::shutdown();
+
+    // Drop the `spdlog` thread pools for path-outputs to force-flush the pending logs. Required as `shutdown()`
+    // force-flushes messages from the global pool only.
+    tp_path.reset();
+}
+
+
+template <uint16_t k>
 void CdBG<k>::flush_loggers()
+{
+    flush_output_logger();
+
+    flush_path_loggers();
+}
+
+
+template <uint16_t k>
+void CdBG<k>::flush_output_logger()
 {
     std::chrono::high_resolution_clock::time_point t_s = std::chrono::high_resolution_clock::now();
     
@@ -511,8 +731,12 @@ void CdBG<k>::flush_loggers()
     std::chrono::high_resolution_clock::time_point t_e = std::chrono::high_resolution_clock::now();
     double elapsed_seconds = std::chrono::duration_cast<std::chrono::duration<double>>(t_e - t_s).count();
     logger_flush_time += elapsed_seconds;
+}
 
 
+template<uint16_t k>
+void CdBG<k>::flush_path_loggers()
+{
     const uint16_t thread_count = params.thread_count();
     const uint8_t gfa_v = params.output_format();
     for(uint16_t t_id = 0; t_id < thread_count; ++t_id)

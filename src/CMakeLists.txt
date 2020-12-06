@@ -20,6 +20,7 @@ set(PROJECT_SRC
         CdBG_Writer.cpp
         CdBG_Plain_Writer.cpp
         CdBG_GFA_Writer.cpp
+        CdBG_GFA_Reduced_Writer.cpp
         Validator.cpp
         Validator_Hash_Table.cpp
         Sequence_Validator.cpp

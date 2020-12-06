@@ -16,7 +16,6 @@ Cuttlefish is a fast, parallel, and very lightweight memory tool to construct th
 - [Acknowledgements](#acknowledgements)
 - [Licenses](#licenses)
 
-
 ## Overview
 
 The construction of the compacted de Bruijn graph from a large collection of reference genomes is a task of increasing interest in genomic analyses. For example, compacted colored reference de Bruijn graphs are increasingly used as sequence indices for the purposes of alignment of short and long reads. Also, as we sequence and assemble a greater diversity of individual genomes, the compacted colored de Bruijn graph can be used as the basis for methods aiming to perform comparative genomic analyses on these genomes. While algorithms have been developed to construct the compacted colored de Bruijn graph from reference sequences, there is still room for improvement, especially in the memory and the runtime performance as the number and the scale of the genomes over which the de Bruijn graph is built grow.
@@ -104,8 +103,9 @@ The arguments are set as following:
 - Number of threads `t` is set to `1` by default, and the use of higher values is recommended.
 - The output formats (`f`) are —
   - `0`: only the maximal unitig (non-branching path) fragments;
-  - `1`: GFA 1.0; and
-  - `2`: GFA 2.0.
+  - `1`: GFA 1.0;
+  - `2`: GFA 2.0; and
+  - `3`: GFA-reduced (see [I/O formats](#io-formats)).
 - The working directory `-w` is used for temporary files created by the process — it is not created by Cuttlefish, and must exist beforehand. The current directory is set as the default working directory.
 
 ## I/O formats
@@ -114,8 +114,43 @@ The input references should be in the FASTA format, possibly gzipped. The curren
 
 - The set of maximal unitigs (non-branching paths) from the original de Bruijn graph;
 - The compacted de Bruijn graph in the [GFA 1.0](https://github.com/GFA-spec/GFA-spec/blob/master/GFA1.md) and the [GFA 2.0](https://github.com/GFA-spec/GFA-spec/blob/master/GFA2.md) format.
+- The compacted de Bruijn graph in a ''reduced'' GFA format. It consists of two files, with the extensions — `.cf_seg` and `.cf_seq`.
+  - The `.cf_seg` file contains all the maximal unitig fragments of the graph (the segment outputs from GFA, i.e. the `S`-tagged entries), each one with a unique id. This file is a list of pairs `<id segment>`.
+  - The `.cf_seq` file contains the ''tiling'' of each input sequence, made by the maximal unitig fragments (the paths (GFA 1) / ordered groups (GFA 2), i.e. the `P`- / `O`-tagged entries). Each line of the file is of the format `<id tiling>`, where `id` is a unique identifier (name) of this sequence, and `tiling` is a space-separated list of the unitig ids, completely covering the sequence. Each unitig id also has a `+` or `-` sign following it, depending on whether the corresponding unitig is present in the canonical or the reverse-complemented form in this tiling order.
 
-Cuttlefish works with the canonical representations of the _k_-mers, i.e. each _k_-mer and its reverse complement are treated as the same vertex in the original graph. The maximal unitig fragments (the segments in the GFA output, i.e. the `S`-tagged entries) are always output in their canonical forms — the orientations are guaranteed to be the same across identical executions.
+  For the example reference file `refs1.fa` (provided in the `data` directory), the output files _may_ look like the following.
+
+  <table>
+  <tr><th>Reference file</th></tr>
+  <td>
+    >ref1
+
+    CGACATGTCTTAG
+  </td>
+  </table>
+
+  <table>
+  <tr><th>Segments file</th><th>Sequence tilings file</th></tr>
+  <tr>
+  <td>
+
+  1	CGA  
+  3	ATGTC  
+  6	CTAAGA
+  
+  </td>
+  <td>
+
+  Reference:1_Sequence:ref1	1+ 3- 3+ 6-
+
+  </td></tr>
+  </table>
+
+  The only GFA information missing _explictly_ in this format is the links (GFA 1) / edges and gaps (GFA 2), i.e. the `L`- or the `E`- and the `G`-tagged entries. These can be readily inferred from the sequence-tilings. For example, a tiling <code><seq_id u<sub>0</sub> u<sub>1</sub> ... u<sub>n</sub>></code> corresponds to the edge and gap multi-set <code>{(u<sub>0</sub>, u<sub>1</sub>), (u<sub>1</sub> u<sub>2</sub>), ... , (u<sub>n-1</sub>, u<sub>n</sub>)}</code>. Whether a pair <code>(u<sub>i</sub>, u<sub>i+1</sub>)</code> is an edge or a gap can be inferred by checking the suffix and the prefix (of length `k - 1`) of the unitigs <code>u<sub>i</sub></code> and <code>u<sub>i+1</sub></code>, respectively (in their correct orientations, based on their following `+`/`-` signs). Note that, a gap is possible in a sequence-tiling only if the sequence contains characters outside of `A`, `C`, `G`, and `T`.
+  
+  For moderate to large sized genomes, this output format is preferrable to the GFA ones — the GFA formats can be quite verbose for this particular scenario, while the reduced representation provides effitively the same information, while taking much lesser space. For example, for the 7-human genomes (experimented with in the manuscript) and using `k` = 31, the compacted graph takes 112GB in GFA2, while 29.3GB in this reduced format.
+
+Cuttlefish works with the canonical representations of the _k_-mers, i.e. each _k_-mer and its reverse complement are treated as the same vertex in the original graph. The maximal unitig fragments (the ''segments'' in the GFA-terminology) are always output in their canonical forms — the orientations are guaranteed to be the same across identical executions.
 
 ### ''Colored'' output
 

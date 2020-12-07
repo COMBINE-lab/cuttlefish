@@ -29,6 +29,7 @@ void build(int argc, char** argv)
         ("o,output", "output file", cxxopts::value<std::string>()->default_value(cuttlefish::_default::EMPTY))
         ("f,format", "output format (0: txt, 1: GFA 1.0, 2: GFA 2.0, 3: GFA-reduced)", cxxopts::value<uint16_t>()->default_value(std::to_string(cuttlefish::_default::OP_FORMAT)))
         ("w,work_dir", "working directory", cxxopts::value<std::string>()->default_value(cuttlefish::_default::WORK_DIR))
+        ("rm", "remove the KMC database")
         ("mph", "minimal perfect hash (BBHash) file (optional)", cxxopts::value<std::string>()->default_value(cuttlefish::_default::EMPTY))
         ("buckets", "hash table buckets (cuttlefish) file (optional)", cxxopts::value<std::string>()->default_value(cuttlefish::_default::EMPTY))
         ("h,help", "print usage");
@@ -50,11 +51,12 @@ void build(int argc, char** argv)
         const auto thread_count = result["threads"].as<uint16_t>();
         const auto output_file = result["output"].as<std::string>();
         const auto format = result["format"].as<uint16_t>();
+        const auto remove_kmc_db = result["rm"].as<bool>();
         const auto working_dir = result["work_dir"].as<std::string>();
         const auto mph_file = result["mph"].as<std::string>();
         const auto buckets_file = result["buckets"].as<std::string>();
 
-        const Build_Params params(refs, lists, dirs, k, kmer_database, thread_count, output_file, format, working_dir, mph_file, buckets_file);
+        const Build_Params params(refs, lists, dirs, k, kmer_database, thread_count, output_file, format, working_dir, remove_kmc_db, mph_file, buckets_file);
         if(!params.is_valid())
         {
             std::cerr << "Invalid input configuration. Aborting.\n";

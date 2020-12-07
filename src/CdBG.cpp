@@ -16,6 +16,12 @@ void CdBG<k>::construct()
     std::cout << "\nConstructing the minimal perfect hash function.\n";
     Vertices.construct(params.kmc_db_path(), params.thread_count(), params.working_dir_path(), params.mph_file_path());
 
+    if(params.remove_kmc_db())
+    {
+        remove_kmer_set(params.kmc_db_path());
+        std::cout << "\nRemoved the KMC database from disk.\n";
+    }
+
     if(!params.output_file_path().empty())
     {
         std::cout << "\nClassifying the vertices.\n";
@@ -26,6 +32,20 @@ void CdBG<k>::construct()
     }
 
     Vertices.clear();
+}
+
+
+template <uint16_t k>
+void CdBG<k>::remove_kmer_set(const std::string& kmc_file_pref) const
+{
+    const std::string kmc_file1_path(kmc_file_pref + ".kmc_pre");
+    const std::string kmc_file2_path(kmc_file_pref + ".kmc_suf");
+
+    if(std::remove(kmc_file1_path.c_str()) || std::remove(kmc_file2_path.c_str()))
+    {
+        std::cerr << "Error removing the KMC database file from path prefix " << kmc_file_pref << ". Aborting.\n";
+        std::exit(EXIT_FAILURE);
+    }
 }
 
 

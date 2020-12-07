@@ -1,6 +1,6 @@
 # Cuttlefish
 
-Cuttlefish is a fast, parallel, and very lightweight memory tool to construct the compacted de Bruijn graph from whole genome reference(s).
+Cuttlefish is a fast, parallel, and very lightweight memory tool to construct the compacted de Bruijn graph from genome reference(s).
 
 ## Table of contents
 
@@ -98,7 +98,7 @@ The arguments are set as following:
   - `-r <comma-separated list of refs>`
   - `-l <newline-separated list file of refs>`
   - `-d <directory containing only the refs>`
-- The _k_-mer length `k` must be odd and within 63 (see the [section](#larger-k-mer-sizes) on _k_-mer sizes to increase the capacity beyond this). The default value is 25.
+- The _k_-mer length `k` must be odd and within 63 (see [Larger _k_-mer sizes](#larger-k-mer-sizes) to increase the _k_-mer size capacity beyond this). The default value is 25.
 - The _k_-mer set prefix `s` must match exactly the output value used in the `kmc` invocation, i.e. it should be the `<output_set>` argument from the `kmc` invocation.
 - Number of threads `t` is set to `1` by default, and the use of higher values is recommended.
 - The output formats (`f`) are —
@@ -113,7 +113,7 @@ The arguments are set as following:
 The input references should be in the FASTA format, possibly gzipped. The currently supported output formats are —
 
 - The set of maximal unitigs (non-branching paths) from the original de Bruijn graph;
-- The compacted de Bruijn graph in the [GFA 1.0](https://github.com/GFA-spec/GFA-spec/blob/master/GFA1.md) and the [GFA 2.0](https://github.com/GFA-spec/GFA-spec/blob/master/GFA2.md) format.
+- The compacted de Bruijn graph in the [GFA 1.0](https://github.com/GFA-spec/GFA-spec/blob/master/GFA1.md) and the [GFA 2.0](https://github.com/GFA-spec/GFA-spec/blob/master/GFA2.md) formats;
 - The compacted de Bruijn graph in a ''reduced'' GFA format. It consists of two files, with the extensions — `.cf_seg` and `.cf_seq`.
   - The `.cf_seg` file contains all the maximal unitig fragments of the graph (the segment outputs from GFA, i.e. the `S`-tagged entries), each one with a unique id. This file is a list of pairs `<id segment>`.
   - The `.cf_seq` file contains the ''tiling'' of each input sequence, made by the maximal unitig fragments (the paths (GFA 1) / ordered groups (GFA 2), i.e. the `P`- / `O`-tagged entries). Each line of the file is of the format `<id tiling>`, where `id` is a unique identifier (name) of this sequence, and `tiling` is a space-separated list of the unitig ids, completely covering the sequence. Each unitig id also has a `+` or `-` sign following it, depending on whether the corresponding unitig is present in the canonical or the reverse-complemented form in this tiling order.
@@ -134,14 +134,14 @@ The input references should be in the FASTA format, possibly gzipped. The curren
   <tr>
   <td>
 
-  1	CGA  
-  3	ATGTC  
-  6	CTAAGA
+    1	CGA  
+    3	ATGTC  
+    6	CTAAGA
   
   </td>
   <td>
 
-  Reference:1_Sequence:ref1	1+ 3- 3+ 6-
+    Reference:1_Sequence:ref1	1+ 3- 3+ 6-
 
   </td></tr>
   </table>
@@ -154,14 +154,14 @@ Cuttlefish works with the canonical representations of the _k_-mers, i.e. each _
 
 ### ''Colored'' output
 
-In the [GFA](https://github.com/GFA-spec/GFA-spec) output format for the compacted de Bruijn graph, the graph is represented as a list of the vertices (i.e. the maximal unitigs) and the adjacencies between them. The output also includes a path-tiling for each individual sequence in the input references, i.e. an ordered list of the maximal unitig ids that completely tile that sequence. Put differently, the GFA outputs describe a colored de Bruijn graph in the sense that the color information for each vertex (maximal unitig) is encoded in the `P` (GFA 1.0) or the `O` (GFA 2.0) entries.
+In the [GFA](https://github.com/GFA-spec/GFA-spec) output formats for the compacted de Bruijn graph, the graph is represented as a list of the vertices (i.e. the maximal unitigs) and the adjacencies between them. The output also includes a path-tiling for each individual sequence in the input references, i.e. an ordered list of the maximal unitig ids that completely tile that sequence. Put differently, the GFA outputs describe a colored de Bruijn graph in the sense that the color information for each vertex (maximal unitig) is encoded in the `P` (GFA 1.0) or the `O` (GFA 2.0) entries (or the tilings in the file `.cf_seq`, in the reduced output).
 
-Throughout the [manuscript](https://doi.org/10.1101/2020.10.21.349605), when we mention the colored de Bruijn graph, we refer to a very specific definition of colors. While this definition is intuitive and natural when constructing the compacted colored de Bruijn graph from a set of reference genomes, it is not the case that the Cuttlefish algorithm allows arbitrary coloring of the _k_-mers in the de Bruijn graph. Specifically, in the definition adopted herein, the color set of a unitig is the subset of input references s<sub> i <sub> 1 </sub> </sub>, s<sub> i <sub> 2 </sub> </sub>, ..., s<sub> i <sub> l </sub> </sub> in which the unitig appears. This color information is implicitly encoded in the path entries of the output GFA files (the `P` entries in GFA 1.0 and the `O` entries in GFA 2.0). As a result, all unitigs produced by Cuttlefish are "monochromatic" under this coloring definition, as a change to the color set internally to a unitig would imply either a branch (which would terminate the unitig) or the start or end of some reference string and a sentinel _k_-mer (which would also terminate the unitig). If one were constructing the compacted colored de Bruijn graph from raw sequencing reads or from highly-fractured assemblies, then one may wish to adopt a different notion of color, wherein color sets may vary across an individual unitig.
+Throughout the [manuscript](https://doi.org/10.1101/2020.10.21.349605), when we mention the colored de Bruijn graph, we refer to a very specific definition of colors. While this definition is intuitive and natural when constructing the compacted colored de Bruijn graph from a set of reference genomes, it is not the case that the Cuttlefish algorithm allows arbitrary coloring of the _k_-mers in the de Bruijn graph. Specifically, in the definition adopted herein, the color set of a unitig is the subset of input references <code>s<sub>i<sub>1</sub></sub>, s<sub>i<sub>2</sub></sub>, ..., s<sub>i<sub>l</sub></sub></code> in which the unitig appears. This color information is implicitly encoded in the path entries of the output GFA files (the `P` entries in GFA 1.0 and the `O` entries in GFA 2.0). As a result, all unitigs produced by Cuttlefish are "monochromatic" under this coloring definition, as a change to the color set internally to a unitig would imply either a branch (which would terminate the unitig) or the start or end of some reference string and a sentinel _k_-mer (which would also terminate the unitig). If one were constructing the compacted colored de Bruijn graph from raw sequencing reads or from highly-fractured assemblies, then one may wish to adopt a different notion of color, wherein color sets may vary across an individual unitig.
 <!-- Adding such color information to the compacted de Bruijn graph produced by Cuttlefish would be possible, but would require further post-processing which we do not consider in this work. -->
 
 ## Example usage
 
-Please use the `kmc` and the `cuttlefish` binaries from their respective paths in the following examples. We use _k_ = 3, 4 CPU threads, and a working directory named `temp` in the examples.
+Please use the `kmc` and the `cuttlefish` binaries from their respective paths in the following examples. We use _k_ = 3, and 4 CPU threads, with a working directory named `temp` in the following examples.
 
 - **For individual input genome reference**
   
@@ -216,13 +216,13 @@ Please use the `kmc` and the `cuttlefish` binaries from their respective paths i
 
 ## Larger _k_-mer sizes
 
-The default maximum _k_-mer size supported with the installation is 63. To use larger _k_-values up-to some `MAX_K`, add `-DINSTANCE_COUNT=<instance_count>` with the `cmake` command — where `instance_count` is the number of `k`-values that are to be supported by Cuttlefish, and should be set to `(MAX_K + 1) / 2`. For example, to support a `MAX_K` of 201, use the following:
+The default maximum _k_-mer size supported with the installation is 63. To set the maximum _k_-mer size capacity to some `MAX_K`, add `-DINSTANCE_COUNT=<instance_count>` with the `cmake` command — where `instance_count` is the number of `k`-values that are to be supported by Cuttlefish, and should be set to `(MAX_K + 1) / 2`. For example, to support a `MAX_K` of 201, use the following:
 
 ```bash
   cmake -DINSTANCE_COUNT=101 ..
 ```
 
-Cuttlefish supports only the odd `k` values within `MAX_K` due to theoretical reasons. Increasing the `MAX_K` bound incurs additional compilation cost, slowing down the installation. Currently, KMC3 supports a `MAX_K` of 255. <!-- Also, to increase `MAX_K` beyond 255, the maximum supported _k_ should also be updated with KMC3. --> Please note that, the second step of the pipeline, i.e. the construction of a minimal perfect hash function (using [BBHash](https://github.com/rizkg/BBHash)) gets less efficient (time-wise) with increasing _k_.
+Cuttlefish supports only the odd `k` values within `MAX_K` due to theoretical reasons. Increasing the `MAX_K` bound incurs additional compilation cost, slowing down the installation. Currently, KMC3 supports a `MAX_K` of 255. <!-- Also, to increase `MAX_K` beyond 255, the maximum supported _k_ should also be updated with KMC3. --> Please note that, the second step of the pipeline, i.e. the construction of a minimal perfect hash function (using [BBHash](https://github.com/rizkg/BBHash)) gets less efficient (time-wise) with increasing _k_, due to disk-read throughput bottlenecks associated with reading the _k_-mers from the KMC database.
 
 ## Intermediate disk usage
 

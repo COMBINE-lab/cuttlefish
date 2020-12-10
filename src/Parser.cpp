@@ -151,5 +151,7 @@ void Parser::close()
 
         parser = nullptr;
         file_ptr = nullptr;
+
+        std::cerr << "\rClosed reference " << curr_ref() << ".\n";
     }
 }

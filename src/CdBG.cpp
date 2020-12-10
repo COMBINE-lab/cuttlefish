@@ -13,7 +13,7 @@ CdBG<k>::CdBG(const Build_Params& params):
 template <uint16_t k> 
 void CdBG<k>::construct()
 {
-    std::cout << "\nConstructing the minimal perfect hash function.\n";
+    std::cout << "\nConstructing the minimal perfect hash function (MPHF).\n";
     Vertices.construct(params.kmc_db_path(), params.thread_count(), params.working_dir_path(), params.mph_file_path());
 
     if(params.remove_kmc_db())
@@ -24,10 +24,10 @@ void CdBG<k>::construct()
 
     if(!params.output_file_path().empty())
     {
-        std::cout << "\nClassifying the vertices.\n";
+        std::cout << "\nComputing the vertex-states.\n";
         classify_vertices();
 
-        std::cout << "\nOutputting the maximal unitigs.\n";
+        std::cout << "\nOutputting the compacted de Bruijn graph.\n";
         output_maximal_unitigs();
     }
 

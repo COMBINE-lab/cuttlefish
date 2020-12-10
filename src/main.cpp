@@ -13,6 +13,7 @@
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
+#include <iomanip>
 
 
 // Driver function for the CdBG build.
@@ -62,6 +63,8 @@ void build(int argc, char** argv)
             std::cerr << "Invalid input configuration. Aborting.\n";
             std::exit(EXIT_FAILURE);
         }
+
+        std::cout.precision(3);
         
 
         std::cout << "\nConstructing the compacted de Bruijn graph for k = " << k << ".\n";
@@ -69,7 +72,7 @@ void build(int argc, char** argv)
         const Application<cuttlefish::MAX_K> app(params);
         app.execute();
 
-        std::cout << "\nConstructed the compacted de Bruijn graph at " << output_file << "\n";
+        std::cout << "\nConstructed the compacted de Bruijn graph at " << output_file << ".\n";
     }
     catch(const std::exception& e)
     {

@@ -90,8 +90,8 @@ void CdBG<k>::output_maximal_unitigs_plain()
         thread_pool.wait_completion();
     }
 
-    std::cerr << "\rProcessed " << seq_count << " sequences. Total reference length is " << ref_len << " bases.\n";
-    std::cout << "Maximum sequence buffer size used (in MB): " << max_buf_sz / (1024 * 1024) << "\n";
+    std::cout << "\nProcessed " << seq_count << " sequences. Total reference length: " << ref_len << " bases.\n";
+    std::cout << "Maximum input seqeunce buffer size used: " << max_buf_sz / (1024 * 1024) << " MB.\n";
 
 
     // Close the thread-pool.
@@ -110,15 +110,15 @@ void CdBG<k>::output_maximal_unitigs_plain()
 
 
     // Debug
-    std::cout << "Unitigs writing time to in-memory buffers (total): " <<
-        std::accumulate(seg_write_time.begin(), seg_write_time.end(), 0) << "\n";
-    std::cout << "Unitigs flush time to disk (total): " <<
-        std::accumulate(buff_flush_time.begin(), buff_flush_time.end(), 0) << "\n";
+    // std::cout << "Unitigs writing time to in-memory buffers (total): " <<
+    //     std::accumulate(seg_write_time.begin(), seg_write_time.end(), 0) << "\n";
+    // std::cout << "Unitigs flush time to disk (total): " <<
+    //     std::accumulate(buff_flush_time.begin(), buff_flush_time.end(), 0) << "\n";
 
 
     std::chrono::high_resolution_clock::time_point t_end = std::chrono::high_resolution_clock::now();
     double elapsed_seconds = std::chrono::duration_cast<std::chrono::duration<double>>(t_end - t_start).count();
-    std::cout << "Done outputting the maximal unitigs (in plain text). Time taken = " << elapsed_seconds << " seconds.\n";
+    std::cout << "Done writing the maximal unitigs (in plain text). Time taken = " << elapsed_seconds << " seconds.\n";
 }
 
 
@@ -155,9 +155,6 @@ void CdBG<k>::output_maximal_unitigs_gfa()
     const std::string& working_dir_path = params.working_dir_path();
 
 
-    // Open a parser for the FASTA / FASTQ file containing the reference.
-    Parser parser(reference_input);
-
 
     // Clear the output file and write the GFA header.
     clear_output_file();
@@ -183,6 +180,9 @@ void CdBG<k>::output_maximal_unitigs_gfa()
     path_write_time.resize(thread_count);
     path_flush_time.resize(thread_count);
 
+
+    // Open a parser for the FASTA / FASTQ file containing the reference.
+    Parser parser(reference_input);
 
     // Track the maximum sequence buffer size used and the total length of the references.
     size_t max_buf_sz = 0;
@@ -241,8 +241,8 @@ void CdBG<k>::output_maximal_unitigs_gfa()
         params.output_format() == 1 ? write_gfa_path(path_name) : write_gfa_ordered_group(path_name);
     }
 
-    std::cerr << "\rProcessed " << seq_count << " sequences. Total reference length is " << ref_len << " bases.\n";
-    std::cout << "Maximum seqeunce buffer size used (in MB): " << max_buf_sz / (1024 * 1024) << "\n";
+    std::cout << "\nProcessed " << seq_count << " sequences. Total reference length: " << ref_len << " bases.\n";
+    std::cout << "Maximum input seqeunce buffer size used: " << max_buf_sz / (1024 * 1024) << " MB.\n";
 
     
     // Close the thread pool.
@@ -264,23 +264,25 @@ void CdBG<k>::output_maximal_unitigs_gfa()
 
 
     // Debug
-    std::cout << "Segments writing time to in-memory buffers (total): " <<
-        std::accumulate(seg_write_time.begin(), seg_write_time.end(), 0) << "\n";
-    std::cout << "Links writing time to in-memory buffers (total): " <<
-        std::accumulate(link_write_time.begin(), link_write_time.end(), 0) << "\n";
-    std::cout << "Segments and links flush time to disk (total): " <<
-        std::accumulate(buff_flush_time.begin(), buff_flush_time.end(), 0) << "\n";
-    std::cout << "Paths writing time to in-memory buffers (total): " <<
-        std::accumulate(path_write_time.begin(), path_write_time.end(), 0) << "\n";
-    std::cout << "Paths flush time to disk (total): " <<
-        std::accumulate(path_flush_time.begin(), path_flush_time.end(), 0) << "\n";
-    std::cout << "Total paths concatenation time: " << path_concat_time << "\n";
-    std::cout << "Total logger shutdown time: " << logger_flush_time << "\n";
+    // std::cout << "Segments writing time to in-memory buffers (total): " <<
+    //     std::accumulate(seg_write_time.begin(), seg_write_time.end(), 0) << "\n";
+    // std::cout << "Links writing time to in-memory buffers (total): " <<
+    //     std::accumulate(link_write_time.begin(), link_write_time.end(), 0) << "\n";
+    // std::cout << "Segments and links flush time to disk (total): " <<
+    //     std::accumulate(buff_flush_time.begin(), buff_flush_time.end(), 0) << "\n";
+    // std::cout << "Paths writing time to in-memory buffers (total): " <<
+    //     std::accumulate(path_write_time.begin(), path_write_time.end(), 0) << "\n";
+    // std::cout << "Paths flush time to disk (total): " <<
+    //     std::accumulate(path_flush_time.begin(), path_flush_time.end(), 0) << "\n";
+    // std::cout << "Total paths concatenation time: " << path_concat_time << "\n";
+    // std::cout << "Total logger shutdown time: " << logger_flush_time << "\n";
 
 
     std::chrono::high_resolution_clock::time_point t_end = std::chrono::high_resolution_clock::now();
     double elapsed_seconds = std::chrono::duration_cast<std::chrono::duration<double>>(t_end - t_start).count();
-    std::cout << "Done outputting the maximal unitigs (in GFA format). Time taken = " << elapsed_seconds << " seconds.\n";
+    std::cout <<    "Done writing the compacted graph"
+                    " (in GFA " << (params.output_format() == cuttlefish::Output_Format::gfa1 ? 1 : 2) << " format)."
+                    " Time taken = " << elapsed_seconds << " seconds.\n";
 }
 
 
@@ -315,10 +317,6 @@ void CdBG<k>::output_maximal_unitigs_gfa_reduced()
     const Reference_Input& reference_input = params.reference_input();
     const uint16_t thread_count = params.thread_count();
     const std::string& working_dir_path = params.working_dir_path();
-
-
-    // Open a parser for the FASTA / FASTQ file containing the reference.
-    Parser parser(reference_input);
 
 
     // Clear the output file and initilize the output loggers.
@@ -357,6 +355,9 @@ void CdBG<k>::output_maximal_unitigs_gfa_reduced()
         })
     );
 
+
+    // Open a parser for the FASTA / FASTQ file containing the reference.
+    Parser parser(reference_input);
 
     // Track the maximum sequence buffer size used and the total length of the references.
     size_t max_buf_sz = 0;
@@ -420,8 +421,8 @@ void CdBG<k>::output_maximal_unitigs_gfa_reduced()
         job_queue.post_job(path_name, left_unitig);
     }
 
-    std::cerr << "\rProcessed " << seq_count << " sequences. Total reference length is " << ref_len << " bases.\n";
-    std::cout << "Maximum seqeunce buffer size used (in MB): " << max_buf_sz / (1024 * 1024) << "\n";
+    std::cout << "\nProcessed " << seq_count << " sequences. Total reference length: " << ref_len << " bases.\n";
+    std::cout << "Maximum input seqeunce buffer size used: " << max_buf_sz / (1024 * 1024) << " MB.\n";
 
     
     // Close the thread pool.
@@ -449,23 +450,23 @@ void CdBG<k>::output_maximal_unitigs_gfa_reduced()
 
 
     // Debug
-    std::cout << "Segments writing time to in-memory buffers (total): " <<
-        std::accumulate(seg_write_time.begin(), seg_write_time.end(), 0) << "\n";
-    std::cout << "Links writing time to in-memory buffers (total): " <<
-        std::accumulate(link_write_time.begin(), link_write_time.end(), 0) << "\n";
-    std::cout << "Segments and links flush time to disk (total): " <<
-        std::accumulate(buff_flush_time.begin(), buff_flush_time.end(), 0) << "\n";
-    std::cout << "Paths writing time to in-memory buffers (total): " <<
-        std::accumulate(path_write_time.begin(), path_write_time.end(), 0) << "\n";
-    std::cout << "Paths flush time to disk (total): " <<
-        std::accumulate(path_flush_time.begin(), path_flush_time.end(), 0) << "\n";
-    std::cout << "Total paths concatenation time: " << path_concat_time << "\n";
-    std::cout << "Total logger shutdown time: " << logger_flush_time << "\n";
+    // std::cout << "Segments writing time to in-memory buffers (total): " <<
+    //     std::accumulate(seg_write_time.begin(), seg_write_time.end(), 0) << "\n";
+    // std::cout << "Links writing time to in-memory buffers (total): " <<
+    //     std::accumulate(link_write_time.begin(), link_write_time.end(), 0) << "\n";
+    // std::cout << "Segments and links flush time to disk (total): " <<
+    //     std::accumulate(buff_flush_time.begin(), buff_flush_time.end(), 0) << "\n";
+    // std::cout << "Paths writing time to in-memory buffers (total): " <<
+    //     std::accumulate(path_write_time.begin(), path_write_time.end(), 0) << "\n";
+    // std::cout << "Paths flush time to disk (total): " <<
+    //     std::accumulate(path_flush_time.begin(), path_flush_time.end(), 0) << "\n";
+    // std::cout << "Total paths concatenation time: " << path_concat_time << "\n";
+    // std::cout << "Total logger shutdown time: " << logger_flush_time << "\n";
 
 
     std::chrono::high_resolution_clock::time_point t_end = std::chrono::high_resolution_clock::now();
     double elapsed_seconds = std::chrono::duration_cast<std::chrono::duration<double>>(t_end - t_start).count();
-    std::cout << "Done outputting the maximal unitigs (in GFA-reduced format). Time taken = " << elapsed_seconds << " seconds.\n";
+    std::cout << "Done writing the compacted graph (in GFA-reduced format). Time taken = " << elapsed_seconds << " seconds.\n";
 }
 
 

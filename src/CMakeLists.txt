@@ -4,7 +4,6 @@ set(PROJECT_SRC
         kmc_api/kmc_file.cpp
         kmc_api/kmer_api.cpp
         kmc_api/mmer.cpp
-        smhasher/MurmurHash3.cpp
         xxHash/xxhash.c
         xxHash/xxh_x86dispatch.c
         xxHash/xxhsum.c
@@ -21,6 +20,7 @@ set(PROJECT_SRC
         CdBG_Writer.cpp
         CdBG_Plain_Writer.cpp
         CdBG_GFA_Writer.cpp
+        CdBG_GFA_Reduced_Writer.cpp
         Validator.cpp
         Validator_Hash_Table.cpp
         Sequence_Validator.cpp

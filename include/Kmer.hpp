@@ -5,7 +5,6 @@
 
 
 #include "DNA_Utility.hpp"
-#include "smhasher/MurmurHash3.h"
 #include "kmc_api/kmc_file.h"
 #include "xxHash/xxh3.h"
 

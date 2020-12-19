@@ -16,34 +16,34 @@ void Kmer_Hash_Table<k>::build_mph_function(const Kmer_Container<k>& kmer_contai
     struct stat buffer;
     if(!mph_file_path.empty() && stat(mph_file_path.c_str(), &buffer) == 0)
     {
-        std::cout << "Found the MPH function at file " << mph_file_path << "\n";
-        std::cout << "Loading the MPH function.\n";
+        std::cout << "Found the MPHF at file " << mph_file_path << ".\n";
+        std::cout << "Loading the MPHF.\n";
 
         load_mph_function(mph_file_path);
 
-        std::cout << "Loaded the MPH function into memory.\n";
+        std::cout << "Loaded the MPHF into memory.\n";
     }
     else    // No BBHash file name provided, or does not exist. Build and save (if specified) one now.
     {
         // Build the MPHF.
-        std::cout << "Building the MPH function from the k-mer database " << kmer_container.container_location() << "\n";
+        std::cout << "Building the MPHF from the k-mer database " << kmer_container.container_location() << ".\n";
 
         auto data_iterator = boomphf::range(kmer_container.buf_begin(), kmer_container.buf_end());
         mph = new mphf_t(kmer_container.size(), data_iterator, working_dir_path, thread_count, GAMMA_FACTOR);
 
-        std::cout << "Built the MPH function in memory.\n";
+        std::cout << "Built the MPHF in memory.\n";
 
-        std::cout << "Total data copy time to BBHash buffers " << mph->data_copy_time << "\n\n";
+        // std::cout << "Total data copy time to BBHash buffers " << mph->data_copy_time << "\n\n";
         
 
         // Save the MPHF if specified.
         if(!mph_file_path.empty())
         {
-            std::cout << "Saving the MPH function in file " << mph_file_path << "\n";
+            std::cout << "Saving the MPHF in file " << mph_file_path << ".\n";
 
             save_mph_function(mph_file_path);
 
-            std::cout << "Saved the MPH function in disk.\n";
+            std::cout << "Saved the MPHF in disk.\n";
         }
     }
 }
@@ -131,19 +131,20 @@ void Kmer_Hash_Table<k>::construct(const std::string& kmc_db_path, const uint16_
 
     // Build the minimal perfect hash function.
     build_mph_function(kmer_container, thread_count, working_dir_path, mph_file_path);
+
     const uint64_t total_bits = mph->totalBitSize();
-    std::cout << "Total MPH size (in MB): " << total_bits / (8 * 1024 * 1024);
-    std::cout << "; in bits / k-mer: " << (float)(total_bits) / kmer_count << "\n";
+    std::cout <<    "\nTotal MPHF size: " << total_bits / (8 * 1024 * 1024) << " MB."
+                    " Bits per k-mer: " << (float)(total_bits) / kmer_count << ".\n";
 
     // Allocate the hash table buckets.
     hash_table.resize(kmer_count);
     hash_table.clear_mem();
-    std::cout << "Allocated hash table buckets for the k-mers. Total memory taken (in MB): " <<
-        hash_table.bytes() / (1024 * 1024) << "\n";
+    std::cout << "Allocated hash table buckets for the k-mers. Total size: " <<
+                hash_table.bytes() / (1024 * 1024) << " MB.\n";
 
     uint64_t total_mem = (total_bits / 8) + hash_table.bytes();   // in bytes
-    std::cout << "Total memory usage by the hash table: " << total_mem / (1024 * 1024)  << " MB.\n";
-    std::cout << "Bits per k-mer: " << (total_mem * 8.0) / kmer_count << "\n";
+    std::cout <<    "Total memory usage by the hash table: " << total_mem / (1024 * 1024)  << " MB."
+                    " Bits per k-mer: " << (total_mem * 8.0) / kmer_count << ".\n";
 
 
     std::chrono::high_resolution_clock::time_point t_end = std::chrono::high_resolution_clock::now();

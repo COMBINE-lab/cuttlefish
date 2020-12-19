@@ -13,16 +13,39 @@ CdBG<k>::CdBG(const Build_Params& params):
 template <uint16_t k> 
 void CdBG<k>::construct()
 {
-    std::cout << "\nConstructing the minimal perfect hash function.\n";
+    std::cout << "\nConstructing the minimal perfect hash function (MPHF).\n";
     Vertices.construct(params.kmc_db_path(), params.thread_count(), params.working_dir_path(), params.mph_file_path());
 
-    std::cout << "\nClassifying the vertices.\n";
-    classify_vertices();
+    if(params.remove_kmc_db())
+    {
+        remove_kmer_set(params.kmc_db_path());
+        std::cout << "\nRemoved the KMC database from disk.\n";
+    }
 
-    std::cout << "\nOutputting the maximal unitigs.\n";
-    output_maximal_unitigs();
+    if(!params.output_file_path().empty())
+    {
+        std::cout << "\nComputing the vertex-states.\n";
+        classify_vertices();
+
+        std::cout << "\nOutputting the compacted de Bruijn graph.\n";
+        output_maximal_unitigs();
+    }
 
     Vertices.clear();
+}
+
+
+template <uint16_t k>
+void CdBG<k>::remove_kmer_set(const std::string& kmc_file_pref) const
+{
+    const std::string kmc_file1_path(kmc_file_pref + ".kmc_pre");
+    const std::string kmc_file2_path(kmc_file_pref + ".kmc_suf");
+
+    if(std::remove(kmc_file1_path.c_str()) || std::remove(kmc_file2_path.c_str()))
+    {
+        std::cerr << "Error removing the KMC database file from path prefix " << kmc_file_pref << ". Aborting.\n";
+        std::exit(EXIT_FAILURE);
+    }
 }
 
 

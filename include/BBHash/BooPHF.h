@@ -950,14 +950,14 @@ we need this 2-functors scheme because HashFunctors won't work with unordered_ma
 				_progressBar.timer_mode=1;
 				
 				
-				double total_raw = _nb_levels;
+				// double total_raw = _nb_levels;
 				
 				double sum_geom_read =  ( 1.0 / (1.0 - _proba_collision));
 				double total_writeEach = sum_geom_read + 1.0;
 
 				double total_fastmode_ram =  (_fastModeLevel+1) +  ( pow(_proba_collision,_fastModeLevel)) * (_nb_levels-(_fastModeLevel+1))   ;
 				
-				printf("for info, total work write each  : %.3f    total work inram from level %i : %.3f  total work raw : %.3f \n",total_writeEach,_fastModeLevel,total_fastmode_ram,total_raw);
+				// printf("for info, total work write each  : %.3f    total work inram from level %i : %.3f  total work raw : %.3f \n",total_writeEach,_fastModeLevel,total_fastmode_ram,total_raw);
 
 				if(writeEach)
 				{

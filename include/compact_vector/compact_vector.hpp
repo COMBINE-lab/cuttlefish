@@ -251,7 +251,7 @@ namespace compact {
                     std::memcpy(reinterpret_cast<void *>(&w_size), reinterpret_cast<void *>(const_cast<char *>(data)),
                                 sizeof(w_size));
                     m_size = w_size;
-                    std::cerr << "size = " << m_size << "\n";
+                    // std::cerr << "size = " << m_size << "\n";
                     data += sizeof(w_size);
                     uint64_t w_capacity{0};
                     std::memcpy(reinterpret_cast<void *>(&w_capacity),
@@ -275,7 +275,7 @@ namespace compact {
                     uint64_t w_size{0};
                     ifile.read(reinterpret_cast<char *>(&w_size), sizeof(w_size));
                     m_size = w_size;
-                    std::cerr << "size = " << m_size << "\n";
+                    // std::cerr << "size = " << m_size << "\n";
 
                     uint64_t w_capacity{0};
                     ifile.read(reinterpret_cast<char *>(&w_capacity), sizeof(w_capacity));

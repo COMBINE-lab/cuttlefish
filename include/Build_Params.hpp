@@ -21,8 +21,9 @@ private:
     const std::string kmc_db_path_; // Path to the KMC database containing the k-mer set.
     const uint16_t thread_count_;    // Number of threads to work with.
     const std::string& output_file_path_;   // Path to the output file.
-    const uint8_t output_format_;   // Output format (0: txt, 1: GFAv1, 2: GFAv2).
+    const cuttlefish::Output_Format output_format_;   // Output format (0: txt, 1: GFAv1, 2: GFAv2).
     const std::string& working_dir_path_;    // Path to the working directory (for temporary files).
+    const bool remove_kmc_db_;  // Option to remove the KMC database, once no longer required.
     const std::string& mph_file_path_;   // Optional path to file storing an MPH over the k-mer set.
     const std::string& buckets_file_path_;  // Optional path to file storing the hash table buckets for the k-mer set.
 
@@ -33,12 +34,13 @@ public:
     Build_Params(   const std::vector<std::string>& ref_paths,
                     const std::vector<std::string>& list_paths,
                     const std::vector<std::string>& dir_paths,
-                    uint16_t k,
+                    const uint16_t k,
                     const std::string& kmc_db_path,
-                    uint16_t thread_count,
+                    const uint16_t thread_count,
                     const std::string& output_file_path,
-                    uint8_t output_format,
+                    const uint8_t output_format,
                     const std::string& working_dir_path,
+                    const bool remove_kmc_db,
                     const std::string& mph_file_path,
                     const std::string& buckets_file_path):
         reference_input_(ref_paths, list_paths, dir_paths),
@@ -46,8 +48,9 @@ public:
         kmc_db_path_(kmc_db_path),
         thread_count_(thread_count),
         output_file_path_(output_file_path),
-        output_format_(output_format),
+        output_format_(cuttlefish::Output_Format(output_format)),
         working_dir_path_(working_dir_path),
+        remove_kmc_db_(remove_kmc_db),
         mph_file_path_(mph_file_path),
         buckets_file_path_(buckets_file_path)
     {}
@@ -89,7 +92,7 @@ public:
 
 
     // Returns the output format.
-    uint8_t output_format() const
+    cuttlefish::Output_Format output_format() const
     {
         return output_format_;
     }
@@ -99,6 +102,13 @@ public:
     const std::string& working_dir_path() const
     {
         return working_dir_path_;
+    }
+
+
+    // Returns the boolean flag for removing the KMC database.
+    bool remove_kmc_db() const
+    {
+        return remove_kmc_db_;
     }
 
 

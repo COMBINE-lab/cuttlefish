@@ -70,8 +70,8 @@ void CdBG<k>::classify_vertices()
             thread_pool.wait_completion();
         }
 
-        std::cerr << "\rProcessed " << seq_count << " sequences. Total reference length is " << ref_len << " bases.\n";
-        std::cout << "Maximum buffer size used (in MB): " << max_buf_sz / (1024 * 1024) << "\n";
+        std::cerr << "\nProcessed " << seq_count << " sequences. Total reference length: " << ref_len << " bases.\n";
+        std::cout << "Maximum input seqeunce buffer size used: " << max_buf_sz / (1024 * 1024) << " MB.\n";
 
         // Close the thread-pool.
         thread_pool.close();
@@ -94,7 +94,7 @@ void CdBG<k>::classify_vertices()
 
     std::chrono::high_resolution_clock::time_point t_end = std::chrono::high_resolution_clock::now();
     double elapsed_seconds = std::chrono::duration_cast<std::chrono::duration<double>>(t_end - t_start).count();
-    std::cout << "Done classifying the vertices. Time taken = " << elapsed_seconds << " seconds.\n";
+    std::cout << "Done computing the vertex-states. Time taken = " << elapsed_seconds << " seconds.\n";
 }
 
 

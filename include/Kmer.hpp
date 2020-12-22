@@ -8,6 +8,7 @@
 #include "kmc_api/kmc_file.h"
 #include "xxHash/xxh3.h"
 
+#include <cstring>
 #include <string>
 #include <algorithm>
 
@@ -248,7 +249,8 @@ inline void Kmer<k>::from_KMC_data(const uint64_t* const kmc_data)
     
     constexpr uint8_t byte_alignment = (k % 4 != 0 ? 4 - (k % 4) : 0);
     constexpr uint32 offset = 62 - ((k - 1 + byte_alignment) & 31) * 2;
-
+    //std::memcpy(kmer_data, kmc_data, NUM_INTS * sizeof(kmer_data[0]));
+    
     if(offset)
     {
         for(int32 i = NUM_INTS - 1; i >= 1; --i)
@@ -262,6 +264,7 @@ inline void Kmer<k>::from_KMC_data(const uint64_t* const kmc_data)
     else
         for (int32 i = NUM_INTS - 1; i >= 0; --i)
             kmer_data[NUM_INTS - 1 - i] = kmc_data[i];
+            
 }
 
 

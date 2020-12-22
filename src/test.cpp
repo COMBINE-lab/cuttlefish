@@ -13,9 +13,11 @@
 #include "spdlog/sinks/basic_file_sink.h"
 #include "spdlog/sinks/stdout_color_sinks.h"
 
+#include <chrono> 
 #include <iostream>
 #include <fstream>
 #include <cstdio>
+#include <cstdlib>
 #include <string>
 #include <zlib.h>
 #include <cstring>
@@ -393,27 +395,48 @@ void test_SPMC_iterator_performance(const char* const db_path, const size_t cons
 
     Kmer_SPMC_Iterator<k> it(kmer_container.spmc_begin(consumer_count));
     it.launch_production();
+    CKMCFile* kmerdb = it.get_kmer_database();
 
     std::cout << "\nProduction ongoing\n";
 
     std::vector<std::unique_ptr<std::thread>> T(consumer_count);
-    // std::vector<Kmer<k>> max_kmer(consumer_count);
+    std::vector<Kmer<k>> max_kmer(consumer_count);
 
     for(size_t i = 0; i < consumer_count; ++i)
     {
         const size_t consumer_id = i;
+        std::atomic<uint64_t> ctr{0};
+        auto& mk = max_kmer[consumer_id];
         T[consumer_id].reset(
-            new std::thread([&kmer_container, &it, consumer_id]()
+            new std::thread([&kmer_container, &it, &mk, &ctr, kmerdb, consumer_id]()
             // new std::thread([&kmer_container, &it, &max_kmer, i]()
                 {
                     std::cout << "Launched consumer " << consumer_id << ".\n";
                     Kmer<k> kmer;
                     Kmer<k> max_kmer;
-                    
                     while(it.tasks_expected(consumer_id))
-                        if(it.task_available(consumer_id) && it.value_at(consumer_id, kmer))
-                            max_kmer = std::max(max_kmer, kmer);
+                        if(it.task_available(consumer_id)) {// && it.value_at(consumer_id, kmer)) {
+                            //
+                            {
+                                auto* ts = it.thread_state_for(consumer_id);
+                                while (ts->kmers_parsed < ts->kmers_available)
+                                {
+                                    kmerdb->parse_kmer<k>(ts->pref_idx, ts->suff_idx, ts->buffer,
+                                                          ts->kmers_parsed * kmerdb->suff_record_size(), kmer);
+
+                                    max_kmer = std::max(max_kmer, kmer);
+                                    //auto v = ctr++;
+                                    //if (v % 10000000 == 1)
+                                    //{
+                                    //    std::cerr << "parsed " << ctr << " k-mers\n";
+                                    //}
+                                    ts->kmers_parsed++;
+                                }
+                                it.set_pending(consumer_id);
+                            }
+                        }
                                 // max_kmer[i] = std::max(max_kmer[i], kmer);
+                    mk = max_kmer;
                 }
             )
         );
@@ -424,7 +447,11 @@ void test_SPMC_iterator_performance(const char* const db_path, const size_t cons
     for(size_t i = 0; i < consumer_count; ++i)
         T[i]->join();
 
-    // std::cout << "Max k-mer: " << std::max_element(max_kmer.begin(), max_kmer.end())->string_label() << "\n";
+    //Kmer<k> global_max;
+    //for (size_t i = 0; i < consumer_count; ++i) {
+    //    global_max = std::max(global_max, max_kmer[i]);
+    //}
+    std::cout << "Max k-mer: " << std::max_element(max_kmer.begin(), max_kmer.end())->string_label() << "\n";
 }
 
 
@@ -463,6 +490,7 @@ void test_iterator_correctness(const char* const db_path, const size_t consumer_
     std::vector<std::vector<Kmer<k>>> kmers(consumer_count);
     Kmer_SPMC_Iterator<k> it(kmer_container.spmc_begin(consumer_count));
 
+    auto start = std::chrono::high_resolution_clock::now(); 
     it.launch_production();
 
     std::vector<std::unique_ptr<std::thread>> T(consumer_count);
@@ -485,6 +513,12 @@ void test_iterator_correctness(const char* const db_path, const size_t consumer_
     it.seize_production();
     for(size_t i = 0; i < consumer_count; ++i)
         T[i]->join();
+
+    auto stop = std::chrono::high_resolution_clock::now(); 
+    auto duration = std::chrono::duration_cast<std::chrono::microseconds>(stop - start); 
+    // To get the value of duration use the count() 
+    // member function on the duration object 
+    std::cout << "actual parsing took: " << duration.count() << std::endl; 
 
     std::vector<Kmer<k>> spmc_kmers;
     spmc_kmers.reserve(kmer_container.size());
@@ -548,7 +582,7 @@ int main(int argc, char** argv)
     // count_kmers_in_unitigs(argv[1], atoi(argv[2]));
 
     static constexpr uint16_t k = 25;
-    static constexpr size_t consumer_count = 1;
+    static const size_t consumer_count = std::atoi(argv[2]);
 
     // test_iterator_correctness<31>(argv[1], consumer_count);
 

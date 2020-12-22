@@ -2,6 +2,8 @@
 #include "Directed_Kmer.hpp"
 #include "Kmer_Container.hpp"
 #include "Kmer_Iterator.hpp"
+#include "Kmer_Buffered_Iterator.hpp"
+#include "Kmer_SPMC_Iterator.hpp"
 #include "BBHash/BooPHF.h"
 #include "Kmer_Hasher.hpp"
 #include "Validator.hpp"
@@ -350,6 +352,171 @@ void count_kmers_in_unitigs(const char* file_name, uint16_t k)
 }
 
 
+template <uint16_t k>
+void test_buffered_iterator_performance(const char* const file_name)
+{
+    const std::string kmc_file(file_name);
+
+    // Open the k-mers container.
+    Kmer_Container<k> kmers(kmc_file);
+
+    std::cout << "k-mers length: " << kmers.kmer_length() << "\n";
+    std::cout << "k-mers count: " << kmers.size() << "\n";
+
+
+    // Iterating over the k-mers on the database from disk.
+
+    std::cout << "\nPerforming some non-trivial task with dereferenced buffered iterators.\n";
+    auto it_beg(kmers.buf_begin());
+    auto it_end(kmers.buf_end());
+    uint64_t count = 0;
+    Kmer<k> max_kmer = Kmer<k>();
+
+    for(auto it = it_beg; it != it_end; ++it)
+    {
+        // Use the iterator from here
+        max_kmer = std::max(max_kmer, *it);
+        count++;
+        if(count % 100000000 == 0)
+            std::cout << "Processed " << count << " k-mers\n";
+    }
+
+    std::cout << "Max k-mer: " << max_kmer.string_label() << "\n";
+    std::cout << "k-mers count found using iterators: " << count << "\n";
+}
+
+
+template <uint16_t k>
+void test_SPMC_iterator_performance(const char* const db_path, const size_t consumer_count)
+{
+    Kmer_Container<k> kmer_container(db_path);
+
+    Kmer_SPMC_Iterator<k> it(kmer_container.spmc_begin(consumer_count));
+    it.launch_production();
+
+    std::cout << "\nProduction ongoing\n";
+
+    std::vector<std::unique_ptr<std::thread>> T(consumer_count);
+    // std::vector<Kmer<k>> max_kmer(consumer_count);
+
+    for(size_t i = 0; i < consumer_count; ++i)
+    {
+        const size_t consumer_id = i;
+        T[consumer_id].reset(
+            new std::thread([&kmer_container, &it, consumer_id]()
+            // new std::thread([&kmer_container, &it, &max_kmer, i]()
+                {
+                    std::cout << "Launched consumer " << consumer_id << ".\n";
+                    Kmer<k> kmer;
+                    Kmer<k> max_kmer;
+                    
+                    while(it.tasks_expected(consumer_id))
+                        if(it.task_available(consumer_id) && it.value_at(consumer_id, kmer))
+                            max_kmer = std::max(max_kmer, kmer);
+                                // max_kmer[i] = std::max(max_kmer[i], kmer);
+                }
+            )
+        );
+    }
+
+
+    it.seize_production();
+    for(size_t i = 0; i < consumer_count; ++i)
+        T[i]->join();
+
+    // std::cout << "Max k-mer: " << std::max_element(max_kmer.begin(), max_kmer.end())->string_label() << "\n";
+}
+
+
+template <uint16_t k>
+void test_iterator_correctness(const char* const db_path, const size_t consumer_count)
+{
+    const std::string kmc_path(db_path);
+
+    // Open the k-mers container.
+    Kmer_Container<k> kmer_container(kmc_path);
+
+    std::cout << "k-mers length: " << kmer_container.kmer_length() << "\n";
+    std::cout << "k-mers count: " << kmer_container.size() << "\n";
+
+
+    // Iterating over the k-mers on the database from disk.
+
+    std::cout << "\nCollecting the k-mers with a buffered iterator.\n";
+
+    std::vector<Kmer<k>> buf_kmers;
+    buf_kmers.reserve(kmer_container.size());
+
+    auto it_end(kmer_container.buf_end());
+    uint64_t count = 0;
+    for(auto it(kmer_container.buf_begin()); it != it_end; ++it)
+    {
+        // Use the iterator from here
+        buf_kmers.emplace_back(*it);
+        count++;
+        if(count % 100000000 == 0)
+            std::cout << "Processed " << count << " k-mers\n";
+    }
+
+
+    std::cout << "\nCollecting the k-mers with an SPMC iterator.\n";
+    std::vector<std::vector<Kmer<k>>> kmers(consumer_count);
+    Kmer_SPMC_Iterator<k> it(kmer_container.spmc_begin(consumer_count));
+
+    it.launch_production();
+
+    std::vector<std::unique_ptr<std::thread>> T(consumer_count);
+
+    for(size_t i = 0; i < consumer_count; ++i)
+        T[i].reset(
+            new std::thread([&it, &kmers, i]()
+                {
+                    std::cout << "Launched consumer " << i << ".\n";
+                    Kmer<k> kmer;
+                    
+                    while(it.tasks_expected(i))
+                        if(it.task_available(i) && it.value_at(i, kmer))
+                            kmers[i].emplace_back(kmer);
+                }
+            )
+        );
+
+
+    it.seize_production();
+    for(size_t i = 0; i < consumer_count; ++i)
+        T[i]->join();
+
+    std::vector<Kmer<k>> spmc_kmers;
+    spmc_kmers.reserve(kmer_container.size());
+    for(size_t i = 0; i < consumer_count; ++i)
+        spmc_kmers.insert(spmc_kmers.end(), kmers[i].begin(), kmers[i].end());
+
+    
+    if(buf_kmers.size() != spmc_kmers.size())
+        std::cout << "Incorrect set of k-mers\n";
+    else
+    {
+        std::cout << "k-mer counts match\n";
+
+        std::cout << "Sorting the k-mer sets (of both collection).\n";
+        std::sort(buf_kmers.begin(), buf_kmers.end());
+        std::sort(spmc_kmers.begin(), spmc_kmers.end());
+        std::cout << "Done sorting\n";
+
+        size_t mis = 0;
+        for(size_t i = 0; i < buf_kmers.size(); ++i)
+            if(!(buf_kmers[i] == spmc_kmers[i]))
+            {
+                // std::cout << "Mismatching k-mers found\n";
+                mis++;
+            }
+
+        std::cout << "#mismatching_k-mers = " << mis << "\n";
+        std::cout << (mis > 0 ? "Incorrect" : "Correct") << " k-mer set parsed.\n";
+    }
+}
+
+
 int main(int argc, char** argv)
 {
     (void)argc;
@@ -379,6 +546,14 @@ int main(int argc, char** argv)
     // test_async_writer(argv[1]);
 
     // count_kmers_in_unitigs(argv[1], atoi(argv[2]));
+
+    static constexpr uint16_t k = 25;
+    static constexpr size_t consumer_count = 1;
+
+    // test_iterator_correctness<31>(argv[1], consumer_count);
+
+    // test_buffered_iterator_performance<k>(argv[1]);
+    test_SPMC_iterator_performance<k>(argv[1], consumer_count);
 
 
     return 0;

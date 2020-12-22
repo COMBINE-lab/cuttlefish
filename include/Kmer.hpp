@@ -76,6 +76,9 @@ public:
     // Gets the k-mer from the KMC api object `kmer_api`.
     void from_CKmerAPI(const CKmerAPI& kmer_api);
 
+    // Gets the k-mer from its KMC raw-binary representation.
+    void from_KMC_data(const uint64_t* kmc_data);
+
     // Returns the reverese complement of the k-mer.
     Kmer<k> reverse_complement() const;
 
@@ -85,6 +88,9 @@ public:
 
     // Returns true iff this k-mer is identical to the other k-mer `rhs`.
     bool operator==(const Kmer<k>& rhs) const;
+
+    // Returns true iff this k-mer is not identical to the other k-mer `rhs`.
+    bool operator!=(const Kmer<k>& rhs) const;
 
     // Returns `true` iff the k-mer is in the forward direction relative to
     // the other k-mer `kmer_hat`.
@@ -228,6 +234,38 @@ inline void Kmer<k>::from_CKmerAPI(const CKmerAPI& kmer_api)
 
 
 template <uint16_t k>
+inline void Kmer<k>::from_KMC_data(const uint64_t* const kmc_data)
+{
+    // The endianness of the k-mer data array in the KMC database is in the opposite
+    // order of the one that Cuttlefish uses. So the fetch gathers it in reverse.
+    // Roughly, the KMC database stores a literal k-mer `b_{k - 1} ... b_1 b_0` such
+    // that the prefix aligns with a byte boundary, i.e. `b_{k - 1} ... b_{k - 1 - 63}`
+    // is stored as one 64-bit collection at its `kmer_data[0]` entry, and the rest
+    // follows this alignment. This is why, the 64-bits corresponding to the substring
+    // `b_63 ... b_0` might be shared between the two maximum indices of `kmer_data`;
+    // so can be all the next disjoint 64-bit substrings. The remainder substring
+    // (of < 64-bits) can be found from just the 0'th entry of `kmer_data`.
+    
+    constexpr uint8_t byte_alignment = (k % 4 != 0 ? 4 - (k % 4) : 0);
+    constexpr uint32 offset = 62 - ((k - 1 + byte_alignment) & 31) * 2;
+
+    if(offset)
+    {
+        for(int32 i = NUM_INTS - 1; i >= 1; --i)
+        {
+            kmer_data[NUM_INTS - 1 - i] = kmc_data[i] >> offset;
+            kmer_data[NUM_INTS - 1 - i] += kmc_data[i - 1] << (64 - offset);
+        }
+
+        kmer_data[NUM_INTS - 1] = kmc_data[0] >> offset;
+    }
+    else
+        for (int32 i = NUM_INTS - 1; i >= 0; --i)
+            kmer_data[NUM_INTS - 1 - i] = kmc_data[i];
+}
+
+
+template <uint16_t k>
 inline Kmer<k> Kmer<k>::reverse_complement() const
 {
     Kmer<k> kmer(*this);
@@ -267,6 +305,13 @@ inline bool Kmer<k>::operator==(const Kmer<k>& rhs) const
             return false;
 
     return true;
+}
+
+
+template <uint16_t k>
+inline bool Kmer<k>::operator!=(const Kmer<k>& rhs) const
+{
+    return !operator==(rhs);
 }
 
 

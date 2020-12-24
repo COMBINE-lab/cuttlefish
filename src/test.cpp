@@ -395,7 +395,6 @@ void test_SPMC_iterator_performance(const char* const db_path, const size_t cons
 
     Kmer_SPMC_Iterator<k> it(kmer_container.spmc_begin(consumer_count));
     it.launch_production();
-    CKMCFile* kmerdb = it.get_kmer_database();
 
     std::cout << "\nProduction ongoing\n";
 
@@ -408,7 +407,7 @@ void test_SPMC_iterator_performance(const char* const db_path, const size_t cons
         std::atomic<uint64_t> ctr{0};
         auto& mk = max_kmer[consumer_id];
         T[consumer_id].reset(
-            new std::thread([&kmer_container, &it, &mk, &ctr, kmerdb, consumer_id]()
+            new std::thread([&kmer_container, &it, &mk, &ctr, consumer_id]()
             // new std::thread([&kmer_container, &it, &max_kmer, i]()
                 {
                     std::cout << "Launched consumer " << consumer_id << ".\n";

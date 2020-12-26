@@ -11,12 +11,24 @@
 
 #include <vector>
 #include <thread>
-#include <iostream> // TODO: remove after testing.
 
+
+// Data required by the consumers to correctly parse raw binary k-mers.
+struct Consumer_Data
+{
+    uint8_t* buffer{nullptr};   // Buffer for the raw binary k-mers.
+    uint64_t pref_idx;          // Index of the prefix (into the in-memory KMC prefix buffer) to start parsing (and using) k-mers from.
+    uint64_t suff_idx;          // Index of the suffix (into the in-disk KMC suffix collection) to start parsing (and using) k-mers from.
+    uint64_t kmers_available;   // Number of raw suffixes present in the current buffer.
+    uint64_t kmers_parsed;      // Number of k-mers parsed by from the current buffer.
+    uint64_t pad_[3];           // Padding to avoid false-sharing.
+                                // TODO: use better soln: https://en.cppreference.com/w/cpp/thread/hardware_destructive_interference_size
+};
 
 // An "iterator" class to iterate over a k-mer database on disk, where a single producer thread
 // (sequentially) reads the raw binary representations of the k-mers from disk, and a number of
 // different consumer threads fetch (and parse) the raw binary k-mers.
+// Note: in a technical sense, it's not an iterator.
 template <uint16_t k>
 class Kmer_SPMC_Iterator
 {
@@ -27,16 +39,6 @@ public:
 
     typedef Kmer_SPMC_Iterator iterator;
 
-    // Iterator traits.
-    // typedef std::input_iterator_tag iterator_category;
-    // typedef Kmer<k> value_type;
-    // typedef int difference_type;
-    // typedef Kmer<k>* pointer;
-    // typedef Kmer<k>& reference;
-
-    // Will `->` be supported?
-    // typedef const Kmer<k>* const_ptr_t;
-
 
 private:
 
@@ -44,14 +46,15 @@ private:
     CKMCFile kmer_database; // The k-mer database object.
 
     const uint64_t kmer_count;  // Number of k-mers present in the underlying database.
-    const size_t consumer_count;  // Total number of consumers.
+    const size_t consumer_count;  // Total number of consumer threads of the iterator.
 
     uint64_t kmers_read;    // Number of raw k-mers read (off disk) by the iterator.
 
-    std::unique_ptr<std::thread> reader{nullptr};   // The thread doing the actual disk-read (of the binary data).
+    std::unique_ptr<std::thread> reader{nullptr};   // The thread doing the actual disk-read of the binary data, i.e. the producer thread.
 
     static constexpr size_t BUF_SZ_PER_CONSUMER = (1 << 24);   // Size of the consumer-specific buffers (in bytes).
-    std::vector<uint8_t*> buffer; // Buffers for the raw binary k-mers, for the consumer threads.
+
+    std::vector<Consumer_Data> consumer;   // Parsing data required for each consumer.
 
     // Status of the tasks for each consumer thread.
     enum class Task_Status: uint8_t
@@ -63,30 +66,17 @@ private:
 
     // TODO: replace the raw pointer with a vector maybe?
     volatile Task_Status* task_status{nullptr}; // Collection of the task statuses of the consumers.
-    
-    // Index of the prefix (into the in-memory KMC prefix buffer) to start parsing (and using) k-mers from, for a consumer.
-    std::vector<uint64_t> pref_idx;
-    
-    // Index of the suffix (into the in-disk KMC suffix collection) to start parsing (and using) k-mers from, for a consumer.
-    std::vector<uint64_t> suff_idx;
-
-    // Number of k-mers read-off disk and made available for a consumer; i.e. number of raw suffixes present in the current buffer.
-    std::vector<uint64_t> kmers_available;
-    
-    // Number of k-mers parsed by a consumer from its current buffer.
-    std::vector<uint64_t> kmers_parsed;
-
 
     // Constructs an iterator for the provided container `kmer_container`, on either
     // its beginning or its ending position, based on `at_begin` and `at_end`. The
     // iterator is to support `consumer_count` number of different consumers.
     Kmer_SPMC_Iterator(const Kmer_Container<k>* kmer_container, size_t consumer_count, bool at_begin = true, bool at_end = false);
 
-    // Opens the k-mer database with the path prefix `db_path` into `kmer_database`.
-    static void open_kmer_database(const std::string& db_path, CKMCFile& kmer_database);
+    // Opens the k-mer database file with the path prefix `db_path`.
+    void open_kmer_database(const std::string& db_path);
 
-    // Closes the k-mer database `kmer_database`.
-    static void close_kmer_database(CKMCFile& kmer_database);
+    // Closes the k-mer database file.
+    void close_kmer_database();
 
     // Reads raw binary k-mer representations from the underlying k-mer database, and
     // makes those available for consumer threads. Reading continues until the database
@@ -100,7 +90,7 @@ private:
 public:
 
     // Copy constructs an iterator from another one `other`.
-    // Note: probably this shouldn't exist, like the `operator=`. But the BBHash code
+    // Note: this should be prohibited, like the `operator=`. But the BBHash code
     // requires this to be implemented.
     Kmer_SPMC_Iterator(const iterator& other);
 
@@ -108,7 +98,7 @@ public:
     ~Kmer_SPMC_Iterator();
 
     // Prohibits assignment-copying. This is a complex object with a background disk-reader
-    // thread and a KMC database object in some arbitrary state. These should not be allowed
+    // thread and a KMC database object in some *arbitrary* state. These should not be allowed
     // to be copied. Besides, there is a number of constant fields for the iterator.
     iterator& operator=(const iterator& rhs) = delete;
 
@@ -171,14 +161,15 @@ inline Kmer_SPMC_Iterator<k>::~Kmer_SPMC_Iterator()
     {
         delete[] task_status;
 
-        for(size_t id = 0; id < consumer_count; ++id)
-            delete[] buffer[id];
+        for(size_t id = 0; id < consumer_count; ++id) {
+           delete[] consumer[id].buffer;
+        }
     }
 }
 
 
 template <uint16_t k>
-inline void Kmer_SPMC_Iterator<k>::open_kmer_database(const std::string& db_path, CKMCFile& kmer_database)
+inline void Kmer_SPMC_Iterator<k>::open_kmer_database(const std::string& db_path)
 {
     if(!kmer_database.open_for_listing_unbuffered(db_path))
     {
@@ -189,7 +180,7 @@ inline void Kmer_SPMC_Iterator<k>::open_kmer_database(const std::string& db_path
 
 
 template <uint16_t k>
-inline void Kmer_SPMC_Iterator<k>::close_kmer_database(CKMCFile& kmer_database)
+inline void Kmer_SPMC_Iterator<k>::close_kmer_database()
 {
     if(!kmer_database.Close())
     {
@@ -206,22 +197,20 @@ inline void Kmer_SPMC_Iterator<k>::launch_production()
 
     task_status = new volatile Task_Status[consumer_count];
 
-    buffer.resize(consumer_count, nullptr);
+    consumer.resize(consumer_count);
     for(size_t id = 0; id < consumer_count; ++id)
     {
-        buffer[id] = new uint8_t[BUF_SZ_PER_CONSUMER];
+        auto& consumer_state = consumer[id];
+        consumer_state.buffer = new uint8_t[BUF_SZ_PER_CONSUMER];
+        consumer_state.pref_idx = 0;
+        consumer_state.suff_idx = 0;
+        consumer_state.kmers_available = 0;
+        consumer_state.kmers_parsed = 0;
         task_status[id] = Task_Status::pending;
     }
 
-    pref_idx.resize(consumer_count);
-    suff_idx.resize(consumer_count);
-    kmers_available.resize(consumer_count, 0);
-    kmers_parsed.resize(consumer_count, 0);
-
-
     // Open the underlying k-mer database.
-    open_kmer_database(kmer_container->container_location(), kmer_database);
-
+    open_kmer_database(kmer_container->container_location());
 
     // Launch the background disk-reader thread.
     reader.reset(
@@ -242,21 +231,21 @@ inline void Kmer_SPMC_Iterator<k>::read_raw_kmers()
     while(!kmer_database.Eof())
     {
         const size_t consumer_id = get_idle_consumer();
-        std::cout << "Idle consumer ID: " << consumer_id << "\n";
+        auto& consumer_state = consumer[consumer_id];
 
-        pref_idx[consumer_id] = kmer_database.curr_prefix_idx();
-        suff_idx[consumer_id] = kmer_database.curr_suffix_idx();
+        consumer_state.pref_idx = kmer_database.curr_prefix_idx();
+        consumer_state.suff_idx = kmer_database.curr_suffix_idx();
 
-        kmers_available[consumer_id] = kmer_database.read_raw_suffixes(buffer[consumer_id], BUF_SZ_PER_CONSUMER);
-        if(!kmers_available[consumer_id])
+        consumer_state.kmers_available = kmer_database.read_raw_suffixes(consumer_state.buffer, BUF_SZ_PER_CONSUMER);
+        if(!consumer_state.kmers_available)
         {
             std::cerr << "Error reading the suffix file. Aborting.\n";
             std::exit(EXIT_FAILURE);
         }
 
-        kmers_read += kmers_available[consumer_id];
+        kmers_read += consumer_state.kmers_available;
 
-        kmers_parsed[consumer_id] = 0;
+        consumer_state.kmers_parsed = 0;
         task_status[consumer_id] = Task_Status::available;
     }
 }
@@ -265,9 +254,8 @@ inline void Kmer_SPMC_Iterator<k>::read_raw_kmers()
 template <uint16_t k>
 inline size_t Kmer_SPMC_Iterator<k>::get_idle_consumer() const
 {
-    static size_t id{0};
+    size_t id{0};
 
-    std::cout << "Looking for an idle consumer, starting from " << id << "\n";
     while(task_status[id] != Task_Status::pending)  // busy-wait
     {
         // id = (id + 1) % consumer_count;
@@ -304,23 +292,23 @@ inline void Kmer_SPMC_Iterator<k>::seize_production()
 
 
     // Close the underlying k-mer database.
-    close_kmer_database(kmer_database);
+    close_kmer_database();
 }
 
 
 template <uint16_t k>
 inline bool Kmer_SPMC_Iterator<k>::value_at(const size_t consumer_id, Kmer<k>& kmer)
 {
-    if(kmers_parsed[consumer_id] == kmers_available[consumer_id])
+    auto& ts = consumer[consumer_id];
+    if(ts.kmers_parsed == ts.kmers_available)
     {
-        std::cout << "Consumer " << consumer_id << " finished a chunk of size " << kmers_available[consumer_id] << "\n";
         task_status[consumer_id] = Task_Status::pending;
         return false;
     }
 
-    kmer_database.parse_kmer<k>(pref_idx[consumer_id], suff_idx[consumer_id], buffer[consumer_id],
-                                kmers_parsed[consumer_id] * kmer_database.suff_record_size(), kmer);
-    kmers_parsed[consumer_id]++;
+    kmer_database.parse_kmer<k>(ts.pref_idx, ts.suff_idx, ts.buffer,
+                                ts.kmers_parsed * kmer_database.suff_record_size(), kmer);
+    ts.kmers_parsed++;
 
     return true;
 }

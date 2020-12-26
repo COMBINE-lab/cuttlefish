@@ -503,7 +503,7 @@ inline uint64_t CKMCFile::read_raw_suffixes(uint8_t* const suff_buf, const size_
 		prefix_index++;
 	}
 
-	std::cout << "Last suffix number: " << sufix_number << "\n";
+	//std::cout << "Last suffix number: " << sufix_number << "\n";
 
  
 	const size_t bytes_to_read = suff_read_count * suff_record_size();
@@ -560,7 +560,6 @@ inline void CKMCFile::parse_kmer(uint64_t& pref_idx, uint64_t& suff_idx, const u
 	uint64_t suff{0};
 
 	off -= 8;
-
 	for(uint32 a = 0; a < sufix_size; a++)
 	{			
 		suff = suff_buf[buf_idx++];
@@ -575,7 +574,6 @@ inline void CKMCFile::parse_kmer(uint64_t& pref_idx, uint64_t& suff_idx, const u
 		else
 			off -= 8;
 	}
-
 	suff_idx++;
 
 	// Skip counter.

@@ -415,7 +415,8 @@ void test_SPMC_iterator_performance(const char* const db_path, const size_t cons
                     Kmer<k> max_kmer;
                     uint64_t local_count{0};
                     while(it.tasks_expected(consumer_id))
-                        if(it.task_available(consumer_id) && it.value_at(consumer_id, kmer)) {
+                        if(it.value_at(consumer_id, kmer))
+                        {
                             max_kmer = std::max(max_kmer, kmer);
                             local_count++;
                             if (local_count % 5000000 == 0) {

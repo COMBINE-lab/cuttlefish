@@ -67,6 +67,7 @@ private:
     // TODO: replace the raw pointer with a vector maybe?
     volatile Task_Status* task_status{nullptr}; // Collection of the task statuses of the consumers.
 
+
     // Constructs an iterator for the provided container `kmer_container`, on either
     // its beginning or its ending position, based on `at_begin` and `at_end`. The
     // iterator is to support `consumer_count` number of different consumers.
@@ -117,6 +118,11 @@ public:
     // Launches the background disk-read of raw binary k-mers.
     void launch_production();
 
+    // Whether production has been launched yet — and more specifically, whether the production data
+    // structures have been instantiated yet. This must be found true before attempting any sort of
+    // access into the data structure. The only exception is the `launch_production` invokation.
+    bool launched() const;
+
     // Waits for the disk-reads of the raw k-mers to be completed, and then waits for the consumers
     // to finish their ongoing tasks; then signals them that no more data are to be provided, and
     // also closes the k-mer database. 
@@ -164,6 +170,8 @@ inline Kmer_SPMC_Iterator<k>::~Kmer_SPMC_Iterator()
         for(size_t id = 0; id < consumer_count; ++id) {
            delete[] consumer[id].buffer;
         }
+
+        std::cerr << "\nCompleted a pass over the k-mer database.\n";
     }
 }
 
@@ -220,6 +228,13 @@ inline void Kmer_SPMC_Iterator<k>::launch_production()
             }
         )
     );
+}
+
+
+template <uint16_t k>
+inline bool Kmer_SPMC_Iterator<k>::launched() const
+{
+    return reader != nullptr;
 }
 
 
@@ -299,6 +314,10 @@ inline void Kmer_SPMC_Iterator<k>::seize_production()
 template <uint16_t k>
 inline bool Kmer_SPMC_Iterator<k>::value_at(const size_t consumer_id, Kmer<k>& kmer)
 {
+    // TODO: try to delay this `volatile` access as much as possible, as each access directly hits the actual memory location.
+    if(!task_available(consumer_id))
+        return false;
+
     auto& ts = consumer[consumer_id];
     if(ts.kmers_parsed == ts.kmers_available)
     {

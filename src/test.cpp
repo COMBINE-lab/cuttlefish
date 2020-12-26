@@ -267,6 +267,7 @@ void test_kmer_iterator(const char* file_name)
 }
 
 
+/*
 void check_uint64_BBHash(const char* file_name, uint16_t thread_count)
 {
     typedef boomphf::SingleHashFunctor<uint64_t> hasher_t;
@@ -285,6 +286,7 @@ void check_uint64_BBHash(const char* file_name, uint16_t thread_count)
     boophf_t * bphf = new boomphf::mphf<uint64_t, hasher_t>(input_keys.size(), input_keys, ".", thread_count);
     delete bphf;
 }
+*/
 
 
 void test_async_writer(const char* log_file_name)

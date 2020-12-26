@@ -18,6 +18,7 @@
 #include <memory> // for make_shared
 #include <unistd.h>
 #include <chrono>
+#include <thread>
 
 
 
@@ -112,8 +113,16 @@ namespace boomphf {
 		}
 		
 		friend bool operator!=(bfile_iterator const& lhs, bfile_iterator const& rhs)  {  return !(lhs == rhs);  }
+
+		// Dummy methods.
+		void launch_production() {}
+		bool launched() { return true; }	// dummy method
+		bool value_at(const size_t consumer_id, basetype& elem) { (void)consumer_id; (void)elem; return false; }
+		bool tasks_expected(const size_t consumer_id) const { (void)consumer_id; return false; }
+		void seize_production() {}
+
 	private:
-		void peek()
+		void peek()	// Added by ourselves.
 		{
 			const int ch = fgetc(_is);
 			ungetc(ch, _is);
@@ -875,7 +884,7 @@ we need this 2-functors scheme because HashFunctors won't work with unordered_ma
 
 #define WORK_CHUNK_SZ 100
 #define LARGE_CHUNK_SZ 1000
-#define WRITE_BUFF_SZ 10000
+#define WRITE_BUFF_SZ 1000000
 //#define WORK_CHUNK_SZ 2
 
 	template<typename Range,typename Iterator>
@@ -886,6 +895,7 @@ we need this 2-functors scheme because HashFunctors won't work with unordered_ma
 		std::shared_ptr<void> it_p; /* used to be "Iterator it" but because of fastmode, iterator is polymorphic; TODO: think about whether it should be a unique_ptr actually */
 		std::shared_ptr<void> until_p; /* to cache the "until" variable */
 		int level;
+		int thread_id;	// Added by ourselves.
 	};
 
 	//forward declaration
@@ -1067,7 +1077,7 @@ we need this 2-functors scheme because HashFunctors won't work with unordered_ma
 		}
 
 		template <typename Iterator>  //typename Range,
-        void pthread_processLevel( std::vector<elem_t>  & buffer , std::shared_ptr<Iterator> shared_it, std::shared_ptr<Iterator> until_p, int i)
+        void pthread_processLevel( std::vector<elem_t>  & buffer , std::shared_ptr<Iterator> shared_it, std::shared_ptr<Iterator> until_p, int i, int thread_id)
 		{
 			uint64_t nb_done =0;
 			int tid =  __sync_fetch_and_add (&_nb_living, 1);
@@ -1077,29 +1087,34 @@ we need this 2-functors scheme because HashFunctors won't work with unordered_ma
 			uint64_t writebuff =0;
 			std::vector< elem_t > & myWriteBuff = bufferperThread[tid];
 
-			
+
 			for (bool isRunning=true;  isRunning ; )
 			{
-
 				//safely copy n items into buffer
-				pthread_mutex_lock(&_mutex);
-				std::chrono::high_resolution_clock::time_point t_start = std::chrono::high_resolution_clock::now();
-                if(i < 2)
-					for(; inbuff<WORK_CHUNK_SZ && (*shared_it)!=until;  ++(*shared_it))
-					{
-						buffer[inbuff]= *(*shared_it); inbuff++;
-					}
-				else
-					for(; inbuff<LARGE_CHUNK_SZ && (*shared_it)!=until;  ++(*shared_it))
-					{
-						buffer[inbuff]= *(*shared_it); inbuff++;
-					}
-				if((*shared_it)==until) isRunning =false;
-				std::chrono::high_resolution_clock::time_point t_end = std::chrono::high_resolution_clock::now();
-    			double elapsed_seconds = std::chrono::duration_cast<std::chrono::duration<double>>(t_end - t_start).count();
-				data_copy_time += elapsed_seconds;
-				pthread_mutex_unlock(&_mutex);
 
+                if(i < 2)	// Use the Cuttlefish iterator to read keys from the input disk-database.
+				{
+					// TODO: try to delay the `volatile` access, i.e. `tasks_expected` as much as possible.
+					while(inbuff < WORK_CHUNK_SZ && shared_it->tasks_expected(thread_id))
+						if(shared_it->value_at(thread_id, buffer[inbuff]))
+							inbuff++;
+
+					if(!shared_it->tasks_expected(thread_id))
+						isRunning = false;
+				}
+				else	// Use the BBHash `bfile_iterator` to read keys from their temporary binary files.
+				{
+					pthread_mutex_lock(&_mutex);
+
+					// TODO: try optimizing by including the value fetch into the iterator advancement.
+					for(; inbuff < LARGE_CHUNK_SZ && (*shared_it) != until;  ++(*shared_it))
+						buffer[inbuff++]= *(*shared_it);
+
+					if((*shared_it) == until)
+						isRunning = false;
+
+					pthread_mutex_unlock(&_mutex);
+				}
 
 				//do work on the n elems of the buffer
 			//	printf("filling input  buff \n");
@@ -1210,7 +1225,6 @@ we need this 2-functors scheme because HashFunctors won't work with unordered_ma
 				funlockfile(_currlevelFile);
 				writebuff = 0;
 			}
-
 		}
 
 		
@@ -1477,11 +1491,12 @@ we need this 2-functors scheme because HashFunctors won't work with unordered_ma
 			t_arg.it_p =  std::static_pointer_cast<void>(std::make_shared<it_type>(input_range.begin()));
 			t_arg.until_p =  std::static_pointer_cast<void>(std::make_shared<it_type>(input_range.end()));
 
-
 			t_arg.level = i;
-			
-			
-			if(_writeEachLevel && (i > 1))
+
+			std::vector<thread_args<Range, it_type>> thread_args(_num_thread);	// Argument collections for the threads.
+		
+
+			if(_writeEachLevel && (i > 1))	// Reading keys from BBHash-made binary files.
 			{
 
 				auto data_iterator_level = file_binary<elem_t>(fname_prev);
@@ -1506,7 +1521,7 @@ we need this 2-functors scheme because HashFunctors won't work with unordered_ma
 			
 			else
 			{
-				if(_fastmode && i >= (_fastModeLevel+1))
+				if(_fastmode && i >= (_fastModeLevel+1))	// Unused by Cuttlefish.
 				{
 
 					/* we'd like to do t_arg.it = data_iterator.begin() but types are different;
@@ -1518,15 +1533,21 @@ we need this 2-functors scheme because HashFunctors won't work with unordered_ma
 					/* we'd like to do t_arg.it = data_iterator.begin() but types are different;
 					 so, casting to (void*) because of that; and we remember the type in the template */
 					
+					/*	Cuttlefish does't use the `_fastmode`.
 					for(int ii=0;ii<_num_thread;ii++)
 						pthread_create (&tab_threads[ii], NULL,  thread_processLevel<elem_t, Hasher_t, Range, fastmode_it_type>, &t_arg); //&t_arg[ii]
+					*/
 					
 					
 				}
-				else
+				else	// Reading from the input key-stream.
 				{
 					for(int ii=0;ii<_num_thread;ii++)
-						pthread_create (&tab_threads[ii], NULL,  thread_processLevel<elem_t, Hasher_t, Range, decltype(input_range.begin())>, &t_arg); //&t_arg[ii]
+					{
+						thread_args[ii] = t_arg;
+						thread_args[ii].thread_id = ii;
+						pthread_create (&tab_threads[ii], NULL,  thread_processLevel<elem_t, Hasher_t, Range, decltype(input_range.begin())>, &thread_args[ii]); //&t_arg[ii]
+					}
 				}
 				//joining
 				for(int ii=0;ii<_num_thread;ii++)
@@ -1615,18 +1636,48 @@ we need this 2-functors scheme because HashFunctors won't work with unordered_ma
 
 		mphf<elem_t, Hasher_t>  * obw = (mphf<elem_t, Hasher_t > *) targ->boophf;
 		int level = targ->level;
+		int thread_id = targ->thread_id;
 		std::vector<elem_t> buffer;
 		// buffer.resize(WORK_CHUNK_SZ);
 		buffer.resize(level < 2 ? WORK_CHUNK_SZ : LARGE_CHUNK_SZ);
 		
 		pthread_mutex_t * mutex =  & obw->_mutex;
 
+		std::unique_ptr<std::thread> producer{nullptr};	// The background key-stream producer thread.
+
 		pthread_mutex_lock(mutex); // from comment above: "//get starting iterator for this thread, must be protected (must not be currently used by other thread to copy elems in buff)"
-        std::shared_ptr<it_type> startit = std::static_pointer_cast<it_type>(targ->it_p);
+        
+		std::shared_ptr<it_type> startit = std::static_pointer_cast<it_type>(targ->it_p);
         std::shared_ptr<it_type> until_p = std::static_pointer_cast<it_type>(targ->until_p);
+		
+		// Launch the producer thread uniquely, from one worker thread.
+		if(level < 2 && !startit->launched())
+		{
+			startit->launch_production();
+
+			producer.reset(
+				new std::thread([&startit]()
+				{
+					startit->seize_production();
+				}
+				)
+			);
+		}
+
 		pthread_mutex_unlock(mutex);
 
-		obw->pthread_processLevel(buffer, startit, until_p, level);
+		obw->pthread_processLevel(buffer, startit, until_p, level, thread_id);
+
+		if(producer != nullptr)
+		{
+			if(!producer->joinable())
+			{
+				std::cerr << "Early termination encountered for the key-stream producer thread. Aborting.\n";
+        		std::exit(EXIT_FAILURE);
+			}
+			
+			producer->join();
+		}
 
 		return NULL;
 	}

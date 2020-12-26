@@ -1,7 +1,8 @@
 
 #include "Kmer_Hash_Table.hpp"
 //#include "Kmer_Iterator.hpp"
-#include "Kmer_Buffered_Iterator.hpp"
+// #include "Kmer_Buffered_Iterator.hpp"
+#include "Kmer_SPMC_Iterator.hpp"
 
 #include <fstream>
 #include <vector>
@@ -28,7 +29,8 @@ void Kmer_Hash_Table<k>::build_mph_function(const Kmer_Container<k>& kmer_contai
         // Build the MPHF.
         std::cout << "Building the MPHF from the k-mer database " << kmer_container.container_location() << ".\n";
 
-        auto data_iterator = boomphf::range(kmer_container.buf_begin(), kmer_container.buf_end());
+        // auto data_iterator = boomphf::range(kmer_container.buf_begin(), kmer_container.buf_end());
+        auto data_iterator = boomphf::range(kmer_container.spmc_begin(thread_count), kmer_container.spmc_end(thread_count));
         mph = new mphf_t(kmer_container.size(), data_iterator, working_dir_path, thread_count, GAMMA_FACTOR);
 
         std::cout << "Built the MPHF in memory.\n";

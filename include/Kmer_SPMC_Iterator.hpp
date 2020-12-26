@@ -133,6 +133,10 @@ public:
 
     // Returns `true` iff a task is available for the consumer with id `consumer_id`.
     bool task_available(size_t consumer_id) const;
+
+    // Dummy methods.
+    const iterator& operator++() { return *this; }
+    Kmer<k> operator*() { return Kmer<k>(); }
 };
 
 
@@ -201,6 +205,9 @@ inline void Kmer_SPMC_Iterator<k>::close_kmer_database()
 template <uint16_t k>
 inline void Kmer_SPMC_Iterator<k>::launch_production()
 {
+    if(launched())
+        return;
+
     // Initialize the buffers and the parsing data structures.
 
     task_status = new volatile Task_Status[consumer_count];
@@ -241,8 +248,6 @@ inline bool Kmer_SPMC_Iterator<k>::launched() const
 template <uint16_t k>
 inline void Kmer_SPMC_Iterator<k>::read_raw_kmers()
 {
-    std::cout << "Opened k-mer database with k-mer count: " << kmer_count << "\n";
-
     while(!kmer_database.Eof())
     {
         const size_t consumer_id = get_idle_consumer();
@@ -295,7 +300,6 @@ inline void Kmer_SPMC_Iterator<k>::seize_production()
 
     reader->join();
 
-    std::cout << "Done production. Waiting for consumers to finish.\n";
 
     // Wait for the consumers to finish consumption, and signal them that the means of production have been seized.
     for(size_t id = 0; id < consumer_count; ++id)
@@ -304,7 +308,6 @@ inline void Kmer_SPMC_Iterator<k>::seize_production()
         
         task_status[id] = Task_Status::no_more;
     }
-
 
     // Close the underlying k-mer database.
     close_kmer_database();

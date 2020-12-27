@@ -224,6 +224,8 @@ The default maximum _k_-mer size supported with the installation is 63. To set t
 
 Cuttlefish supports only the odd `k` values within `MAX_K` due to theoretical reasons. Increasing the `MAX_K` bound incurs additional compilation cost, slowing down the installation. Currently, KMC3 supports a `MAX_K` of 255. <!-- Also, to increase `MAX_K` beyond 255, the maximum supported _k_ should also be updated with KMC3. --> Please note that, the second step of the pipeline, i.e. the construction of a minimal perfect hash function (using [BBHash](https://github.com/rizkg/BBHash)) gets less efficient (time-wise) with increasing _k_, due to disk-read throughput bottlenecks associated with reading the _k_-mers from the KMC database.
 
+Note that, Cuttlefish uses only as many bytes as required (rounded up to multiples of 8) for a _k_-mer as necessary — thus increasing the maximum _k_-mer size capacity through setting large values for `MAX_K` does not affect the performance for smaller _k_-mer sizes.
+
 ## Intermediate disk usage
 
 The Cuttlefish pipeline uses a non-trivial amount of intermediate disk space, in the forms of — the _k_-mer set produced by KMC3, and temporary files produced during the minimal perfect hash construction and the GFA output constructions. The produced KMC3 database (the `.kmc_pre` and the `.kmc_suf` extension files) is not removed automatically, and can be safely removed by the user after the Cuttlefish execution.

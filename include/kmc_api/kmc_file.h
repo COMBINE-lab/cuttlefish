@@ -486,24 +486,28 @@ inline uint64_t CKMCFile::read_raw_suffixes(uint8_t* const suff_buf, const size_
 		// const uint64_t suff_id_next = std::min(prefix_file_buf[prefix_index + 1], total_kmers);
 
 		// There are this many k-mers with the prefix `prefix_index`.
-		const uint64_t suff_to_read = suff_id_next - prefix_file_buf[prefix_index];
+		const uint64_t suff_to_read = suff_id_next - sufix_number;
 		if(suff_to_read > 0)
 		{
-			// TODO: completely fill the buffer, instead of keeping some empty space at the end.
-			if(suff_read_count + suff_to_read > max_suff_count)
+			if(suff_read_count + suff_to_read <= max_suff_count)
+			{
+				suff_read_count += suff_to_read;
+				sufix_number += suff_to_read;
+
+				if(sufix_number == total_kmers)
+					end_of_file = true;
+			}
+			else
+			{
+				sufix_number += (max_suff_count - suff_read_count);
+				suff_read_count = max_suff_count;
+
 				break;
-
-			suff_read_count += suff_to_read;
-			sufix_number += suff_to_read;
-
-			if(sufix_number == total_kmers)
-				end_of_file = true;
+			}
 		}
 
 		prefix_index++;
 	}
-
-	//std::cout << "Last suffix number: " << sufix_number << "\n";
 
  
 	const size_t bytes_to_read = suff_read_count * suff_record_size();
@@ -546,6 +550,7 @@ inline void CKMCFile::parse_kmer(uint64_t& pref_idx, uint64_t& suff_idx, const u
 	while(suff_idx == prefix_file_buf[pref_idx + 1])
 		pref_idx++;
 	
+	// TODO: make some of these constant class-fields, to avoid repeated calculations.
 	const uint64_t prefix_mask = (1 << 2 * lut_prefix_length) - 1; //for kmc2 db
 	constexpr uint8_t byte_alignment = (k % 4 != 0 ? 4 - (k % 4) : 0);
 	uint32_t off = (sizeof(pref_idx) * 8) - (lut_prefix_length * 2) - byte_alignment * 2;

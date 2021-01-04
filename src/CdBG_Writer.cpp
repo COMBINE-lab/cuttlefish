@@ -91,7 +91,7 @@ void CdBG<k>::output_maximal_unitigs_plain()
     }
 
     std::cout << "\nProcessed " << seq_count << " sequences. Total reference length: " << ref_len << " bases.\n";
-    std::cout << "Maximum input seqeunce buffer size used: " << max_buf_sz / (1024 * 1024) << " MB.\n";
+    std::cout << "Maximum input sequence buffer size used: " << max_buf_sz / (1024 * 1024) << " MB.\n";
 
 
     // Close the thread-pool.
@@ -242,7 +242,7 @@ void CdBG<k>::output_maximal_unitigs_gfa()
     }
 
     std::cout << "\nProcessed " << seq_count << " sequences. Total reference length: " << ref_len << " bases.\n";
-    std::cout << "Maximum input seqeunce buffer size used: " << max_buf_sz / (1024 * 1024) << " MB.\n";
+    std::cout << "Maximum input sequence buffer size used: " << max_buf_sz / (1024 * 1024) << " MB.\n";
 
     
     // Close the thread pool.
@@ -422,7 +422,7 @@ void CdBG<k>::output_maximal_unitigs_gfa_reduced()
     }
 
     std::cout << "\nProcessed " << seq_count << " sequences. Total reference length: " << ref_len << " bases.\n";
-    std::cout << "Maximum input seqeunce buffer size used: " << max_buf_sz / (1024 * 1024) << " MB.\n";
+    std::cout << "Maximum input sequence buffer size used: " << max_buf_sz / (1024 * 1024) << " MB.\n";
 
     
     // Close the thread pool.

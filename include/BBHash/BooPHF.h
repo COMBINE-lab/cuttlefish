@@ -19,6 +19,7 @@
 #include <unistd.h>
 #include <chrono>
 #include <thread>
+#include "Binary_File_Iterator.hpp"
 
 
 
@@ -195,6 +196,16 @@ namespace boomphf {
 		bfile_iterator<type_elem> end() const {return bfile_iterator<type_elem>(); }
 		
 		size_t        size () const  {  return 0;  }//todo ?
+
+		Binary_File_Iterator<type_elem> begin(const char* filename) const
+		{
+			return Binary_File_Iterator<type_elem>(filename);
+		}
+
+		Binary_File_Iterator<type_elem> end(const char* filename) const
+		{
+			return Binary_File_Iterator<type_elem>(filename, true);
+		}
 		
 	private:
 		FILE * _is;
@@ -1179,9 +1190,12 @@ we need this 2-functors scheme because HashFunctors won't work with unordered_ma
 								if(writebuff>=WRITE_BUFF_SZ)
 								{
 									//flush buffer
-									flockfile(_currlevelFile);
-									fwrite(myWriteBuff.data(),sizeof(elem_t),writebuff,_currlevelFile);
-									funlockfile(_currlevelFile);
+									// flockfile(_currlevelFile);
+									// fwrite(myWriteBuff.data(),sizeof(elem_t),writebuff,_currlevelFile);
+									// funlockfile(_currlevelFile);
+									pthread_mutex_lock(&file_lock);
+									op_stream->write(myWriteBuff.data(), writebuff);
+									pthread_mutex_unlock(&file_lock);
 									writebuff = 0;
 								
 								}
@@ -1220,9 +1234,12 @@ we need this 2-functors scheme because HashFunctors won't work with unordered_ma
 			if(_writeEachLevel && writebuff>0)
 			{
 				//flush buffer
-				flockfile(_currlevelFile);
-				fwrite(myWriteBuff.data(),sizeof(elem_t),writebuff,_currlevelFile);
-				funlockfile(_currlevelFile);
+				// flockfile(_currlevelFile);
+				// fwrite(myWriteBuff.data(),sizeof(elem_t),writebuff,_currlevelFile);
+				// funlockfile(_currlevelFile);
+				pthread_mutex_lock(&file_lock);
+				op_stream->write(myWriteBuff.data(), writebuff);
+				pthread_mutex_unlock(&file_lock);
 				writebuff = 0;
 			}
 		}
@@ -1473,7 +1490,8 @@ we need this 2-functors scheme because HashFunctors won't work with unordered_ma
 				
 				if(i< _nb_levels-1 && i > 0 ) //create curr file
 				{
-					_currlevelFile = fopen(fname_curr,"w");
+					// _currlevelFile = fopen(fname_curr,"w");
+					op_stream.reset(new Compressed_Stream<elem_t>(fname_curr));
 				}
 			}
 			
@@ -1501,11 +1519,13 @@ we need this 2-functors scheme because HashFunctors won't work with unordered_ma
 
 				auto data_iterator_level = file_binary<elem_t>(fname_prev);
 				
-				typedef decltype(data_iterator_level.begin()) disklevel_it_type;
+				// typedef decltype(data_iterator_level.begin()) disklevel_it_type;
+				typedef decltype(data_iterator_level.end(fname_prev)) disklevel_it_type;
 				
-				//data_iterator_level.begin();
-				t_arg.it_p = std::static_pointer_cast<void>(std::make_shared<disklevel_it_type>(data_iterator_level.begin()));
-				t_arg.until_p = std::static_pointer_cast<void>(std::make_shared<disklevel_it_type>(data_iterator_level.end()));
+				// t_arg.it_p = std::static_pointer_cast<void>(std::make_shared<disklevel_it_type>(data_iterator_level.begin()));
+				// t_arg.until_p = std::static_pointer_cast<void>(std::make_shared<disklevel_it_type>(data_iterator_level.end()));
+				t_arg.it_p = std::static_pointer_cast<void>(std::make_shared<disklevel_it_type>(data_iterator_level.begin(fname_prev)));
+				t_arg.until_p = std::static_pointer_cast<void>(std::make_shared<disklevel_it_type>(data_iterator_level.end(fname_prev)));
 				
 				for(int ii=0;ii<_num_thread;ii++)
 					pthread_create (&tab_threads[ii], NULL,  thread_processLevel<elem_t, Hasher_t, Range, disklevel_it_type>, &t_arg); //&t_arg[ii]
@@ -1569,8 +1589,8 @@ we need this 2-functors scheme because HashFunctors won't work with unordered_ma
 			{
 				if(i< _nb_levels-1 && i>0)
 				{
-					fflush(_currlevelFile);
-					fclose(_currlevelFile);
+					// fflush(_currlevelFile);
+					// fclose(_currlevelFile);
 				}
 				
 					if(i== _nb_levels- 1) //delete last file
@@ -1615,7 +1635,9 @@ we need this 2-functors scheme because HashFunctors won't work with unordered_ma
 		bool _withprogress;
 		bool _built;
 		bool _writeEachLevel;
-		FILE * _currlevelFile;
+		// FILE * _currlevelFile;
+		std::unique_ptr<Compressed_Stream<elem_t>> op_stream;		
+		pthread_mutex_t file_lock;
 		int _pid;
 	public:
 		pthread_mutex_t _mutex;

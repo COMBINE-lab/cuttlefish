@@ -12,6 +12,9 @@
 #include "spdlog/async.h"
 #include "spdlog/sinks/basic_file_sink.h"
 #include "spdlog/sinks/stdout_color_sinks.h"
+#include "zstr/zstr.hpp"
+#include "Compressed_Stream.hpp"
+#include "Binary_File_Iterator.hpp"
 
 #include <chrono> 
 #include <iostream>
@@ -565,6 +568,66 @@ void test_iterator_correctness(const char* const db_path, const size_t consumer_
 }
 
 
+void compress(const std::string& output_file, const std::size_t buf_size, const std::size_t byte_count)
+{
+    std::unique_ptr<std::ostream> os_p = std::unique_ptr<std::ostream>(new zstr::ofstream(output_file));
+
+    uint8_t* const buf = new uint8_t[buf_size];
+    std::size_t buf_idx = 0;
+    std::size_t disk_access_count = 0;
+    std::size_t byte_idx = 0;
+    for(; byte_idx < byte_count; ++byte_idx)
+    {
+        buf[buf_idx++] = 'A' + (byte_idx) % 26;
+        if(buf_idx == buf_size)
+        {
+            os_p->write((const char*)buf, buf_size);
+            buf_idx = 0;
+
+            disk_access_count++;
+        }
+    }
+
+    if(buf_idx > 0)
+    {
+        os_p->write((const char*)buf, buf_idx);
+        disk_access_count++;
+    }
+
+    delete[] buf;
+
+
+    std::cout << "Written bytes: " << byte_idx << "\n";
+    std::cout << "Disk-write count: " << disk_access_count << "\n";
+}
+
+
+void decompress(const std::string& compressed_file, const std::size_t buf_size, const std::size_t byte_count)
+{
+    std::unique_ptr<std::istream> is_p = std::unique_ptr<std::istream>(new zstr::ifstream(compressed_file));
+
+    char* const buf = new char[buf_size];
+
+    std::size_t read_count = 0;
+    std::size_t disk_access_count = 0;
+    while(read_count < byte_count)
+    {
+        const std::streamsize to_read = std::min(byte_count - read_count, buf_size);
+        is_p->read(buf, to_read);
+        if(is_p->gcount() != to_read)
+            std::exit(EXIT_FAILURE);
+
+        read_count += to_read;
+        disk_access_count++;
+    }
+
+    delete[] buf;
+
+
+    std::cout << "Disk-read count: " << disk_access_count << "\n";
+}
+
+
 int main(int argc, char** argv)
 {
     (void)argc;
@@ -595,13 +658,16 @@ int main(int argc, char** argv)
 
     // count_kmers_in_unitigs(argv[1], atoi(argv[2]));
 
-    static constexpr uint16_t k = 25;
-    static const size_t consumer_count = std::atoi(argv[2]);
+    // static constexpr uint16_t k = 25;
+    // static const size_t consumer_count = std::atoi(argv[2]);
 
     // test_iterator_correctness<31>(argv[1], consumer_count);
 
     // test_buffered_iterator_performance<k>(argv[1]);
-    test_SPMC_iterator_performance<k>(argv[1], consumer_count);
+    // test_SPMC_iterator_performance<k>(argv[1], consumer_count);
+
+    compress(argv[1], std::atol(argv[2]), std::atol(argv[3]));
+    decompress(argv[1], std::atol(argv[2]), std::atol(argv[3]));
 
 
     return 0;

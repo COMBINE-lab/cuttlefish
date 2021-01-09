@@ -2,6 +2,7 @@
 #include "Kmer_Container.hpp"
 #include "Kmer_Iterator.hpp"
 #include "Kmer_Buffered_Iterator.hpp"
+#include "Kmer_SPMC_Iterator.hpp"
 
 template <uint16_t k>
 Kmer_Container<k>::Kmer_Container(const std::string& kmc_file_path):
@@ -77,6 +78,20 @@ template <uint16_t k>
 typename Kmer_Container<k>::buf_iterator Kmer_Container<k>::buf_end() const
 {
     return buf_iterator(this, false, true);
+}
+
+
+template <uint16_t k>
+typename Kmer_Container<k>::spmc_iterator Kmer_Container<k>::spmc_begin(const size_t consumer_count) const
+{
+    return spmc_iterator(this, consumer_count);   
+}
+
+
+template <uint16_t k>
+typename Kmer_Container<k>::spmc_iterator Kmer_Container<k>::spmc_end(const size_t consumer_count) const
+{
+    return spmc_iterator(this, consumer_count, false, true);
 }
 
 

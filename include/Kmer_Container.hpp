@@ -11,6 +11,7 @@
 
 template <uint16_t k> class Kmer_Iterator;
 template <uint16_t k> class Kmer_Buffered_Iterator;
+template <uint16_t k> class Kmer_SPMC_Iterator;
 
 // Wrapper class for KMC databases on disk.
 template <uint16_t k>
@@ -18,6 +19,7 @@ class Kmer_Container
 {
     typedef Kmer_Iterator<k> iterator;
     typedef Kmer_Buffered_Iterator<k> buf_iterator;
+    typedef Kmer_SPMC_Iterator<k> spmc_iterator;
 
 
 private:
@@ -57,6 +59,14 @@ public:
     // Returns an iterator pointing to the ending (exclusive) of the underlying
     // k-mer database.
     iterator end() const;
+
+    // Returns an SPMC iterator pointing to the beginning of the underlying k-mer
+    // database, that can support `consumer_count` consumers.
+    spmc_iterator spmc_begin(size_t consumer_count) const;
+
+    // Returns an SPMC iterator pointing to the ending (exclusive) of the underlying
+    // k-mer database, that can support `consumer_count` consumers.
+    spmc_iterator spmc_end(size_t consumer_count) const;
 
     // Loads the full k-mer set from the KMC database into the collection `kmers`.
     void load_kmers(std::vector<Kmer<k>>& kmers) const;

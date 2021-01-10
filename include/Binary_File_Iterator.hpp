@@ -125,7 +125,6 @@ inline void Binary_File_Iterator<T_elem_>::advance()
 {
     if(stream == nullptr)
     {
-        std::cout << "Launching compressed streaming\n";
         stream = std::unique_ptr<Compressed_Stream<T_elem_>>(new Compressed_Stream<T_elem_>(file_path, false));
         buf = new T_elem_[BUF_SZ];
     }

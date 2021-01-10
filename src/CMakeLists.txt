@@ -6,6 +6,9 @@ set(PROJECT_SRC
         kmc_api/mmer.cpp
         xxHash/xxhash.c
         xxHash/xxhsum.c
+        lz4/lz4.c
+        lz4/lz4hc.c
+        lz4/lz4frame.c
         Parser.cpp
         Thread_Pool.cpp
         DNA_Utility.cpp

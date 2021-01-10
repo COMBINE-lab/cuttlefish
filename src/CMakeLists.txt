@@ -14,6 +14,24 @@ set(LZ4_SRC
         lz4/lz4hc.c
         lz4/lz4frame.c
 )
+set(FASTPFOR_SRC
+        FastPFor/benchbitpacking.cpp
+        FastPFor/bitpackingaligned.cpp
+        FastPFor/bitpacking.cpp
+        FastPFor/bitpackingunaligned.cpp
+        FastPFor/codecs.cpp
+        FastPFor/csv2maropu.cpp
+        FastPFor/entropy.cpp
+        FastPFor/gapstats.cpp
+        FastPFor/horizontalbitpacking.cpp
+        FastPFor/inmemorybenchmark.cpp
+        FastPFor/partitionbylength.cpp
+        FastPFor/simdbitpacking.cpp
+        FastPFor/simdunalignedbitpacking.cpp
+        FastPFor/streamvbyte.c
+        FastPFor/unit.cpp
+        FastPFor/varintdecode.c
+)
 set(CORE_SRC
         Parser.cpp
         Thread_Pool.cpp
@@ -39,6 +57,7 @@ set(PROJECT_SRC
         ${KMC_SRC}
         ${XXHASH_SRC}
         ${LZ4_SRC}
+        ${FASTPFOR_SRC}
         ${CORE_SRC}
 )
 
@@ -58,7 +77,8 @@ target_include_directories(core PUBLIC ${CMAKE_SOURCE_DIR}/${INCLUDE_DIR})
 # Specify the warnings and the extra optimization flags to the compiler for the target library.
 # As the flags are specified as `PRIVATE`, they will only be used when compiling this library.
 # These will not be propagated to the targets linking to it.
-target_compile_options(core PRIVATE ${WARNING_FLAGS} ${SUPPRESS_WARNING_FLAGS} ${OPTIMIZE_FLAGS})
+set(SSSE_FLAGS -msse4.1 -mssse3)
+target_compile_options(core PRIVATE ${WARNING_FLAGS} ${SUPPRESS_WARNING_FLAGS} ${OPTIMIZE_FLAGS} ${SSSE_FLAGS})
 
 
 # Create an executable from the driver program.

@@ -8,7 +8,7 @@ cmake_minimum_required(VERSION 3.14)
 set(PROJECT_NAME cuttlefish)
 project(${PROJECT_NAME}
         VERSION 0.1.0
-        LANGUAGES CXX
+        LANGUAGES CXX C
         )
 
 
@@ -17,8 +17,12 @@ project(${PROJECT_NAME}
 set(CMAKE_CXX_STANDARD 14)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+set(CMAKE_C_STANDARD 11)
+set(CMAKE_C_STANDARD_REQUIRED ON)
+
 # Turn off using platform-specific compiler standards.
 set(CMAKE_CXX_EXTENSIONS OFF)
+# set(CMAKE_C_EXTENSIONS OFF)
 
 
 # Bundle the warning flags that we want to pass on to the compiler.
@@ -26,7 +30,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # Same with maybe-uninitialized (might want this one back later though).
 # Reference: https://gcc.gnu.org/onlinedocs/gcc/Warning-Options.html
 set(WARNING_FLAGS -Wall -Wextra)
-set(SUPPRESS_WARNING_FLAGS -Wno-unknown-pragmas -Wno-maybe-uninitialized -Wno-class-memaccess -Wno-implicit-fallthrough)
+set(SUPPRESS_WARNING_FLAGS -Wno-unknown-pragmas -Wno-maybe-uninitialized -Wno-implicit-fallthrough)
 
 # Bundle the extra optimization flags (not associated with the `-O` levels)
 # that we want to pass on to the compiler.

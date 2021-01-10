@@ -1,14 +1,20 @@
 
 # Bundle the core source files into a variable.
-set(PROJECT_SRC
+set(KMC_SRC
         kmc_api/kmc_file.cpp
         kmc_api/kmer_api.cpp
         kmc_api/mmer.cpp
+)
+set(XXHASH_SRC
         xxHash/xxhash.c
         xxHash/xxhsum.c
+)
+set(LZ4_SRC
         lz4/lz4.c
         lz4/lz4hc.c
         lz4/lz4frame.c
+)
+set(CORE_SRC
         Parser.cpp
         Thread_Pool.cpp
         DNA_Utility.cpp
@@ -28,7 +34,13 @@ set(PROJECT_SRC
         Sequence_Validator.cpp
         Kmers_Validator.cpp
         utility.cpp
-    )
+)
+set(PROJECT_SRC
+        ${KMC_SRC}
+        ${XXHASH_SRC}
+        ${LZ4_SRC}
+        ${CORE_SRC}
+)
 
 
 # Build a library with the provided source(s).

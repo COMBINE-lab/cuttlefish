@@ -5,7 +5,6 @@ set(PROJECT_SRC
         kmc_api/kmer_api.cpp
         kmc_api/mmer.cpp
         xxHash/xxhash.c
-        xxHash/xxh_x86dispatch.c
         xxHash/xxhsum.c
         Parser.cpp
         Thread_Pool.cpp

@@ -8,7 +8,7 @@
 
 #ifndef UTIL
 #define UTIL
-#include "common.h"
+#include "FastPFor/common.h"
 
 #ifdef __linux__
 #define USE_O_DIRECT

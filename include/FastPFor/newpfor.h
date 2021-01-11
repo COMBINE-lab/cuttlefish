@@ -15,9 +15,9 @@
 #ifndef NEWPFOR_H_
 #define NEWPFOR_H_
 
-#include "common.h"
-#include "util.h"
-#include "codecs.h"
+#include "FastPFor/common.h"
+#include "FastPFor/util.h"
+#include "FastPFor/codecs.h"
 
 namespace FastPForLib {
 

@@ -13,8 +13,8 @@
 #define SNAPPYDELTA_H_
 
 #include <snappy.h>
-#include "common.h"
-#include "codecs.h"
+#include "FastPFor/common.h"
+#include "FastPFor/codecs.h"
 
 namespace FastPFor {
 

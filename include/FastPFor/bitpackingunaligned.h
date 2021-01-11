@@ -6,7 +6,7 @@
  */
 #ifndef BITPACKINGUNALIGNED
 #define BITPACKINGUNALIGNED
-#include "common.h"
+#include "FastPFor/common.h"
 
 namespace FastPForLib {
 

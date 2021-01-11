@@ -7,14 +7,14 @@
 #ifndef SIMDFASTPFOR_H_
 #define SIMDFASTPFOR_H_
 
-#include "common.h"
-#include "codecs.h"
-#include "simdbitpacking.h"
-#include "usimdbitpacking.h"
-#include "memutil.h"
-#include "util.h"
-#include "simple8b.h"
-#include "usimdbitpacking.h"
+#include "FastPFor/common.h"
+#include "FastPFor/codecs.h"
+#include "FastPFor/simdbitpacking.h"
+#include "FastPFor/usimdbitpacking.h"
+#include "FastPFor/memutil.h"
+#include "FastPFor/util.h"
+#include "FastPFor/simple8b.h"
+#include "FastPFor/usimdbitpacking.h"
 
 namespace FastPForLib {
 

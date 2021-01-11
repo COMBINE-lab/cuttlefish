@@ -7,7 +7,7 @@
 #ifndef BITPACKINGALIGNED
 #define BITPACKINGALIGNED
 
-#include "common.h"
+#include "FastPFor/common.h"
 
 namespace FastPForLib {
 

@@ -7,7 +7,7 @@
 #ifndef USIMDBITPACKING_H_
 #define USIMDBITPACKING_H_
 
-#include "common.h"
+#include "FastPFor/common.h"
 
 namespace FastPForLib {
 

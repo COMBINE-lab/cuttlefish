@@ -10,7 +10,7 @@
 #include <vector>
 #include <queue>
 #include <random>
-#include "common.h"
+#include "FastPFor/common.h"
 
 namespace FastPForLib {
 

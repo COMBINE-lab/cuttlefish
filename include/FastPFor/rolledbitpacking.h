@@ -9,8 +9,8 @@
 #define ROLLEDBITPACKING_H_
 
 #include <exception> // logic_error, runtime_error
-#include "common.h"
-#include "util.h"
+#include "FastPFor/common.h"
+#include "FastPFor/util.h"
 
 namespace FastPForLib {
 

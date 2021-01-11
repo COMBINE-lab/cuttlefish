@@ -8,7 +8,7 @@
 #ifndef CPUBENCHMARK_H_
 #define CPUBENCHMARK_H_
 
-#include "common.h"
+#include "FastPFor/common.h"
 
 namespace FastPForLib {
 

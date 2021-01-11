@@ -58,8 +58,8 @@
 #ifndef SIMPLE8B_RLE_H_
 #define SIMPLE8B_RLE_H_
 
-#include "common.h"
-#include "codecs.h"
+#include "FastPFor/common.h"
+#include "FastPFor/codecs.h"
 
 #define _SIMPLE8B_USE_RLE // optional, comment this line if run-length encoding
                           // is not needed

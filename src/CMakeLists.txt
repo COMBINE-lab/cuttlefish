@@ -15,21 +15,13 @@ set(LZ4_SRC
         lz4/lz4frame.c
 )
 set(FASTPFOR_SRC
-        FastPFor/benchbitpacking.cpp
         FastPFor/bitpackingaligned.cpp
         FastPFor/bitpacking.cpp
         FastPFor/bitpackingunaligned.cpp
-        FastPFor/codecs.cpp
-        FastPFor/csv2maropu.cpp
-        FastPFor/entropy.cpp
-        FastPFor/gapstats.cpp
         FastPFor/horizontalbitpacking.cpp
-        FastPFor/inmemorybenchmark.cpp
-        FastPFor/partitionbylength.cpp
         FastPFor/simdbitpacking.cpp
         FastPFor/simdunalignedbitpacking.cpp
         FastPFor/streamvbyte.c
-        FastPFor/unit.cpp
         FastPFor/varintdecode.c
 )
 set(CORE_SRC
@@ -77,13 +69,7 @@ target_include_directories(core PUBLIC ${CMAKE_SOURCE_DIR}/${INCLUDE_DIR})
 # Specify the warnings and the extra optimization flags to the compiler for the target library.
 # As the flags are specified as `PRIVATE`, they will only be used when compiling this library.
 # These will not be propagated to the targets linking to it.
-set(SSSE_FLAGS -msse4.1 -mssse3)
-target_compile_options(core PRIVATE ${WARNING_FLAGS} ${SUPPRESS_WARNING_FLAGS} ${OPTIMIZE_FLAGS} ${SSSE_FLAGS})
-
-
-# Create an executable from the driver program.
-add_executable(${PROJECT_NAME} main.cpp)
-
+target_compile_options(core PRIVATE ${COMPILE_FLAGS})
 
 # Link the core library to the threads package in the platform.
 target_link_libraries(core PRIVATE ${CMAKE_THREAD_LIBS_INIT})
@@ -92,12 +78,15 @@ target_link_libraries(core PRIVATE ${CMAKE_THREAD_LIBS_INIT})
 target_link_libraries(core PRIVATE ZLIB::ZLIB)
 
 
+# Create an executable from the driver program.
+add_executable(${PROJECT_NAME} main.cpp)
+
 # Link the executable to the required libraries.
 target_link_libraries(${PROJECT_NAME} PRIVATE core)
 
 
-# Specify warnings flags to the compiler for the target executable.
-target_compile_options(${PROJECT_NAME} PRIVATE ${WARNING_FLAGS} ${SUPPRESS_WARNING_FLAGS} ${OPTIMIZE_FLAGS})
+# Specify compiler flags to the compilation of the target executable.
+target_compile_options(${PROJECT_NAME} PRIVATE ${COMPILE_FLAGS})
 
 
 # Set the parent directory for the target binaries inside the "installation directory". The
@@ -120,4 +109,4 @@ install(TARGETS ${PROJECT_NAME}
 
 add_executable(test test.cpp)
 target_link_libraries(test PRIVATE core)
-target_compile_options(test PRIVATE ${WARNING_FLAGS} ${SUPPRESS_WARNING_FLAGS} ${OPTIMIZE_FLAGS})
+target_compile_options(test PRIVATE ${COMPILE_FLAGS})

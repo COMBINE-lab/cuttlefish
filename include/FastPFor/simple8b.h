@@ -8,8 +8,8 @@
 #ifndef SIMPLE8B_H_
 #define SIMPLE8B_H_
 
-#include "common.h"
-#include "codecs.h"
+#include "FastPFor/common.h"
+#include "FastPFor/codecs.h"
 
 namespace FastPForLib {
 

@@ -9,11 +9,11 @@
 #define DELTAUTIL_H_
 #include <vector>
 #include <exception>
-#include "common.h"
-#include "codecs.h"
-#include "memutil.h"
-#include "entropy.h"
-#include "ztimer.h"
+#include "FastPFor/common.h"
+#include "FastPFor/codecs.h"
+#include "FastPFor/memutil.h"
+#include "FastPFor/entropy.h"
+#include "FastPFor/ztimer.h"
 
 namespace FastPForLib {
 

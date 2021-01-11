@@ -8,8 +8,8 @@
 #ifndef _STREAMVARIABLEBYTE_
 #define _STREAMVARIABLEBYTE_
 
-#include "common.h"
-#include "codecs.h"
+#include "FastPFor/common.h"
+#include "FastPFor/codecs.h"
 
 namespace FastPForLib {
 

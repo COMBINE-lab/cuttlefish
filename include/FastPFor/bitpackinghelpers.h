@@ -8,7 +8,7 @@
 #ifndef BITPACKINGHELPERS_H_
 #define BITPACKINGHELPERS_H_
 
-#include "bitpacking.h"
+#include "FastPFor/bitpacking.h"
 
 namespace FastPForLib {
 

@@ -8,9 +8,9 @@
 #ifndef SIMDGROUPSIMPLE_H_
 #define SIMDGROUPSIMPLE_H_
 
-#include "common.h"
-#include "codecs.h"
-#include "util.h"
+#include "FastPFor/common.h"
+#include "FastPFor/codecs.h"
+#include "FastPFor/util.h"
 
 namespace FastPForLib {
 

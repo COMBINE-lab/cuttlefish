@@ -11,8 +11,8 @@
 #ifndef SIMPLE9_H_
 #define SIMPLE9_H_
 
-#include "common.h"
-#include "codecs.h"
+#include "FastPFor/common.h"
+#include "FastPFor/codecs.h"
 
 namespace FastPForLib {
 

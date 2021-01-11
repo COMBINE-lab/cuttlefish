@@ -6,8 +6,8 @@
 #ifndef MERSENNE_H_
 #define MERSENNE_H_
 
-#include "common.h"
-#include "util.h"
+#include "FastPFor/common.h"
+#include "FastPFor/util.h"
 
 namespace FastPForLib {
 

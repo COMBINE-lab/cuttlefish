@@ -8,10 +8,10 @@
 #ifndef PFOR2008_H_
 #define PFOR2008_H_
 
-#include "common.h"
-#include "codecs.h"
-#include "bitpacking.h"
-#include "util.h"
+#include "FastPFor/common.h"
+#include "FastPFor/codecs.h"
+#include "FastPFor/bitpacking.h"
+#include "FastPFor/util.h"
 #include <iostream>
 
 namespace FastPForLib {

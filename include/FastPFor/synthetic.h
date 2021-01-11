@@ -8,10 +8,10 @@
 
 #include <vector>
 #include <set>
-#include "common.h"
-#include "util.h"
-#include "mersenne.h"
-#include "memutil.h"
+#include "FastPFor/common.h"
+#include "FastPFor/util.h"
+#include "FastPFor/mersenne.h"
+#include "FastPFor/memutil.h"
 
 namespace FastPForLib {
 

@@ -7,9 +7,9 @@
 #ifndef COMPOSITECODEC_H_
 #define COMPOSITECODEC_H_
 
-#include "codecs.h"
-#include "common.h"
-#include "util.h"
+#include "FastPFor/codecs.h"
+#include "FastPFor/common.h"
+#include "FastPFor/util.h"
 
 namespace FastPForLib {
 

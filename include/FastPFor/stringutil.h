@@ -8,8 +8,8 @@
 #ifndef STRINGUTIL_H_
 #define STRINGUTIL_H_
 
-#include "common.h"
-#include "util.h"
+#include "FastPFor/common.h"
+#include "FastPFor/util.h"
 
 namespace FastPForLib {
 

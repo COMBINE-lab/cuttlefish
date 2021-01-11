@@ -7,7 +7,7 @@
 #ifndef SIMDBITPACKING_H_
 #define SIMDBITPACKING_H_
 
-#include "common.h"
+#include "FastPFor/common.h"
 
 namespace FastPForLib {
 

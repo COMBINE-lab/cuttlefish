@@ -8,8 +8,8 @@
 #ifndef PACKINGVECTORS_H_
 #define PACKINGVECTORS_H_
 
-#include "common.h"
-#include "bitpacking.h"
+#include "FastPFor/common.h"
+#include "FastPFor/bitpacking.h"
 
 namespace FastPForLib {
 

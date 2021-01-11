@@ -8,7 +8,7 @@
 #ifndef MEMUTIL_H_
 #define MEMUTIL_H_
 
-#include "common.h"
+#include "FastPFor/common.h"
 
 namespace FastPForLib {
 

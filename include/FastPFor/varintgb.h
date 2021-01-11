@@ -8,9 +8,9 @@
 #ifndef VARINTGB_H_
 #define VARINTGB_H_
 
-#include "common.h"
-#include "codecs.h"
-#include "variablebyte.h"
+#include "FastPFor/common.h"
+#include "FastPFor/codecs.h"
+#include "FastPFor/variablebyte.h"
 
 namespace FastPForLib {
 

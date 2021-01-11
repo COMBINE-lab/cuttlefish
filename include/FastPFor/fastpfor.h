@@ -7,12 +7,12 @@
 
 #ifndef EPFOR_H_
 #define EPFOR_H_
-#include "blockpacking.h"
-#include "codecs.h"
-#include "common.h"
-#include "cpubenchmark.h"
-#include "packingvectors.h"
-#include "simple8b.h"
+#include "FastPFor/blockpacking.h"
+#include "FastPFor/codecs.h"
+#include "FastPFor/common.h"
+#include "FastPFor/cpubenchmark.h"
+#include "FastPFor/packingvectors.h"
+#include "FastPFor/simple8b.h"
 
 namespace FastPForLib {
 

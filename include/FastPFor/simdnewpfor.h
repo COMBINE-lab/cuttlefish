@@ -16,11 +16,11 @@
 #ifndef SIMDNEWPFOR_H_
 #define SIMDNEWPFOR_H_
 
-#include "common.h"
-#include "util.h"
-#include "codecs.h"
-#include "newpfor.h"
-#include "usimdbitpacking.h"
+#include "FastPFor/common.h"
+#include "FastPFor/util.h"
+#include "FastPFor/codecs.h"
+#include "FastPFor/newpfor.h"
+#include "FastPFor/usimdbitpacking.h"
 
 namespace FastPForLib {
 

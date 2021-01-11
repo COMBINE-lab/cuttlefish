@@ -37,6 +37,12 @@ set(SUPPRESS_WARNING_FLAGS -Wno-unknown-pragmas -Wno-maybe-uninitialized -Wno-im
 # Reference: https://gcc.gnu.org/onlinedocs/gcc/Optimize-Options.html
 set(OPTIMIZE_FLAGS -funroll-loops)
 
+# Bundle some SSE flags, required for the `FastPFor` library.
+set(SSE_FLAGS -msse4.1 -mssse3)
+
+# Bundle all the flags together.
+set(COMPILE_FLAGS ${WARNING_FLAGS} ${SUPPRESS_WARNING_FLAGS} ${OPTIMIZE_FLAGS} ${SSE_FLAGS})
+
 
 # Add the required preprocessor definitions (`#define`s) to pass on.
 add_definitions(-D__STDC_FORMAT_MACROS -DSPDLOG_FMT_EXTERNAL_HO -DFMT_HEADER_ONLY -DXXH_INLINE_ALL)

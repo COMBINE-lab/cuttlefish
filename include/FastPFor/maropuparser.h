@@ -8,7 +8,7 @@
 #ifndef MAROPUPARSER_H_
 #define MAROPUPARSER_H_
 
-#include "common.h"
+#include "FastPFor/common.h"
 
 namespace FastPForLib {
 

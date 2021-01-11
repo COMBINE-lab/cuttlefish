@@ -17,7 +17,7 @@
 #endif
 
 #include <exception>
-#include "common.h"
+#include "FastPFor/common.h"
 
 /***
  * D. Lemire: for my purposes, I just took the code I needed from

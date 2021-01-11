@@ -8,9 +8,9 @@
 #ifndef CODECS_H_
 #define CODECS_H_
 
-#include "common.h"
-#include "util.h"
-#include "bitpackinghelpers.h"
+#include "FastPFor/common.h"
+#include "FastPFor/util.h"
+#include "FastPFor/bitpackinghelpers.h"
 
 namespace FastPForLib {
 

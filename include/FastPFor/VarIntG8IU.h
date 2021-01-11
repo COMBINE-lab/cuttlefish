@@ -13,7 +13,7 @@
 #ifndef VARINTG8IU_H__
 #define VARINTG8IU_H__
 #include <emmintrin.h>
-#include "codecs.h"
+#include "FastPFor/codecs.h"
 #ifdef __GNUC__
 #define PREDICT_FALSE(x) (__builtin_expect(x, 0))
 #else

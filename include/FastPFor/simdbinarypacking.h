@@ -8,9 +8,9 @@
 #ifndef SIMDBINARYPACKING_H_
 #define SIMDBINARYPACKING_H_
 
-#include "codecs.h"
-#include "simdbitpacking.h"
-#include "util.h"
+#include "FastPFor/codecs.h"
+#include "FastPFor/simdbitpacking.h"
+#include "FastPFor/util.h"
 
 namespace FastPForLib {
 

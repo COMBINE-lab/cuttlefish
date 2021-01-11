@@ -70,8 +70,8 @@
 #ifndef SIMPLE9_RLE_H_
 #define SIMPLE9_RLE_H_
 
-#include "common.h"
-#include "codecs.h"
+#include "FastPFor/common.h"
+#include "FastPFor/codecs.h"
 
 //#define _SIMPLE9_USE_RLE // uncomment this line if run-length encoding is
 //needed

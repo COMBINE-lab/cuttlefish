@@ -7,8 +7,8 @@
 
 #ifndef VARIABLEBYTE_H_
 #define VARIABLEBYTE_H_
-#include "codecs.h"
-#include "common.h"
+#include "FastPFor/codecs.h"
+#include "FastPFor/common.h"
 
 namespace FastPForLib {
 

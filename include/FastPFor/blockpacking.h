@@ -9,10 +9,10 @@
 #ifndef BLOCKPACKING_H_
 #define BLOCKPACKING_H_
 
-#include "codecs.h"
-#include "bitpackingunaligned.h"
-#include "bitpackingaligned.h"
-#include "util.h"
+#include "FastPFor/codecs.h"
+#include "FastPFor/bitpackingunaligned.h"
+#include "FastPFor/bitpackingaligned.h"
+#include "FastPFor/util.h"
 
 namespace FastPForLib {
 

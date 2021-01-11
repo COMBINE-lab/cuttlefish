@@ -13,10 +13,10 @@
 #ifndef SIMDOPTPFOR_H_
 #define SIMDOPTPFOR_H_
 
-#include "common.h"
-#include "util.h"
-#include "simple16.h"
-#include "simdnewpfor.h"
+#include "FastPFor/common.h"
+#include "FastPFor/util.h"
+#include "FastPFor/simple16.h"
+#include "FastPFor/simdnewpfor.h"
 
 namespace FastPForLib {
 

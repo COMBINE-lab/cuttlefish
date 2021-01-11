@@ -12,7 +12,7 @@
 #include <map>
 #include <set>
 #include <vector>
-#include "common.h"
+#include "FastPFor/common.h"
 
 namespace FastPForLib {
 

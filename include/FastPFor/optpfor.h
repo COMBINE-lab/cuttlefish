@@ -13,10 +13,10 @@
 #ifndef OPTPFOR_H_
 #define OPTPFOR_H_
 
-#include "common.h"
-#include "util.h"
-#include "simple16.h"
-#include "newpfor.h"
+#include "FastPFor/common.h"
+#include "FastPFor/util.h"
+#include "FastPFor/simple16.h"
+#include "FastPFor/newpfor.h"
 
 namespace FastPForLib {
 

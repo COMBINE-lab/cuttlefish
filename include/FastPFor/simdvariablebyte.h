@@ -10,8 +10,8 @@
 #ifndef SIMDVARIABLEBYTE_H_
 #define SIMDVARIABLEBYTE_H_
 
-#include "common.h"
-#include "codecs.h"
+#include "FastPFor/common.h"
+#include "FastPFor/codecs.h"
 
 #ifdef __cplusplus
 extern "C" {

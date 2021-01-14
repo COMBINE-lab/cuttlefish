@@ -15,6 +15,7 @@
 #include "zstr/zstr.hpp"
 #include "Compressed_Stream.hpp"
 #include "Binary_File_Iterator.hpp"
+#include "Codec_Stream.hpp"
 
 #include <chrono> 
 #include <iostream>
@@ -700,6 +701,73 @@ void decompress_lz4(const std::string& compressed_file, const std::size_t buf_si
 }
 
 
+void test_codec_stream(const char* const file_path, const size_t thread_count, const size_t blk_count = 50, const size_t max_buf_sz = 1000)
+{
+    constexpr size_t seed = 123456789101112UL;
+
+    // typedef uint32_t T_elem_t;
+    typedef uint64_t T_elem_t;
+
+    codec_stream::Codec_Stream<T_elem_t> comp_stream(thread_count, max_buf_sz, file_path);
+
+    std::vector<std::unique_ptr<std::thread>> T(thread_count);
+    for(size_t i = 0; i < thread_count; ++i)
+        T[i].reset(new std::thread([&comp_stream, blk_count, max_buf_sz]()
+        {
+            T_elem_t* const write_buf = new T_elem_t[max_buf_sz];
+
+            const codec_stream::Token& token = comp_stream.get_token();
+            for(size_t blk = 0; blk < blk_count; ++blk)
+            {
+                const size_t elem_count = max_buf_sz / (blk + 1);
+                for(size_t i = 0; i < elem_count; ++i)
+                {
+                    // write_buf[i] = (blk * max_buf_sz + i);
+                    write_buf[i] = (seed * blk + max_buf_sz * i + i * i);
+                }
+
+                comp_stream.write(token, write_buf, elem_count);
+            }
+
+            delete[] write_buf;
+        }
+        ));
+
+    for(size_t i = 0; i < thread_count; ++i)
+        T[i]->join();
+
+    comp_stream.close_stream();
+
+    std::cout << "Done compression.\n";
+
+
+
+    codec_stream::Codec_Stream<T_elem_t> decomp_stream(thread_count, max_buf_sz, file_path, false);
+    for(size_t i = 0; i < thread_count; ++i)
+        T[i].reset(
+            new std::thread([&decomp_stream, blk_count, max_buf_sz]()
+            {
+                T_elem_t* const read_buf = new T_elem_t[max_buf_sz];
+
+                const codec_stream::Token& token = decomp_stream.get_token();
+                while(decomp_stream.read(token, read_buf));
+
+                delete[] read_buf;
+            }
+            )
+        );
+
+    for(size_t i = 0; i < thread_count; ++i)
+        T[i]->join();
+
+    decomp_stream.close_stream();
+
+    std::cout << "Done decompression.\n";
+
+    decomp_stream.remove_files();
+}
+
+
 int main(int argc, char** argv)
 {
     (void)argc;
@@ -740,8 +808,11 @@ int main(int argc, char** argv)
 
     // compress(argv[1], std::atol(argv[2]), std::atol(argv[3]));
     // compress_lz4(argv[1], std::atol(argv[2]), std::atol(argv[3]));
-    // decompress(argv[1], std::atol(argv[2]), std::atol(argv[3]));
-    decompress_lz4(argv[1], std::atol(argv[2]), std::atol(argv[3]));
+
+    const size_t thread_count = std::atol(argv[2]);
+    const size_t blk_count = std::atol(argv[2]);
+    const size_t max_buf_sz = std::atol(argv[3]);
+    test_codec_stream(argv[1], thread_count, blk_count, max_buf_sz);
 
 
     return 0;

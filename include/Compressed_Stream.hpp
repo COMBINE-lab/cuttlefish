@@ -6,7 +6,7 @@
 
 // #include "zstr/zstr.hpp"
 #include "lz4_stream/lz4_stream.h"
-#include "FastPFor/codecfactory.h"
+// #include "FastPFor/codecfactory.h"
 
 #include <fstream>
 

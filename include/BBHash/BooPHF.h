@@ -20,6 +20,7 @@
 #include <chrono>
 #include <thread>
 #include "Binary_File_Iterator.hpp"
+#include "Codec_Stream.hpp"
 
 
 
@@ -176,16 +177,16 @@ namespace boomphf {
 		
 		file_binary(const char* filename)
 		{
-			_is = fopen(filename, "rb");
+			// _is = fopen(filename, "rb");
 
-			if (!_is) {
-				throw std::invalid_argument("Error opening " + std::string(filename));
-			}
+			// if (!_is) {
+			// 	throw std::invalid_argument("Error opening " + std::string(filename));
+			// }
 		}
 		
 		~file_binary()
 		{
-			fclose(_is);
+			// fclose(_is);
 		}
 		
 		bfile_iterator<type_elem> begin() const
@@ -894,7 +895,7 @@ we need this 2-functors scheme because HashFunctors won't work with unordered_ma
 
 
 #define WORK_CHUNK_SZ 100
-#define LARGE_CHUNK_SZ 1000
+#define LARGE_CHUNK_SZ 100000
 #define WRITE_BUFF_SZ 1000000
 //#define WORK_CHUNK_SZ 2
 
@@ -995,7 +996,9 @@ we need this 2-functors scheme because HashFunctors won't work with unordered_ma
 			{
 				_tempBitset =  new bitVector(_levels[ii].hash_domain); // temp collision bitarray for this level
 
+				// std::cout << "Level " << ii << "\n";
 				processLevel(input_range,ii);
+				// std::cout << "Finished level " << ii << "\n";
 
 				_levels[ii].bitset.clearCollisions(0 , _levels[ii].hash_domain , _tempBitset);
 				
@@ -1090,14 +1093,23 @@ we need this 2-functors scheme because HashFunctors won't work with unordered_ma
 		template <typename Iterator>  //typename Range,
         void pthread_processLevel( std::vector<elem_t>  & buffer , std::shared_ptr<Iterator> shared_it, std::shared_ptr<Iterator> until_p, int i, int thread_id)
 		{
+			// std::cout << "HERE\n";
 			uint64_t nb_done =0;
 			int tid =  __sync_fetch_and_add (&_nb_living, 1);
 			auto until = *until_p;
 			uint64_t inbuff =0;
 
+			// std::cout << "HERE\n";
+
 			uint64_t writebuff =0;
 			std::vector< elem_t > & myWriteBuff = bufferperThread[tid];
 
+			// std::cout << "Before token for thread " << thread_id << "\n";
+
+			const codec_stream::Token* write_token = (i < _nb_levels - 1 && i > 0 ? &(write_stream->get_token()) : nullptr);
+			const codec_stream::Token* read_token = (i < _nb_levels && i > 1 ? &(read_stream->get_token()) : nullptr);
+
+			// std::cout << "After token for thread " << thread_id << "\n";
 
 			for (bool isRunning=true;  isRunning ; )
 			{
@@ -1105,6 +1117,8 @@ we need this 2-functors scheme because HashFunctors won't work with unordered_ma
 
                 if(i < 2)	// Use the Cuttlefish iterator to read keys from the input disk-database.
 				{
+					// std::cout << "Thread-id: " << thread_id << "\n";
+
 					// TODO: try to delay the `volatile` access, i.e. `tasks_expected` as much as possible.
 					while(inbuff < WORK_CHUNK_SZ && shared_it->tasks_expected(thread_id))
 						if(shared_it->value_at(thread_id, buffer[inbuff]))
@@ -1113,8 +1127,9 @@ we need this 2-functors scheme because HashFunctors won't work with unordered_ma
 					if(!shared_it->tasks_expected(thread_id))
 						isRunning = false;
 				}
-				else	// Use the BBHash `bfile_iterator` to read keys from their temporary binary files.
+				else	// Use the custom codec (`Codec_Stream`) to read keys from the BBHash temporary binary files.
 				{
+					/*
 					pthread_mutex_lock(&_mutex);
 
 					// TODO: try optimizing by including the value fetch into the iterator advancement.
@@ -1125,6 +1140,13 @@ we need this 2-functors scheme because HashFunctors won't work with unordered_ma
 						isRunning = false;
 
 					pthread_mutex_unlock(&_mutex);
+					*/
+					// std::cout << "Reading elements\n";
+					inbuff = read_stream->read(*read_token, buffer);
+					if(inbuff == 0)
+						isRunning = false;
+
+					// std::cout << "Read " << inbuff << " elements\n";
 				}
 
 				//do work on the n elems of the buffer
@@ -1155,7 +1177,7 @@ we need this 2-functors scheme because HashFunctors won't work with unordered_ma
 
 	
 
-						
+						// Unused by Cuttlefish.
 						if(_fastmode && i == _fastModeLevel)
 						{
 
@@ -1187,17 +1209,20 @@ we need this 2-functors scheme because HashFunctors won't work with unordered_ma
 							if(_writeEachLevel && i > 0 && i < _nb_levels -1)
 							{
 								// if(writebuff>=WORK_CHUNK_SZ)
-								if(writebuff>=WRITE_BUFF_SZ)
+								// if(writebuff>=WRITE_BUFF_SZ)
+								if(writebuff >= LARGE_CHUNK_SZ)
 								{
 									//flush buffer
 									// flockfile(_currlevelFile);
 									// fwrite(myWriteBuff.data(),sizeof(elem_t),writebuff,_currlevelFile);
 									// funlockfile(_currlevelFile);
+									/*
 									pthread_mutex_lock(&file_lock);
 									op_stream->write(myWriteBuff.data(), writebuff);
 									pthread_mutex_unlock(&file_lock);
+									*/
+									write_stream->write(*write_token, myWriteBuff, writebuff);
 									writebuff = 0;
-								
 								}
 								
 									myWriteBuff[writebuff++] = val;
@@ -1237,11 +1262,16 @@ we need this 2-functors scheme because HashFunctors won't work with unordered_ma
 				// flockfile(_currlevelFile);
 				// fwrite(myWriteBuff.data(),sizeof(elem_t),writebuff,_currlevelFile);
 				// funlockfile(_currlevelFile);
+				/*
 				pthread_mutex_lock(&file_lock);
 				op_stream->write(myWriteBuff.data(), writebuff);
 				pthread_mutex_unlock(&file_lock);
+				*/
+				write_stream->write(*write_token, myWriteBuff, writebuff);
 				writebuff = 0;
 			}
+
+			// std::cout << "Done at level " << i << "\n";
 		}
 
 		
@@ -1485,13 +1515,21 @@ we need this 2-functors scheme because HashFunctors won't work with unordered_ma
 				
 				if(i>2) //delete previous file
 				{
-					unlink(fname_old);
+					// unlink(fname_old);
+					codec_stream::Codec_Stream<elem_t>::remove_files(fname_old);
 				}
 				
 				if(i< _nb_levels-1 && i > 0 ) //create curr file
 				{
 					// _currlevelFile = fopen(fname_curr,"w");
-					op_stream.reset(new Compressed_Stream<elem_t>(fname_curr));
+					// op_stream.reset(new Compressed_Stream<elem_t>(fname_curr));
+					write_stream.reset(new codec_stream::Codec_Stream<elem_t>(_num_thread, LARGE_CHUNK_SZ, fname_curr));
+					// std::cout << "Done instantiating codec-streams for level " << i << "\n";
+				}
+
+				if(i < _nb_levels && i > 1)
+				{
+					read_stream.reset(new codec_stream::Codec_Stream<elem_t>(_num_thread, LARGE_CHUNK_SZ, fname_prev, false));
 				}
 			}
 			
@@ -1527,6 +1565,7 @@ we need this 2-functors scheme because HashFunctors won't work with unordered_ma
 				t_arg.it_p = std::static_pointer_cast<void>(std::make_shared<disklevel_it_type>(data_iterator_level.begin(fname_prev)));
 				t_arg.until_p = std::static_pointer_cast<void>(std::make_shared<disklevel_it_type>(data_iterator_level.end(fname_prev)));
 				
+				// std::cout << "Spawning threads for level " << i << "\n";
 				for(int ii=0;ii<_num_thread;ii++)
 					pthread_create (&tab_threads[ii], NULL,  thread_processLevel<elem_t, Hasher_t, Range, disklevel_it_type>, &t_arg); //&t_arg[ii]
 			
@@ -1534,9 +1573,12 @@ we need this 2-functors scheme because HashFunctors won't work with unordered_ma
 				//must join here before the block is closed and file_binary is destroyed (and closes the file)
 				for(int ii=0;ii<_num_thread;ii++)
 				{
+					// std::cout << "Joining thread " << ii << "\n";
 					pthread_join(tab_threads[ii], NULL);
+					// std::cout << "Joined thread " << ii << "\n";
 				}
-				
+
+				// std::cout << "Joined level-specific threads for level " << i << "\n";
 			}
 			
 			else
@@ -1575,8 +1617,8 @@ we need this 2-functors scheme because HashFunctors won't work with unordered_ma
 					pthread_join(tab_threads[ii], NULL);
 				}
 			}
+			std::cerr << "Done\n";
 			//printf("\ngoing to level %i  : %llu elems  %.2f %%  expected : %.2f %% \n",i,_cptLevel,100.0* _cptLevel/(float)_nelem,100.0* pow(_proba_collision,i) );
-
 			//printf("\ncpt total processed %llu \n",_cptTotalProcessed);
 			if(_fastmode && i == _fastModeLevel) //shrink to actual number of elements in set
 			{
@@ -1587,15 +1629,25 @@ we need this 2-functors scheme because HashFunctors won't work with unordered_ma
 			
 			if(_writeEachLevel)
 			{
+				// std::cout << "Trying to close streams\n";
+
 				if(i< _nb_levels-1 && i>0)
 				{
+					// std::cout << "Closing write stream\n";
 					// fflush(_currlevelFile);
 					// fclose(_currlevelFile);
+					write_stream->close();
+					// std::cout << "Done closing write.\n";
+					// std::cout << "Closing read stream\n";
+					if(i > 1)
+						read_stream->close();
+					// std::cout << "Done closing stream\n";
 				}
 				
 					if(i== _nb_levels- 1) //delete last file
 					{
-						unlink(fname_prev);
+						// unlink(fname_prev);
+						codec_stream::Codec_Stream<elem_t>::remove_files(fname_prev);
 					}
 			}
 
@@ -1636,8 +1688,10 @@ we need this 2-functors scheme because HashFunctors won't work with unordered_ma
 		bool _built;
 		bool _writeEachLevel;
 		// FILE * _currlevelFile;
-		std::unique_ptr<Compressed_Stream<elem_t>> op_stream;		
-		pthread_mutex_t file_lock;
+		// std::unique_ptr<Compressed_Stream<elem_t>> op_stream;		
+		// pthread_mutex_t file_lock;
+		std::unique_ptr<codec_stream::Codec_Stream<elem_t>> write_stream{nullptr};
+		std::unique_ptr<codec_stream::Codec_Stream<elem_t>> read_stream{nullptr};
 		int _pid;
 	public:
 		pthread_mutex_t _mutex;
@@ -1689,6 +1743,8 @@ we need this 2-functors scheme because HashFunctors won't work with unordered_ma
 		pthread_mutex_unlock(mutex);
 
 		obw->pthread_processLevel(buffer, startit, until_p, level, thread_id);
+
+		// std::cout << "Processed level " << level << "\n";
 
 		if(producer != nullptr)
 		{

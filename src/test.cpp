@@ -736,7 +736,7 @@ void test_codec_stream(const char* const file_path, const size_t thread_count, c
     for(size_t i = 0; i < thread_count; ++i)
         T[i]->join();
 
-    comp_stream.close_stream();
+    comp_stream.close();
 
     std::cout << "Done compression.\n";
 
@@ -760,7 +760,7 @@ void test_codec_stream(const char* const file_path, const size_t thread_count, c
     for(size_t i = 0; i < thread_count; ++i)
         T[i]->join();
 
-    decomp_stream.close_stream();
+    decomp_stream.close();
 
     std::cout << "Done decompression.\n";
 
@@ -817,3 +817,4 @@ int main(int argc, char** argv)
 
     return 0;
 }
+

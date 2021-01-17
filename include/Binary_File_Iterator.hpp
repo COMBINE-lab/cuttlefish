@@ -84,7 +84,7 @@ inline Binary_File_Iterator<T_elem_>::Binary_File_Iterator(const std::string& fi
     file_path(file_path),
     offset{at_end ? END_OFF : 0}
 {
-    peek();
+    // peek();
 }
 
 

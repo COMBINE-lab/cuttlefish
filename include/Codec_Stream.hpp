@@ -55,7 +55,7 @@ private:
     const size_t buf_sz;    // Size (in bytes) of each buffer (per-user).
     const std::string file_pref;    // Prefix of the path to the codec files.
     const std::string stream_file;  // Path to the codec-streaming file.
-    const std::string blk_elem_file;    // Path to the metafile containing the number of elements in the codec blocks.
+    const std::string blk_elems_file;    // Path to the metafile containing the number of elements in the codec blocks.
     const std::string blk_bytes_file;   // Path to the metafile containing the number of bytes in the compressed blocks.
     const bool is_compression;  // Whether the codec-stream is being used for compression or decompression.
 
@@ -127,10 +127,13 @@ public:
     size_t read(const Token& token, std::vector<T_elem_>& data);
 
     // Closes the codec-stream.
-    void close_stream();
+    void close();
 
     // Delete the codec-stream specific files.
     void remove_files() const;
+
+    // Delete codec-stream specific files with path-prefix `path_prefix`.
+    static void remove_files(const std::string& path_prefix);
 };
 
 
@@ -141,7 +144,7 @@ inline Codec_Stream<T_elem_>::Codec_Stream(const size_t user_count, const size_t
     buf_sz(LZ4_compressBound(max_elems_per_blk * sizeof(T_elem_))),
     file_pref(file_pref),
     stream_file(file_pref + ".stream"),
-    blk_elem_file(file_pref + ".elems"),
+    blk_elems_file(file_pref + ".elems"),
     blk_bytes_file(file_pref + ".bytes"),
     is_compression{is_compression}
 {
@@ -160,7 +163,7 @@ inline Codec_Stream<T_elem_>::Codec_Stream(const size_t user_count, const size_t
     {
         stream = std::fopen(stream_file.c_str(), "rb");
 
-        read(blk_elem_file, elems_per_blk);
+        read(blk_elems_file, elems_per_blk);
         read(blk_bytes_file, bytes_per_blk);
     }
 
@@ -300,7 +303,14 @@ inline size_t Codec_Stream<T_elem_>::read(const Token& token, T_elem_* const dat
 
 
 template <typename T_elem_>
-inline void Codec_Stream<T_elem_>::close_stream()
+inline size_t Codec_Stream<T_elem_>::read(const Token& token, std::vector<T_elem_>& data)
+{
+    return read(token, data.data());
+}
+
+
+template <typename T_elem_>
+inline void Codec_Stream<T_elem_>::close()
 {
     if(is_compression)
         close_write();
@@ -327,13 +337,13 @@ inline void Codec_Stream<T_elem_>::close_write()
 
     stream = nullptr;
 
-    write<typename decltype(elems_per_blk)::value_type>(blk_elem_file, elems_per_blk);
+    write<typename decltype(elems_per_blk)::value_type>(blk_elems_file, elems_per_blk);
     write<typename decltype(bytes_per_blk)::value_type>(blk_bytes_file, bytes_per_blk);
 
     mutex_lock.unlock();
 
-    std::cout << "Total input bytes provided:  " << std::accumulate(elem_bytes.begin(), elem_bytes.end(), 0) << "\n";
-    std::cout << "Total compressed byte count: " << std::accumulate(compressed_bytes.begin(), compressed_bytes.end(), 0) << "\n";
+    std::cout << "Total input bytes provided:  " << std::accumulate(elem_bytes.begin(), elem_bytes.end(), 0LU) << "\n";
+    std::cout << "Total compressed byte count: " << std::accumulate(compressed_bytes.begin(), compressed_bytes.end(), 0LU) << "\n";
 }
 
 
@@ -354,15 +364,15 @@ inline void Codec_Stream<T_elem_>::close_read()
     stream = nullptr;
     mutex_lock.unlock();
 
-    std::cout << "Total compressed bytes read:   " << std::accumulate(compressed_bytes.begin(), compressed_bytes.end(), 0) << "\n";
-    std::cout << "Total decompressed byte count: " << std::accumulate(decompressed_bytes.begin(), decompressed_bytes.end(), 0) << "\n";
+    std::cout << "Total compressed bytes read:   " << std::accumulate(compressed_bytes.begin(), compressed_bytes.end(), 0LU) << "\n";
+    std::cout << "Total decompressed byte count: " << std::accumulate(decompressed_bytes.begin(), decompressed_bytes.end(), 0LU) << "\n";
 }
 
 
 template <typename T_elem_>
 inline void Codec_Stream<T_elem_>::remove_files() const
 {
-    if(std::remove(stream_file.c_str()) != 0 || std::remove(blk_elem_file.c_str()) != 0 || std::remove(blk_bytes_file.c_str()) != 0)
+    if(std::remove(stream_file.c_str()) != 0 || std::remove(blk_elems_file.c_str()) != 0 || std::remove(blk_bytes_file.c_str()) != 0)
     {
         std::cerr << "Error deleting codec-stream files. Aborting.\n";
         std::exit(EXIT_FAILURE);
@@ -407,7 +417,24 @@ inline void Codec_Stream<T_elem_>::read(const std::string& file_path, std::vecto
     }
 }
 
+
+template <typename T_elem_>
+inline void Codec_Stream<T_elem_>::remove_files(const std::string& path_prefix)
+{
+    const std::string stream_file = path_prefix + ".stream";
+    const std::string blk_elems_file = path_prefix + ".elems";
+    const std::string blk_bytes_file = path_prefix + ".bytes";
+
+    if(std::remove(stream_file.c_str()) != 0 || std::remove(blk_elems_file.c_str()) != 0 || std::remove(blk_bytes_file.c_str()) != 0)
+    {
+        std::cerr << "Error deleting codec-stream files. Aborting.\n";
+        std::exit(EXIT_FAILURE);
+    }
+}
+
+
 }
 
 
 #endif
+

@@ -22,7 +22,7 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 
 # Turn off using platform-specific compiler standards.
 set(CMAKE_CXX_EXTENSIONS OFF)
-# set(CMAKE_C_EXTENSIONS OFF)
+set(CMAKE_C_EXTENSIONS OFF)
 
 
 # Bundle the warning flags that we want to pass on to the compiler.

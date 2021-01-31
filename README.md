@@ -228,7 +228,7 @@ Note that, Cuttlefish uses only as many bytes as required (rounded up to multipl
 
 ## Intermediate disk usage
 
-The Cuttlefish pipeline uses a non-trivial amount of intermediate disk space, in the forms of — the _k_-mer set produced by KMC3, and temporary files produced during the minimal perfect hash construction and the GFA output constructions. The produced KMC3 database (the `.kmc_pre` and the `.kmc_suf` extension files) is not removed automatically, and can be safely removed by the user after the Cuttlefish execution.
+The Cuttlefish pipeline uses a non-trivial amount of intermediate disk space, in the forms of — the _k_-mer set produced by KMC3, and temporary files produced during the minimal perfect hash construction and the GFA output constructions. The produced KMC3 database (the `.kmc_pre` and the `.kmc_suf` extension files) is not removed automatically (unless the flag `--rm` is passed to the graph build), and can be safely removed by the user after the Cuttlefish execution.
 
 ## Acknowledgements
 

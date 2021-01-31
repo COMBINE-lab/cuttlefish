@@ -51,4 +51,4 @@
 
 /* Simulate the same impact as including the old xxh3.h source file */
 
-#include "xxhash.h"
+#include "xxHash/xxhash.h"

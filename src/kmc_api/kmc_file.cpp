@@ -105,6 +105,60 @@ bool CKMCFile::OpenForListing(const std::string &file_name)
 	index_in_partial_buf = 0;
 	return true;
 }
+
+//----------------------------------------------------------------------------------
+// Open files *kmc_pre & *.kmc_suf, read *.kmc_pre to RAM, close *kmc.pre
+// *.kmc_suf is not buffered
+// IN	: file_name - the name of kmer_counter's output
+// RET	: true		- if successful
+//----------------------------------------------------------------------------------
+bool CKMCFile::open_for_listing_unbuffered(const std::string& file_name)
+{
+	uint64 size;
+
+	if (is_opened)
+		return false;
+	
+	if (file_pre || file_suf)
+		return false;
+
+	if (!OpenASingleFile(file_name + ".kmc_pre", file_pre, size, (char *)"KMCP"))
+		return false;
+
+	ReadParamsFrom_prefix_file_buf(size);
+	fclose(file_pre);
+	file_pre = NULL;
+
+	end_of_file = total_kmers == 0;
+
+	if (!OpenASingleFile(file_name + ".kmc_suf", file_suf, size, (char *)"KMCS"))
+		return false;
+
+	suffix_file_total_to_read = size;
+	suf_file_left_to_read = suffix_file_total_to_read;
+
+
+	sufix_file_buf = NULL;
+	/*
+	sufix_file_buf = new uchar[part_size];
+
+	auto to_read = MIN(suf_file_left_to_read, part_size);
+	auto readed = fread(sufix_file_buf, 1, to_read, file_suf);
+	if (readed != to_read)
+	{
+		std::cerr << "Error: some error while reading suffix file\n";
+		return false;
+	}
+
+	suf_file_left_to_read -= readed;
+	*/
+
+	is_opened = opened_for_listing;
+	prefix_index = 0;
+	sufix_number = 0;
+	index_in_partial_buf = 0;
+	return true;
+}
 //----------------------------------------------------------------------------------
 CKMCFile::CKMCFile()
 {
@@ -468,7 +522,8 @@ bool CKMCFile::Close()
 		end_of_file = false;
 		delete [] prefix_file_buf;
 		prefix_file_buf = NULL;
-		delete [] sufix_file_buf;
+		if(sufix_file_buf != NULL)
+			delete [] sufix_file_buf;
 		sufix_file_buf = NULL;
 		delete[] signature_map;
 		signature_map = NULL;

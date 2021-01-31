@@ -28,7 +28,7 @@ A pre-print of the manuscript is available in [bioRxiv](https://doi.org/10.1101/
 
 To install Cuttlefish, the following are required:
 
-- A [GCC](https://gcc.gnu.org/) compiler for C++14;
+- [GCC](https://gcc.gnu.org/) compilers for C++14 and C11;
 - [CMake](https://cmake.org/) (version >= 3.14);
 - [zlib](https://zlib.net/).
 

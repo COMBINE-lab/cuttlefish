@@ -91,7 +91,7 @@
 #if !defined(PLATFORM_POSIX_VERSION)
 #  define PLATFORM_POSIX_VERSION -1
 #endif
-
+int fileno();   // To avoid `-Wimplicit-function-declaration` for `fileno`.
 #if (defined(__linux__) && (PLATFORM_POSIX_VERSION >= 1)) \
  || (PLATFORM_POSIX_VERSION >= 200112L) \
  || defined(__DJGPP__) \

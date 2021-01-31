@@ -595,13 +595,11 @@ int main(int argc, char** argv)
 
     // count_kmers_in_unitigs(argv[1], atoi(argv[2]));
 
-    static constexpr uint16_t k = 25;
-    static const size_t consumer_count = std::atoi(argv[2]);
-
-    // test_iterator_correctness<31>(argv[1], consumer_count);
+    // static constexpr uint16_t k = 25;
+    // static const size_t consumer_count = std::atoi(argv[2]);
 
     // test_buffered_iterator_performance<k>(argv[1]);
-    test_SPMC_iterator_performance<k>(argv[1], consumer_count);
+    // test_SPMC_iterator_performance<k>(argv[1], consumer_count);
 
 
     return 0;

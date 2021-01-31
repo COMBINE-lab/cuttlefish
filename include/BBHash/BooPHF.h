@@ -41,7 +41,7 @@ namespace boomphf {
 ////////////////////////////////////////////////////////////////
 
 
-#define READ_BUFF_SZ 100000
+#define READ_BUFF_SZ 800000
 
 	
 	// iterator from disk file of u_int64_t with buffered read,   todo template
@@ -74,7 +74,7 @@ namespace boomphf {
 		{
 			//printf("bf it %p\n",_is);
 			// _buffsize = 100000;
-			_buffsize = READ_BUFF_SZ;
+			_buffsize = READ_BUFF_SZ / sizeof(basetype);
 			// _buffer = (basetype *) malloc(_buffsize*sizeof(basetype));
 			int reso = fseek(_is,0,SEEK_SET);
 			if (reso) {
@@ -884,7 +884,7 @@ we need this 2-functors scheme because HashFunctors won't work with unordered_ma
 
 #define WORK_CHUNK_SZ 100
 #define LARGE_CHUNK_SZ 1000
-#define WRITE_BUFF_SZ 1000000
+#define WRITE_BUFF_SZ 10000
 //#define WORK_CHUNK_SZ 2
 
 	template<typename Range,typename Iterator>

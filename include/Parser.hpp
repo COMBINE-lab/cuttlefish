@@ -11,10 +11,10 @@
 #include "zlib.h"
 
 
-struct _KSEQ_DATA;
+struct _KSEQ_DATA;  // Forward declaration for `kseq`'s sequence-data format.
 
 
-// Wrapper class to parse FASTA/FASTQ files using the kseq library.
+// Wrapper class to parse FASTA/FASTQ files using the `kseq` library.
 class Parser
 {
     typedef _KSEQ_DATA kseq_t;

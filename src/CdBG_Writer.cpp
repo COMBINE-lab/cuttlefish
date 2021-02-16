@@ -552,34 +552,34 @@ void CdBG<k>::allocate_output_buffers()
 
 
 template <uint16_t k>
-bool CdBG<k>::is_unipath_start(const cuttlefish::Vertex_Class vertex_class, const cuttlefish::dir_t dir, const cuttlefish::Vertex_Class prev_kmer_class, const cuttlefish::dir_t prev_kmer_dir) const
+bool CdBG<k>::is_unipath_start(const cuttlefish::State_Class state_class, const cuttlefish::dir_t dir, const cuttlefish::State_Class prev_kmer_class, const cuttlefish::dir_t prev_kmer_dir) const
 {
-    if(vertex_class == cuttlefish::Vertex_Class::multi_in_multi_out)
+    if(state_class == cuttlefish::State_Class::multi_in_multi_out)
         return true;
 
     if(dir == cuttlefish::FWD)
     {
-        if(vertex_class == cuttlefish::Vertex_Class::multi_in_single_out)
+        if(state_class == cuttlefish::State_Class::multi_in_single_out)
             return true;
     }
     else    // dir == cuttlefish::BWD
-        if(vertex_class == cuttlefish::Vertex_Class::single_in_multi_out)
+        if(state_class == cuttlefish::State_Class::single_in_multi_out)
             return true;
 
 
     // assert(kmer_idx > 0);
 
 
-    if(prev_kmer_class == cuttlefish::Vertex_Class::multi_in_multi_out)
+    if(prev_kmer_class == cuttlefish::State_Class::multi_in_multi_out)
         return true;
 
     if(prev_kmer_dir == cuttlefish::FWD)
     {
-        if(prev_kmer_class == cuttlefish::Vertex_Class::single_in_multi_out)
+        if(prev_kmer_class == cuttlefish::State_Class::single_in_multi_out)
             return true;
     }
     else    // prev_kmer_dir == cuttlefish::BWD
-        if(prev_kmer_class == cuttlefish::Vertex_Class::multi_in_single_out)
+        if(prev_kmer_class == cuttlefish::State_Class::multi_in_single_out)
             return true;
 
     
@@ -588,34 +588,34 @@ bool CdBG<k>::is_unipath_start(const cuttlefish::Vertex_Class vertex_class, cons
 
 
 template <uint16_t k>
-bool CdBG<k>::is_unipath_end(const cuttlefish::Vertex_Class vertex_class, const cuttlefish::dir_t dir, const cuttlefish::Vertex_Class next_kmer_class, const cuttlefish::dir_t next_kmer_dir) const
+bool CdBG<k>::is_unipath_end(const cuttlefish::State_Class state_class, const cuttlefish::dir_t dir, const cuttlefish::State_Class next_kmer_class, const cuttlefish::dir_t next_kmer_dir) const
 {
-    if(vertex_class == cuttlefish::Vertex_Class::multi_in_multi_out)
+    if(state_class == cuttlefish::State_Class::multi_in_multi_out)
         return true;
 
     if(dir == cuttlefish::FWD)
     {
-        if(vertex_class == cuttlefish::Vertex_Class::single_in_multi_out)
+        if(state_class == cuttlefish::State_Class::single_in_multi_out)
             return true;
     }
     else    // dir == cuttlefish::BWD
-        if(vertex_class == cuttlefish::Vertex_Class::multi_in_single_out)
+        if(state_class == cuttlefish::State_Class::multi_in_single_out)
             return true;
 
 
     // assert(kmer_idx < ref.length() - k);
 
 
-    if(next_kmer_class == cuttlefish::Vertex_Class::multi_in_multi_out)
+    if(next_kmer_class == cuttlefish::State_Class::multi_in_multi_out)
         return true;
 
     if(next_kmer_dir == cuttlefish::FWD)
     {
-        if(next_kmer_class == cuttlefish::Vertex_Class::multi_in_single_out)
+        if(next_kmer_class == cuttlefish::State_Class::multi_in_single_out)
             return true;
     }
     else    // next_kmer_dir == cuttlefish::BWD
-        if(next_kmer_class == cuttlefish::Vertex_Class::single_in_multi_out)
+        if(next_kmer_class == cuttlefish::State_Class::single_in_multi_out)
             return true;
 
 

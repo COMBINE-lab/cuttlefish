@@ -180,7 +180,7 @@ size_t CdBG<k>::output_maximal_unitigs_gfa(const uint16_t thread_id, const char*
             // A valid left neighbor exists as it's not an isolated k-mer.
             Annotated_Kmer<k> prev_kmer(Kmer<k>(seq, kmer_idx - 1), kmer_idx, Vertices);
             
-            if(is_unipath_start(curr_kmer.vertex_class(), curr_kmer.dir(), prev_kmer.vertex_class(), prev_kmer.dir()))
+            if(is_unipath_start(curr_kmer.state_class(), curr_kmer.dir(), prev_kmer.state_class(), prev_kmer.dir()))
                 // A maximal unitig ends at the ending of a maximal valid subsequence.
                 output_gfa_unitig(thread_id, seq, curr_kmer, curr_kmer);
 
@@ -208,14 +208,14 @@ size_t CdBG<k>::output_maximal_unitigs_gfa(const uint16_t thread_id, const char*
         else
         {
             prev_kmer = Annotated_Kmer<k>(Kmer<k>(seq, kmer_idx - 1), kmer_idx, Vertices);
-            if(is_unipath_start(curr_kmer.vertex_class(), curr_kmer.dir(), prev_kmer.vertex_class(), prev_kmer.dir()))
+            if(is_unipath_start(curr_kmer.state_class(), curr_kmer.dir(), prev_kmer.state_class(), prev_kmer.dir()))
             {
                 on_unipath = true;
                 unipath_start_kmer = curr_kmer;
             }
         }
 
-        if(on_unipath && is_unipath_end(curr_kmer.vertex_class(), curr_kmer.dir(), next_kmer.vertex_class(), next_kmer.dir()))
+        if(on_unipath && is_unipath_end(curr_kmer.state_class(), curr_kmer.dir(), next_kmer.state_class(), next_kmer.dir()))
         {
             output_gfa_unitig(thread_id, seq, unipath_start_kmer, curr_kmer);
             on_unipath = false;
@@ -228,7 +228,7 @@ size_t CdBG<k>::output_maximal_unitigs_gfa(const uint16_t thread_id, const char*
             prev_kmer = curr_kmer;
             curr_kmer = next_kmer;
 
-            if(is_unipath_start(curr_kmer.vertex_class(), curr_kmer.dir(), prev_kmer.vertex_class(), prev_kmer.dir()))
+            if(is_unipath_start(curr_kmer.state_class(), curr_kmer.dir(), prev_kmer.state_class(), prev_kmer.dir()))
             {
                 on_unipath = true;
                 unipath_start_kmer = curr_kmer;
@@ -252,7 +252,7 @@ size_t CdBG<k>::output_maximal_unitigs_gfa(const uint16_t thread_id, const char*
             {
                 next_kmer.roll_to_next_kmer(seq[kmer_idx + k], Vertices);
                 
-                if(on_unipath && is_unipath_end(curr_kmer.vertex_class(), curr_kmer.dir(), next_kmer.vertex_class(), next_kmer.dir()))
+                if(on_unipath && is_unipath_end(curr_kmer.state_class(), curr_kmer.dir(), next_kmer.state_class(), next_kmer.dir()))
                 {
                     output_gfa_unitig(thread_id, seq, unipath_start_kmer, curr_kmer);
                     on_unipath = false;

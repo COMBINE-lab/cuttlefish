@@ -16,7 +16,7 @@ class Annotated_Kmer: public Directed_Kmer<k>
 private:
 
     size_t idx_;
-    cuttlefish::Vertex_Class vertex_class_;
+    cuttlefish::State_Class state_class_;
 
 
 public:
@@ -41,14 +41,14 @@ public:
     // Returns the index of the k-mer.
     size_t idx() const;
 
-    // Returns the vertex class of the k-mer.
-    cuttlefish::Vertex_Class vertex_class() const;
+    // Returns the state-class of the k-mer.
+    cuttlefish::State_Class state_class() const;
 };
 
 
 template <uint16_t k>
 inline Annotated_Kmer<k>::Annotated_Kmer(const Kmer<k>& kmer, const size_t kmer_idx, const Kmer_Hash_Table<k>& hash):
-    Directed_Kmer<k>(kmer), idx_(kmer_idx), vertex_class_(hash[this->canonical_].vertex_class())
+    Directed_Kmer<k>(kmer), idx_(kmer_idx), state_class_(hash[this->canonical_].state_class())
 {}
 
 
@@ -58,7 +58,7 @@ inline void Annotated_Kmer<k>::roll_to_next_kmer(const char next_base, const Kme
     Directed_Kmer<k>::roll_to_next_kmer(next_base);
 
     idx_++;
-    vertex_class_ = hash[this->canonical_].vertex_class();
+    state_class_ = hash[this->canonical_].state_class();
 }
 
 
@@ -71,7 +71,7 @@ inline void Annotated_Kmer<k>::operator=(const Annotated_Kmer<k>& rhs)
     this->dir_ = rhs.dir_;
     
     idx_ = rhs.idx_;
-    vertex_class_ = rhs.vertex_class_;
+    state_class_ = rhs.state_class_;
 }
 
 
@@ -83,9 +83,9 @@ inline size_t Annotated_Kmer<k>::idx() const
 
 
 template <uint16_t k>
-inline cuttlefish::Vertex_Class Annotated_Kmer<k>::vertex_class() const
+inline cuttlefish::State_Class Annotated_Kmer<k>::state_class() const
 {
-    return vertex_class_;
+    return state_class_;
 }
 
 

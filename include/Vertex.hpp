@@ -21,9 +21,9 @@ class Vertex
 
 private:
 
-    cuttlefish::Vertex_Class vertex_class_;
-    cuttlefish::base_t enter_;
-    cuttlefish::base_t exit_;
+    cuttlefish::State_Class state_class_;
+    cuttlefish::base_t front_;
+    cuttlefish::base_t back_;
     bool visited_;
     bool outputted_;
 
@@ -34,23 +34,23 @@ public:
     Vertex(): visited_(false)
     {}
 
-    // Constructs a vertex of class `single_in_single_out`.
-    Vertex(cuttlefish::Vertex_Class vertex_class, cuttlefish::base_t enter, cuttlefish::base_t exit);
+    // Constructs a vertex of state-class `single_in_single_out`.
+    Vertex(cuttlefish::State_Class state_class, cuttlefish::base_t front, cuttlefish::base_t back);
 
-    // Constructs a vertex of class either `multi_in_single_out` or `single_in_multi_out`.
-    Vertex(cuttlefish::Vertex_Class vertex_class, cuttlefish::base_t base);
+    // Constructs a vertex of state-class either `multi_in_single_out` or `single_in_multi_out`.
+    Vertex(cuttlefish::State_Class state_class, cuttlefish::base_t base);
 
-    // Constructs a vertex of class `vertex_class`, with the provided outputted status.
-    Vertex(cuttlefish::Vertex_Class vertex_class, bool outputted = false);
+    // Constructs a vertex of state-class `state_class`, with the provided outputted status.
+    Vertex(cuttlefish::State_Class state_class, bool outputted = false);
 
-    // Returns the vertex class.
-    cuttlefish::Vertex_Class vertex_class() const;
+    // Returns the state-class.
+    cuttlefish::State_Class state_class() const;
 
-    // Returns the entering base.
-    cuttlefish::base_t enter() const;
+    // Returns the base at the front of the vertex.
+    cuttlefish::base_t front() const;
 
-    // Returns the exitting base.
-    cuttlefish::base_t exit() const;
+    // Returns the base at the back of the vertex.
+    cuttlefish::base_t back() const;
 
     // Returns the outputted status.
     bool outputted() const;
@@ -61,21 +61,21 @@ public:
 
 
 
-inline cuttlefish::Vertex_Class Vertex::vertex_class() const
+inline cuttlefish::State_Class Vertex::state_class() const
 {
-    return vertex_class_;
+    return state_class_;
 }
 
 
-inline cuttlefish::base_t Vertex::enter() const
+inline cuttlefish::base_t Vertex::front() const
 {
-    return enter_;
+    return front_;
 }
 
 
-inline cuttlefish::base_t Vertex::exit() const
+inline cuttlefish::base_t Vertex::back() const
 {
-    return exit_;
+    return back_;
 }
 
 

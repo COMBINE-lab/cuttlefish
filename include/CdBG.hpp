@@ -25,7 +25,7 @@ class CdBG
 private:
 
     const Build_Params params;    // Required parameters wrapped in one object.
-    Kmer_Hash_Table<k> Vertices;   // The hash table for the vertices (canonical k-mers) of the de Bruijn graph.
+    Kmer_Hash_Table<k, cuttlefish::BITS_PER_REF_KMER> Vertices; // The hash table for the vertices (canonical k-mers) of the de Bruijn graph.
 
     // Minimum size of a partition to be processed by one thread.
     static constexpr uint16_t PARTITION_SIZE_THRESHOLD = 1;

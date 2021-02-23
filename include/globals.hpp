@@ -18,6 +18,10 @@
 
 #define INSTANTIATE(z, k, class_name) template class class_name<2 * k + 1>;
 #define ENUMERATE(count, instantiator, class_name) BOOST_PP_REPEAT(count, instantiator, class_name)
+
+#define INSTANTIATE_PER_BIT(z, k, class_name) template class class_name<2 * k + 1, 5>;// template class class_name<2 * k + 1, 6>;
+#define ENUMERATE_PER_BIT(count, instantiator, class_name) BOOST_PP_REPEAT(count, instantiator, class_name)
+
 // BOOST_PP_REPEAT reference: https://www.boost.org/doc/libs/1_55_0/libs/preprocessor/doc/ref/repeat.html
 
 
@@ -62,9 +66,9 @@ namespace cuttlefish
     };
 
 
-    constexpr uint8_t BITS_PER_KMER = 5;
-    typedef compact::ts_vector<state_code_t, BITS_PER_KMER, uint64_t, std::allocator<uint64_t>> bitvector_t;
-    typedef compact::iterator_imp::lhs_setter<state_code_t, BITS_PER_KMER, uint64_t, true, 64U> bitvector_entry_t;
+    constexpr uint8_t BITS_PER_REF_KMER = 5;
+    typedef compact::ts_vector<state_code_t, BITS_PER_REF_KMER, uint64_t, std::allocator<uint64_t>> ref_bitvector_t;
+    typedef compact::iterator_imp::lhs_setter<state_code_t, BITS_PER_REF_KMER, uint64_t, true, 64U> ref_bitvector_entry_t;
 
 
     typedef std::shared_ptr<spdlog::logger> logger_t;

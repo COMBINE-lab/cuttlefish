@@ -10,16 +10,16 @@
 #include <cstdint>
 
 
-template <uint16_t k> class Kmer_Hash_Table;
-class Kmer_Hash_Entry_API;
+template <uint16_t k, uint8_t BITS_PER_KEY> class Kmer_Hash_Table;
+template <uint8_t BITS_PER_KEY> class Kmer_Hash_Entry_API;
 
 
 class State
 {
-    template <uint16_t k>
+    template <uint16_t k, uint8_t BITS_PER_KEY>
     friend class Kmer_Hash_Table;
 
-    friend class Kmer_Hash_Entry_API;
+    friend class Kmer_Hash_Entry_API<cuttlefish::BITS_PER_REF_KMER>;
 
 private:
 
@@ -31,7 +31,7 @@ private:
     State(cuttlefish::state_code_t code);
 
     // Constructs a `State` from the state stored at the bitvector entry `bv_entry`.
-    State(const cuttlefish::bitvector_entry_t& bv_entry);
+    State(const cuttlefish::ref_bitvector_entry_t& bv_entry);
 
     // Sets the DNA base 2-bit encoding at the bits b1 and b0 of `code`.
     // Requirement: the two bits must be zero before the call, for consistent behavior.
@@ -111,7 +111,7 @@ inline State::State(const cuttlefish::state_code_t code):
 }
 
 
-inline State::State(const cuttlefish::bitvector_entry_t& bv_entry)
+inline State::State(const cuttlefish::ref_bitvector_entry_t& bv_entry)
 {
     // CAS vector `fetch` does not work.
     // bv_entry.fetch_val(vertex_code);

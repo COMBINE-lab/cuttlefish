@@ -140,7 +140,7 @@ void CdBG<k>::output_plain_unitig(const uint16_t thread_id, const char* const se
     // For a particular unitig, always query the same well-defined canonical flanking
     // k-mer, irrespective of which direction the unitig may be traversed at.
     const Kmer<k> min_flanking_kmer = std::min(start_kmer.canonical(), end_kmer.canonical());
-    Kmer_Hash_Entry_API hash_table_entry = Vertices[min_flanking_kmer];
+    Kmer_Hash_Entry_API<cuttlefish::BITS_PER_REF_KMER> hash_table_entry = Vertices[min_flanking_kmer];
     State& state = hash_table_entry.get_state();
 
     if(state.is_outputted())

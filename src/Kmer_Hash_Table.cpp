@@ -10,8 +10,8 @@
 #include <sys/stat.h>
 
 
-template <uint16_t k>
-void Kmer_Hash_Table<k>::build_mph_function(const Kmer_Container<k>& kmer_container, const uint16_t thread_count, const std::string& working_dir_path, const std::string& mph_file_path)
+template <uint16_t k, uint8_t BITS_PER_KEY>
+void Kmer_Hash_Table<k, BITS_PER_KEY>::build_mph_function(const Kmer_Container<k>& kmer_container, const uint16_t thread_count, const std::string& working_dir_path, const std::string& mph_file_path)
 {
     // The serialized BBHash file (saved from some earlier execution) exists.
     struct stat buffer;
@@ -51,8 +51,8 @@ void Kmer_Hash_Table<k>::build_mph_function(const Kmer_Container<k>& kmer_contai
 }
 
 
-template <uint16_t k>
-void Kmer_Hash_Table<k>::load_mph_function(const std::string& file_path)
+template <uint16_t k, uint8_t BITS_PER_KEY>
+void Kmer_Hash_Table<k, BITS_PER_KEY>::load_mph_function(const std::string& file_path)
 {
     std::ifstream input(file_path.c_str(), std::ifstream::in);
     if(input.fail())
@@ -68,8 +68,8 @@ void Kmer_Hash_Table<k>::load_mph_function(const std::string& file_path)
 }
 
 
-template <uint16_t k>
-void Kmer_Hash_Table<k>::save_mph_function(const std::string& file_path) const
+template <uint16_t k, uint8_t BITS_PER_KEY>
+void Kmer_Hash_Table<k, BITS_PER_KEY>::save_mph_function(const std::string& file_path) const
 {
     std::ofstream output(file_path.c_str(), std::ofstream::out);
     if(output.fail())
@@ -84,8 +84,8 @@ void Kmer_Hash_Table<k>::save_mph_function(const std::string& file_path) const
 }
 
 
-template <uint16_t k>
-void Kmer_Hash_Table<k>::save_hash_buckets(const std::string& file_path) const
+template <uint16_t k, uint8_t BITS_PER_KEY>
+void Kmer_Hash_Table<k, BITS_PER_KEY>::save_hash_buckets(const std::string& file_path) const
 {
     std::ofstream output(file_path.c_str(), std::ofstream::out);
     if(output.fail())
@@ -100,8 +100,8 @@ void Kmer_Hash_Table<k>::save_hash_buckets(const std::string& file_path) const
 }
 
 
-template <uint16_t k>
-void Kmer_Hash_Table<k>::load_hash_buckets(const std::string& file_path)
+template <uint16_t k, uint8_t BITS_PER_KEY>
+void Kmer_Hash_Table<k, BITS_PER_KEY>::load_hash_buckets(const std::string& file_path)
 {
     std::ifstream input(file_path.c_str(), std::ifstream::in);
     if(input.fail())
@@ -117,8 +117,8 @@ void Kmer_Hash_Table<k>::load_hash_buckets(const std::string& file_path)
 }
 
 
-template <uint16_t k>
-void Kmer_Hash_Table<k>::construct(const std::string& kmc_db_path, const uint16_t thread_count, const std::string& working_dir_path, const std::string& mph_file_path)
+template <uint16_t k, uint8_t BITS_PER_KEY>
+void Kmer_Hash_Table<k, BITS_PER_KEY>::construct(const std::string& kmc_db_path, const uint16_t thread_count, const std::string& working_dir_path, const std::string& mph_file_path)
 {
     std::chrono::high_resolution_clock::time_point t_start = std::chrono::high_resolution_clock::now();
 
@@ -155,8 +155,8 @@ void Kmer_Hash_Table<k>::construct(const std::string& kmc_db_path, const uint16_
 }
 
 
-template <uint16_t k>
-void Kmer_Hash_Table<k>::clear()
+template <uint16_t k, uint8_t BITS_PER_KEY>
+void Kmer_Hash_Table<k, BITS_PER_KEY>::clear()
 {
     if(mph != NULL)
         delete mph;
@@ -170,4 +170,4 @@ void Kmer_Hash_Table<k>::clear()
 
 
 // Template instantiations for the required specializations.
-ENUMERATE(INSTANCE_COUNT, INSTANTIATE, Kmer_Hash_Table)
+ENUMERATE_PER_BIT(INSTANCE_COUNT, INSTANTIATE_PER_BIT, Kmer_Hash_Table)

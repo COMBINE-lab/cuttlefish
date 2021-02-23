@@ -250,7 +250,7 @@ bool CdBG<k>::process_loop(const Directed_Kmer<k>& kmer, const Directed_Kmer<k>&
     {
         // Fetch the entry for `kmer_hat`.
         const Kmer<k>& kmer_hat = kmer.canonical();
-        Kmer_Hash_Entry_API hash_table_entry = Vertices[kmer_hat];
+        Kmer_Hash_Entry_API<cuttlefish::BITS_PER_REF_KMER> hash_table_entry = Vertices[kmer_hat];
         State& state = hash_table_entry.get_state();
         state = State(Vertex(cuttlefish::State_Class::multi_in_multi_out));
 
@@ -273,7 +273,7 @@ bool CdBG<k>::process_leftmost_kmer(const Directed_Kmer<k>& kmer, const Directed
     const Kmer<k>& next_kmer_hat = next_kmer.canonical();
 
     // Fetch the entry for `kmer_hat`.
-    Kmer_Hash_Entry_API hash_table_entry = Vertices[kmer_hat];
+    Kmer_Hash_Entry_API<cuttlefish::BITS_PER_REF_KMER> hash_table_entry = Vertices[kmer_hat];
     State& state = hash_table_entry.get_state();
 
     // The k-mer is already classified as a complex node.
@@ -375,7 +375,7 @@ bool CdBG<k>::process_rightmost_kmer(const Directed_Kmer<k>& kmer, const char pr
     const cuttlefish::dir_t dir = kmer.dir();
 
     // Fetch the entry for `kmer_hat`.
-    Kmer_Hash_Entry_API hash_table_entry = Vertices[kmer_hat];
+    Kmer_Hash_Entry_API<cuttlefish::BITS_PER_REF_KMER> hash_table_entry = Vertices[kmer_hat];
     State& state = hash_table_entry.get_state();
 
     // The k-mer is already classified as a complex node.
@@ -475,7 +475,7 @@ bool CdBG<k>::process_internal_kmer(const Directed_Kmer<k>& kmer, const Directed
     const Kmer<k>& next_kmer_hat = next_kmer.canonical();
 
     // Fetch the hash table entry for `kmer_hat`.
-    Kmer_Hash_Entry_API hash_table_entry = Vertices[kmer_hat];
+    Kmer_Hash_Entry_API<cuttlefish::BITS_PER_REF_KMER> hash_table_entry = Vertices[kmer_hat];
     State& state = hash_table_entry.get_state();
 
     // The k-mer is already classified as a complex node.
@@ -591,7 +591,7 @@ bool CdBG<k>::process_isolated_kmer(const Directed_Kmer<k>& kmer)
     const Kmer<k>& kmer_hat = kmer.canonical();
 
     // Fetch the hash table entry for `kmer_hat`.
-    Kmer_Hash_Entry_API hash_table_entry = Vertices[kmer_hat];
+    Kmer_Hash_Entry_API<cuttlefish::BITS_PER_REF_KMER> hash_table_entry = Vertices[kmer_hat];
     State& state = hash_table_entry.get_state();
 
 

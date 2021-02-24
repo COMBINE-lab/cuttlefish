@@ -7,9 +7,14 @@
 #include "globals.hpp"
 
 
+template <uint8_t BITS_PER_KEY> class Kmer_Hash_Entry_API;
+
+
 // Class for a state in the state-space of the automata in read de Bruijn graphs.
 class State_Read_Space
 {
+    friend class Kmer_Hash_Entry_API<cuttlefish::BITS_PER_READ_KMER>;
+
     typedef DNA::Extended_Base edge_encoding_t;
 
 private:
@@ -34,6 +39,9 @@ private:
     static constexpr cuttlefish::state_code_t OUTPUTTED = static_cast<cuttlefish::state_code_t>((0b101 << FRONT_IDX) | 0b101 << BACK_IDX);
 
 
+    // Constructs a state that wraps the provided numeric value `code`.
+    State_Read_Space(cuttlefish::state_code_t code);
+
     // Sets the back-encoding of the state to the `Extended_Base`-encoding `edge`.
     // Requirement: except while for setting `Extended_Base::N`, the bits must be zero beforehand.
     void set_back_encoding(edge_encoding_t edge);
@@ -41,6 +49,9 @@ private:
     // Sets the front-encoding of the state to the `Extended_Base`-encoding `edge`.
     // Requirement: except while for setting `Extended_Base::N`, the bits must be zero beforehand.
     void set_front_encoding(edge_encoding_t edge);
+
+    // Returns the wrapped state-code value.
+    cuttlefish::state_code_t get_state() const;
 
 
 public:
@@ -67,6 +78,11 @@ inline constexpr State_Read_Space::State_Read_Space():
 {}
 
 
+inline State_Read_Space::State_Read_Space(const cuttlefish::state_code_t code):
+    code(code)
+{}
+
+
 inline void State_Read_Space::set_back_encoding(edge_encoding_t edge)
 {
     code |= (static_cast<cuttlefish::state_code_t>(edge) << BACK_IDX);
@@ -76,6 +92,12 @@ inline void State_Read_Space::set_back_encoding(edge_encoding_t edge)
 inline void State_Read_Space::set_front_encoding(edge_encoding_t edge)
 {
     code |= (static_cast<cuttlefish::state_code_t>(edge) << FRONT_IDX);
+}
+
+
+inline cuttlefish::state_code_t State_Read_Space::get_state() const
+{
+    return code;
 }
 
 

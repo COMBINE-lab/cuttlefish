@@ -77,6 +77,8 @@ namespace cuttlefish
     typedef compact::ts_vector<state_code_t, BITS_PER_REF_KMER, uint64_t, std::allocator<uint64_t>> ref_bitvector_t;
     typedef compact::iterator_imp::lhs_setter<state_code_t, BITS_PER_REF_KMER, uint64_t, true, 64U> ref_bitvector_entry_t;
 
+    constexpr uint8_t BITS_PER_READ_KMER = 6;
+
 
     typedef std::shared_ptr<spdlog::logger> logger_t;
 }

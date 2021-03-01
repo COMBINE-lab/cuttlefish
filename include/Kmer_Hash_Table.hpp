@@ -11,7 +11,7 @@
 #include "Kmer_Hasher.hpp"
 #include "compact_vector/compact_vector.hpp"
 #include "Kmer_Hash_Entry_API.hpp"
-#include "SpinLock/SpinLock.hpp"
+#include "Spin_Lock.hpp"
 
 
 template <uint16_t k> class CdBG;
@@ -48,7 +48,8 @@ private:
     uint64_t lock_range_size;
 
     // The locks to maintain mutually exclusive access for threads to the same indices into the bitvector `hash_table`.
-    std::array<SpinLock, lock_count> locks_;
+    // std::array<SpinLock, lock_count> locks_;
+    std::array<Spin_Lock, lock_count> locks_;
 
 
     // Builds the minimal perfect hash function `mph` over the set of

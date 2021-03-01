@@ -1,7 +1,5 @@
 
 #include "Kmer_Hash_Table.hpp"
-//#include "Kmer_Iterator.hpp"
-// #include "Kmer_Buffered_Iterator.hpp"
 #include "Kmer_SPMC_Iterator.hpp"
 
 #include <fstream>
@@ -30,7 +28,7 @@ void Kmer_Hash_Table<k, BITS_PER_KEY>::build_mph_function(const Kmer_Container<k
         std::cout << "Building the MPHF from the k-mer database " << kmer_container.container_location() << ".\n";
 
         // auto data_iterator = boomphf::range(kmer_container.buf_begin(), kmer_container.buf_end());
-        auto data_iterator = boomphf::range(kmer_container.spmc_begin(thread_count), kmer_container.spmc_end(thread_count));
+        const auto data_iterator = boomphf::range(kmer_container.spmc_begin(thread_count), kmer_container.spmc_end(thread_count));
         mph = new mphf_t(kmer_container.size(), data_iterator, working_dir_path, thread_count, GAMMA_FACTOR);
 
         std::cout << "Built the MPHF in memory.\n";
@@ -124,7 +122,7 @@ void Kmer_Hash_Table<k, BITS_PER_KEY>::construct(const std::string& kmc_db_path,
 
 
     // Open a container over the k-mer database.
-    Kmer_Container<k> kmer_container(kmc_db_path);
+    const Kmer_Container<k> kmer_container(kmc_db_path);
     const uint64_t kmer_count = kmer_container.size();
     std::cout << "Total number of k-mers in the set (KMC database): " << kmer_count << ".\n";
     
@@ -144,13 +142,13 @@ void Kmer_Hash_Table<k, BITS_PER_KEY>::construct(const std::string& kmc_db_path,
     std::cout << "Allocated hash table buckets for the k-mers. Total size: " <<
                 hash_table.bytes() / (1024 * 1024) << " MB.\n";
 
-    uint64_t total_mem = (total_bits / 8) + hash_table.bytes();   // in bytes
+    const uint64_t total_mem = (total_bits / 8) + hash_table.bytes();   // in bytes
     std::cout <<    "Total memory usage by the hash table: " << total_mem / (1024 * 1024)  << " MB."
                     " Bits per k-mer: " << (total_mem * 8.0) / kmer_count << ".\n";
 
 
     std::chrono::high_resolution_clock::time_point t_end = std::chrono::high_resolution_clock::now();
-    double elapsed_seconds = std::chrono::duration_cast<std::chrono::duration<double>>(t_end - t_start).count();
+    const double elapsed_seconds = std::chrono::duration_cast<std::chrono::duration<double>>(t_end - t_start).count();
     std::cout << "Done allocating the hash table. Time taken = " << elapsed_seconds << " seconds.\n";
 }
 

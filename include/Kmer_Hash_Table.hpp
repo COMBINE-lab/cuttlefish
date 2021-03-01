@@ -32,6 +32,7 @@ private:
     constexpr static double GAMMA_FACTOR = 2.0;
 
     // The MPH function.
+    // TODO: Initialize with `std::nullptr`.
     mphf_t* mph = NULL;
 
     // The buckets collection (raw `State` representations) for the hash table structure.
@@ -116,9 +117,9 @@ inline uint64_t Kmer_Hash_Table<k, BITS_PER_KEY>::bucket_id(const Kmer<k>& kmer)
 template <uint16_t k, uint8_t BITS_PER_KEY>
 inline Kmer_Hash_Entry_API<BITS_PER_KEY> Kmer_Hash_Table<k, BITS_PER_KEY>::operator[](const uint64_t bucket_id)
 {
-    uint64_t lidx = bucket_id / lock_range_size; 
+    const uint64_t lidx = bucket_id / lock_range_size; 
     locks_[lidx].lock();
-    auto r = Kmer_Hash_Entry_API<BITS_PER_KEY>(hash_table[bucket_id]);
+    const Kmer_Hash_Entry_API<BITS_PER_KEY> r(hash_table[bucket_id]);
     locks_[lidx].unlock();
     return r;
 }
@@ -136,11 +137,11 @@ inline State Kmer_Hash_Table<k, BITS_PER_KEY>::operator[](const Kmer<k>& kmer) c
 {
     // NOTE: this makes the `const` a lie.  Should be a better solution here.
     // TODO: Design a sparse-locks collection class, moving the locks array there. Have a pointer to `Sparse_Lock` in this class.
-    auto v = mph->lookup(kmer);
-    uint64_t lidx = v / lock_range_size; 
+    const auto v = mph->lookup(kmer);
+    const uint64_t lidx = v / lock_range_size; 
     auto* tp = const_cast<Kmer_Hash_Table*>(this);
     const_cast<decltype(tp->locks_[lidx])>(tp->locks_[lidx]).lock();
-    auto ve = State(hash_table[v]);
+    const State ve(hash_table[v]);
     const_cast<decltype(tp->locks_[lidx])>(tp->locks_[lidx]).unlock();
     return ve;
 }
@@ -149,10 +150,10 @@ inline State Kmer_Hash_Table<k, BITS_PER_KEY>::operator[](const Kmer<k>& kmer) c
 template <uint16_t k, uint8_t BITS_PER_KEY>
 inline bool Kmer_Hash_Table<k, BITS_PER_KEY>::update(Kmer_Hash_Entry_API<BITS_PER_KEY>& api)
 {
-    auto it = &(api.bv_entry);
-    uint64_t lidx = (std::distance(hash_table.begin(), it)) / lock_range_size;
+    const auto it = &(api.bv_entry);
+    const uint64_t lidx = (std::distance(hash_table.begin(), it)) / lock_range_size;
     locks_[lidx].lock();
-    bool success = (api.bv_entry == api.get_read_state());
+    const bool success = (api.bv_entry == api.get_read_state());
     if (success) {
         api.bv_entry = api.get_current_state();
     }

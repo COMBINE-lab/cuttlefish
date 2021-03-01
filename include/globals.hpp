@@ -10,21 +10,6 @@
 #include "boost/preprocessor/repetition/repeat.hpp"
 
 
-// The macro `INSTANCE_COUNT` must be set exactly to `(MAX_K + 1) / 2` for a required maximum k-value.
-// Also, the `MAX_K` value must be odd (as the k-values used in the algorithm) for correct results.
-#ifndef INSTANCE_COUNT
-    #define INSTANCE_COUNT 32
-#endif
-
-#define INSTANTIATE(z, k, class_name) template class class_name<2 * k + 1>;
-#define ENUMERATE(count, instantiator, class_name) BOOST_PP_REPEAT(count, instantiator, class_name)
-
-#define INSTANTIATE_PER_BIT(z, k, class_name) template class class_name<2 * k + 1, 5>;// template class class_name<2 * k + 1, 6>;
-#define ENUMERATE_PER_BIT(count, instantiator, class_name) BOOST_PP_REPEAT(count, instantiator, class_name)
-
-// BOOST_PP_REPEAT reference: https://www.boost.org/doc/libs/1_55_0/libs/preprocessor/doc/ref/repeat.html
-
-
 // Forward declarations of the type of the bitvector used and the type to access its entries (mutable).
 namespace compact
 {
@@ -82,6 +67,22 @@ namespace cuttlefish
 
     typedef std::shared_ptr<spdlog::logger> logger_t;
 }
+
+
+// The macro `INSTANCE_COUNT` must be set exactly to `(MAX_K + 1) / 2` for a required maximum k-value.
+// Also, the `MAX_K` value must be odd (as the k-values used in the algorithm) for correct results.
+#ifndef INSTANCE_COUNT
+    #define INSTANCE_COUNT 32
+#endif
+
+#define INSTANTIATE(z, k, class_name) template class class_name<2 * k + 1>;
+#define ENUMERATE(count, instantiator, class_name) BOOST_PP_REPEAT(count, instantiator, class_name)
+
+#define INSTANTIATE_PER_BIT(z, k, class_name)   template class class_name<2 * k + 1, cuttlefish::BITS_PER_REF_KMER>;\
+                                                template class class_name<2 * k + 1, cuttlefish::BITS_PER_READ_KMER>;
+#define ENUMERATE_PER_BIT(count, instantiator, class_name) BOOST_PP_REPEAT(count, instantiator, class_name)
+
+// BOOST_PP_REPEAT reference: https://www.boost.org/doc/libs/1_55_0/libs/preprocessor/doc/ref/repeat.html
 
 
 

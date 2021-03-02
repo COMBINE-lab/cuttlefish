@@ -32,11 +32,6 @@ struct Consumer_Data
 template <uint16_t k>
 class Kmer_SPMC_Iterator
 {
-    friend class Kmer_Container<k>;
-
-
-public:
-
     typedef Kmer_SPMC_Iterator iterator;
 
 
@@ -68,11 +63,6 @@ private:
     volatile Task_Status* task_status{nullptr}; // Collection of the task statuses of the consumers.
 
 
-    // Constructs an iterator for the provided container `kmer_container`, on either
-    // its beginning or its ending position, based on `at_begin` and `at_end`. The
-    // iterator is to support `consumer_count` number of different consumers.
-    Kmer_SPMC_Iterator(const Kmer_Container<k>* kmer_container, size_t consumer_count, bool at_begin = true, bool at_end = false);
-
     // Opens the k-mer database file with the path prefix `db_path`.
     void open_kmer_database(const std::string& db_path);
 
@@ -89,6 +79,11 @@ private:
 
 
 public:
+
+    // Constructs an iterator for the provided container `kmer_container`, on either
+    // its beginning or its ending position, based on `at_begin` and `at_end`. The
+    // iterator is to support `consumer_count` number of different consumers.
+    Kmer_SPMC_Iterator(const Kmer_Container<k>* kmer_container, size_t consumer_count, bool at_begin = true, bool at_end = false);
 
     // Copy constructs an iterator from another one `other`.
     // Note: this should be prohibited, like the `operator=`. But the BBHash code

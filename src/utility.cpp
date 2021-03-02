@@ -6,6 +6,7 @@
 #include <cstring>
 #include <cstdlib>
 #include <ctime>
+#include <iostream>
 
 
 std::string get_random_string(const size_t len)
@@ -63,4 +64,17 @@ std::string remove_whitespaces(const char* s)
             str += *p;
 
     return str;
+}
+
+
+void remove_kmer_set(const std::string& kmc_file_pref)
+{
+    const std::string kmc_file1_path(kmc_file_pref + ".kmc_pre");
+    const std::string kmc_file2_path(kmc_file_pref + ".kmc_suf");
+
+    if(std::remove(kmc_file1_path.c_str()) || std::remove(kmc_file2_path.c_str()))
+    {
+        std::cerr << "Error removing the KMC database file from path prefix " << kmc_file_pref << ". Aborting.\n";
+        std::exit(EXIT_FAILURE);
+    }
 }

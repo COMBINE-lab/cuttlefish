@@ -93,10 +93,6 @@ private:
     double logger_flush_time = 0;
 
 
-    // Removes the k-mer set (KMC database) with the path prefix `kmc_file_pref`.
-    void remove_kmer_set(const std::string& kmc_file_pref) const;
-
-
     /* Build methods */
 
     // TODO: rename the "classify" methods with appropriate terminology that are consistent with the theory.

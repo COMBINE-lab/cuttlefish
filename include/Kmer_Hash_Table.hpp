@@ -12,6 +12,7 @@
 #include "compact_vector/compact_vector.hpp"
 #include "Kmer_Hash_Entry_API.hpp"
 #include "Spin_Lock.hpp"
+#include "Sparse_Lock.hpp"
 
 
 template <uint16_t k> class CdBG;
@@ -43,13 +44,9 @@ private:
     // TODO: increase locks and check note at the end about the false `const` issue.
     constexpr static uint64_t lock_count{65536};
 
-    // Number of contiguous entries of the bitvector that each lock is assigned to.
-    // TODO: try making it `const`.
-    uint64_t lock_range_size;
 
     // The locks to maintain mutually exclusive access for threads to the same indices into the bitvector `hash_table`.
-    // std::array<SpinLock, lock_count> locks_;
-    std::array<Spin_Lock, lock_count> locks_;
+    Sparse_Lock<Spin_Lock>* sparse_lock_ptr{nullptr};
 
 
     // Builds the minimal perfect hash function `mph` over the set of
@@ -105,6 +102,9 @@ public:
 
     // Clears the hash-table. Do not invoke on an unused object.
     void clear();
+
+    // Destructs the hash table.
+    ~Kmer_Hash_Table();
 };
 
 
@@ -118,10 +118,10 @@ inline uint64_t Kmer_Hash_Table<k, BITS_PER_KEY>::bucket_id(const Kmer<k>& kmer)
 template <uint16_t k, uint8_t BITS_PER_KEY>
 inline Kmer_Hash_Entry_API<BITS_PER_KEY> Kmer_Hash_Table<k, BITS_PER_KEY>::operator[](const uint64_t bucket_id)
 {
-    const uint64_t lidx = bucket_id / lock_range_size; 
-    locks_[lidx].lock();
+    sparse_lock_ptr->lock(bucket_id);
     const Kmer_Hash_Entry_API<BITS_PER_KEY> r(hash_table[bucket_id]);
-    locks_[lidx].unlock();
+    sparse_lock_ptr->unlock(bucket_id);
+    
     return r;
 }
 
@@ -136,29 +136,37 @@ inline Kmer_Hash_Entry_API<BITS_PER_KEY> Kmer_Hash_Table<k, BITS_PER_KEY>::opera
 template <uint16_t k, uint8_t BITS_PER_KEY>
 inline State Kmer_Hash_Table<k, BITS_PER_KEY>::operator[](const Kmer<k>& kmer) const
 {
-    // NOTE: this makes the `const` a lie.  Should be a better solution here.
-    // TODO: Design a sparse-locks collection class, moving the locks array there. Have a pointer to `Sparse_Lock` in this class.
-    const auto v = mph->lookup(kmer);
-    const uint64_t lidx = v / lock_range_size; 
-    auto* tp = const_cast<Kmer_Hash_Table*>(this);
-    const_cast<decltype(tp->locks_[lidx])>(tp->locks_[lidx]).lock();
-    const State ve(hash_table[v]);
-    const_cast<decltype(tp->locks_[lidx])>(tp->locks_[lidx]).unlock();
-    return ve;
+    const uint64_t bucket = bucket_id(kmer);
+
+    sparse_lock_ptr->lock(bucket);
+    const State state(hash_table[bucket]);
+    sparse_lock_ptr->unlock(bucket);
+
+    return state;
 }
 
 
 template <uint16_t k, uint8_t BITS_PER_KEY>
 inline bool Kmer_Hash_Table<k, BITS_PER_KEY>::update(Kmer_Hash_Entry_API<BITS_PER_KEY>& api)
 {
-    const auto it = &(api.bv_entry);
-    const uint64_t lidx = (std::distance(hash_table.begin(), it)) / lock_range_size;
-    locks_[lidx].lock();
+    // const auto it = &(api.bv_entry);
+    // const uint64_t lidx = (std::distance(hash_table.begin(), it)) / lock_range_size;
+    // locks_[lidx].lock();
+    // const bool success = (api.bv_entry == api.get_read_state());
+    // if (success) {
+    //     api.bv_entry = api.get_current_state();
+    // }
+    // locks_[lidx].unlock();
+    // return success;
+
+    const uint64_t bucket = std::distance(hash_table.begin(), &(api.bv_entry));
+
+    sparse_lock_ptr->lock(bucket);
     const bool success = (api.bv_entry == api.get_read_state());
-    if (success) {
+    if(success)
         api.bv_entry = api.get_current_state();
-    }
-    locks_[lidx].unlock();
+    sparse_lock_ptr->unlock(bucket);
+    
     return success;
 }
 

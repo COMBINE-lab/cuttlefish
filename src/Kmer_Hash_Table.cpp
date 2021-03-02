@@ -126,7 +126,7 @@ void Kmer_Hash_Table<k, BITS_PER_KEY>::construct(const std::string& kmc_db_path,
     const uint64_t kmer_count = kmer_container.size();
     std::cout << "Total number of k-mers in the set (KMC database): " << kmer_count << ".\n";
     
-    lock_range_size = uint64_t(std::ceil(double(kmer_count) / lock_count));
+    sparse_lock_ptr = new Sparse_Lock<Spin_Lock>(kmer_count, lock_count);
 
 
     // Build the minimal perfect hash function.
@@ -160,9 +160,23 @@ void Kmer_Hash_Table<k, BITS_PER_KEY>::clear()
         delete mph;
 
     mph = NULL;
+
+
+    if(sparse_lock_ptr != nullptr)
+        delete sparse_lock_ptr;
+    
+    sparse_lock_ptr = nullptr;
+
     
     // hash_table.clear();
     hash_table.resize(0);
+}
+
+
+template <uint16_t k, uint8_t BITS_PER_KEY>
+Kmer_Hash_Table<k, BITS_PER_KEY>::~Kmer_Hash_Table()
+{
+    clear();
 }
 
 

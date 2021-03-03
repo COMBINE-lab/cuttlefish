@@ -45,5 +45,19 @@ struct Output_Task_Params
 };
 
 
+// Wrapper over the parameters for the DFA-states computation task for read-dBGs.
+struct Compute_States_Read_Space_Params
+{
+    uint16_t thread_id;
+
+
+    Compute_States_Read_Space_Params() {}
+
+    Compute_States_Read_Space_Params(const uint16_t thread_id):
+        thread_id(thread_id)
+    {}
+};
+
+
 
 #endif

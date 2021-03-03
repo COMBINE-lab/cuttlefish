@@ -1,14 +1,15 @@
 
 #include "Thread_Pool.hpp"
 #include "CdBG.hpp"
+#include "Read_CdBG_Constructor.hpp"
 
 #include <iostream>
 
 
 template <uint16_t k>
-Thread_Pool<k>::Thread_Pool(const uint16_t thread_count, CdBG<k>* const cdbg, const Task_Type task_type):
+Thread_Pool<k>::Thread_Pool(const uint16_t thread_count, void* const dBG, const Task_Type task_type):
     thread_count(thread_count),
-    cdbg(cdbg),
+    dBG(dBG),
     task_type(task_type),
     task_status(new volatile Task_Status[thread_count])
 {
@@ -18,10 +19,26 @@ Thread_Pool<k>::Thread_Pool(const uint16_t thread_count, CdBG<k>* const cdbg, co
 
     
     // Resize the parameters collections.
-    if(task_type == Task_Type::classification)
+    switch(task_type)
+    {
+    case Task_Type::classification:
         classify_params.resize(thread_count);
-    else
+        break;
+    
+    case Task_Type::output_plain:
+    case Task_Type::output_gfa:
+    case Task_Type::output_gfa_reduced:
         output_params.resize(thread_count);
+        break;
+
+    case Task_Type::compute_states_read_space:
+        compute_states_read_space_params.resize(thread_count);
+        break;
+
+    default:
+        std::cerr << "Unrecognized task type encountered in thread pool. Aborting.\n";
+        std::exit(EXIT_FAILURE);
+    }
 
 
     // Launch the threads.
@@ -46,18 +63,36 @@ void Thread_Pool<k>::task(const uint16_t thread_id)
         // Some task is available for the thread number `thread_id`.
         if(task_status[thread_id] == Task_Status::available)
         {
-            if(task_type == Task_Type::classification)
+            switch(task_type)
             {
-                const Classification_Task_Params& params = classify_params[thread_id];
-                cdbg->process_substring(params.seq, params.seq_len, params.left_end, params.right_end);
-            }
-            else
-            {
-                const Output_Task_Params& params = output_params[thread_id];
-                if(task_type == Task_Type::output_plain)
-                    cdbg->output_plain_off_substring(params.thread_id, params.seq, params.seq_len, params.left_end, params.right_end);
-                else    // `task_type == Task_Type::output_gfa`
-                    cdbg->output_gfa_off_substring(params.thread_id, params.seq, params.seq_len, params.left_end, params.right_end);
+            case Task_Type::classification:
+                {
+                    const Classification_Task_Params& params = classify_params[thread_id];
+                    static_cast<CdBG<k>*>(dBG)->process_substring(params.seq, params.seq_len, params.left_end, params.right_end);
+                }
+                break;
+
+            case Task_Type::output_plain:
+                {
+                    const Output_Task_Params& params = output_params[thread_id];
+                    static_cast<CdBG<k>*>(dBG)->output_plain_off_substring(params.thread_id, params.seq, params.seq_len, params.left_end, params.right_end);
+                }
+                break;
+
+            case Task_Type::output_gfa:
+            case Task_Type::output_gfa_reduced:
+                {
+                    const Output_Task_Params& params = output_params[thread_id];
+                    static_cast<CdBG<k>*>(dBG)->output_gfa_off_substring(params.thread_id, params.seq, params.seq_len, params.left_end, params.right_end);
+                }
+                break;
+            
+            case Task_Type::compute_states_read_space:
+                {
+                    const Compute_States_Read_Space_Params& params = compute_states_read_space_params[thread_id];
+                    static_cast<Read_CdBG_Constructor<k>*>(dBG)->process_edges(params.thread_id);
+                }
+                break;
             }
 
 
@@ -104,6 +139,15 @@ template <uint16_t k>
 void Thread_Pool<k>::assign_output_task(const uint16_t thread_id, const char* const seq, const size_t seq_len, const size_t left_end, const size_t right_end)
 {
     output_params[thread_id] = Output_Task_Params(thread_id, seq, seq_len, left_end, right_end);
+
+    assign_task(thread_id);
+}
+
+
+template <uint16_t k>
+void Thread_Pool<k>::assign_compute_states_read_space_task(const uint16_t thread_id)
+{
+    compute_states_read_space_params[thread_id] = Compute_States_Read_Space_Params(thread_id);
 
     assign_task(thread_id);
 }
@@ -168,11 +212,6 @@ void Thread_Pool<k>::close()
 
 
     delete[] task_status;
-
-    if(task_type == Task_Type::classification)
-        classify_params.clear();
-    else
-        output_params.clear();
 }
 
 

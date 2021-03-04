@@ -83,7 +83,7 @@ namespace cuttlefish
 
 #define INSTANTIATE_PER_BIT(z, k, class_name)   template class class_name<2 * k + 1, cuttlefish::BITS_PER_REF_KMER>;\
                                                 template class class_name<2 * k + 1, cuttlefish::BITS_PER_READ_KMER>;
-#define ENUMERATE_PER_BIT(count, instantiator, class_name) BOOST_PP_REPEAT(count, instantiator, class_name)
+
 
 // BOOST_PP_REPEAT reference: https://www.boost.org/doc/libs/1_55_0/libs/preprocessor/doc/ref/repeat.html
 

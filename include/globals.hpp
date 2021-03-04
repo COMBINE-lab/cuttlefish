@@ -78,9 +78,17 @@ namespace cuttlefish
 
 // Metaprogramming macro-loops for instantiating required template instances.
 
-#define INSTANTIATE(z, k, class_name) template class class_name<2 * k + 1>;
+// Given some `x`, explicitly instantiates the class `class_name` for the template parameter `k` with `2x + 1`;
+// i.e. it is an instantiator for odd k-values.
+#define INSTANTIATE(z, x, class_name) template class class_name<2 * x + 1>;
+
+// Enumerates all the explicit instantiations of the template class `class_name` using `instantiator`, for all
+// `x` in `[0, count)`. The `x`-value is used as appropriate by `instantiator`.
 #define ENUMERATE(count, instantiator, class_name) BOOST_PP_REPEAT(count, instantiator, class_name)
 
+// Given some `x`, explicitly instantiates two instances of the class `class_name`, with the template parameters
+// `k` = `2x + 1`, and `BITS_PER_KEY` with `BITS_PER_REF_KMER` and `BITS_PER_READ_KMER` for alternate instances;
+// i.e. it is an instantiator for odd k-values and all the different bits-per-key requirements.
 #define INSTANTIATE_PER_BIT(z, k, class_name)   template class class_name<2 * k + 1, cuttlefish::BITS_PER_REF_KMER>;\
                                                 template class class_name<2 * k + 1, cuttlefish::BITS_PER_READ_KMER>;
 

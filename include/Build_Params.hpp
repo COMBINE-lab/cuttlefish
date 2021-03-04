@@ -16,9 +16,11 @@ class Build_Params
 {
 private:
 
+    const bool is_read_graph_;  // Whether to build a read- or a reference-compacted de Bruijn graph.
     const Reference_Input reference_input_; // Collection of the input references.
     const uint16_t k_;   // The k parameter for the edge-centric de Bruijn graph to be compacted.
-    const std::string kmc_db_path_; // Path to the KMC database containing the k-mer set.
+    const std::string vertex_db_path_;  // Path to the KMC database containing the vertices (canonical k-mers).
+    const std::string edge_db_path_;    // Path to the KMC database containing the edges (canonical (k + 1)-mers).
     const uint16_t thread_count_;    // Number of threads to work with.
     const std::string& output_file_path_;   // Path to the output file.
     const cuttlefish::Output_Format output_format_;   // Output format (0: txt, 1: GFAv1, 2: GFAv2).
@@ -31,11 +33,13 @@ private:
 public:
 
     // Constructs a parameters wrapper object with the self-explanatory parameters.
-    Build_Params(   const std::vector<std::string>& ref_paths,
+    Build_Params(   const bool is_read_graph,
+                    const std::vector<std::string>& ref_paths,
                     const std::vector<std::string>& list_paths,
                     const std::vector<std::string>& dir_paths,
                     const uint16_t k,
-                    const std::string& kmc_db_path,
+                    const std::string& vertex_db_path,
+                    const std::string& edge_db_path,
                     const uint16_t thread_count,
                     const std::string& output_file_path,
                     const uint8_t output_format,
@@ -43,9 +47,11 @@ public:
                     const bool remove_kmc_db,
                     const std::string& mph_file_path,
                     const std::string& buckets_file_path):
+        is_read_graph_(is_read_graph),
         reference_input_(ref_paths, list_paths, dir_paths),
         k_(k),
-        kmc_db_path_(kmc_db_path),
+        vertex_db_path_(vertex_db_path),
+        edge_db_path_(edge_db_path),
         thread_count_(thread_count),
         output_file_path_(output_file_path),
         output_format_(cuttlefish::Output_Format(output_format)),
@@ -54,6 +60,13 @@ public:
         mph_file_path_(mph_file_path),
         buckets_file_path_(buckets_file_path)
     {}
+
+
+    // Returns the boolean flag to whether to build a read- or a reference-compacted de Bruijn graph.
+    bool is_read_graph() const
+    {
+        return is_read_graph_;
+    }
 
 
     // Returns the reference input collections.
@@ -70,10 +83,17 @@ public:
     }
 
 
-    // Returns the path to the KMC database.
-    const std::string& kmc_db_path() const
+    // Returns the path to the vertex database.
+    const std::string& vertex_db_path() const
     {
-        return kmc_db_path_;
+        return vertex_db_path_;
+    }
+
+
+    // Returns the path to the edge database.
+    const std::string& edge_db_path() const
+    {
+        return edge_db_path_;
     }
 
 
@@ -133,12 +153,40 @@ public:
 
 inline bool Build_Params::is_valid() const
 {
+    bool valid = true;
+
+
+    // Check if read and reference de Bruijn graphs parameters are being mixed with.
+    if(is_read_graph_)
+    {
+        if(!reference_input_.empty())
+        {
+            std::cout << "No reference is to be provided for a compacted read de Bruijn graph construction.\n";
+            valid = false;
+        }
+
+        if(edge_db_path_.empty())
+        {
+            std::cout << "The path prefix to the KMC-database for edges (i.e. (k + 1)-mers) is required.\n";
+            valid = false;
+        }
+    }
+    else
+    {
+        if(!edge_db_path_.empty())
+        {
+            std::cout << "No edge (i.e. (k + 1)-mer) database is required for a compacted reference de Bruijn graph construction.\n";
+            valid = false;
+        }
+    }
+
+
     // Even `k` values are not consistent with the theory.
     // Also, `k` needs to be in the range `[1, MAX_K]`.
     if((k_ & 1) == 0 || (k_ > cuttlefish::MAX_K))
     {
         std::cout << "The k-mer length (k) needs to be odd and within " << cuttlefish::MAX_K << ".\n";
-        return false;
+        valid = false;
     }
 
 
@@ -147,7 +195,7 @@ inline bool Build_Params::is_valid() const
     if(num_threads > 0 && thread_count_ > num_threads)
     {
         std::cout << "At most " << num_threads << " concurrent threads are supported at the machine.\n";
-        return false;
+        valid = false;
     }
 
 
@@ -155,11 +203,11 @@ inline bool Build_Params::is_valid() const
     if(output_format_ >= cuttlefish::num_op_formats)
     {
         std::cout << "Invalid output file format.\n";
-        return false;
+        valid = false;
     }
 
 
-    return true;
+    return valid;
 }
 
 

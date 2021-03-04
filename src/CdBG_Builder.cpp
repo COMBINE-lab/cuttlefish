@@ -608,7 +608,7 @@ bool CdBG<k>::process_isolated_kmer(const Directed_Kmer<k>& kmer)
 template <uint16_t k> 
 void CdBG<k>::print_state_class_dist() const
 {
-    const std::string& kmc_db_path = params.kmc_db_path();
+    const std::string& kmc_db_path = params.vertex_db_path();
 
     Kmer_Container<k> kmers(kmc_db_path);
     auto it_beg = kmers.begin();

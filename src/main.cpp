@@ -19,13 +19,15 @@
 // Driver function for the CdBG build.
 void build(int argc, char** argv)
 {
-    cxxopts::Options options("cuttlefish build", "Efficiently construct the compacted de Bruijn graph from references");
+    cxxopts::Options options("cuttlefish build", "Efficiently construct the compacted de Bruijn graph from references or reads");
     options.add_options()
+        ("read", "construct a compacted read de Bruijn graph")
         ("r,refs", "reference files", cxxopts::value<std::vector<std::string>>()->default_value(cuttlefish::_default::EMPTY))
         ("l,lists", "reference file lists", cxxopts::value<std::vector<std::string>>()->default_value(cuttlefish::_default::EMPTY))
         ("d,dirs", "reference file directories", cxxopts::value<std::vector<std::string>>()->default_value(cuttlefish::_default::EMPTY))
         ("k,kmer_len", "k-mer length", cxxopts::value<uint16_t>()->default_value(std::to_string(cuttlefish::_default::K)))
-        ("s,kmc_db", "set of k-mers (KMC database) prefix", cxxopts::value<std::string>())
+        ("s,kmc_db", "set of vertices, i.e. k-mers (KMC database) prefix", cxxopts::value<std::string>())
+        ("e,edge_db", "set of edges, i.e. (k + 1)-mers (KMC database) prefix", cxxopts::value<std::string>()->default_value(cuttlefish::_default::EMPTY))
         ("t,threads", "number of threads to use", cxxopts::value<uint16_t>()->default_value(std::to_string(cuttlefish::_default::THREAD_COUNT)))
         ("o,output", "output file", cxxopts::value<std::string>()->default_value(cuttlefish::_default::EMPTY))
         ("f,format", "output format (0: txt, 1: GFA 1.0, 2: GFA 2.0, 3: GFA-reduced)", cxxopts::value<uint16_t>()->default_value(std::to_string(cuttlefish::_default::OP_FORMAT)))
@@ -44,11 +46,13 @@ void build(int argc, char** argv)
             return;
         }
 
+        const bool is_read_graph = result["read"].as<bool>();
         const auto refs = result["refs"].as<std::vector<std::string>>();
         const auto lists = result["lists"].as<std::vector<std::string>>();
         const auto dirs = result["dirs"].as<std::vector<std::string>>();
         const auto k = result["kmer_len"].as<uint16_t>();
         const auto kmer_database = result["kmc_db"].as<std::string>();
+        const auto edge_database = result["edge_db"].as<std::string>();
         const auto thread_count = result["threads"].as<uint16_t>();
         const auto output_file = result["output"].as<std::string>();
         const auto format = result["format"].as<uint16_t>();
@@ -57,7 +61,7 @@ void build(int argc, char** argv)
         const auto mph_file = result["mph"].as<std::string>();
         const auto buckets_file = result["buckets"].as<std::string>();
 
-        const Build_Params params(refs, lists, dirs, k, kmer_database, thread_count, output_file, format, working_dir, remove_kmc_db, mph_file, buckets_file);
+        const Build_Params params(is_read_graph, refs, lists, dirs, k, kmer_database, edge_database, thread_count, output_file, format, working_dir, remove_kmc_db, mph_file, buckets_file);
         if(!params.is_valid())
         {
             std::cerr << "Invalid input configuration. Aborting.\n";
@@ -143,7 +147,10 @@ void validate(int argc, char** argv)
 int main(int argc, char** argv)
 {
     if(argc < 2)
+    {
         std::cout << "Usage:\ncuttlefish <command> [OPTIONS]" << std::endl;
+        std::cout << "Supported commands: `build` and `validate`." << std::endl;
+    }
     else
     {
         const std::string command = argv[1];

@@ -15,11 +15,11 @@ template <uint16_t k>
 void CdBG<k>::construct()
 {
     std::cout << "\nConstructing the minimal perfect hash function (MPHF).\n";
-    Vertices.construct(params.kmc_db_path(), params.thread_count(), params.working_dir_path(), params.mph_file_path());
+    Vertices.construct(params.vertex_db_path(), params.thread_count(), params.working_dir_path(), params.mph_file_path());
 
     if(params.remove_kmc_db())
     {
-        remove_kmer_set(params.kmc_db_path());
+        remove_kmer_set(params.vertex_db_path());
         std::cout << "\nRemoved the KMC database from disk.\n";
     }
 

@@ -48,6 +48,13 @@ public:
     {
         return dir_paths_;
     }
+
+
+    // Returns whether the reference collection is empty or not.
+    bool empty() const
+    {
+        return ref_paths_.empty() && list_paths_.empty() && dir_paths_.empty();
+    }
 };
 
 

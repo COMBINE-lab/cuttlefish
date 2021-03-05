@@ -4,24 +4,24 @@
 
 
 
-#include "CdBG.hpp"
 #include "Validator.hpp"
 #include "Build_Params.hpp"
 #include "Validation_Params.hpp"
 
 
 // The top-level application class for the compaction algorithm.
-template <uint16_t k>
+template <uint16_t k, template<uint16_t> typename T_App>
 class Application
 {
 private:
 
     // Pointer to an application instance of the next `Application` class in the top-down hierarchy (on `k`).
-    Application<k - 2>* const app_next_level;
+    Application<k - 2, T_App>* const app_next_level;
 
-    // Pointer to a `CdBG` object that operates with the k-value `k`.
-    CdBG<k>* const cdbg;
+    // Pointer to a driver object that operates with the k-value `k`.
+    T_App<k>* const app;
 
+    // TODO: Make the validator member generic, like `T_App`.
     // Pointer to a `Validator` object that operates with the k-value `k`.
     Validator<k>* const validator;
 
@@ -46,12 +46,12 @@ public:
 };
 
 
-template <>
-class Application<1>
+template <template<uint16_t> typename T_App>
+class Application<1, T_App>
 {
 private:
 
-    CdBG<1>* const cdbg;
+    T_App<1>* const app;
 
     Validator<1>* const validator;
 
@@ -59,21 +59,21 @@ private:
 public:
 
     Application(const Build_Params& params):
-        cdbg(params.k() == 1 ? new CdBG<1>(params) : nullptr),
+        app(params.k() == 1 ? new T_App<1>(params) : nullptr),
         validator(nullptr)
     {}
 
 
     Application(const Validation_Params& params):
-        cdbg(nullptr),
+        app(nullptr),
         validator(params.k() == 1 ? new Validator<1>(params) : nullptr)
     {}
 
 
     ~Application()
     {
-        if(cdbg != nullptr)
-            delete cdbg;
+        if(app != nullptr)
+            delete app;
 
         if(validator != nullptr)
             delete validator;
@@ -82,8 +82,8 @@ public:
 
     void execute() const
     {
-        if(cdbg != nullptr)
-            cdbg->construct();
+        if(app != nullptr)
+            app->construct();
         else
         {
             std::cerr << "The provided k is not valid. Aborting.\n";
@@ -103,47 +103,47 @@ public:
 };
 
 
-template <uint16_t k>
-inline Application<k>::Application(const Build_Params& params):
-    app_next_level(new Application<k - 2>(params)),
-    cdbg(params.k() == k ? new CdBG<k>(params) : nullptr),
+template <uint16_t k, template <uint16_t> typename T_App>
+inline Application<k, T_App>::Application(const Build_Params& params):
+    app_next_level(new Application<k - 2, T_App>(params)),
+    app(params.k() == k ? new T_App<k>(params) : nullptr),
     validator(nullptr)
 {}
 
 
-template <uint16_t k>
-inline Application<k>::Application(const Validation_Params& params):
-    app_next_level(new Application<k - 2>(params)),
-    cdbg(nullptr),
+template <uint16_t k, template <uint16_t> typename T_App>
+inline Application<k, T_App>::Application(const Validation_Params& params):
+    app_next_level(new Application<k - 2, T_App>(params)),
+    app(nullptr),
     validator(params.k() == k ? new Validator<k>(params): nullptr)
 {}
 
 
-template <uint16_t k>
-inline Application<k>::~Application()
+template <uint16_t k, template <uint16_t> typename T_App>
+inline Application<k, T_App>::~Application()
 {
     delete app_next_level;
 
-    if(cdbg != nullptr)
-        delete cdbg;
+    if(app != nullptr)
+        delete app;
 
     if(validator != nullptr)
         delete validator;
 }
 
 
-template <uint16_t k>
-inline void Application<k>::execute() const
+template <uint16_t k, template <uint16_t> typename T_App>
+inline void Application<k, T_App>::execute() const
 {
-    if(cdbg != nullptr)
-        cdbg->construct();
+    if(app != nullptr)
+        app->construct();
     else
         app_next_level->execute();
 }
 
 
-template <uint16_t k>
-inline bool Application<k>::validate() const
+template <uint16_t k, template <uint16_t> typename T_App>
+inline bool Application<k, T_App>::validate() const
 {
     if(validator != nullptr)
         return validator->validate();

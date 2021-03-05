@@ -73,7 +73,7 @@ void build(int argc, char** argv)
 
         std::cout << "\nConstructing the compacted de Bruijn graph for k = " << k << ".\n";
 
-        const Application<cuttlefish::MAX_K> app(params);
+        const Application<cuttlefish::MAX_K, CdBG> app(params);
         app.execute();
 
         std::cout << "\nConstructed the compacted de Bruijn graph at " << output_file << ".\n";
@@ -132,7 +132,7 @@ void validate(int argc, char** argv)
 
         std::cout << "\nValidating the compacted de Bruijn graph for k = " << k << "\n";
 
-        const Application<cuttlefish::MAX_K> app(params);
+        const Application<cuttlefish::MAX_K, CdBG> app(params);
         std::cout << (app.validate() ? "\nValidation successful" : "\nValidation failed") << std::endl;
     }
     catch(const std::exception& e)

@@ -8,9 +8,11 @@
 #include "Kmer_Hash_Table.hpp"
 #include "Build_Params.hpp"
 #include "Thread_Pool.hpp"
+#include "Kmer_Container.hpp"
+#include "Kmer_SPMC_Iterator.hpp"
 
 
-// A class to construct read-compacted de Bruijn graphs.
+// A class to construct compacted read de Bruijn graphs.
 template <uint16_t k>
 class Read_CdBG_Constructor
 {
@@ -20,6 +22,8 @@ private:
 
     const Build_Params params;  // Required parameters (wrapped inside).
     Kmer_Hash_Table<k, cuttlefish::BITS_PER_READ_KMER>& hash_table; // Hash table for the vertices (canonical k-mers) of the graph.
+    const Kmer_Container<k + 1> edge_container; // Wrapper container for the edge-database.
+    Kmer_SPMC_Iterator<k + 1> edge_parser;  // Parser for the edges from the edge-database.
 
 
     // Distributes the DFA-states computation task to the worker threads in the thread pool `thread_pool`.

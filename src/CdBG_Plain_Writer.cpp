@@ -189,5 +189,5 @@ void CdBG<k>::write_path(const uint16_t thread_id, const char* const seq, const 
 
 
 
-// Template instantiations for the required specializations.
+// Template instantiations for the required instances.
 ENUMERATE(INSTANCE_COUNT, INSTANTIATE, CdBG)

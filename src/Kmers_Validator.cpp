@@ -82,5 +82,5 @@ void Validator<k>::validate_kmer_set(bool& result) const
 
 
 
-// Template instantiations for the required specializations.
+// Template instantiations for the required instances.
 ENUMERATE(INSTANCE_COUNT, INSTANTIATE, Validator)

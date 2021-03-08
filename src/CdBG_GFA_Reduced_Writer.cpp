@@ -125,5 +125,5 @@ void CdBG<k>::write_sequence_tiling(Job_Queue<std::string, Oriented_Unitig>& job
 
 
 
-// Template instantiations for the required specializations.
+// Template instantiations for the required instances.
 ENUMERATE(INSTANCE_COUNT, INSTANTIATE, CdBG)

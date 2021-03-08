@@ -216,5 +216,5 @@ void Thread_Pool<k>::close()
 
 
 
-// Template instantiations for the required specializations.
+// Template instantiations for the required instances.
 ENUMERATE(INSTANCE_COUNT, INSTANTIATE, Thread_Pool)

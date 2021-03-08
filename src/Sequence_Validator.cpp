@@ -252,5 +252,5 @@ bool Validator<k>::walk_unitig(const char* const seq, const size_t seq_len, cons
 
 
 
-// Template instantiations for the required specializations.
+// Template instantiations for the required instances.
 ENUMERATE(INSTANCE_COUNT, INSTANTIATE, Validator)

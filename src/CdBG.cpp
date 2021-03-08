@@ -67,5 +67,5 @@ size_t CdBG<k>::search_valid_kmer(const char* const seq, const size_t left_end, 
 
 
 
-// Template instantiations for the required specializations.
+// Template instantiations for the required instances.
 ENUMERATE(INSTANCE_COUNT, INSTANTIATE, CdBG)

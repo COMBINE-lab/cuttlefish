@@ -627,5 +627,5 @@ void CdBG<k>::print_state_class_dist() const
 
 
 
-// Template instantiations for the required specializations.
+// Template instantiations for the required instances.
 ENUMERATE(INSTANCE_COUNT, INSTANTIATE, CdBG)

@@ -926,5 +926,5 @@ void CdBG<k>::remove_temp_files(const uint64_t file_id) const
 
 
 
-// Template instantiations for the required specializations.
+// Template instantiations for the required instances.
 ENUMERATE(INSTANCE_COUNT, INSTANTIATE, CdBG)

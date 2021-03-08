@@ -756,5 +756,5 @@ void CdBG<k>::flush_path_loggers()
 
 
 
-// Template instantiations for the required specializations.
+// Template instantiations for the required instances.
 ENUMERATE(INSTANCE_COUNT, INSTANTIATE, CdBG)

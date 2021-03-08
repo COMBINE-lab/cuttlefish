@@ -181,5 +181,5 @@ Kmer_Hash_Table<k, BITS_PER_KEY>::~Kmer_Hash_Table()
 
 
 
-// Template instantiations for the required specializations.
+// Template instantiations for the required instances.
 ENUMERATE(INSTANCE_COUNT, INSTANTIATE_PER_BIT, Kmer_Hash_Table)

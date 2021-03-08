@@ -1,6 +1,7 @@
 
 #include "Input_Defaults.hpp"
 #include "CdBG.hpp"
+#include "Read_CdBG.hpp"
 #include "Validator.hpp"
 #include "Build_Params.hpp"
 #include "Validation_Params.hpp"
@@ -69,14 +70,17 @@ void build(int argc, char** argv)
         }
 
         std::cout.precision(3);
-        
 
-        std::cout << "\nConstructing the compacted de Bruijn graph for k = " << k << ".\n";
 
-        const Application<cuttlefish::MAX_K, CdBG> app(params);
-        app.execute();
+        const std::string dBG_type = (params.is_read_graph() ? "read" : "reference");
 
-        std::cout << "\nConstructed the compacted de Bruijn graph at " << output_file << ".\n";
+        std::cout << "\nConstructing the " << dBG_type << " compacted de Bruijn graph for k = " << k << ".\n";
+
+        const Application<cuttlefish::MAX_K, CdBG> app_ref_dBG(params);
+        const Application<cuttlefish::MAX_K, Read_CdBG> app_read_dBG(params);
+        params.is_read_graph() ? app_read_dBG.execute() : app_ref_dBG.execute();
+
+        std::cout << "\nConstructed the " << dBG_type << " compacted de Bruijn graph at " << output_file << ".\n";
     }
     catch(const std::exception& e)
     {

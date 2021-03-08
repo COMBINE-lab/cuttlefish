@@ -4,12 +4,14 @@
 
 
 
+#include "globals.hpp"
 #include "Reference_Input.hpp"
 #include "Output_Format.hpp"
 
 #include <string>
 #include <vector>
 #include <thread>
+#include <iostream>
 
 
 class Build_Params
@@ -156,7 +158,7 @@ inline bool Build_Params::is_valid() const
     bool valid = true;
 
 
-    // Check if read and reference de Bruijn graphs parameters are being mixed with.
+    // Check if read and reference de Bruijn graph parameters are being mixed with.
     if(is_read_graph_)
     {
         if(!reference_input_.empty())

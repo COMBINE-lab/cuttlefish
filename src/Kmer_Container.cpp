@@ -9,7 +9,7 @@ Kmer_Container<k>::Kmer_Container(const std::string& kmc_file_path):
     kmc_file_path(kmc_file_path)
 {
     CKMCFile kmer_database;
-    if(!kmer_database.OpenForListing(kmc_file_path))
+    if(!kmer_database.open_for_listing_unbuffered(kmc_file_path))
     {
         std::cout << "Error opening KMC database files with prefix " << kmc_file_path << ". Aborting.\n";
         std::exit(EXIT_FAILURE);
@@ -119,5 +119,5 @@ void Kmer_Container<k>::load_kmers(std::vector<Kmer<k>>& kmers) const
 
 
 
-// Template instantiations for the required specializations.
-ENUMERATE(INSTANCE_COUNT, INSTANTIATE, Kmer_Container)
+// Template instantiations for the required instances.
+ENUMERATE(INSTANCE_COUNT, INSTANTIATE_ALL, Kmer_Container)

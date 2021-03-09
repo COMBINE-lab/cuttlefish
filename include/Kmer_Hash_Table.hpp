@@ -50,9 +50,8 @@ private:
     // TODO: increase locks and check note at the end about the false `const` issue.
     constexpr static uint64_t lock_count{65536};
 
-
     // The locks to maintain mutually exclusive access for threads to the same indices into the bitvector `hash_table`.
-    Sparse_Lock<Spin_Lock>* sparse_lock_ptr{nullptr};
+    mutable Sparse_Lock<Spin_Lock> sparse_lock;
 
 
     // Builds the minimal perfect hash function `mph` over the set of
@@ -128,9 +127,9 @@ inline uint64_t Kmer_Hash_Table<k, BITS_PER_KEY>::bucket_id(const Kmer<k>& kmer)
 template <uint16_t k, uint8_t BITS_PER_KEY>
 inline Kmer_Hash_Entry_API<BITS_PER_KEY> Kmer_Hash_Table<k, BITS_PER_KEY>::operator[](const uint64_t bucket_id)
 {
-    sparse_lock_ptr->lock(bucket_id);
+    sparse_lock.lock(bucket_id);
     const Kmer_Hash_Entry_API<BITS_PER_KEY> r(hash_table[bucket_id]);
-    sparse_lock_ptr->unlock(bucket_id);
+    sparse_lock.unlock(bucket_id);
     
     return r;
 }
@@ -148,9 +147,9 @@ inline State Kmer_Hash_Table<k, BITS_PER_KEY>::operator[](const Kmer<k>& kmer) c
 {
     const uint64_t bucket = bucket_id(kmer);
 
-    sparse_lock_ptr->lock(bucket);
+    sparse_lock.lock(bucket);
     const State state(hash_table[bucket]);
-    sparse_lock_ptr->unlock(bucket);
+    sparse_lock.unlock(bucket);
 
     return state;
 }
@@ -171,11 +170,11 @@ inline bool Kmer_Hash_Table<k, BITS_PER_KEY>::update(Kmer_Hash_Entry_API<BITS_PE
 
     const uint64_t bucket = std::distance(hash_table.begin(), &(api.bv_entry));
 
-    sparse_lock_ptr->lock(bucket);
+    sparse_lock.lock(bucket);
     const bool success = (api.bv_entry == api.get_read_state());
     if(success)
         api.bv_entry = api.get_current_state();
-    sparse_lock_ptr->unlock(bucket);
+    sparse_lock.unlock(bucket);
     
     return success;
 }

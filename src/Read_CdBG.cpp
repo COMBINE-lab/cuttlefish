@@ -5,7 +5,8 @@
 
 template <uint16_t k>
 Read_CdBG<k>::Read_CdBG(const Build_Params& params):
-    params(params)
+    params(params),
+    hash_table(params.vertex_db_path())
 {}
 
 

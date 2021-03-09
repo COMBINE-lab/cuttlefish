@@ -43,6 +43,9 @@ public:
     // Returns the number of k-mers present in the underlying k-mer database.
     uint64_t size() const;
 
+    // Returns the number of k-mers present in the k-mer database with path prefix `kmc_db_path`.
+    static uint64_t size(const std::string& kmc_db_path);
+
 
     // Returns an iterator pointing to the beginning of the underlying k-mer
     // database.

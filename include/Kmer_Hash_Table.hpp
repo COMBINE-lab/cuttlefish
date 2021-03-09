@@ -32,6 +32,12 @@ private:
     // Lowest bits/elem is achieved with gamma = 1, higher values lead to larger mphf but faster construction/query.
     constexpr static double GAMMA_FACTOR = 2.0;
 
+    // Path to the underlying k-mer database, over which the hash table is constructed.
+    const std::string& kmc_db_path;
+
+    // Number of keys (`Kmer<k>`s) in the hash table.
+    const uint64_t kmer_count;
+
     // The MPH function.
     // TODO: Initialize with `std::nullptr`.
     mphf_t* mph = NULL;
@@ -54,7 +60,7 @@ private:
     // with `mph_file_path` being the file to use for BBHash build
     // using `thread_count` number of threads. Uses the directory
     // at `working_dir_path` to store temporary files.
-    void build_mph_function(const Kmer_Container<k>& kmer_container, uint16_t thread_count, const std::string& working_dir_path, const std::string& mph_file_path);
+    void build_mph_function(uint16_t thread_count, const std::string& working_dir_path, const std::string& mph_file_path);
 
     // Loads an MPH function from the file at `file_path` into `mph`.
     void load_mph_function(const std::string& file_path);
@@ -80,12 +86,16 @@ private:
 
 public:
 
+    // Constructs a `Kmer_Hash_Table` object, where the hash table is to be built
+    // over the KMC database with path prefix `kmc_db_path`.
+    Kmer_Hash_Table(const std::string& kmc_db_path);
+
     // Constructs a minimal perfect hash function (specifically, the BBHash) for
     // the collection of k-mers present at the KMC database at path `kmc_db_path`,
     // using up-to `thread_count` number of threads. If a non-empty path is passed
     // with `mph_file_path`, either an MPH is loaded from there (instead of building
     // from scratch), or the newly built MPH is saved there.
-    void construct(const std::string& kmc_db_path, uint16_t thread_count, const std::string& working_dir_path, const std::string& mph_file_path);
+    void construct(uint16_t thread_count, const std::string& working_dir_path, const std::string& mph_file_path);
 
     // Returns an API to the entry (in the hash table) for the key `kmer`. The API
     // wraps the hash table position and the state value at that position.

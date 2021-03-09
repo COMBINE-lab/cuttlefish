@@ -5,7 +5,8 @@
 
 template <uint16_t k> 
 CdBG<k>::CdBG(const Build_Params& params):
-    params(params)
+    params(params),
+    Vertices(params.vertex_db_path())
 {
     Kmer<k>::set_k(params.k());
 }
@@ -15,7 +16,7 @@ template <uint16_t k>
 void CdBG<k>::construct()
 {
     std::cout << "\nConstructing the minimal perfect hash function (MPHF).\n";
-    Vertices.construct(params.vertex_db_path(), params.thread_count(), params.working_dir_path(), params.mph_file_path());
+    Vertices.construct(params.thread_count(), params.working_dir_path(), params.mph_file_path());
 
     if(params.remove_kmc_db())
     {

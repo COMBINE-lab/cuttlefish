@@ -55,6 +55,14 @@ uint64_t Kmer_Container<k>::size() const
 
 
 template <uint16_t k>
+uint64_t Kmer_Container<k>::size(const std::string& kmc_db_path)
+{
+    const Kmer_Container<k> kmer_container(kmc_db_path);
+    return kmer_container.size();
+}
+
+
+template <uint16_t k>
 typename Kmer_Container<k>::iterator Kmer_Container<k>::begin() const
 {
     return iterator(this);

@@ -9,7 +9,14 @@
 
 
 template <uint16_t k, uint8_t BITS_PER_KEY>
-void Kmer_Hash_Table<k, BITS_PER_KEY>::build_mph_function(const Kmer_Container<k>& kmer_container, const uint16_t thread_count, const std::string& working_dir_path, const std::string& mph_file_path)
+Kmer_Hash_Table<k, BITS_PER_KEY>::Kmer_Hash_Table(const std::string& kmc_db_path):
+    kmc_db_path(kmc_db_path),
+    kmer_count{Kmer_Container<k>::size(kmc_db_path)}
+{}
+
+
+template <uint16_t k, uint8_t BITS_PER_KEY>
+void Kmer_Hash_Table<k, BITS_PER_KEY>::build_mph_function(const uint16_t thread_count, const std::string& working_dir_path, const std::string& mph_file_path)
 {
     // The serialized BBHash file (saved from some earlier execution) exists.
     struct stat buffer;
@@ -24,12 +31,15 @@ void Kmer_Hash_Table<k, BITS_PER_KEY>::build_mph_function(const Kmer_Container<k
     }
     else    // No BBHash file name provided, or does not exist. Build and save (if specified) one now.
     {
+        // Open a container over the k-mer database.
+        const Kmer_Container<k> kmer_container(kmc_db_path);
+
         // Build the MPHF.
         std::cout << "Building the MPHF from the k-mer database " << kmer_container.container_location() << ".\n";
 
         // auto data_iterator = boomphf::range(kmer_container.buf_begin(), kmer_container.buf_end());
         const auto data_iterator = boomphf::range(kmer_container.spmc_begin(thread_count), kmer_container.spmc_end(thread_count));
-        mph = new mphf_t(kmer_container.size(), data_iterator, working_dir_path, thread_count, GAMMA_FACTOR);
+        mph = new mphf_t(kmer_count, data_iterator, working_dir_path, thread_count, GAMMA_FACTOR);
 
         std::cout << "Built the MPHF in memory.\n";
 
@@ -116,21 +126,18 @@ void Kmer_Hash_Table<k, BITS_PER_KEY>::load_hash_buckets(const std::string& file
 
 
 template <uint16_t k, uint8_t BITS_PER_KEY>
-void Kmer_Hash_Table<k, BITS_PER_KEY>::construct(const std::string& kmc_db_path, const uint16_t thread_count, const std::string& working_dir_path, const std::string& mph_file_path)
+void Kmer_Hash_Table<k, BITS_PER_KEY>::construct(const uint16_t thread_count, const std::string& working_dir_path, const std::string& mph_file_path)
 {
     std::chrono::high_resolution_clock::time_point t_start = std::chrono::high_resolution_clock::now();
 
 
-    // Open a container over the k-mer database.
-    const Kmer_Container<k> kmer_container(kmc_db_path);
-    const uint64_t kmer_count = kmer_container.size();
     std::cout << "Total number of k-mers in the set (KMC database): " << kmer_count << ".\n";
     
     sparse_lock_ptr = new Sparse_Lock<Spin_Lock>(kmer_count, lock_count);
 
 
     // Build the minimal perfect hash function.
-    build_mph_function(kmer_container, thread_count, working_dir_path, mph_file_path);
+    build_mph_function(thread_count, working_dir_path, mph_file_path);
 
     const uint64_t total_bits = mph->totalBitSize();
     std::cout <<    "\nTotal MPHF size: " << total_bits / (8 * 1024 * 1024) << " MB."

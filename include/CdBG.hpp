@@ -415,11 +415,12 @@ private:
 
 public:
 
-    // Constructs a `CdBG` object with the parameters wrapped at `params`.
+    // Constructs a `CdBG` object with the parameters required for the construction of the
+    // compacted representation of the underlying reference de Bruijn graph wrapped in `params`.
     CdBG(const Build_Params& params);
 
-    // Constructs the compacted de Bruijn graph using up-to `thread_count` threads, and
-    // outputs the maximal unitigs into the file named `output_file_name`.
+    // Constructs the compacted reference de Bruijn graph, employing the parameters received
+    // with the object-constructor.
     void construct();
 };
 

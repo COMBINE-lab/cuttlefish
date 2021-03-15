@@ -1,6 +1,8 @@
 
 #include "Read_CdBG_Constructor.hpp"
 
+#include "chrono"
+
 
 template <uint16_t k>
 Read_CdBG_Constructor<k>::Read_CdBG_Constructor(const Build_Params& params, Kmer_Hash_Table<k, cuttlefish::BITS_PER_READ_KMER>& hash_table):
@@ -16,6 +18,9 @@ Read_CdBG_Constructor<k>::Read_CdBG_Constructor(const Build_Params& params, Kmer
 template <uint16_t k>
 void Read_CdBG_Constructor<k>::compute_DFA_states()
 {
+    std::chrono::high_resolution_clock::time_point t_start = std::chrono::high_resolution_clock::now();
+
+
     // Construct a thread pool.
     const uint16_t thread_count = params.thread_count();
     Thread_Pool<k> thread_pool(thread_count, this, Thread_Pool<k>::Task_Type::compute_states_read_space);
@@ -31,6 +36,11 @@ void Read_CdBG_Constructor<k>::compute_DFA_states()
 
     // Wait for the consumer threads to finish parsing and processing the edges.
     thread_pool.close();
+
+
+    std::chrono::high_resolution_clock::time_point t_end = std::chrono::high_resolution_clock::now();
+    double elapsed_seconds = std::chrono::duration_cast<std::chrono::duration<double>>(t_end - t_start).count();
+    std::cout << "Done computing the DFA states. Time taken = " << elapsed_seconds << " seconds.\n";
 }
 
 

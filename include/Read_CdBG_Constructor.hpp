@@ -25,6 +25,10 @@ private:
     const Kmer_Container<k + 1> edge_container; // Wrapper container for the edge-database.
     Kmer_SPMC_Iterator<k + 1> edge_parser;  // Parser for the edges from the edge-database.
 
+    // Members required to keep track of the total number of edges processed across different threads.
+    mutable Spin_Lock lock;
+    mutable uint64_t edges_processed = 0;
+
 
     // Distributes the DFA-states computation task to the worker threads in the thread pool `thread_pool`.
     void distribute_states_computation(Thread_Pool<k>& thread_pool);

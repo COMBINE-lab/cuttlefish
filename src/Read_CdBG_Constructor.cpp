@@ -37,6 +37,8 @@ void Read_CdBG_Constructor<k>::compute_DFA_states()
     // Wait for the consumer threads to finish parsing and processing the edges.
     thread_pool.close();
 
+    std::cout << "Number of processed egdes: " << edges_processed << "\n";
+
 
     std::chrono::high_resolution_clock::time_point t_end = std::chrono::high_resolution_clock::now();
     double elapsed_seconds = std::chrono::duration_cast<std::chrono::duration<double>>(t_end - t_start).count();
@@ -61,10 +63,18 @@ template <uint16_t k>
 void Read_CdBG_Constructor<k>::process_edges(const uint16_t thread_id)
 {
     Kmer<k + 1> edge;
+    uint64_t edge_count = 0;
 
     while(edge_parser.tasks_expected(thread_id))
         if(edge_parser.value_at(thread_id, edge))
-        {}
+        {
+            edge_count++;
+        }
+
+    lock.lock();
+    std::cout << "Thread " << thread_id << " processed " << edge_count << " edges.\n";  // Temporary log. TODO: remove.
+    edges_processed += edge_count;
+    lock.unlock();
 }
 
 

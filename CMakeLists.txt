@@ -54,6 +54,33 @@ set(THREADS_PREFER_PTHREAD_FLAG TRUE)   # The BBHash library uses `pthread`.
 # the `kseq` library to gzipped compressed files.
 find_package(ZLIB REQUIRED)
 
+# Search and load setting for the `jemalloc` library. It provides scalable concurrency support
+# and better avoidance of fragmentation.
+set(FAST_MALLOC_LIB "")
+find_package(jemalloc)
+if(jemalloc_FOUND)
+    message("Found the Jemalloc library")
+    set(FAST_MALLOC_LIB ${JEMALLOC_LIBRARIES})
+else()
+    message("Build system is fetching and installing jemalloc")
+
+    include(ExternalProject)
+
+    ExternalProject_Add(libjemalloc
+        DOWNLOAD_DIR ${CMAKE_SOURCE_DIR}/external
+        DOWNLOAD_COMMAND    curl -k -L https://github.com/jemalloc/jemalloc/archive/5.2.1.tar.gz -o jemalloc-5.2.1.tar.gz
+                            && tar -xzf jemalloc-5.2.1.tar.gz
+
+        SOURCE_DIR ${CMAKE_SOURCE_DIR}/external/jemalloc-5.2.1
+        BUILD_IN_SOURCE TRUE
+        INSTALL_DIR ${CMAKE_SOURCE_DIR}/external/install
+        CONFIGURE_COMMAND sh -c "CC=${CMAKE_C_COMPILER} ./autogen.sh --disable-debug --enable-static --prefix=<INSTALL_DIR> --silent"
+        INSTALL_COMMAND cp -r lib <INSTALL_DIR>/ && cp -r include <INSTALL_DIR>/
+    )
+
+    set(FAST_MALLOC_LIB ${CMAKE_SOURCE_DIR}/external/install/lib/libjemalloc.a)
+endif()
+
 
 # The `Debug` configuration optimizes the program for debugging and enables full debug information.
 # The `Release` configuration enables most compiler optimizations for speed and defines `NDEBUG`

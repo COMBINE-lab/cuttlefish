@@ -52,6 +52,13 @@ target_compile_options(core PRIVATE ${WARNING_FLAGS} ${SUPPRESS_WARNING_FLAGS} $
 add_executable(${PROJECT_NAME} main.cpp)
 
 
+# Link the core library to the `jemalloc` library, for better `malloc` support.
+target_link_libraries(core PRIVATE ${FAST_MALLOC_LIB})
+
+# Link the core library to the `dl` library, required in using dynamic shared object.
+# Needed by `jemalloc`.
+target_link_libraries(core PRIVATE ${CMAKE_DL_LIBS})
+
 # Link the core library to the threads package in the platform.
 target_link_libraries(core PRIVATE ${CMAKE_THREAD_LIBS_INIT})
 

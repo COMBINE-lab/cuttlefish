@@ -13,9 +13,18 @@
 #include <algorithm>
 
 
+// Defining this macro states our intent that only odd k-values will be used for de Bruijn graph vertices.
+// Hence, extraction of k-mers from (k + 1)-mers — vertices from edges — will only happen when k is odd.
+#define ODD_K
+
+
 template <uint16_t k>
 class Kmer: public DNA_Utility
 {
+    // Make k-mers friend for (k + 1)-mer, so that de Bruijn graph vertices, i.e. k-mers,
+    // may access private information (the raw data) from edges, i.e. (k + 1)-mers.
+    friend class Kmer<k - 1>;
+
 private:
 
     // Number of 64-bit integers required to compactly represent the underlying k-mer with 2-bits/base encoding.
@@ -80,6 +89,14 @@ public:
     // Gets the k-mer from its KMC raw-binary representation.
     void from_KMC_data(const uint64_t* kmc_data);
 
+    // Gets the k-mer that is a prefix of the provided
+    // (k + 1)-mer `k_plus_1_mer`.
+    void from_prefix(const Kmer<k + 1>& k_plus_1_mer);
+
+    // Gets the k-mer that is a suffix of the provided
+    // (k + 1)-mer `k_plus_1_mer`.
+    void from_suffix(const Kmer<k + 1>& k_plus_1_mer);
+
     // Returns the reverese complement of the k-mer.
     Kmer<k> reverse_complement() const;
 
@@ -113,9 +130,10 @@ public:
     // Returns the string label of the k-mer.
     std::string string_label() const;
 
-    // For debugging purposes.
+    // Prints the literal representation of the K-mer `kmer` to the
+    // stream `ostream`.
     template <uint16_t K>
-    friend std::ostream& operator<<(std::ostream& out, const Kmer<k>& kmer);
+    friend std::ostream& operator<<(std::ostream& out, const Kmer<K>& kmer);
 };
 
 
@@ -269,6 +287,39 @@ inline void Kmer<k>::from_KMC_data(const uint64_t* const kmc_data)
 
 
 template <uint16_t k>
+inline void Kmer<k>::from_prefix(const Kmer<k + 1>& k_plus_1_mer)
+{
+    // Note: `Kmer<k>` and `Kmer<k + 1>` always have the same number of words (i.e. `NUM_INTS`) for odd k-values.
+    // The only time that they have different numbers of words is when `k` is a multiple of 32. In such cases,
+    // a (k + 1)-mer contains just one base in its highest index word, and a k-mer's words are fully packed.
+
+    std::memcpy(kmer_data, k_plus_1_mer.kmer_data, NUM_INTS * sizeof(uint64_t));
+    right_shift();  // Clear the LSN of the (k + 1)-mer, from the k-mer.
+
+    #ifndef ODD_K   // The following `if` conditional can only be `true` when `k` is a multiple of 32.
+    constexpr uint16_t kp1_NUM_INTS = ((k + 1) + 31) / 32;
+    if(kp1_NUM_INTS != NUM_INTS)    // Fetch the only base not copied from the (k + 1)-mer as the MSN for this k-mer.
+        kmer_data[NUM_INTS - 1] |= (k_plus_1_mer.kmer_data[kp1_NUM_INTS - 1] << 62);
+    #endif
+}
+
+
+template <uint16_t k>
+inline void Kmer<k>::from_suffix(const Kmer<k + 1>& k_plus_1_mer)
+{
+    std::memcpy(kmer_data, k_plus_1_mer.kmer_data, NUM_INTS * sizeof(uint64_t));
+
+    #ifndef ODD_K   // The following `if` conditional can only be `true` when `k` is a multiple of 32.
+    constexpr uint16_t kp1_NUM_INTS = ((k + 1) + 31) / 32;
+    if(kp1_NUM_INTS != NUM_INTS)    // The only base not copied from the (k + 1)-mer isn't required to be fetched — it will be cleared out anyways.
+        return;
+    #endif
+
+    kmer_data[NUM_INTS - 1] &= Kmer<k + 1>::CLEAR_MSN_MASK; // Clear the MSN of the (k + 1)-mer from this k-mer.
+}
+
+
+template <uint16_t k>
 inline Kmer<k> Kmer<k>::reverse_complement() const
 {
     Kmer<k> kmer(*this);
@@ -330,6 +381,9 @@ inline void Kmer<k>::roll_to_next_kmer(const char next_base, Kmer<k>& rev_compl)
 {
     const DNA::Base mapped_base = map_base(next_base);
 
+    // Logically, since a left shift moves the MSN out of the length `k` boundary, the clearing of the base
+    // may seem redundant. But, the `to_u64` hashing method implementation works with bytes — not clearing
+    // out this base breaks the consistency of the hashing.
     kmer_data[NUM_INTS - 1] &= CLEAR_MSN_MASK;
     left_shift();
     kmer_data[0] |= mapped_base;

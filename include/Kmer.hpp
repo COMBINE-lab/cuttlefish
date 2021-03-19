@@ -46,6 +46,10 @@ private:
     // Right-shifts the collection of the bits at the `kmer_data` array by one base (2-bits).
     void right_shift();
 
+    // Left-shifts the collection of the bits at the `kmer_data` array by `N` bases (2N-bits).
+    template <uint16_t N> void left_shift(char(*)[N != 0] = 0);
+    template <uint16_t N> void left_shift(char(*)[N == 0] = 0);
+
 
 public:
 
@@ -159,6 +163,28 @@ inline void Kmer<k>::right_shift()
 
     kmer_data[NUM_INTS - 1] >>= 2;
 }
+
+
+template <uint16_t k>
+template <uint16_t N>
+inline void Kmer<k>::left_shift(char(*)[N != 0])
+{
+    // static_assert(N > 0 && N < 4, "invalid bit-shift amount");
+
+    constexpr uint16_t num_bit_shift = (N > 0 ? 2 * N : 1);
+    constexpr uint64_t mask_MSNs = ((static_cast<uint64_t>(1) << num_bit_shift) - 1) << (64 - num_bit_shift);
+
+    for(uint16_t idx = NUM_INTS - 1; idx > 0; --idx)
+        kmer_data[idx] = (kmer_data[idx] << num_bit_shift) | ((kmer_data[idx - 1] & mask_MSNs) >> (64 - num_bit_shift));
+
+    kmer_data[0] <<= num_bit_shift;
+}
+
+
+template <uint16_t k>
+template <uint16_t N>
+inline void Kmer<k>::left_shift(char(*)[N == 0])
+{}
 
 
 template <uint16_t k>

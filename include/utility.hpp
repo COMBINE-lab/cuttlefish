@@ -6,8 +6,10 @@
 #include <string>
 
 
-// Returns a random string of length `len`.
-std::string get_random_string(size_t len);
+// Returns a random string of length `len`, using characters from `alphabet`.
+std::string get_random_string(size_t len, const char* alphabet =    "0123456789"
+                                                                    "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+                                                                    "abcdefghijklmnopqrstuvwxyz");
 
 // Returns `true` iff `pref` is a prefix of `s`.
 bool is_prefix(const std::string& s, const std::string& pref);

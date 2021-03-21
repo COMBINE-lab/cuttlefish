@@ -9,24 +9,15 @@
 #include <iostream>
 
 
-std::string get_random_string(const size_t len)
+std::string get_random_string(const size_t len, const char* const alphabet)
 {
-    static const char alphabet[] =
-        "0123456789"
-        "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-        "abcdefghijklmnopqrstuvwxyz";
-    char *s = new char[len + 1];
+    std::string str;
+    str.reserve(len);
 
-    const unsigned seed = time(NULL);
-    srand(seed);
+    const unsigned int seed = static_cast<unsigned int>(std::time(NULL));
+    std::srand(seed);
     for (size_t i = 0; i < len; ++i)
-        s[i] = alphabet[(std::rand() % (sizeof(alphabet) - 1))];
-
-    s[len] = '\0';
-
-
-    const std::string str(s);
-    delete s;
+        str += alphabet[(std::rand() % (sizeof(alphabet) - 1))];
 
     return str;
 }

@@ -104,6 +104,10 @@ public:
     // Returns the reverese complement of the k-mer.
     Kmer<k> reverse_complement() const;
 
+    // Gets the k-mer that is the reverse complement of
+    // the provided k-mer `other`.
+    void as_reverse_complement(const Kmer<k>& kmer);
+
     // Returns true iff the bitwise encoding of this k-mer is lesser to the
     // encoding of the other k-mer `rhs`.
     bool operator<(const Kmer<k>& rhs) const;
@@ -348,6 +352,8 @@ inline void Kmer<k>::from_suffix(const Kmer<k + 1>& k_plus_1_mer)
 template <uint16_t k>
 inline Kmer<k> Kmer<k>::reverse_complement() const
 {
+    // TODO: define the method using `as_reverse_complement`.
+
     Kmer<k> kmer(*this);
     Kmer<k> rev_compl;
     
@@ -363,6 +369,38 @@ inline Kmer<k> Kmer<k>::reverse_complement() const
 
 
     return rev_compl;
+}
+
+
+template <uint16_t k>
+inline void Kmer<k>::as_reverse_complement(const Kmer<k>& other)
+{
+    // Working with bytes instead of 64-bit words at a time.
+
+    uint8_t* const rev_compl = reinterpret_cast<uint8_t*>(kmer_data);
+    const uint8_t* const data = reinterpret_cast<const uint8_t*>(other.kmer_data);
+
+
+    // Get the reverse complement for the fully packed bytes.
+
+    constexpr uint16_t packed_byte_count = k / 4;
+
+    for(uint16_t byte_idx = 0; byte_idx < packed_byte_count; ++byte_idx)
+        rev_compl[packed_byte_count - 1 - byte_idx] = DNA_Utility::reverse_complement(data[byte_idx]);
+
+
+    // Get the reverse complement for the only byte that might be partially packed (possible for the highest-indexed byte only).
+
+    constexpr uint16_t rem_base_count = (k & 3);
+    if(rem_base_count == 0) // if constexpr(rem_base_count == 0)    // C++17 compile-time optimization
+        return;
+    
+    rev_compl[packed_byte_count] = 0;
+    left_shift<rem_base_count>();
+
+    for(int i = 0; i < rem_base_count; ++i)
+        rev_compl[0] |= (DNA_Utility::complement(DNA::Base((data[packed_byte_count] & (0b11 << (2 * i))) >> (2 * i)))
+                                        << (2 * (rem_base_count - 1 - i)));
 }
 
 

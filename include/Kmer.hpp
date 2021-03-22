@@ -5,6 +5,7 @@
 
 
 #include "DNA_Utility.hpp"
+#include "utility.hpp"
 #include "kmc_api/kmc_file.h"
 #include "xxHash/xxh3.h"
 
@@ -137,6 +138,9 @@ public:
 
     // Returns the string label of the k-mer.
     std::string string_label() const;
+
+    // Returns a randomly generated k-mer.
+    static Kmer<k> random_kmer();
 
     // Prints the literal representation of the K-mer `kmer` to the
     // stream `ostream`.
@@ -513,6 +517,13 @@ inline std::string Kmer<k>::string_label() const
     delete label;
     
     return str_label;
+}
+
+
+template <uint16_t k>
+inline Kmer<k> Kmer<k>::random_kmer()
+{
+    return Kmer<k>(get_random_string(k, "ACGT"));
 }
 
 

@@ -14,8 +14,8 @@ template <uint8_t BITS_PER_KEY> class Kmer_Hash_Entry_API;
 class State_Read_Space
 {
     friend class Kmer_Hash_Entry_API<cuttlefish::BITS_PER_READ_KMER>;
-
-    typedef DNA::Extended_Base edge_encoding_t;
+    
+    typedef DNA::Extended_Base edge_encoding_t; // TODO: replace this with `cuttlefish::edge_encoding_t`.
 
 private:
 

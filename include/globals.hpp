@@ -42,6 +42,7 @@ namespace cuttlefish
 
     typedef bool dir_t;
     typedef DNA::Base base_t;
+    typedef DNA::Extended_Base edge_encoding_t;
     typedef uint8_t state_code_t;
 
 

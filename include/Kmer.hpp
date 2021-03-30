@@ -119,6 +119,16 @@ public:
     // Returns true iff this k-mer is not identical to the other k-mer `rhs`.
     bool operator!=(const Kmer<k>& rhs) const;
 
+    // Returns the `DNA::Base` (2-bit) encoding of the character at the front,
+    // i.e. at the first index of the literal representation. For a k-mer
+    // `n_{k - 1} ... n_1 n_0`, this is the base `n_{k - 1}`.
+    DNA::Base front() const;
+
+    // Returns the `DNA::Base` (2-bit) encoding of the character at the back,
+    // i.e. at the last index of the literal representation. For a k-mer
+    // `n_{k - 1} ... n_1 n_0`, this is the base `n_0`.
+    DNA::Base back() const;
+
     // Returns `true` iff the k-mer is in the forward direction relative to
     // the other k-mer `kmer_hat`.
     bool in_forward(const Kmer<k>& kmer_hat) const;
@@ -434,6 +444,29 @@ template <uint16_t k>
 inline bool Kmer<k>::operator!=(const Kmer<k>& rhs) const
 {
     return !operator==(rhs);
+}
+
+
+template <uint16_t k>
+inline DNA::Base Kmer<k>::front() const
+{
+    // Relative index of the most significant nucleotide in it's 64-bit word.
+    constexpr uint16_t rel_idx_MSN = 2 * ((k - 1) % 32);
+
+    // Mask to extract the most significant nucelotide.
+    constexpr uint64_t mask_MSN = (static_cast<uint64_t>(0b11) << rel_idx_MSN);
+
+    return DNA::Base((kmer_data[NUM_INTS - 1] & mask_MSN) >> rel_idx_MSN);
+}
+
+
+template <uint16_t k>
+inline DNA::Base Kmer<k>::back() const
+{
+    // Mask to extract the least significant nucleotide.
+    constexpr uint64_t mask_LSN = static_cast<uint64_t>(0b11);
+
+    return DNA::Base(kmer_data[0] & mask_LSN);
 }
 
 

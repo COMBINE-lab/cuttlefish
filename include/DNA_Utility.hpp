@@ -99,6 +99,13 @@ private:
         240, 176, 112,  48, 224, 160,  96,  32, 208, 144,  80,  16, 192, 128,  64,   0
     };
 
+    // Mapped `DNA::Extended_Base` for the corresponding `DNA::Base`, i.e.
+    // a mapping from [0(A) — T(3)] to [1(A) — 4(T)].
+    static constexpr DNA::Extended_Base MAPPED_EXTENDED_BASE[4] =
+    {
+        DNA::Extended_Base::A, DNA::Extended_Base::C, DNA::Extended_Base::G, DNA::Extended_Base::T
+    };
+
 
 public:
 
@@ -137,6 +144,13 @@ public:
     static uint8_t reverse_complement(const uint8_t byte)
     {
         return REVERSE_COMPLEMENT_BYTE[byte];
+    }
+
+    // Returns the mapping `DNA::Extended_Base` representation of the
+    // `DNA::Base` representation `base`.
+    static DNA::Extended_Base map_extended_base(const DNA::Base base)
+    {
+        return MAPPED_EXTENDED_BASE[base];
     }
 };
 

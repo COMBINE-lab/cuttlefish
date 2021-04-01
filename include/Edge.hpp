@@ -21,8 +21,8 @@ class Edge
 private:
 
     Kmer<k + 1> e_; // The edge (k + 1)-mer (need not be in canonical form).
-    Kmer<k> u_; // One endpoint of the edge `e_hat` — source endpoint of the `e` form.
-    Kmer<k> v_; // One endpoint of the edge `e_hat` — sink endpoint of the `e` form.
+    Kmer<k> u_; // One endpoint k-mer of this edge instance — source k-mer of the `e` form.
+    Kmer<k> v_; // One endpoint k-mer of this edge instance — sink k-mer of the `e` form.
     Kmer<k> u_hat_; // Canonical form of `u`.
     Kmer<k> v_hat_; // Canonical form of `v`.
     cuttlefish::side_t s_u_hat_;    // The side of the vertex `u_hat` to which this edge instance is incident to.
@@ -34,13 +34,31 @@ public:
     // Returns a mutable reference to the edge (k + 1)-mer.
     Kmer<k + 1>& e();
 
-    // Reconfigures the edge data. i.e. sets the relevant information of
-    // the edge from the underlying (k + 1)-mer. Must be used whenever the
-    // edge (k + 1)-mer (updatable using `e()`) is modified.
-    void reconfigure();
+    // Configures the edge data. i.e. sets the relevant information of the
+    // edge from the underlying (k + 1)-mer. Must be used whenever the edge
+    // (k + 1)-mer (updatable using `e()`) is modified.
+    void configure();
 
     // Returns `true` iff the edge is a loop.
     bool is_loop() const;
+
+    // Returns the vertex (i.e. canonical k-mer) `u_hat` — which corresponds
+    // to the source endpoint k-mer `u` of this edge instance `e`.
+    const Kmer<k>& u_hat() const;
+
+    // Returns the vertex (i.e. canonical k-mer) `v_hat` — which corresponds
+    // to the sink endpoint k-mer `v` of this edge instance `e`.
+    const Kmer<k>& v_hat() const;
+
+    // Returns the side of the vertex (i.e. canonical k-mer) `u_hat` — which
+    // corresponds to the source endpoint k-mer `u` of this edge instance `e`
+    // — to which this edge instance `e` is incident to.
+    cuttlefish::side_t s_u_hat() const;
+
+    // Returns the side of the vertex (i.e. canonical k-mer) `v_hat` — which
+    // corresponds to the sink endpoint k-mer `v` of this edge instance `e`
+    // — to which this edge instance `e` is incident to.
+    cuttlefish::side_t s_v_hat() const;
 
     // Returns the `DNA::Extended_Base` base-encoding of the underlying edge,
     // from the point-of-view of the vertex `u_hat`.
@@ -60,7 +78,7 @@ inline Kmer<k + 1>& Edge<k>::e()
 
 
 template <uint16_t k>
-inline void Edge<k>::reconfigure()
+inline void Edge<k>::configure()
 {
     u_.from_prefix(e_),
     v_.from_suffix(e_);
@@ -77,6 +95,34 @@ template <uint16_t k>
 inline bool Edge<k>::is_loop() const
 {
     return u_hat_ == v_hat_;
+}
+
+
+template <uint16_t k>
+inline const Kmer<k>& Edge<k>::u_hat() const
+{
+    return u_hat_;
+}
+
+
+template <uint16_t k>
+inline const Kmer<k>& Edge<k>::v_hat() const
+{
+    return v_hat_;
+}
+
+
+template <uint16_t k>
+inline cuttlefish::side_t Edge<k>::s_u_hat() const
+{
+    return s_u_hat_;
+}
+
+
+template <uint16_t k>
+inline cuttlefish::side_t Edge<k>::s_v_hat() const
+{
+    return s_v_hat_;
 }
 
 

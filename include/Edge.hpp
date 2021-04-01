@@ -12,7 +12,7 @@
 
 // Class for an instance of a bidirected edge.
 // NB: for some (k + 1)-mer `e`, `e` and `e_bar` denote the same bidirected edge `e_hat`;
-// but these being different (k + 1)-mers, they are treated as different instances of the
+// but these being different (k + 1)-mers, they are treated as different *instances* of the
 // same edge. Semantically, the underlying edges are the same. This edge instance is in the
 // tuple form `(u, s_\hat{u}, v, s_\hat{v})`.
 template <uint16_t k>
@@ -23,8 +23,10 @@ private:
     Kmer<k + 1> e_; // The edge (k + 1)-mer (need not be in canonical form).
     Kmer<k> u_; // One endpoint k-mer of this edge instance — source k-mer of the `e` form.
     Kmer<k> v_; // One endpoint k-mer of this edge instance — sink k-mer of the `e` form.
-    Kmer<k> u_hat_; // Canonical form of `u`.
-    Kmer<k> v_hat_; // Canonical form of `v`.
+    Kmer<k> u_bar_; // Reverse complement of `u`.
+    Kmer<k> v_bar_; // Reverse complement of `v`.
+    const Kmer<k>* u_hat_ptr;   // Pointer to the canonical form of the k-mer `u`, i.e. ptr to `min(u, u_bar)`.
+    const Kmer<k>* v_hat_ptr;   // Pointer to the canonical form of the k-mer `v`, i.e. ptr to `min(v, v_bar)`.
     cuttlefish::side_t s_u_hat_;    // The side of the vertex `u_hat` to which this edge instance is incident to.
     cuttlefish::side_t s_v_hat_;    // The side of the vertex `v_hat` to which this edge instance is incident to.
 
@@ -83,32 +85,35 @@ inline void Edge<k>::configure()
     u_.from_prefix(e_),
     v_.from_suffix(e_);
 
-    u_hat_.as_reverse_complement(u_),
-    v_hat_.as_reverse_complement(v_);
+    u_bar_.as_reverse_complement(u_),
+    v_bar_.as_reverse_complement(v_);
 
-    s_u_hat_ = (u_ == u_hat_ ? cuttlefish::side_t::back : cuttlefish::side_t::front);
-    s_v_hat_ = (v_ == v_hat_ ? cuttlefish::side_t::front : cuttlefish::side_t::back);
+    u_hat_ptr = Kmer<k>::canonical(u_, u_bar_),
+    v_hat_ptr = Kmer<k>::canonical(v_, v_bar_);
+
+    s_u_hat_ = (&u_ == u_hat_ptr ? cuttlefish::side_t::back : cuttlefish::side_t::front);
+    s_v_hat_ = (&v_ == v_hat_ptr ? cuttlefish::side_t::front : cuttlefish::side_t::back);
 }
 
 
 template <uint16_t k>
 inline bool Edge<k>::is_loop() const
 {
-    return u_hat_ == v_hat_;
+    return *u_hat_ptr == *v_hat_ptr;
 }
 
 
 template <uint16_t k>
 inline const Kmer<k>& Edge<k>::u_hat() const
 {
-    return u_hat_;
+    return *u_hat_ptr;
 }
 
 
 template <uint16_t k>
 inline const Kmer<k>& Edge<k>::v_hat() const
 {
-    return v_hat_;
+    return *v_hat_ptr;
 }
 
 

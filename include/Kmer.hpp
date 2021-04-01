@@ -151,6 +151,11 @@ public:
     // Returns the canonical version of the k-mer.
     Kmer canonical() const;
 
+    // Given a k-mer `kmer` and its reverse complement `rev_compl`,
+    // returns a pointer to one of these, which represents the
+    // canonical form.
+    static const Kmer<k>* canonical(const Kmer<k>& kmer, const Kmer<k>& rev_compl);
+
     // Returns the string label of the k-mer.
     std::string string_label() const;
 
@@ -510,6 +515,13 @@ template <uint16_t k>
 inline Kmer<k> Kmer<k>::canonical() const
 {
     return canonical(reverse_complement());
+}
+
+
+template <uint16_t k>
+inline const Kmer<k>* Kmer<k>::canonical(const Kmer<k>& kmer, const Kmer<k>& rev_compl)
+{
+    return kmer < rev_compl ? &kmer : &rev_compl;
 }
 
 

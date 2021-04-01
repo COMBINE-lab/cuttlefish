@@ -1,5 +1,6 @@
 
 #include "Read_CdBG_Constructor.hpp"
+#include "Edge.hpp"
 
 #include "chrono"
 
@@ -62,12 +63,22 @@ void Read_CdBG_Constructor<k>::distribute_states_computation(Thread_Pool<k>& thr
 template <uint16_t k>
 void Read_CdBG_Constructor<k>::process_edges(const uint16_t thread_id)
 {
-    Kmer<k + 1> edge;
+    Edge<k> e;
     uint64_t edge_count = 0;
 
     while(edge_parser.tasks_expected(thread_id))
-        if(edge_parser.value_at(thread_id, edge))
+        if(edge_parser.value_at(thread_id, e.e()))
         {
+            e.configure();  // A new edge (k + 1)-mer has been parsed; set the relevant k-mer and sides information.
+
+            if(e.is_loop())
+                while(!add_loop(e.u_hat(), e.s_u_hat(), e.s_v_hat()));
+            else
+            {
+                while(!add_incident_edge(e.u_hat(), e.s_u_hat(), e.edge_encoding_u()));
+                while(!add_incident_edge(e.v_hat(), e.s_v_hat(), e.edge_encoding_v()));
+            }
+
             edge_count++;
         }
 

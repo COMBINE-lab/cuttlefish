@@ -70,6 +70,9 @@ public:
     // `edge`. For optimization purposes, only certain edge-updates have defined
     // behavior: empty-to-rest and unique-to-multi.
     void update_edge_at(cuttlefish::side_t side, edge_encoding_t edge);
+
+    // Returns `true` iff the underlying code is the same as that one of `rhs`.
+    bool operator==(const State_Read_Space& rhs) const;
 };
 
 
@@ -116,6 +119,12 @@ inline State_Read_Space::edge_encoding_t State_Read_Space::edge_at(const cuttlef
 inline void State_Read_Space::update_edge_at(const cuttlefish::side_t side, const edge_encoding_t edge)
 {
     side == cuttlefish::side_t::front ? set_front_encoding(edge) : set_back_encoding(edge);
+}
+
+
+inline bool State_Read_Space::operator==(const State_Read_Space& rhs) const
+{
+    return code == rhs.code;
 }
 
 

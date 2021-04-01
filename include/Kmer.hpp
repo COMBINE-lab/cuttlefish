@@ -38,6 +38,11 @@ private:
     // A k-mer `n_{k - 1} ... n_1 n_0` is stored in the array `kmer_data` such that, `kmer_data[0]`
     // stores the suffix `n_63 ... n_0`, then `kmer_data[1]` stores `n_127 ... n_64`, and so on.
     // That is, the suffix is aligned with a byte boundary.
+    // TODO: reverse this store-order of the data — i.e. `n_{k - 1}` as the least significant base
+    // (so stored in `kmer_data[0]`) and `n_0` as the most significant base (so stored in `kmer_data[0]`).
+    // This would optimize at least the following:
+    //      i) `from_KMC_data` () — aligning with the KMC data alignment and thus `memcpy` instead of bit-twiddling;
+    //      ii) `operator<` — `memcmp` instead of highest-to-lowest index looping comparison.
     uint64_t kmer_data[NUM_INTS];
 
 

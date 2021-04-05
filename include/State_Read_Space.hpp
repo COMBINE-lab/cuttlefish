@@ -14,8 +14,6 @@ template <uint8_t BITS_PER_KEY> class Kmer_Hash_Entry_API;
 class State_Read_Space
 {
     friend class Kmer_Hash_Entry_API<cuttlefish::BITS_PER_READ_KMER>;
-    
-    typedef DNA::Extended_Base edge_encoding_t; // TODO: replace this with `cuttlefish::edge_encoding_t`.
 
 private:
 
@@ -44,11 +42,11 @@ private:
 
     // Sets the back-encoding of the state to the `Extended_Base`-encoding `edge`.
     // Requirement: except while for setting `Extended_Base::N`, the bits must be zero beforehand.
-    void set_back_encoding(edge_encoding_t edge);
+    void set_back_encoding(cuttlefish::edge_encoding_t edge);
 
     // Sets the front-encoding of the state to the `Extended_Base`-encoding `edge`.
     // Requirement: except while for setting `Extended_Base::N`, the bits must be zero beforehand.
-    void set_front_encoding(edge_encoding_t edge);
+    void set_front_encoding(cuttlefish::edge_encoding_t edge);
 
     // Returns the wrapped state-code value.
     cuttlefish::state_code_t get_state() const;
@@ -64,12 +62,12 @@ public:
 
     // Returns the `Extended_Base`-encoding of the edge(s) incident to the side
     // `side` of a vertex having this state.
-    edge_encoding_t edge_at(cuttlefish::side_t side) const;
+    cuttlefish::edge_encoding_t edge_at(cuttlefish::side_t side) const;
 
     // Updates the `Extended_Base` encoding of the side `side` of this state, with
     // `edge`. For optimization purposes, only certain edge-updates have defined
     // behavior: empty-to-rest and unique-to-multi.
-    void update_edge_at(cuttlefish::side_t side, edge_encoding_t edge);
+    void update_edge_at(cuttlefish::side_t side, cuttlefish::edge_encoding_t edge);
 
     // Returns `true` iff the underlying code is the same as that one of `rhs`.
     bool operator==(const State_Read_Space& rhs) const;
@@ -77,7 +75,7 @@ public:
 
 
 inline constexpr State_Read_Space::State_Read_Space():
-    code{(static_cast<cuttlefish::state_code_t>(edge_encoding_t::E) << FRONT_IDX) | static_cast<cuttlefish::state_code_t>(edge_encoding_t::E)}
+    code{(static_cast<cuttlefish::state_code_t>(cuttlefish::edge_encoding_t::E) << FRONT_IDX) | static_cast<cuttlefish::state_code_t>(cuttlefish::edge_encoding_t::E)}
 {}
 
 
@@ -86,13 +84,13 @@ inline State_Read_Space::State_Read_Space(const cuttlefish::state_code_t code):
 {}
 
 
-inline void State_Read_Space::set_back_encoding(edge_encoding_t edge)
+inline void State_Read_Space::set_back_encoding(cuttlefish::edge_encoding_t edge)
 {
     code |= (static_cast<cuttlefish::state_code_t>(edge) << BACK_IDX);
 }
 
 
-inline void State_Read_Space::set_front_encoding(edge_encoding_t edge)
+inline void State_Read_Space::set_front_encoding(cuttlefish::edge_encoding_t edge)
 {
     code |= (static_cast<cuttlefish::state_code_t>(edge) << FRONT_IDX);
 }
@@ -110,13 +108,13 @@ inline bool State_Read_Space::is_outputted() const
 }
 
 
-inline State_Read_Space::edge_encoding_t State_Read_Space::edge_at(const cuttlefish::side_t side) const
+inline cuttlefish::edge_encoding_t State_Read_Space::edge_at(const cuttlefish::side_t side) const
 {
-    return static_cast<edge_encoding_t>(side == cuttlefish::side_t::front ? (code & FRONT_MASK) >> FRONT_IDX : (code & BACK_MASK) >> BACK_IDX);
+    return static_cast<cuttlefish::edge_encoding_t>(side == cuttlefish::side_t::front ? (code & FRONT_MASK) >> FRONT_IDX : (code & BACK_MASK) >> BACK_IDX);
 }
 
 
-inline void State_Read_Space::update_edge_at(const cuttlefish::side_t side, const edge_encoding_t edge)
+inline void State_Read_Space::update_edge_at(const cuttlefish::side_t side, const cuttlefish::edge_encoding_t edge)
 {
     side == cuttlefish::side_t::front ? set_front_encoding(edge) : set_back_encoding(edge);
 }

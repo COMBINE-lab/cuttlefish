@@ -31,6 +31,7 @@ public:
         output_gfa,
         output_gfa_reduced,
         compute_states_read_space,
+        extract_unipaths_read_space,
     };
 
 
@@ -63,7 +64,7 @@ private:
     // Collection of the task parameters for each thread.
     std::vector<Classification_Task_Params> classify_params;
     std::vector<Output_Task_Params> output_params;
-    std::vector<Compute_States_Read_Space_Params> compute_states_read_space_params;
+    std::vector<Read_dBG_Compaction_Params> read_dBG_compaction_params;
 
 
     // Marks the thread number `thread_id` as busy with some task.
@@ -79,7 +80,6 @@ private:
 
 
 public:
-
 
     // Constructs a thread pool with `thread_count` number of threads to operate
     // on the de Brujin graph `dBG` for tasks of type `task_type`.
@@ -97,8 +97,8 @@ public:
     // Assigns an outputting task to the thread number `thread_id` with the provided parameters.
     void assign_output_task(uint16_t thread_id, const char* seq, size_t seq_len, size_t left_end, size_t right_end);
 
-    // Assigns a DFA-states computation task to the thread number `thread_id`.
-    void assign_compute_states_read_space_task(uint16_t thread_id);
+    // Assigns a read-dBG compaction task (either DFA-states computation or maximal unitigs extraction) to the thread number `thread_id`.
+    void assign_read_dBG_compaction_task(uint16_t thread_id);
 
     // Waits until all the threads in the pool have completed their active tasks.
     void wait_completion() const;

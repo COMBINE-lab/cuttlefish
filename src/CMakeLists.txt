@@ -22,6 +22,7 @@ set(PROJECT_SRC
         CdBG_GFA_Reduced_Writer.cpp
         Read_CdBG.cpp
         Read_CdBG_Constructor.cpp
+        Read_CdBG_Extractor.cpp
         Validator.cpp
         Validator_Hash_Table.cpp
         Sequence_Validator.cpp

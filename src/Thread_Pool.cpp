@@ -2,6 +2,7 @@
 #include "Thread_Pool.hpp"
 #include "CdBG.hpp"
 #include "Read_CdBG_Constructor.hpp"
+#include "Read_CdBG_Extractor.hpp"
 
 #include <iostream>
 
@@ -32,7 +33,8 @@ Thread_Pool<k>::Thread_Pool(const uint16_t thread_count, void* const dBG, const 
         break;
 
     case Task_Type::compute_states_read_space:
-        compute_states_read_space_params.resize(thread_count);
+    case Task_Type::extract_unipaths_read_space:
+        read_dBG_compaction_params.resize(thread_count);
         break;
 
     default:
@@ -89,10 +91,16 @@ void Thread_Pool<k>::task(const uint16_t thread_id)
             
             case Task_Type::compute_states_read_space:
                 {
-                    const Compute_States_Read_Space_Params& params = compute_states_read_space_params[thread_id];
+                    const Read_dBG_Compaction_Params& params = read_dBG_compaction_params[thread_id];
                     static_cast<Read_CdBG_Constructor<k>*>(dBG)->process_edges(params.thread_id);
                 }
                 break;
+
+            case Task_Type::extract_unipaths_read_space:
+                {
+                    const Read_dBG_Compaction_Params& params = read_dBG_compaction_params[thread_id];
+                    static_cast<Read_CdBG_Extractor<k>*>(dBG)->process_vertices(params.thread_id);
+                }
             }
 
 
@@ -145,9 +153,9 @@ void Thread_Pool<k>::assign_output_task(const uint16_t thread_id, const char* co
 
 
 template <uint16_t k>
-void Thread_Pool<k>::assign_compute_states_read_space_task(const uint16_t thread_id)
+void Thread_Pool<k>::assign_read_dBG_compaction_task(const uint16_t thread_id)
 {
-    compute_states_read_space_params[thread_id] = Compute_States_Read_Space_Params(thread_id);
+    read_dBG_compaction_params[thread_id] = Read_dBG_Compaction_Params(thread_id);
 
     assign_task(thread_id);
 }

@@ -55,7 +55,7 @@ void Read_CdBG_Constructor<k>::distribute_states_computation(Thread_Pool<k>& thr
     for(uint16_t t_id = 0; t_id < thread_count; ++t_id)
     {
         const uint16_t idle_thread_id = thread_pool.get_idle_thread();
-        thread_pool.assign_compute_states_read_space_task(idle_thread_id);
+        thread_pool.assign_read_dBG_compaction_task(idle_thread_id);
     }
 }
 

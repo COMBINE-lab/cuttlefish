@@ -1,6 +1,7 @@
 
 #include "Read_CdBG.hpp"
 #include "Read_CdBG_Constructor.hpp"
+#include "Read_CdBG_Extractor.hpp"
 
 
 template <uint16_t k>
@@ -19,6 +20,10 @@ void Read_CdBG<k>::construct()
     std::cout << "\nComputing the DFA states.\n";
     Read_CdBG_Constructor<k> cdBg_constructor(params, hash_table);
     cdBg_constructor.compute_DFA_states();
+
+    std::cout << "\nExtracting the maximal unitigs.\n";
+    Read_CdBG_Extractor<k> cdBg_extractor(params, hash_table);
+    cdBg_extractor.extract_maximal_unitigs();
 
     hash_table.clear();
 }

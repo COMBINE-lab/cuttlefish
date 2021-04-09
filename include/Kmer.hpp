@@ -139,10 +139,22 @@ public:
     bool in_forward(const Kmer<k>& kmer_hat) const;
 
     // Transforms this k-mer by chopping off the first base and
-    // appending the next base `next_base` to the end, i.e.
-    // rolls the k-mer by one base. Also sets the passed reverse
-    // complement `rev_compl` of the k-mer accordingly.
+    // appending the next base character `next_base` to the end,
+    //  i.e. rolls the k-mer by one base. Also sets the passed
+    // reverse complement `rev_compl` of the k-mer accordingly.
     void roll_to_next_kmer(char next_base, Kmer<k>& rev_compl);
+
+    // Transforms this k-mer by chopping off the first base and
+    // appending the next base `base` to the end, i.e.  rolls
+    // the k-mer by one base. Also sets the passed reverse
+    // complement `rev_compl` of the k-mer accordingly.
+    void roll_to_next_kmer(DNA::Base base, Kmer<k>& rev_compl);
+
+    // Transforms this k-mer by chopping off the first base and
+    // appending the next base coded with the edge encoding `edge`,
+    // i.e. rolls the k-mer by one base. Also sets the passed
+    // reverse complement `rev_compl` of the k-mer accordingly.
+    void roll_to_next_kmer(DNA::Extended_Base edge, Kmer<k>& rev_compl);
 
     // Returns the canonical version of the k-mer, comparing it to its
     // reverse complement `rev_compl`.
@@ -492,15 +504,31 @@ inline void Kmer<k>::roll_to_next_kmer(const char next_base, Kmer<k>& rev_compl)
 {
     const DNA::Base mapped_base = map_base(next_base);
 
+    roll_to_next_kmer(mapped_base, rev_compl);
+}
+
+
+template <uint16_t k>
+inline void Kmer<k>::roll_to_next_kmer(const DNA::Base base, Kmer<k>& rev_compl)
+{
     // Logically, since a left shift moves the MSN out of the length `k` boundary, the clearing of the base
     // may seem redundant. But, the `to_u64` hashing method implementation works with bytes — not clearing
     // out this base breaks the consistency of the hashing.
     kmer_data[NUM_INTS - 1] &= CLEAR_MSN_MASK;
     left_shift();
-    kmer_data[0] |= mapped_base;
+    kmer_data[0] |= base;
 
     rev_compl.right_shift();
-    rev_compl.kmer_data[NUM_INTS - 1] |= (uint64_t(complement(mapped_base)) << (2 * ((k - 1) & 31)));
+    rev_compl.kmer_data[NUM_INTS - 1] |= (uint64_t(complement(base)) << (2 * ((k - 1) & 31)));
+}
+
+
+template <uint16_t k>
+inline void Kmer<k>::roll_to_next_kmer(const DNA::Extended_Base edge, Kmer<k>& rev_compl)
+{
+    const DNA::Base mapped_base = map_base(edge);
+
+    roll_to_next_kmer(mapped_base, rev_compl);
 }
 
 

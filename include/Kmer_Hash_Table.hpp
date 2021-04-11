@@ -96,6 +96,9 @@ public:
     // from scratch), or the newly built MPH is saved there.
     void construct(uint16_t thread_count, const std::string& working_dir_path, const std::string& mph_file_path);
 
+    // Returns the hash value of the k-mer `kmer`.
+    uint64_t operator()(const Kmer<k>& kmer) const;
+
     // Returns an API to the entry (in the hash table) for the key `kmer`. The API
     // wraps the hash table position and the state value at that position.
     Kmer_Hash_Entry_API<BITS_PER_KEY> operator[](const Kmer<k>& kmer);
@@ -121,6 +124,13 @@ template <uint16_t k, uint8_t BITS_PER_KEY>
 inline uint64_t Kmer_Hash_Table<k, BITS_PER_KEY>::bucket_id(const Kmer<k>& kmer) const
 {
     return mph->lookup(kmer);
+}
+
+
+template <uint16_t k, uint8_t BITS_PER_KEY>
+inline uint64_t Kmer_Hash_Table<k, BITS_PER_KEY>::operator()(const Kmer<k>& kmer) const
+{
+    return bucket_id(kmer);
 }
 
 

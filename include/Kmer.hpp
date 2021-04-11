@@ -156,6 +156,16 @@ public:
     // reverse complement `rev_compl` of the k-mer accordingly.
     void roll_to_next_kmer(DNA::Extended_Base edge, Kmer<k>& rev_compl);
 
+    // Transforms this k-mer by chopping off the first base and
+    // appending the base coded with the edge encoding `edge` to
+    // the end, i.e. rolls the k-mer to the "right" by one base.
+    void roll_forward(DNA::Extended_Base edge);
+
+    // Transforms this k-mer by chopping off the last base and
+    // appending the base coded with the edge encoding `edge` to
+    // the beginning, i.e. rolls the k-mer to the "left" by one base.
+    void roll_backward(DNA::Extended_Base edge);
+
     // Returns the canonical version of the k-mer, comparing it to its
     // reverse complement `rev_compl`.
     Kmer canonical(const Kmer<k>& rev_compl) const;
@@ -529,6 +539,30 @@ inline void Kmer<k>::roll_to_next_kmer(const DNA::Extended_Base edge, Kmer<k>& r
     const DNA::Base mapped_base = map_base(edge);
 
     roll_to_next_kmer(mapped_base, rev_compl);
+}
+
+
+template <uint16_t k>
+inline void Kmer<k>::roll_forward(const DNA::Extended_Base edge)
+{
+    const DNA::Base mapped_base = map_base(edge);
+
+    kmer_data[NUM_INTS - 1] &= CLEAR_MSN_MASK;
+    left_shift<1>();
+    kmer_data[0] |= static_cast<uint64_t>(mapped_base);
+}
+
+
+template <uint16_t k>
+inline void Kmer<k>::roll_backward(const DNA::Extended_Base edge)
+{
+    // Relative index of the most significant nucleotide in it's 64-bit word.
+    constexpr uint16_t rel_idx_MSN = 2 * ((k - 1) % 32);
+
+    const DNA::Extended_Base mapped_base = map_base(edge);
+
+    right_shift();
+    kmer_data[NUM_INTS - 1] |= (static_cast<uint64_t>(mapped_base) << rel_idx_MSN);
 }
 
 

@@ -559,7 +559,7 @@ inline void Kmer<k>::roll_backward(const DNA::Extended_Base edge)
     // Relative index of the most significant nucleotide in it's 64-bit word.
     constexpr uint16_t rel_idx_MSN = 2 * ((k - 1) % 32);
 
-    const DNA::Extended_Base mapped_base = map_base(edge);
+    const DNA::Base mapped_base = map_base(edge);
 
     right_shift();
     kmer_data[NUM_INTS - 1] |= (static_cast<uint64_t>(mapped_base) << rel_idx_MSN);

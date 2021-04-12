@@ -77,11 +77,6 @@ private:
     // supposed to store value items for the key `kmer`.
     uint64_t bucket_id(const Kmer<k>& kmer) const;
 
-    // Returns an API to the entry (in the hash table) for a k-mer hashing
-    // to the bucket number `bucket_id` of the hash table. The API wraps
-    // the hash table position and the state value at that position.
-    Kmer_Hash_Entry_API<BITS_PER_KEY> operator[](uint64_t bucket_id);
-
 
 public:
 
@@ -98,6 +93,11 @@ public:
 
     // Returns the hash value of the k-mer `kmer`.
     uint64_t operator()(const Kmer<k>& kmer) const;
+
+    // Returns an API to the entry (in the hash table) for a k-mer hashing
+    // to the bucket number `bucket_id` of the hash table. The API wraps
+    // the hash table position and the state value at that position.
+    Kmer_Hash_Entry_API<BITS_PER_KEY> operator[](uint64_t bucket_id);
 
     // Returns an API to the entry (in the hash table) for the key `kmer`. The API
     // wraps the hash table position and the state value at that position.

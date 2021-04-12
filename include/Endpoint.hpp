@@ -68,7 +68,20 @@ public:
     // Returns the neighboring endpoint of this endpoint that's connected with an edge encoded
     // with the code `e`, from the point-of-view of this endpoint. Uses the hash table `hash`
     // to get the hash value of the corresponding neighbor vertex.
-    Endpoint neighbor_endpoint(cuttlefish::edge_encoding_t e, const Kmer_Hash_Table<k, cuttlefish::BITS_PER_READ_KMER>& hash);
+    Endpoint neighbor_endpoint(cuttlefish::edge_encoding_t e, const Kmer_Hash_Table<k, cuttlefish::BITS_PER_READ_KMER>& hash) const;
+
+    // Returns the canonical form of the associated vertex.
+    const Kmer<k>& canonical() const;
+
+    // Returns the side of the endpoint to which the corresponding edge is incident to.
+    cuttlefish::side_t side() const;
+
+    // Returns the `DNA::Extended_Base` encoding of the corresponding edge incident to
+    // the endpoint.
+    cuttlefish::edge_encoding_t edge() const;
+
+    // Returns the hash value of the vertex associated to this endpoint.
+    uint64_t hash() const;
 };
 
 
@@ -144,7 +157,7 @@ inline cuttlefish::edge_encoding_t Endpoint<k>::entrance_edge(const Kmer<k + 1>&
 
 
 template <uint16_t k>
-inline Endpoint<k> Endpoint<k>::neighbor_endpoint(const cuttlefish::edge_encoding_t e, const Kmer_Hash_Table<k, cuttlefish::BITS_PER_READ_KMER>& hash)
+inline Endpoint<k> Endpoint<k>::neighbor_endpoint(const cuttlefish::edge_encoding_t e, const Kmer_Hash_Table<k, cuttlefish::BITS_PER_READ_KMER>& hash) const
 {
     Kmer<k> kmer(*kmer_hat_ptr);
 
@@ -156,6 +169,34 @@ inline Endpoint<k> Endpoint<k>::neighbor_endpoint(const cuttlefish::edge_encodin
     
     kmer.roll_backward(e);
     return Endpoint<k>(kmer, true, hash);
+}
+
+
+template <uint16_t k>
+inline const Kmer<k>& Endpoint<k>::canonical() const
+{
+    return *kmer_hat_ptr;
+}
+
+
+template <uint16_t k>
+inline cuttlefish::side_t Endpoint<k>::side() const
+{
+    return s;
+}
+
+
+template <uint16_t k>
+inline cuttlefish::edge_encoding_t Endpoint<k>::edge() const
+{
+    return e;
+}
+
+
+template <uint16_t k>
+inline uint64_t Endpoint<k>::hash() const
+{
+    return h;
 }
 
 

@@ -8,12 +8,8 @@
 template <uint16_t k>
 Read_CdBG_Constructor<k>::Read_CdBG_Constructor(const Build_Params& params, Kmer_Hash_Table<k, cuttlefish::BITS_PER_READ_KMER>& hash_table):
     params(params),
-    hash_table(hash_table),
-    edge_container(params.edge_db_path()),
-    edge_parser(&edge_container, params.thread_count())
-{
-    std::cout << "Total number of distinct edges: " << edge_container.size() << ".\n";
-}
+    hash_table(hash_table)
+{}
 
 
 template <uint16_t k>
@@ -27,10 +23,14 @@ void Read_CdBG_Constructor<k>::compute_DFA_states()
     Thread_Pool<k> thread_pool(thread_count, this, Thread_Pool<k>::Task_Type::compute_states_read_space);
 
     // Launch the reading (and parsing per demand) of the edges from disk.
+    const Kmer_Container<k + 1> edge_container(params.edge_db_path());  // Wrapper container for the edge-database.
+    Kmer_SPMC_Iterator<k + 1> edge_parser(&edge_container, params.thread_count());  // Parser for the edges from the edge-database.
+    std::cout << "Total number of distinct edges: " << edge_container.size() << ".\n";
+
     edge_parser.launch_production();
 
     // Launch (multi-threaded) computation of the states.
-    distribute_states_computation(thread_pool);
+    distribute_states_computation(&edge_parser, thread_pool);
 
     // Wait for the edges to be depleted from the database.
     edge_parser.seize_production();
@@ -38,7 +38,7 @@ void Read_CdBG_Constructor<k>::compute_DFA_states()
     // Wait for the consumer threads to finish parsing and processing the edges.
     thread_pool.close();
 
-    std::cout << "Number of processed egdes: " << edges_processed << "\n";
+    std::cout << "Number of processed edges: " << edges_processed << "\n";
 
 
     std::chrono::high_resolution_clock::time_point t_end = std::chrono::high_resolution_clock::now();
@@ -48,20 +48,20 @@ void Read_CdBG_Constructor<k>::compute_DFA_states()
 
 
 template <uint16_t k>
-void Read_CdBG_Constructor<k>::distribute_states_computation(Thread_Pool<k>& thread_pool)
+void Read_CdBG_Constructor<k>::distribute_states_computation(Kmer_SPMC_Iterator<k + 1>* const edge_parser, Thread_Pool<k>& thread_pool)
 {
     const uint16_t thread_count = params.thread_count();
 
     for(uint16_t t_id = 0; t_id < thread_count; ++t_id)
     {
         const uint16_t idle_thread_id = thread_pool.get_idle_thread();
-        thread_pool.assign_read_dBG_compaction_task(idle_thread_id);
+        thread_pool.assign_read_dBG_compaction_task(edge_parser, idle_thread_id);
     }
 }
 
 
 template <uint16_t k>
-void Read_CdBG_Constructor<k>::process_edges(const uint16_t thread_id)
+void Read_CdBG_Constructor<k>::process_edges(Kmer_SPMC_Iterator<k + 1>* const edge_parser, const uint16_t thread_id)
 {
     // Data locations to be reused per each edge processed.
     Edge<k> e;  // For the edges to be processed one-by-one.
@@ -71,8 +71,8 @@ void Read_CdBG_Constructor<k>::process_edges(const uint16_t thread_id)
 
     uint64_t edge_count = 0;    // Number of edges processed by this thread.
 
-    while(edge_parser.tasks_expected(thread_id))
-        if(edge_parser.value_at(thread_id, e.e()))
+    while(edge_parser->tasks_expected(thread_id))
+        if(edge_parser->value_at(thread_id, e.e()))
         {
             e.configure(hash_table);    // A new edge (k + 1)-mer has been parsed; set information for its two endpoints.
 

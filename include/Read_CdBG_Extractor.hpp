@@ -23,8 +23,6 @@ private:
 
     const Build_Params params;  // Required parameters (wrapped inside).
     Kmer_Hash_Table<k, cuttlefish::BITS_PER_READ_KMER>& hash_table; // Hash table for the vertices (i.e. canonical k-mers) of the original (uncompacted) de Bruijn graph.
-    const Kmer_Container<k> vertex_container;   // Wrapper container for the vertex-database.
-    Kmer_SPMC_Iterator<k> vertex_parser;    // Parser for the vertices from the vertex-database.
 
     // Members required to keep track of the total number of vertices processed across different worker (i.e. extractor) threads.
     mutable Spin_Lock lock;
@@ -32,11 +30,11 @@ private:
 
 
     // Distributes the maximal unitigs extraction task to the worker threads in the thread pool `thread_pool`.
-    void distribute_unipaths_extraction(Thread_Pool<k>& thread_pool);
+    void distribute_unipaths_extraction(Kmer_SPMC_Iterator<k>* vertex_parser, Thread_Pool<k>& thread_pool);
 
     // Processes the vertices provided to the thread with id `thread_id`, i.e. builds the maximal unitigs from
     // the flanking vertices provided to that thread.
-    void process_vertices(uint16_t thread_id);
+    void process_vertices(Kmer_SPMC_Iterator<k>* vertex_parser, uint16_t thread_id);
 
 
 public:

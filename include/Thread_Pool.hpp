@@ -13,9 +13,6 @@
 #include <thread>
 
 
-template <uint16_t k> class CdBG;
-
-
 // A basic thread pool class to support avoidance of latency incurred with frequent
 // construction and destruction of threads throughout the compaction algorithm.
 template <uint16_t k>
@@ -97,8 +94,10 @@ public:
     // Assigns an outputting task to the thread number `thread_id` with the provided parameters.
     void assign_output_task(uint16_t thread_id, const char* seq, size_t seq_len, size_t left_end, size_t right_end);
 
-    // Assigns a read-dBG compaction task (either DFA-states computation or maximal unitigs extraction) to the thread number `thread_id`.
-    void assign_read_dBG_compaction_task(uint16_t thread_id);
+    // Assigns a read-dBG compaction task, either DFA-states computation or maximal unitigs extraction,
+    // to the thread number `thread_id`; the edges (i.e. (k + 1)-mers) or vertices (i.e. k-mers),
+    // respectively, are parsed using `parser`.
+    void assign_read_dBG_compaction_task(void* parser, uint16_t thread_id);
 
     // Waits until all the threads in the pool have completed their active tasks.
     void wait_completion() const;

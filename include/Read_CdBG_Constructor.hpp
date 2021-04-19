@@ -24,20 +24,21 @@ private:
 
     const Build_Params params;  // Required parameters (wrapped inside).
     Kmer_Hash_Table<k, cuttlefish::BITS_PER_READ_KMER>& hash_table; // Hash table for the vertices (canonical k-mers) of the graph.
-    const Kmer_Container<k + 1> edge_container; // Wrapper container for the edge-database.
-    Kmer_SPMC_Iterator<k + 1> edge_parser;  // Parser for the edges from the edge-database.
-
+    
     // Members required to keep track of the total number of edges processed across different threads.
     mutable Spin_Lock lock;
     mutable uint64_t edges_processed = 0;
 
 
-    // Distributes the DFA-states computation task to the worker threads in the thread pool `thread_pool`.
-    void distribute_states_computation(Thread_Pool<k>& thread_pool);
+    // Distributes the DFA-states computation task — disperses the graph edges (i.e. (k + 1)-mers)
+    // parsed by the parser `edge_parser` to the worker threads in the thread pool `thread_pool`,
+    // for the edges to be processed by making appropriate state transitions for their endpoints.
+    void distribute_states_computation(Kmer_SPMC_Iterator<k + 1>* edge_parser, Thread_Pool<k>& thread_pool);
 
-    // Processes the edges provided to the thread with id `thread_id`, i.e. makes state-transitions for
-    // the DFA as per the edges provided to that thread.
-    void process_edges(uint16_t thread_id);
+    // Processes the edges provided to the thread with id `thread_id` from the parser `edge_parser`,
+    // i.e. makes state-transitions for the DFA of the vertices `u` and `v` for each bidirected edge
+    // `(u, v)` provided to that thread.
+    void process_edges(Kmer_SPMC_Iterator<k + 1>* edge_parser, uint16_t thread_id);
 
     // Adds the information of an incident edge `e` to the side `s` of some vertex `v`, all wrapped
     // inside the edge-endpoint object `endpoint` — making the appropriate state transitions for the

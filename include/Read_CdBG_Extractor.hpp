@@ -29,11 +29,14 @@ private:
     mutable uint64_t vertices_processed = 0;
 
 
-    // Distributes the maximal unitigs extraction task to the worker threads in the thread pool `thread_pool`.
+    // Distributes the maximal unitigs extraction task — disperses the graph vertices (i.e. k-mers)
+    // parsed by the parser `vertex_parser` to the worker threads in the thread pool `thread_pool`,
+    // for the unitpath-flanking vertices to be identified and the corresponding unipaths to be extracted.
     void distribute_unipaths_extraction(Kmer_SPMC_Iterator<k>* vertex_parser, Thread_Pool<k>& thread_pool);
 
-    // Processes the vertices provided to the thread with id `thread_id`, i.e. builds the maximal unitigs from
-    // the flanking vertices provided to that thread.
+    // Processes the vertices provided to the thread with id `thread_id` from the parser `vertex_parser`,
+    // i.e. for each vertex `v` provided to that thread, identifies whether it is a unipath-flanking
+    // vertex, and if it is, then piece-wise constructs the corresponding unipath.
     void process_vertices(Kmer_SPMC_Iterator<k>* vertex_parser, uint16_t thread_id);
 
 

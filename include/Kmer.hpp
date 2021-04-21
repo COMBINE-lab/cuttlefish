@@ -402,17 +402,7 @@ inline Kmer<k> Kmer<k>::reverse_complement() const
 
     Kmer<k> kmer(*this);
     Kmer<k> rev_compl;
-    
-    constexpr uint64_t mask_LSN = uint64_t(0b11);
-
-    for(uint16_t idx = 0; idx < k; ++idx)
-    {
-        rev_compl.left_shift();
-        rev_compl.kmer_data[0] |= complement(DNA::Base(kmer.kmer_data[0] & mask_LSN));
-
-        kmer.right_shift();
-    }
-
+    rev_compl.as_reverse_complement(*this);
 
     return rev_compl;
 }

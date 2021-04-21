@@ -40,15 +40,15 @@ private:
     void process_vertices(Kmer_SPMC_Iterator<k>* vertex_parser, uint16_t thread_id);
 
     // Returns `true` iff some vertex `v` with the provided state `state` is a flanking vertex for
-    // the maximal unitig containing it. If it is, then stores the side of `v` that is opposite to
-    // the flanking side, i.e. the side extending the unipath `p` containing `v`, to `unipath_side`.
-    // If `p` is trivial, then the side stored is implementation-specific.
+    // the maximal unitig containing it.
     // NB: unless for flanking vertices that are branching, this function cannot possibly be defined
     // — for non-branching vertices, it's not possible to compute whether they are flanking solely
-    // from their states. Nevertheless, given that the information-discarding heuristic for branching
-    // k-mers has been implemented in the DFA states computation phase, this method correctly computes
-    // the flanking-status for some vertex from just its state.
-    static bool is_flanking_state(State_Read_Space state, cuttlefish::side_t& unipath_side);
+    // from their states. Nevertheless, given that the heuristic of propagation of information-
+    // discarding from branching k-mers has been implemented in the DFA states computation phase,
+    // this method correctly computes the flanking-status for some vertex from just its state.
+    // (The information-discarding propagation heuristic turns the flanking non-branching vertices
+    // into branching ones.)
+    static bool is_flanking_state(State_Read_Space state);
 
     // Returns `true` iff the vertex-side `side` for a vertex with state `state` flanks the maximal
     // unitig containing the vertex.

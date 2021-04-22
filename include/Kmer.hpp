@@ -398,9 +398,6 @@ inline void Kmer<k>::from_suffix(const Kmer<k + 1>& k_plus_1_mer)
 template <uint16_t k>
 inline Kmer<k> Kmer<k>::reverse_complement() const
 {
-    // TODO: define the method using `as_reverse_complement`.
-
-    Kmer<k> kmer(*this);
     Kmer<k> rev_compl;
     rev_compl.as_reverse_complement(*this);
 

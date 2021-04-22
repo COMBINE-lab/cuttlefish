@@ -71,10 +71,7 @@ inline void Annotated_Kmer<k>::roll_to_next_kmer(const char next_base, const Kme
 template <uint16_t k>
 inline void Annotated_Kmer<k>::operator=(const Annotated_Kmer<k>& rhs)
 {
-    this->kmer_ = rhs.kmer_;
-    this->rev_compl_ = rhs.rev_compl_;
-    this->canonical_ = rhs.canonical_;
-    this->dir_ = rhs.dir_;
+    Directed_Kmer<k>::operator=(rhs);
     
     idx_ = rhs.idx_;
     state_class_ = rhs.state_class_;

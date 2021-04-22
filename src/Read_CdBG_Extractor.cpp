@@ -1,5 +1,6 @@
 
 #include "Read_CdBG_Extractor.hpp"
+#include "Directed_Vertex.hpp"
 
 
 template <uint16_t k>
@@ -36,6 +37,7 @@ void Read_CdBG_Extractor<k>::extract_maximal_unitigs()
     thread_pool.close();
 
     std::cout << "Number of processed vertices: " << vertices_processed << ".\n";
+    std::cout << "Number of unipaths extracted: " << unipath_count << "\n";
 
 
     std::chrono::high_resolution_clock::time_point t_end = std::chrono::high_resolution_clock::now();
@@ -60,19 +62,65 @@ void Read_CdBG_Extractor<k>::distribute_unipaths_extraction(Kmer_SPMC_Iterator<k
 template <uint16_t k>
 void Read_CdBG_Extractor<k>::process_vertices(Kmer_SPMC_Iterator<k>* const vertex_parser, const uint16_t thread_id)
 {
-    Kmer<k> v;
-    uint64_t vertex_count = 0;
+    // Data structures to be reused per each vertex processed.
+    Kmer<k> v;  // For the vertex to be processed one-by-one.
+    cuttlefish::side_t s_v; // The side of the vertex `v` that connects it to the maximal unitig containing it, if `v` is flanking.
+    State_Read_Space state; // State of the vertex `v`.
+
+    uint64_t vertex_count = 0;  // Number of vertices scanned by this thread.
+    uint64_t unipaths_extracted = 0;    // Number of maximal unitigs successfully extracted by this thread, in the canonical form.
 
     while(vertex_parser->tasks_expected(thread_id))
         if(vertex_parser->value_at(thread_id, v))
         {
+            state = hash_table[v].state();
+            
+            if(is_flanking_state(state, s_v))
+                if(extract_maximal_unitig(v, s_v))
+                    unipaths_extracted++;
+
             vertex_count++;
         }
 
     lock.lock();
     std::cout << "Thread " << thread_id << " processed " << vertex_count << " vertices.\n"; // TODO: remove.
     vertices_processed += vertex_count;
+    unipath_count += unipaths_extracted;
     lock.unlock();
+}
+
+
+template <uint16_t k>
+bool Read_CdBG_Extractor<k>::extract_maximal_unitig(const Kmer<k>& v_hat, const cuttlefish::side_t s_v_hat)
+{
+    // Data structures to be reused per each vertex extension of the maximal unitig.
+    cuttlefish::side_t s_v = s_v_hat;   // The side of the current vertex `v` through which to extend the maximal unitig, i.e. exit `v`.
+    Directed_Vertex<k> v(s_v == cuttlefish::side_t::back ? v_hat : v_hat.reverse_complement(), hash_table); // Current vertex being added to the maximal unitig.
+    State_Read_Space state = hash_table[v.hash()].state();  // State of the vertex `v`.
+    cuttlefish::edge_encoding_t e_v;    // The next edge from `v` to include into the maximal unitig.
+    cuttlefish::base_t b_ext;   // The nucleobase corresponding to the edge `e_v` and the exiting side `s_v` from `v` to add to the literal maximal unitig.
+
+    const Directed_Vertex<k> init_vertex(v);
+    // std::string unipath(init_vertex.kmer().string_label());
+
+    while(!is_flanking_side(state, s_v))
+    {
+        e_v = state.edge_at(s_v);
+        b_ext = (s_v == cuttlefish::side_t::back ? DNA_Utility::map_base(e_v) : DNA_Utility::complement(DNA_Utility::map_base(e_v)));
+
+        v.roll_forward(b_ext, hash_table);
+        s_v = v.exit_side();
+        state = hash_table[v.hash()].state();
+        
+        // unipath += Kmer<k>::map_char(b_ext);
+    }
+
+    
+    if(init_vertex.kmer() >= v.kmer_bar())
+        return false;
+
+    // TODO: Output the built maximal unitig.
+    return true;
 }
 
 

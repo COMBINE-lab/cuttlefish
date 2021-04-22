@@ -40,6 +40,9 @@ public:
     // the hash table `hash`.
     Directed_Vertex(const Kmer<k>& kmer, const Kmer_Hash_Table<k, cuttlefish::BITS_PER_READ_KMER>& hash);
 
+    // Copy constructs the vertex from `rhs`.
+    Directed_Vertex(const Directed_Vertex<k>& rhs);
+
     // Returns `true` iff the k-mer observed for the vertex is in its canonical form.
     bool in_canonical_form() const;
 
@@ -51,11 +54,28 @@ public:
     // and uses the hash table `hash` to get the hash value of the vertex.
     void from_suffix(const Kmer<k + 1>& e, const Kmer_Hash_Table<k, cuttlefish::BITS_PER_READ_KMER>& hash);
 
+    // Returns the observed k-mer for the vertex.
+    const Kmer<k>& kmer() const;
+
+    // Returns the reverse complement of the observed k-mer for the vertex.
+    const Kmer<k>& kmer_bar() const;
+
     // Returns the canonical form of the vertex.
     const Kmer<k>& canonical() const;
 
     // Returns the hash value of the vertex.
     uint64_t hash() const;
+
+    // Transforms this vertex to another by chopping off the first base from the associated
+    // observed k-mer, and appending the nucleobase `b` to the end, i.e. effecitively
+    // rolling the associated k-mer by one base "forward". The hash table `hash` is used
+    // to get the hash value of the new vertex.
+    void roll_forward(cuttlefish::base_t b, const Kmer_Hash_Table<k, cuttlefish::BITS_PER_READ_KMER>& hash);
+
+    // Returns the side of the vertex which is to be the incidence side of some bidirected
+    // edge instance if this vertex instance were to be the source vertex (i.e. prefix k-mer)
+    // of that edge.
+    cuttlefish::side_t exit_side() const;
 };
 
 
@@ -75,6 +95,15 @@ inline Directed_Vertex<k>::Directed_Vertex(const Kmer<k>& kmer, const Kmer_Hash_
 {
     init(hash);
 }
+
+
+template <uint16_t k>
+inline Directed_Vertex<k>::Directed_Vertex(const Directed_Vertex<k>& rhs):
+    kmer_(rhs.kmer_),
+    kmer_bar_(rhs.kmer_bar_),
+    kmer_hat_ptr(Kmer<k>::canonical(kmer_, kmer_bar_)),
+    h(rhs.h)
+{}
 
 
 template <uint16_t k>
@@ -101,6 +130,20 @@ inline void Directed_Vertex<k>::from_suffix(const Kmer<k + 1>& e, const Kmer_Has
 
 
 template <uint16_t k>
+inline const Kmer<k>& Directed_Vertex<k>::kmer() const
+{
+    return kmer_;
+}
+
+
+template <uint16_t k>
+inline const Kmer<k>& Directed_Vertex<k>::kmer_bar() const
+{
+    return kmer_bar_;
+}
+
+
+template <uint16_t k>
 inline const Kmer<k>& Directed_Vertex<k>::canonical() const
 {
     return *kmer_hat_ptr;
@@ -111,6 +154,23 @@ template <uint16_t k>
 inline uint64_t Directed_Vertex<k>::hash() const
 {
     return h;
+}
+
+
+template <uint16_t k>
+inline void Directed_Vertex<k>::roll_forward(const cuttlefish::base_t b, const Kmer_Hash_Table<k, cuttlefish::BITS_PER_READ_KMER>& hash)
+{
+    kmer_.roll_to_next_kmer(b, kmer_bar_);
+    kmer_hat_ptr = Kmer<k>::canonical(kmer_, kmer_bar_);
+
+    h = hash(*kmer_hat_ptr);
+}
+
+
+template <uint16_t k>
+inline cuttlefish::side_t Directed_Vertex<k>::exit_side() const
+{
+    return &kmer_ == kmer_hat_ptr ? cuttlefish::side_t::back : cuttlefish::side_t::front;
 }
 
 

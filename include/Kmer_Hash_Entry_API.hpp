@@ -91,14 +91,14 @@ private:
     const State_Read_Space state_read;
 
     // Value read from the bitvector entry when the object is constructed; is mutable.
-    State_Read_Space state;
+    State_Read_Space state_;
 
 
     // Constructs an API to the bitvector entry `bv_entry`.
     Kmer_Hash_Entry_API(const bitvector_entry_t& bv_entry):
         bv_entry(bv_entry), state_read(bv_entry)
     {
-        state = state_read;
+        state_ = state_read;
     }
 
     // Returns the state value read when the object was constructed.
@@ -112,7 +112,7 @@ private:
     // possibly have been modified.
     cuttlefish::state_code_t get_current_state() const
     {
-        return state.get_state();
+        return state_.get_state();
     }
 
 
@@ -121,7 +121,13 @@ public:
     // Returns a reference to the mutable copy of the wrapped state value.
     State_Read_Space& get_state()
     {
-        return state;
+        return state_;
+    }
+
+    // Returns a copy of the wrapped state value.
+    State_Read_Space state() const
+    {
+        return state_;
     }
 };
 

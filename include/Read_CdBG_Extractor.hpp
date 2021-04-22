@@ -25,8 +25,10 @@ private:
     Kmer_Hash_Table<k, cuttlefish::BITS_PER_READ_KMER>& hash_table; // Hash table for the vertices (i.e. canonical k-mers) of the original (uncompacted) de Bruijn graph.
 
     // Members required to keep track of the total number of vertices processed across different worker (i.e. extractor) threads.
-    mutable Spin_Lock lock;
-    mutable uint64_t vertices_processed = 0;
+    mutable Spin_Lock lock; // Mutual exclusion lock to access various unique resources by threads spawned off this class' methods.
+    mutable uint64_t vertices_processed = 0;    // Total number of vertices scanned from the database.
+    
+    uint64_t unipath_count = 0; // Total number of maximal unitigs extracted from the underlying graph.
 
 
     // Distributes the maximal unitigs extraction task — disperses the graph vertices (i.e. k-mers)
@@ -39,24 +41,42 @@ private:
     // vertex, and if it is, then piece-wise constructs the corresponding unipath.
     void process_vertices(Kmer_SPMC_Iterator<k>* vertex_parser, uint16_t thread_id);
 
-    // Returns `true` iff some vertex `v` with the provided state `state` is a flanking vertex for
-    // the maximal unitig containing it.
-    // NB: unless for flanking vertices that are branching, this function cannot possibly be defined
-    // — for non-branching vertices, it's not possible to compute whether they are flanking solely
-    // from their states. Nevertheless, given that the heuristic of propagation of information-
-    // discarding from branching k-mers has been implemented in the DFA states computation phase,
-    // this method correctly computes the flanking-status for some vertex from just its state.
-    // (The information-discarding propagation heuristic turns the flanking non-branching vertices
-    // into branching ones.)
-    static bool is_flanking_state(State_Read_Space state);
+    // Extracts the maximal unitig `p` that is flanked by the vertex `v_hat` and connects to `v_hat`
+    // through its side `s_v_hat`. Returns `true` iff the extraction is successful, which happens when
+    // the k-mer `v_hat` is the first k-mer in the canonical form of `p`. Thus encountering a maximal
+    // unitig in its non-canonical form results in a failed extraction.
+    bool extract_maximal_unitig(const Kmer<k>& v_hat, cuttlefish::side_t s_v_hat);
 
-    // Returns `true` iff the vertex-side `side` for a vertex with state `state` flanks the maximal
-    // unitig containing the vertex.
-    // NB: this method is only applicable when information-discarding is propagated to the neighbors
-    // from branching vertices. In absence of the implementation for the heuristic, this function
-    // cannot possibly be defined from solely the parameters `state` and `side` — for non-branching
-    // vertices, it's not possible to compute whether some side of them they are flanking solely
-    // from their states — a vertex `v` is also required.
+    // Note: The following methods are only applicable when the heuristic of information-discarding
+    // from branching vertices to their neighbors has been implemented in the DFA states computation
+    // phase. In the general case, these functions with their specified input parameters and their
+    // intended output values can not possibly be defined. Given just the state of a vertex, unless
+    // for flanking vertices that are branching, it's not possible to determine —
+    //      i.   whether it is a maximal unitig flanking vertex;
+    //      ii.  whether some specific side of it is a flanking side;
+    //      iii. and which side of it may connect to the containing maximal unitig.
+    // The vertex itself, along with the hash table containing the DFA states, are required in general
+    // — so that the neighboring vertices can also be probed to answer these queries. Nevertheless,
+    // given that the heuristic of propagation of information-discarding from branching vertices has
+    // been implemented in the DFA states computation phase, the following method definitions can
+    // correctly respond to the queries given just the state. This is because the heuristic transforms
+    // the flanking non-branching vertices into branching ones. Thus, although their states are not
+    // technically "correct" as per the theoretical model — we are throwing away more information from
+    // the model than it already is doing — this does not affect the output for the purposes of maximal
+    // unitigs extraction.
+
+    // Returns `true` iff some vertex `v` with the provided state `state` is a flanking vertex for the
+    // maximal unitig `p` containing it. If yes, then stores the side of `v` to `unipath_side` through
+    // which `v` is connected to `p`. If `p` is trivial, i.e. `p = v`, then the returned side is `back`,
+    // —  necessitated by an optimization for the extraction of unipaths in their canonical forms.
+    // NB: this method is only applicable if the heuristic of information-propagation from branching vertices
+    // has been implemented in the DFA states computation phase. See the detailed comment in the class body.
+    static bool is_flanking_state(State_Read_Space state, cuttlefish::side_t& unipath_side);
+
+    // Returns `true` iff the vertex-side `side` for a vertex with state `state` flanks the maximal unitig
+    // containing the vertex.
+    // NB: this method is only applicable if the heuristic of information-propagation from branching vertices
+    // has been implemented in the DFA states computation phase. See the detailed comment in the class body.
     static bool is_flanking_side(State_Read_Space state, cuttlefish::side_t side);
 
 
@@ -85,7 +105,6 @@ inline bool Read_CdBG_Extractor<k>::is_flanking_state(const State_Read_Space sta
         unipath_side = cuttlefish::side_t::front;
         return true;
     }
-
 
     return false;
 }

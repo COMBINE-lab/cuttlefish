@@ -124,6 +124,11 @@ public:
     // Returns true iff this k-mer is not identical to the other k-mer `rhs`.
     bool operator!=(const Kmer<k>& rhs) const;
 
+    // Returns true iff the bitwise encoding of this k-mer is either equal
+    // or greater to the other k-mer `rhs`. The current encoding corresponds
+    // to the lexical ordering.
+    bool operator>=(const Kmer<k>& rhs) const;
+
     // Returns the `DNA::Base` (2-bit) encoding of the character at the front,
     // i.e. at the first index of the literal representation. For a k-mer
     // `n_{k - 1} ... n_1 n_0`, this is the base `n_{k - 1}`.
@@ -463,6 +468,13 @@ template <uint16_t k>
 inline bool Kmer<k>::operator!=(const Kmer<k>& rhs) const
 {
     return !operator==(rhs);
+}
+
+
+template <uint16_t k>
+inline bool Kmer<k>::operator>=(const Kmer<k>& rhs) const
+{
+    return !operator<(rhs);
 }
 
 

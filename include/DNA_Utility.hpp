@@ -41,6 +41,12 @@ private:
         T, G, C, A, N
     };
 
+    // Mapped ASCII characters for the `DNA::Base` notations.
+    static constexpr char MAPPED_CHAR[4] = 
+    {
+        'A', 'C', 'G', 'T'
+    };
+
     // DNA-complement characters for the ASCII characters in the range [0, 127] 
     static constexpr char COMPLEMENTED_CHAR[128] = 
     {
@@ -126,6 +132,12 @@ public:
     static DNA::Base complement(const DNA::Base base)
     {
         return COMPLEMENTED_BASE[base];
+    }
+
+    // Returns the mapping character of the nucleobase `base`.
+    static char map_char(const DNA::Base base)
+    {
+        return MAPPED_CHAR[static_cast<std::size_t>(base)];
     }
         
     // Returns the DNA-complement (upper-case) character of the character `base`.

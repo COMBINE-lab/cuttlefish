@@ -122,17 +122,13 @@ bool Read_CdBG_Extractor<k>::extract_maximal_unitig(const Kmer<k>& v_hat, const 
     }
 
     const Directed_Vertex<k>& term_vertex = v;
-
-    
-    if(init_vertex.kmer() >= term_vertex.kmer_bar())    // The maximal unitig has been encountered in its non-canonical form.
-        return false;
+    const bool in_canonical = (init_vertex.kmer() < term_vertex.kmer_bar());
+    const Directed_Vertex<k>& sign_vertex = (in_canonical ? init_vertex : term_vertex);
+    const Directed_Vertex<k>& cosign_vertex = (in_canonical ? term_vertex : init_vertex);
 
     // Mark the flanking vertices as outputted.
-    if(!mark_flanking_vertices(init_vertex, term_vertex))
-    {
-        std::cerr << "Hash table update failed while marking some flanking vertices as outputted. Aborting.\n";
-        std::exit(EXIT_FAILURE);
-    }
+    if(!mark_flanking_vertices(sign_vertex, cosign_vertex))
+        return false;
 
     // TODO: Output the built maximal unitig.
     return true;

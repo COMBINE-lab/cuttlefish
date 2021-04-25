@@ -8,6 +8,7 @@
 #include "Kmer_Hash_Table.hpp"
 #include "Kmer_Container.hpp"
 #include "Kmer_SPMC_Iterator.hpp"
+#include "Directed_Vertex.hpp"
 #include "Build_Params.hpp"
 #include "Spin_Lock.hpp"
 #include "Thread_Pool.hpp"
@@ -46,6 +47,14 @@ private:
     // the k-mer `v_hat` is the first k-mer in the canonical form of `p`. Thus encountering a maximal
     // unitig in its non-canonical form results in a failed extraction.
     bool extract_maximal_unitig(const Kmer<k>& v_hat, cuttlefish::side_t s_v_hat);
+
+    // Marks the vertex `v` as outputted, and returns `true` iff the hash table update is successful.
+    bool mark_vertex(const Directed_Vertex<k>& v);
+
+    // Marks the two endpoint vertices of a maximal unitig `p` as outputted: the first vertex in the
+    // canonical form of `p`, `sign_vertex`, and the last vertex in the form, `cosign_vertex`; returns
+    // `true` iff the corresponding hash table updates are successful.
+    bool mark_flanking_vertices(const Directed_Vertex<k>& sign_vertex, const Directed_Vertex<k>& cosign_vertex);
 
     // Note: The following methods are only applicable when the heuristic of information-discarding
     // from branching vertices to their neighbors has been implemented in the DFA states computation
@@ -89,6 +98,23 @@ public:
     // Extracts the maximal unitigs of the de Bruijn graph.
     void extract_maximal_unitigs();
 };
+
+
+template <uint16_t k>
+inline bool Read_CdBG_Extractor<k>::mark_vertex(const Directed_Vertex<k>& v)
+{
+    Kmer_Hash_Entry_API<cuttlefish::BITS_PER_READ_KMER> bucket = hash_table[v.hash()];
+    bucket.get_state().mark_outputted();
+    
+    return hash_table.update(bucket);
+}
+
+
+template <uint16_t k>
+inline bool Read_CdBG_Extractor<k>::mark_flanking_vertices(const Directed_Vertex<k>& sign_vertex, const Directed_Vertex<k>& cosign_vertex)
+{
+    return mark_vertex(sign_vertex) && (sign_vertex.hash() == cosign_vertex.hash() || mark_vertex(cosign_vertex));
+}
 
 
 template <uint16_t k>

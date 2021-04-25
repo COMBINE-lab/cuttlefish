@@ -1,6 +1,5 @@
 
 #include "Read_CdBG_Extractor.hpp"
-#include "Directed_Vertex.hpp"
 
 
 template <uint16_t k>
@@ -75,7 +74,7 @@ void Read_CdBG_Extractor<k>::process_vertices(Kmer_SPMC_Iterator<k>* const verte
         {
             state = hash_table[v].state();
             
-            if(is_flanking_state(state, s_v))
+            if(!state.is_outputted() && is_flanking_state(state, s_v))
                 if(extract_maximal_unitig(v, s_v))
                     unipaths_extracted++;
 
@@ -103,8 +102,15 @@ bool Read_CdBG_Extractor<k>::extract_maximal_unitig(const Kmer<k>& v_hat, const 
     const Directed_Vertex<k> init_vertex(v);
     // std::string unipath(init_vertex.kmer().string_label());
 
-    while(!is_flanking_side(state, s_v))
+    while(true)
     {
+        if(state.is_outputted())    // The opposite end of the maximal unitig has been reached, and the unitig is found to have already been outputted.
+            return false;
+
+        if(is_flanking_side(state, s_v))
+            break;
+
+
         e_v = state.edge_at(s_v);
         b_ext = (s_v == cuttlefish::side_t::back ? DNA_Utility::map_base(e_v) : DNA_Utility::complement(DNA_Utility::map_base(e_v)));
 
@@ -115,9 +121,18 @@ bool Read_CdBG_Extractor<k>::extract_maximal_unitig(const Kmer<k>& v_hat, const 
         // unipath += Kmer<k>::map_char(b_ext);
     }
 
+    const Directed_Vertex<k>& term_vertex = v;
+
     
-    if(init_vertex.kmer() >= v.kmer_bar())
+    if(init_vertex.kmer() >= term_vertex.kmer_bar())    // The maximal unitig has been encountered in its non-canonical form.
         return false;
+
+    // Mark the flanking vertices as outputted.
+    if(!mark_flanking_vertices(init_vertex, term_vertex))
+    {
+        std::cerr << "Hash table update failed while marking some flanking vertices as outputted. Aborting.\n";
+        std::exit(EXIT_FAILURE);
+    }
 
     // TODO: Output the built maximal unitig.
     return true;

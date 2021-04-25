@@ -15,14 +15,9 @@
 #include "Sparse_Lock.hpp"
 
 
-template <uint16_t k> class CdBG;
-
-
 template <uint16_t k, uint8_t BITS_PER_KEY>
 class Kmer_Hash_Table
 {
-    friend class CdBG<k>;
-
     typedef boomphf::mphf<Kmer<k>, Kmer_Hasher<k>> mphf_t;    // The MPH function type.
 
     typedef compact::ts_vector<cuttlefish::state_code_t, BITS_PER_KEY, uint64_t, std::allocator<uint64_t>> bitvector_t;
@@ -67,16 +62,6 @@ private:
     // Saves the MPH function `mph` into a file at `file_path`.
     void save_mph_function(const std::string& file_path) const;
 
-    // Saves the hash table buckets `hash_table` into a file at `file_path`.
-    void save_hash_buckets(const std::string& file_path) const;
-
-    // Loads the hash table buckets `hash_table` from the file at `file_path`.
-    void load_hash_buckets(const std::string& file_path);
-
-    // Returns the id / number of the bucket in the hash table that is
-    // supposed to store value items for the key `kmer`.
-    uint64_t bucket_id(const Kmer<k>& kmer) const;
-
 
 public:
 
@@ -90,6 +75,10 @@ public:
     // with `mph_file_path`, either an MPH is loaded from there (instead of building
     // from scratch), or the newly built MPH is saved there.
     void construct(uint16_t thread_count, const std::string& working_dir_path, const std::string& mph_file_path);
+
+    // Returns the id / number of the bucket in the hash table that is
+    // supposed to store value items for the key `kmer`.
+    uint64_t bucket_id(const Kmer<k>& kmer) const;
 
     // Returns the hash value of the k-mer `kmer`.
     uint64_t operator()(const Kmer<k>& kmer) const;
@@ -114,6 +103,12 @@ public:
 
     // Clears the hash-table. Do not invoke on an unused object.
     void clear();
+
+    // Saves the hash table buckets `hash_table` into a file at `file_path`.
+    void save_hash_buckets(const std::string& file_path) const;
+
+    // Loads the hash table buckets `hash_table` from the file at `file_path`.
+    void load_hash_buckets(const std::string& file_path);
 
     // Destructs the hash table.
     ~Kmer_Hash_Table();

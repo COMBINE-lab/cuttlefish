@@ -18,8 +18,7 @@ void CdBG<k>::classify_vertices()
     const std::string& buckets_file_path = params.buckets_file_path();
 
     // The serialized hash table buckets (saved from some earlier execution) exists.
-    struct stat buffer;
-    if(!buckets_file_path.empty() && stat(buckets_file_path.c_str(), &buffer) == 0)
+    if(!buckets_file_path.empty() && file_exists(buckets_file_path))
     {
         std::cout << "Found the hash table buckets at file " << buckets_file_path << "\n";
         std::cout << "Loading the buckets.\n";

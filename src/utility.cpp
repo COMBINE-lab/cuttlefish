@@ -35,6 +35,14 @@ bool is_prefix(const std::string& s, const std::string& pref)
 }
 
 
+bool file_exists(const std::string& file_path)
+{
+    struct stat stat_buf;
+
+    return stat(file_path.c_str(), &stat_buf) == 0;
+}
+
+
 bool file_prefix_exists(const std::string& path, const std::string& prefix)
 {
     for(const auto& entry: ghc::filesystem::directory_iterator(path))

@@ -1,6 +1,7 @@
 
 #include "Read_CdBG_Constructor.hpp"
 #include "Edge.hpp"
+#include "utility.hpp"
 
 #include "chrono"
 
@@ -18,27 +19,46 @@ void Read_CdBG_Constructor<k>::compute_DFA_states()
     std::chrono::high_resolution_clock::time_point t_start = std::chrono::high_resolution_clock::now();
 
 
-    // Construct a thread pool.
-    const uint16_t thread_count = params.thread_count();
-    Thread_Pool<k> thread_pool(thread_count, this, Thread_Pool<k>::Task_Type::compute_states_read_space);
+    const std::string& buckets_file_path = params.buckets_file_path();
+    if(!buckets_file_path.empty() && file_exists(buckets_file_path))    // The serialized hash table buckets, saved from some earlier execution, exists.
+    {
+        std::cout <<    "Found the hash table buckets at file " << buckets_file_path << ".\n"
+                        "Loading the buckets.\n";
+        hash_table.load_hash_buckets(buckets_file_path);
+        std::cout << "Loaded the buckets into memory.\n";
+    }
+    else
+    {
+        // Construct a thread pool.
+        const uint16_t thread_count = params.thread_count();
+        Thread_Pool<k> thread_pool(thread_count, this, Thread_Pool<k>::Task_Type::compute_states_read_space);
 
-    // Launch the reading (and parsing per demand) of the edges from disk.
-    const Kmer_Container<k + 1> edge_container(params.edge_db_path());  // Wrapper container for the edge-database.
-    Kmer_SPMC_Iterator<k + 1> edge_parser(&edge_container, params.thread_count());  // Parser for the edges from the edge-database.
-    std::cout << "Total number of distinct edges: " << edge_container.size() << ".\n";
+        // Launch the reading (and parsing per demand) of the edges from disk.
+        const Kmer_Container<k + 1> edge_container(params.edge_db_path());  // Wrapper container for the edge-database.
+        Kmer_SPMC_Iterator<k + 1> edge_parser(&edge_container, params.thread_count());  // Parser for the edges from the edge-database.
+        std::cout << "Total number of distinct edges: " << edge_container.size() << ".\n";
 
-    edge_parser.launch_production();
+        edge_parser.launch_production();
 
-    // Launch (multi-threaded) computation of the states.
-    distribute_states_computation(&edge_parser, thread_pool);
+        // Launch (multi-threaded) computation of the states.
+        distribute_states_computation(&edge_parser, thread_pool);
 
-    // Wait for the edges to be depleted from the database.
-    edge_parser.seize_production();
+        // Wait for the edges to be depleted from the database.
+        edge_parser.seize_production();
 
-    // Wait for the consumer threads to finish parsing and processing the edges.
-    thread_pool.close();
+        // Wait for the consumer threads to finish parsing and processing the edges.
+        thread_pool.close();
 
-    std::cout << "Number of processed edges: " << edges_processed << "\n";
+        std::cout << "Number of processed edges: " << edges_processed << "\n";
+
+        
+        if(!buckets_file_path.empty())  // Save the hash table buckets, if a file path is provided.
+        {
+            std::cout << "Saving the hash table buckets in file " << buckets_file_path << ".\n";
+            hash_table.save_hash_buckets(buckets_file_path);
+            std::cout << "Saved the buckets in disk.\n";
+        }
+    }
 
 
     std::chrono::high_resolution_clock::time_point t_end = std::chrono::high_resolution_clock::now();

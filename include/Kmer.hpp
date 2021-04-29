@@ -190,6 +190,9 @@ public:
     template <typename T_container_>
     void get_label(T_container_& label) const;
 
+    // Implicitly converts the k-mer to a `std::string`.
+    operator std::string() const;
+
     // Returns a randomly generated k-mer.
     static Kmer<k> random_kmer();
 
@@ -651,6 +654,16 @@ inline void Kmer<k>::get_label(T_container_& label) const
     for(uint16_t bit_pair_idx = 0; bit_pair_idx < (k & 31); ++bit_pair_idx)
         label[(k - 1) - (((NUM_INTS - 1) << 5) + bit_pair_idx)] =
             map_char(static_cast<DNA::Base>((kmer_data[NUM_INTS - 1] & (0b11ULL << (2 * bit_pair_idx))) >> (2 * bit_pair_idx)));
+}
+
+
+template <uint16_t k>
+inline Kmer<k>::operator std::string() const
+{
+    std::string label;
+    get_label(label);
+
+    return label;
 }
 
 

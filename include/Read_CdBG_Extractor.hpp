@@ -13,6 +13,8 @@
 #include "Spin_Lock.hpp"
 #include "Thread_Pool.hpp"
 
+#include <fstream>
+
 
 // A class to extract the vertices from a compacted de Bruin graph — which are the maximal unitigs of some ordinary de Bruijn graph.
 template <uint16_t k>
@@ -24,6 +26,9 @@ private:
 
     const Build_Params params;  // Required parameters (wrapped inside).
     Kmer_Hash_Table<k, cuttlefish::BITS_PER_READ_KMER>& hash_table; // Hash table for the vertices (i.e. canonical k-mers) of the original (uncompacted) de Bruijn graph.
+
+    std::ofstream output_;  // Sink for the output maximal unitigs.
+    static constexpr std::size_t BUFF_SZ = 100 * 1024ULL;   // 100 KB.
 
     // Members required to keep track of the total number of vertices processed across different worker (i.e. extractor) threads.
     mutable Spin_Lock lock; // Mutual exclusion lock to access various unique resources by threads spawned off this class' methods.
@@ -45,8 +50,9 @@ private:
     // Extracts the maximal unitig `p` that is flanked by the vertex `v_hat` and connects to `v_hat`
     // through its side `s_v_hat`. Returns `true` iff the extraction is successful, which happens when
     // the maximal unitig is encountered and attempted for output-marking _first_, by some thread. If
-    // the attempt is successful, then the maximal unitig is extracted in its canonical form.
-    bool extract_maximal_unitig(const Kmer<k>& v_hat, cuttlefish::side_t s_v_hat);
+    // the attempt is successful, then the maximal unitig is extracted in its canonical form, into the
+    // string `unipath` (it is overwritten). If not, `unipath` may contain partial form of the unitig.
+    bool extract_maximal_unitig(const Kmer<k>& v_hat, cuttlefish::side_t s_v_hat, std::string& unipath);
 
     // Marks the vertex `v` as outputted. Returns `true` iff `v` has not been marked yet and the hash
     // table update is successful.
@@ -57,6 +63,15 @@ private:
     // `true` iff the vertices have not been marked yet and the corresponding hash table updates are
     // successful.
     bool mark_flanking_vertices(const Directed_Vertex<k>& sign_vertex, const Directed_Vertex<k>& cosign_vertex);
+
+    // Clears the output file content.
+    void clear_output_file() const;
+
+    // Initializes the output logger.
+    void init_output_logger();
+
+    // Closes the output logger.
+    void close_output_logger();
 
     // Note: The following methods are only applicable when the heuristic of information-discarding
     // from branching vertices to their neighbors has been implemented in the DFA states computation

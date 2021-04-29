@@ -52,7 +52,7 @@ private:
     // the maximal unitig is encountered and attempted for output-marking _first_, by some thread. If
     // the attempt is successful, then the maximal unitig is extracted in its canonical form, into the
     // string `unipath` (it is overwritten). If not, `unipath` may contain partial form of the unitig.
-    bool extract_maximal_unitig(const Kmer<k>& v_hat, cuttlefish::side_t s_v_hat, std::string& unipath);
+    bool extract_maximal_unitig(const Kmer<k>& v_hat, cuttlefish::side_t s_v_hat, std::vector<char>& unipath);
 
     // Marks the vertex `v` as outputted. Returns `true` iff `v` has not been marked yet and the hash
     // table update is successful.

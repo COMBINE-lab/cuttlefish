@@ -34,8 +34,9 @@ public:
     // Constructs a string buffer object that would flush its content to `sink`.
     String_Buffer(T_sink_& sink);
 
-    // Appends the content of the string `str` to the buffer. Flushes are possible.
-    void operator+=(const std::string& str);
+    // Appends the content of `str` to the buffer. Flushes are possible.
+    template <typename T_container_>
+    void operator+=(const T_container_& str);
 
     // Destructs the buffer object, flushing it if content are present.
     ~String_Buffer();
@@ -78,19 +79,20 @@ inline String_Buffer<CAPACITY, T_sink_>::String_Buffer(T_sink_& sink):
 
 
 template <std::size_t CAPACITY, typename T_sink_>
-inline void String_Buffer<CAPACITY, T_sink_>::operator+=(const std::string& str)
+template <typename T_container_>
+inline void String_Buffer<CAPACITY, T_sink_>::operator+=(const T_container_& str)
 {
-    if(buffer.size() + str.length() >= CAPACITY)
+    if(buffer.size() + str.size() >= CAPACITY)
     {
         flush();
         
-        if(str.length() >= CAPACITY)
+        if(str.size() >= CAPACITY)
         {
             std::cerr <<    "A single output string overflows the string-buffer capacity.\n"
-                            "Output string length: " << str.length() << ", string-buffer capacity: " << CAPACITY << ".\n"
+                            "Output string length: " << str.size() << ", string-buffer capacity: " << CAPACITY << ".\n"
                             "Please consider increasing the buffer capacity parameter in build for future use.\n";
             
-            buffer.reserve(str.length());
+            buffer.reserve(str.size());
         }
     }
 

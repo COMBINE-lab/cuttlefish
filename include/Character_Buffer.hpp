@@ -15,7 +15,7 @@
 // capacity of `CAPACITY` (although it is non-binding when a string with length 
 // larger than that is added), and it flushes to a sink of type `T_sink_` when it
 // overflows or is destructed. Writing to the provided sink (in the constructor)
-// is thread-safe — w/ a limiting contention for access per sink-type, not per sink.
+// is thread-safe.
 template <std::size_t CAPACITY, typename T_sink_>
 class Character_Buffer
 {
@@ -49,12 +49,17 @@ public:
 // a member function is not possible without partially specializing the entire
 // class. We need to specialize the actual flushing mechanism to support various
 // types of sinks, e.g. `std::ofstream`, `spdlog::logger` etc.
+// Since the sole purpose of the class is to support the `Character_Buffer` class
+// circumvent some contraint, everything is encapsulated in its specializations
+// as private, with `Character_Buffer` as friend.
 template <typename T_sink_>
 class Character_Buffer_Flusher
+{};
+
+
+template <>
+class Character_Buffer_Flusher<std::ofstream>
 {
-    // Since the sole purpose of the class is to support the `Character_Buffer` class
-    // circumvent some contraint, everything is encapsulated here as private, with
-    //  `Character_Buffer` as friend.
     template <std::size_t, typename> friend class Character_Buffer;
 
 private:
@@ -66,7 +71,7 @@ private:
 
 
     // Writes `len` characters from the memory location `str_buf` to the sink `sink`.
-    static void write(const char* str_buf, std::size_t len, T_sink_& sink);
+    static void write(const char* str_buf, std::size_t len, std::ofstream& sink);
 };
 
 
@@ -118,7 +123,6 @@ inline Character_Buffer<CAPACITY, T_sink_>::~Character_Buffer()
 }
 
 
-template <>
 inline void Character_Buffer_Flusher<std::ofstream>::write(const char* const str_buf, const std::size_t len, std::ofstream& output)
 {
     lock.lock();
@@ -135,7 +139,7 @@ inline void Character_Buffer_Flusher<std::ofstream>::write(const char* const str
 }
 
 
-template <typename T_sink_> Spin_Lock Character_Buffer_Flusher<T_sink_>::lock; // Definition of the static lock of `Character_Buffer_Flusher`.
+Spin_Lock Character_Buffer_Flusher<std::ofstream>::lock; // Definition of the static lock of `Character_Buffer_Flusher`.
 
 
 

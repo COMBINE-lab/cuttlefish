@@ -1,6 +1,6 @@
 
 #include "Read_CdBG_Extractor.hpp"
-#include "String_Buffer.hpp"
+#include "Character_Buffer.hpp"
 
 
 // Definition of static members.
@@ -82,7 +82,7 @@ void Read_CdBG_Extractor<k>::process_vertices(Kmer_SPMC_Iterator<k>* const verte
     uint64_t vertex_count = 0;  // Number of vertices scanned by this thread.
     uint64_t unipaths_extracted = 0;    // Number of maximal unitigs successfully extracted by this thread, in the canonical form.
 
-    String_Buffer<BUFF_SZ, std::ofstream> output_buffer(output_);   // The output buffer for maximal unitigs.
+    Character_Buffer<BUFF_SZ, std::ofstream> output_buffer(output_);   // The output buffer for maximal unitigs.
     unipath.reserve(BUFF_SZ);
 
     while(vertex_parser->tasks_expected(thread_id))

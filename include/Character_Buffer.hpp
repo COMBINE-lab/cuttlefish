@@ -1,6 +1,6 @@
 
-#ifndef STRING_BUFFER_HPP
-#define STRING_BUFFER_HPP
+#ifndef CHARACTER_BUFFER_HPP
+#define CHARACTER_BUFFER_HPP
 
 
 
@@ -11,17 +11,17 @@
 #include <iostream>
 
 
-// A buffer class to contain contiguous strings. The buffer is to have a maximum
+// A buffer class to contain contiguous characters. The buffer is to have a maximum
 // capacity of `CAPACITY` (although it is non-binding when a string with length 
 // larger than that is added), and it flushes to a sink of type `T_sink_` when it
 // overflows or is destructed. Writing to the provided sink (in the constructor)
 // is thread-safe — w/ a limiting contention for access per sink-type, not per sink.
 template <std::size_t CAPACITY, typename T_sink_>
-class String_Buffer
+class Character_Buffer
 {
 private:
 
-    std::vector<char> buffer;   // The string buffer.
+    std::vector<char> buffer;   // The character buffer.
     T_sink_& sink;  // Reference to the sink to flush the buffer content to.
 
 
@@ -31,31 +31,31 @@ private:
 
 public:
 
-    // Constructs a string buffer object that would flush its content to `sink`.
-    String_Buffer(T_sink_& sink);
+    // Constructs a character buffer object that would flush its content to `sink`.
+    Character_Buffer(T_sink_& sink);
 
     // Appends the content of `str` to the buffer. Flushes are possible.
     template <typename T_container_>
     void operator+=(const T_container_& str);
 
     // Destructs the buffer object, flushing it if content are present.
-    ~String_Buffer();
+    ~Character_Buffer();
 };
 
 
-// Helper class to actually flush the content of the `String_Buffer` class to its
+// Helper class to actually flush the content of the `Character_Buffer` class to its
 // sink of type `T_sink`.
 // It's used to circumvent the C++ constraint that partial specialization of a
 // a member function is not possible without partially specializing the entire
 // class. We need to specialize the actual flushing mechanism to support various
 // types of sinks, e.g. `std::ofstream`, `spdlog::logger` etc.
 template <typename T_sink_>
-class String_Buffer_Flusher
+class Character_Buffer_Flusher
 {
-    // Since the sole purpose of the class is to support the `String_Buffer` class
+    // Since the sole purpose of the class is to support the `Character_Buffer` class
     // circumvent some contraint, everything is encapsulated here as private, with
-    //  `String_Buffer` as friend.
-    template <std::size_t, typename> friend class String_Buffer;
+    //  `Character_Buffer` as friend.
+    template <std::size_t, typename> friend class Character_Buffer;
 
 private:
 
@@ -71,7 +71,7 @@ private:
 
 
 template <std::size_t CAPACITY, typename T_sink_>
-inline String_Buffer<CAPACITY, T_sink_>::String_Buffer(T_sink_& sink):
+inline Character_Buffer<CAPACITY, T_sink_>::Character_Buffer(T_sink_& sink):
     sink(sink)
 {
     buffer.reserve(CAPACITY);
@@ -80,7 +80,7 @@ inline String_Buffer<CAPACITY, T_sink_>::String_Buffer(T_sink_& sink):
 
 template <std::size_t CAPACITY, typename T_sink_>
 template <typename T_container_>
-inline void String_Buffer<CAPACITY, T_sink_>::operator+=(const T_container_& str)
+inline void Character_Buffer<CAPACITY, T_sink_>::operator+=(const T_container_& str)
 {
     if(buffer.size() + str.size() >= CAPACITY)
     {
@@ -102,16 +102,16 @@ inline void String_Buffer<CAPACITY, T_sink_>::operator+=(const T_container_& str
 
 
 template <std::size_t CAPACITY, typename T_sink_>
-inline void String_Buffer<CAPACITY, T_sink_>::flush()
+inline void Character_Buffer<CAPACITY, T_sink_>::flush()
 {
-    String_Buffer_Flusher<T_sink_>::write(buffer.data(), buffer.size(), sink);
+    Character_Buffer_Flusher<T_sink_>::write(buffer.data(), buffer.size(), sink);
 
     buffer.clear();
 }
 
 
 template <std::size_t CAPACITY, typename T_sink_>
-inline String_Buffer<CAPACITY, T_sink_>::~String_Buffer()
+inline Character_Buffer<CAPACITY, T_sink_>::~Character_Buffer()
 {
     if(!buffer.empty())
         flush();
@@ -119,7 +119,7 @@ inline String_Buffer<CAPACITY, T_sink_>::~String_Buffer()
 
 
 template <>
-inline void String_Buffer_Flusher<std::ofstream>::write(const char* const str_buf, const std::size_t len, std::ofstream& output)
+inline void Character_Buffer_Flusher<std::ofstream>::write(const char* const str_buf, const std::size_t len, std::ofstream& output)
 {
     lock.lock();
 
@@ -135,7 +135,7 @@ inline void String_Buffer_Flusher<std::ofstream>::write(const char* const str_bu
 }
 
 
-template <typename T_sink_> Spin_Lock String_Buffer_Flusher<T_sink_>::lock; // Definition of the static lock of `String_Buffer_Flusher`.
+template <typename T_sink_> Spin_Lock Character_Buffer_Flusher<T_sink_>::lock; // Definition of the static lock of `Character_Buffer_Flusher`.
 
 
 

@@ -186,6 +186,10 @@ public:
     // Returns the string label of the k-mer.
     std::string string_label() const;
 
+    // Gets the string label of the k-mer into the container `label`.
+    template <typename T_container_>
+    void get_label(T_container_& label) const;
+
     // Returns a randomly generated k-mer.
     static Kmer<k> random_kmer();
 
@@ -628,6 +632,25 @@ inline std::string Kmer<k>::string_label() const
     delete label;
     
     return str_label;
+}
+
+
+template <uint16_t k>
+template <typename T_container_>
+inline void Kmer<k>::get_label(T_container_& label) const
+{
+    label.resize(k);
+
+    // Get the fully packed words' representations.
+    for(uint16_t data_idx = 0; data_idx < NUM_INTS - 1; ++data_idx)
+        for(uint16_t bit_pair_idx = 0; bit_pair_idx < 32; ++bit_pair_idx)
+            label[(k - 1) - ((data_idx << 5) + bit_pair_idx)] =
+                map_char(static_cast<DNA::Base>((kmer_data[data_idx] & (0b11ULL << (2 * bit_pair_idx))) >> (2 * bit_pair_idx)));
+
+    // Get the partially packed (highest index) word's representation.
+    for(uint16_t bit_pair_idx = 0; bit_pair_idx < (k & 31); ++bit_pair_idx)
+        label[(k - 1) - (((NUM_INTS - 1) << 5) + bit_pair_idx)] =
+            map_char(static_cast<DNA::Base>((kmer_data[NUM_INTS - 1] & (0b11ULL << (2 * bit_pair_idx))) >> (2 * bit_pair_idx)));
 }
 
 

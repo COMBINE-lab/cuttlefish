@@ -44,8 +44,8 @@ private:
 
     // Extracts the maximal unitig `p` that is flanked by the vertex `v_hat` and connects to `v_hat`
     // through its side `s_v_hat`. Returns `true` iff the extraction is successful, which happens when
-    // the k-mer `v_hat` is the first k-mer in the canonical form of `p`. Thus encountering a maximal
-    // unitig in its non-canonical form results in a failed extraction.
+    // the maximal unitig is encountered and attempted for output-marking _first_, by some thread. If
+    // the attempt is successful, then the maximal unitig is extracted in its canonical form.
     bool extract_maximal_unitig(const Kmer<k>& v_hat, cuttlefish::side_t s_v_hat);
 
     // Marks the vertex `v` as outputted. Returns `true` iff `v` has not been marked yet and the hash

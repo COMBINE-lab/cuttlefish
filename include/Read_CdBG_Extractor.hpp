@@ -12,6 +12,8 @@
 #include "Build_Params.hpp"
 #include "Spin_Lock.hpp"
 #include "Thread_Pool.hpp"
+#include "Async_Logger_Wrapper.hpp"
+#include "Output_Sink.hpp"
 
 #include <fstream>
 
@@ -27,7 +29,9 @@ private:
     const Build_Params params;  // Required parameters (wrapped inside).
     Kmer_Hash_Table<k, cuttlefish::BITS_PER_READ_KMER>& hash_table; // Hash table for the vertices (i.e. canonical k-mers) of the original (uncompacted) de Bruijn graph.
 
-    std::ofstream output_;  // Sink for the output maximal unitigs.
+    // typedef std::ofstream sink_t;
+    typedef Async_Logger_Wrapper sink_t;
+    Output_Sink<sink_t> output_sink;    // Sink for the output maximal unitigs.
     static constexpr std::size_t BUFF_SZ = 100 * 1024ULL;   // 100 KB.
 
     // Members required to keep track of the total number of vertices processed across different worker (i.e. extractor) threads.
@@ -67,11 +71,11 @@ private:
     // Clears the output file content.
     void clear_output_file() const;
 
-    // Initializes the output logger.
-    void init_output_logger();
+    // Initializes the output sink.
+    void init_output_sink();
 
-    // Closes the output logger.
-    void close_output_logger();
+    // Closes the output sink.
+    void close_output_sink();
 
     // Note: The following methods are only applicable when the heuristic of information-discarding
     // from branching vertices to their neighbors has been implemented in the DFA states computation

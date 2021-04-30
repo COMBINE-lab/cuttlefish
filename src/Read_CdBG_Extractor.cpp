@@ -31,9 +31,9 @@ void Read_CdBG_Extractor<k>::extract_maximal_unitigs()
 
     vertex_parser.launch_production();
 
-    // Clear the output file and initialize the output logger.
+    // Clear the output file and initialize the output sink.
     clear_output_file();
-    init_output_logger();
+    init_output_sink();
 
     // Launch (multi-thread) extraction of the maximal unitigs.
     distribute_unipaths_extraction(&vertex_parser, thread_pool);
@@ -44,8 +44,8 @@ void Read_CdBG_Extractor<k>::extract_maximal_unitigs()
     // Wait for the consumer threads to finish parsing and processing edges.
     thread_pool.close();
 
-    // Close the output logger.
-    close_output_logger();
+    // Close the output sink.
+    close_output_sink();
 
     std::cout << "Number of processed vertices: " << vertices_processed << ".\n";
     std::cout << "Number of unipaths extracted: " << unipath_count << "\n";
@@ -82,7 +82,7 @@ void Read_CdBG_Extractor<k>::process_vertices(Kmer_SPMC_Iterator<k>* const verte
     uint64_t vertex_count = 0;  // Number of vertices scanned by this thread.
     uint64_t unipaths_extracted = 0;    // Number of maximal unitigs successfully extracted by this thread, in the canonical form.
 
-    Character_Buffer<BUFF_SZ, std::ofstream> output_buffer(output_);   // The output buffer for maximal unitigs.
+    Character_Buffer<BUFF_SZ, sink_t> output_buffer(output_sink.sink());  // The output buffer for maximal unitigs.
     unipath.reserve(BUFF_SZ);
 
     while(vertex_parser->tasks_expected(thread_id))
@@ -173,16 +173,16 @@ void Read_CdBG_Extractor<k>::clear_output_file() const
 
 
 template <uint16_t k>
-void Read_CdBG_Extractor<k>::init_output_logger()
+void Read_CdBG_Extractor<k>::init_output_sink()
 {
-    output_ = std::ofstream(params.output_file_path());
+    output_sink.init_sink(params.output_file_path());
 }
 
 
 template <uint16_t k>
-void Read_CdBG_Extractor<k>::close_output_logger()
+void Read_CdBG_Extractor<k>::close_output_sink()
 {
-    output_.close();
+    output_sink.close_sink();
 }
 
 

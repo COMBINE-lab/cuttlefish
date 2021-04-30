@@ -7,6 +7,7 @@ set(PROJECT_SRC
         xxHash/xxhash.c
         xxHash/xxhsum.c
         Parser.cpp
+        Async_Logger_Wrapper.cpp
         Thread_Pool.cpp
         DNA_Utility.cpp
         Kmer_u64.cpp

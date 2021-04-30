@@ -5,6 +5,7 @@
 
 
 #include "Spin_Lock.hpp"
+#include "Async_Logger_Wrapper.hpp"
 
 #include <vector>
 #include <fstream>
@@ -75,6 +76,21 @@ private:
 };
 
 
+template <>
+class Character_Buffer_Flusher<Async_Logger_Wrapper>
+{
+    template <std::size_t, typename> friend class Character_Buffer;
+
+private:
+
+    // Writes the content of the vector `buf` to the sink `sink`. Note that the vector
+    // `buf` is modified in the process — a null-terminator (`\0`) is appended at the
+    // end — which is expected to be not problematic under the assumption that the
+    // buffer is cleared after the write (i.e. flush).
+    static void write(std::vector<char>& buf, const Async_Logger_Wrapper& sink);
+};
+
+
 template <std::size_t CAPACITY, typename T_sink_>
 inline Character_Buffer<CAPACITY, T_sink_>::Character_Buffer(T_sink_& sink):
     sink(sink)
@@ -141,6 +157,13 @@ inline void Character_Buffer_Flusher<std::ofstream>::write(std::vector<char>& bu
 
 Spin_Lock Character_Buffer_Flusher<std::ofstream>::lock; // Definition of the static lock of `Character_Buffer_Flusher`.
 
+
+inline void Character_Buffer_Flusher<Async_Logger_Wrapper>::write(std::vector<char>& buf, const Async_Logger_Wrapper& sink)
+{
+    buf.emplace_back('\0');
+
+    sink.write(buf.data());
+}
 
 
 #endif

@@ -70,8 +70,8 @@ private:
     static Spin_Lock lock;
 
 
-    // Writes `len` characters from the memory location `str_buf` to the sink `sink`.
-    static void write(const char* str_buf, std::size_t len, std::ofstream& sink);
+    // Writes the content of the vector `buf` to the sink `sink`.
+    static void write(std::vector<char>& buf, std::ofstream& sink);
 };
 
 
@@ -109,7 +109,7 @@ inline void Character_Buffer<CAPACITY, T_sink_>::operator+=(const T_container_& 
 template <std::size_t CAPACITY, typename T_sink_>
 inline void Character_Buffer<CAPACITY, T_sink_>::flush()
 {
-    Character_Buffer_Flusher<T_sink_>::write(buffer.data(), buffer.size(), sink);
+    Character_Buffer_Flusher<T_sink_>::write(buffer, sink);
 
     buffer.clear();
 }
@@ -123,11 +123,11 @@ inline Character_Buffer<CAPACITY, T_sink_>::~Character_Buffer()
 }
 
 
-inline void Character_Buffer_Flusher<std::ofstream>::write(const char* const str_buf, const std::size_t len, std::ofstream& output)
+inline void Character_Buffer_Flusher<std::ofstream>::write(std::vector<char>& buf, std::ofstream& output)
 {
     lock.lock();
 
-    output.write(str_buf, len);
+    output.write(buf.data(), buf.size());
 
     if(output.fail())
     {

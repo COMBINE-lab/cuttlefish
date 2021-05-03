@@ -39,7 +39,7 @@ void Read_CdBG_Extractor<k>::extract_maximal_unitigs()
     // Launch (multi-thread) extraction of the maximal unitigs.
     distribute_unipaths_extraction(&vertex_parser, thread_pool);
 
-    // Wait for the vertices to be deplted from the database.
+    // Wait for the vertices to be depleted from the database.
     vertex_parser.seize_production();
 
     // Wait for the consumer threads to finish parsing and processing edges.
@@ -75,7 +75,7 @@ template <uint16_t k>
 void Read_CdBG_Extractor<k>::process_vertices(Kmer_SPMC_Iterator<k>* const vertex_parser, const uint16_t thread_id)
 {
     // Data structures to be reused per each vertex processed.
-    Kmer<k> v;  // For the vertex to be processed one-by-one.
+    Kmer<k> v;  // The vertex copy to be processed one-by-one.
     cuttlefish::side_t s_v; // The side of the vertex `v` that connects it to the maximal unitig containing it, if `v` is flanking.
     State_Read_Space state; // State of the vertex `v`.
     std::vector<char> unipath;  // The extracted maximal unitig from the vertex `v`.
@@ -152,6 +152,9 @@ bool Read_CdBG_Extractor<k>::extract_maximal_unitig(const Kmer<k>& v_hat, const 
     // Mark the flanking vertices as outputted.
     if(!mark_flanking_vertices(sign_vertex, cosign_vertex))
         return false;
+
+    if(!in_canonical)
+        reverse_complement(unipath);
 
     return true;
 }

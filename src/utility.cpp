@@ -77,3 +77,16 @@ void remove_kmer_set(const std::string& kmc_file_pref)
         std::exit(EXIT_FAILURE);
     }
 }
+
+
+void clear_file(const std::string& file_path)
+{
+    std::ofstream file(file_path.c_str(), std::ofstream::out | std::ofstream::trunc);
+    if(file.fail())
+    {
+        std::cerr << "Error opening file " << file_path << ". Aborting.\n";
+        std::exit(EXIT_FAILURE);
+    }
+
+    file.close();
+}

@@ -28,6 +28,9 @@ std::string remove_whitespaces(const char* s);
 // Removes the k-mer set (KMC database) with the path prefix `kmc_file_pref`.
 void remove_kmer_set(const std::string& kmc_file_pref);
 
+// Clears the content of the file at path `file_path`.
+void clear_file(const std::string& file_path);
+
 
 
 #endif

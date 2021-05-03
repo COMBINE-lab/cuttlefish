@@ -477,28 +477,14 @@ void CdBG<k>::clear_output_file() const
     const std::string& output_file_path = params.output_file_path();
 
     if(op_format == cuttlefish::txt || op_format == cuttlefish::gfa1 || op_format == cuttlefish::gfa2)
-    {
-        std::ofstream output(output_file_path.c_str(), std::ofstream::out | std::ofstream::trunc);
-        if(!output)
-        {
-            std::cerr << "Error opening output file " << output_file_path << ". Aborting.\n";
-            std::exit(EXIT_FAILURE);
-        }
-
-        output.close();
-    }
+        clear_file(output_file_path);
     else if(op_format == cuttlefish::gfa_reduced)
     {
         const std::string seg_file_path(output_file_path + SEG_FILE_EXT);
         const std::string seq_file_path(output_file_path + SEQ_FILE_EXT);
 
-        std::ofstream   output_seg(seg_file_path.c_str(), std::ofstream::out | std::ofstream::trunc),
-                        output_seq(seq_file_path.c_str(), std::ofstream::out | std::ofstream::trunc);
-        if(!output_seg || !output_seq)
-        {
-            std::cerr << "Error opening output files " << seg_file_path << " and " << seq_file_path << ". Aborting.\n";
-            std::exit(EXIT_FAILURE);
-        }
+        clear_file(seg_file_path);
+        clear_file(seq_file_path);
     }
 }
 

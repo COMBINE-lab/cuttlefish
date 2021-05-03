@@ -68,9 +68,6 @@ private:
     // successful.
     bool mark_flanking_vertices(const Directed_Vertex<k>& sign_vertex, const Directed_Vertex<k>& cosign_vertex);
 
-    // Clears the output file content.
-    void clear_output_file() const;
-
     // Initializes the output sink.
     void init_output_sink();
 

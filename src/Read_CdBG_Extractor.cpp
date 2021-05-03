@@ -1,6 +1,7 @@
 
 #include "Read_CdBG_Extractor.hpp"
 #include "Character_Buffer.hpp"
+#include "utility.hpp"
 
 
 // Definition of static members.
@@ -32,7 +33,7 @@ void Read_CdBG_Extractor<k>::extract_maximal_unitigs()
     vertex_parser.launch_production();
 
     // Clear the output file and initialize the output sink.
-    clear_output_file();
+    clear_file(params.output_file_path());
     init_output_sink();
 
     // Launch (multi-thread) extraction of the maximal unitigs.
@@ -153,22 +154,6 @@ bool Read_CdBG_Extractor<k>::extract_maximal_unitig(const Kmer<k>& v_hat, const 
         return false;
 
     return true;
-}
-
-
-template <uint16_t k>
-void Read_CdBG_Extractor<k>::clear_output_file() const
-{
-    const std::string& output_file_path = params.output_file_path();
-    
-    std::ofstream output(output_file_path.c_str(), std::ofstream::out | std::ofstream::trunc);
-    if(output.fail())
-    {
-        std::cerr << "Error opening output file " << output_file_path << ". Aborting.\n";
-        std::exit(EXIT_FAILURE);
-    }
-
-    output.close();
 }
 
 

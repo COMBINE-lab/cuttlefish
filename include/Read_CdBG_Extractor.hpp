@@ -39,6 +39,8 @@ private:
     mutable uint64_t vertices_processed = 0;    // Total number of vertices scanned from the database.
     
     uint64_t unipath_count = 0; // Total number of maximal unitigs extracted from the underlying graph.
+    uint64_t kmer_count = 0;    // Total number of k-mers in the extracted maximal unitigs.
+    std::size_t max_unipath_len = 0;    // Length of the longest extracted maximal unitig.
 
 
     // Distributes the maximal unitigs extraction task — disperses the graph vertices (i.e. k-mers)

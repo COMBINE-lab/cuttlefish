@@ -29,6 +29,7 @@ set(PROJECT_SRC
         Sequence_Validator.cpp
         Kmers_Validator.cpp
         utility.cpp
+        Minimizer_Policy.cpp
     )
 
 

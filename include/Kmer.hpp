@@ -26,6 +26,9 @@ class Kmer: public DNA_Utility
     // may access private information (the raw data) from edges, i.e. (k + 1)-mers.
     friend class Kmer<k - 1>;
 
+    // Minimizers can be represented using 32-bit integers.
+    typedef uint32_t minimizer_t;
+
 private:
 
     // Number of 64-bit integers required to compactly represent the underlying k-mer with 2-bits/base encoding.
@@ -200,6 +203,20 @@ public:
     // stream `ostream`.
     template <uint16_t K>
     friend std::ostream& operator<<(std::ostream& out, const Kmer<K>& kmer);
+
+    // Returns the lexicographic l-minimizer for the k-mer.
+    template <uint8_t l>
+    minimizer_t minimizer() const;
+
+    // Returns the l-minimizer for the k-mer where the vector `order`
+    // determines the minimizer-ordering of the l-mers, i.e. the order
+    // of the l-mer `i` is `order[i]`.
+    template <uint8_t l>
+    minimizer_t minimizer(const std::vector<uint32_t>& order) const;
+
+    // Accumulates the counts of the l-mers of the k-mer into `count`.
+    template <uint8_t l>
+    void count_lmers(std::vector<uint64_t>& count) const;
 };
 
 
@@ -680,6 +697,82 @@ std::ostream& operator<<(std::ostream& out, const Kmer<k>& kmer)
     out << kmer.string_label();
 
     return out;
+}
+
+
+template <uint16_t k>
+template <uint8_t l>
+inline typename Kmer<k>::minimizer_t Kmer<k>::minimizer() const
+{
+    // static_assert(l <= k);
+
+    // TODO: SIMD?
+
+    minimizer_t lmer = kmer_data[0] & ((1ULL << (2 * l)) - 1);
+    minimizer_t minmzr = lmer;
+
+    for(uint16_t idx = l; idx < k; ++idx)
+    {
+        const uint16_t word_idx = (idx >> 5);
+        const uint16_t base_idx = (idx & 31);
+        lmer =  (lmer >> 2) |
+                (((kmer_data[word_idx] & (0b11ULL << (2 * base_idx))) >> (2 * base_idx)) << (2 * (l - 1)));
+
+        if(minmzr > lmer)
+            minmzr = lmer;
+    }
+
+
+    return minmzr;
+}
+
+
+template <uint16_t k>
+template <uint8_t l>
+inline typename Kmer<k>::minimizer_t Kmer<k>::minimizer(const std::vector<uint32_t>& order) const
+{
+    // static_assert(l <= k);
+
+    // TODO: SIMD?
+
+    minimizer_t lmer = kmer_data[0] & ((1ULL << (2 * l)) - 1);
+    minimizer_t minmzr = lmer;
+
+    for(uint16_t idx = l; idx < k; ++idx)
+    {
+        const uint16_t word_idx = (idx >> 5);
+        const uint16_t base_idx = (idx & 31);
+        lmer =  (lmer >> 2) |
+                (((kmer_data[word_idx] & (0b11ULL << (2 * base_idx))) >> (2 * base_idx)) << (2 * (l - 1)));
+
+        if(order[minmzr] > order[lmer])
+            minmzr = lmer;
+    }
+
+
+    return minmzr;
+}
+
+
+template <uint16_t k>
+template <uint8_t l>
+inline void Kmer<k>::count_lmers(std::vector<uint64_t>& count) const
+{
+    // static_assert(l <= k);
+
+    std::size_t lmer = kmer_data[0] & ((1ULL << (2 * l)) - 1);
+    count[lmer]++;
+
+    for(uint16_t idx = l; idx < k; ++idx)
+    {
+        const uint16_t word_idx = (idx >> 5);
+        const uint16_t base_idx = (idx & 31);
+
+        lmer =  (lmer >> 2) |
+                (((kmer_data[word_idx] & (0b11ULL << (2 * base_idx))) >> (2 * base_idx)) << (2 * (l - 1)));
+
+        count[lmer]++;
+    }
 }
 
 

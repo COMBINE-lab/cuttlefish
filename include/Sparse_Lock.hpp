@@ -4,6 +4,8 @@
 
 
 
+#include <vector>
+#include <cstdint>
 #include <cmath>
 
 

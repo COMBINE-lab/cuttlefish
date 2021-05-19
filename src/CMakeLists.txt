@@ -6,6 +6,7 @@ set(PROJECT_SRC
         kmc_api/mmer.cpp
         xxHash/xxhash.c
         xxHash/xxhsum.c
+        Application.cpp
         Parser.cpp
         Async_Logger_Wrapper.cpp
         Thread_Pool.cpp

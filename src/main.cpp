@@ -47,7 +47,7 @@ void build(int argc, char** argv)
             return;
         }
 
-        const bool is_read_graph = result["read"].as<bool>();
+        const auto is_read_graph = result["read"].as<bool>();
         const auto refs = result["refs"].as<std::vector<std::string>>();
         const auto lists = result["lists"].as<std::vector<std::string>>();
         const auto dirs = result["dirs"].as<std::vector<std::string>>();
@@ -72,15 +72,15 @@ void build(int argc, char** argv)
         std::cout.precision(3);
 
 
-        const std::string dBG_type = (params.is_read_graph() ? "read" : "reference");
+        const std::string dBg_type(params.is_read_graph() ? "read" : "reference");
 
-        std::cout << "\nConstructing the " << dBG_type << " compacted de Bruijn graph for k = " << k << ".\n";
+        std::cout << "\nConstructing the compacted " << dBg_type << " de Bruijn graph for k = " << k << ".\n";
 
-        const Application<cuttlefish::MAX_K, CdBG> app_ref_dBG(params);
-        const Application<cuttlefish::MAX_K, Read_CdBG> app_read_dBG(params);
-        params.is_read_graph() ? app_read_dBG.execute() : app_ref_dBG.execute();
+        params.is_read_graph() ?
+            Application<cuttlefish::MAX_K, Read_CdBG>(params).execute() :
+            Application<cuttlefish::MAX_K, CdBG>(params).execute();
 
-        std::cout << "\nConstructed the " << dBG_type << " compacted de Bruijn graph at " << output_file << ".\n";
+        std::cout << "\nConstructed the " << dBg_type << " compacted de Bruijn graph at " << output_file << ".\n";
     }
     catch(const std::exception& e)
     {
@@ -136,8 +136,8 @@ void validate(int argc, char** argv)
 
         std::cout << "\nValidating the compacted de Bruijn graph for k = " << k << "\n";
 
-        const Application<cuttlefish::MAX_K, CdBG> app(params);
-        std::cout << (app.validate() ? "\nValidation successful" : "\nValidation failed") << std::endl;
+        std::cout << (Application<cuttlefish::MAX_K, CdBG>(params).validate() ?
+                        "\nValidation successful" : "\nValidation failed") << std::endl;
     }
     catch(const std::exception& e)
     {
@@ -157,7 +157,9 @@ int main(int argc, char** argv)
     }
     else
     {
-        const std::string command = argv[1];
+        std::string command(argv[1]);
+        std::transform(command.begin(), command.end(), command.begin(), [](const char ch) { return std::tolower(ch); });
+
         if(command == "build")
             build(argc - 1, argv + 1);
         else if(command == "validate")

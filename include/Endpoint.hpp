@@ -18,6 +18,8 @@ class Endpoint
 {
 private:
 
+    // TODO: Refactor the class with inclusion of a `Directed_Vertex` instance, replacing four fields.
+
     Kmer<k> kmer_;  // The endpoint k-mer spelled by the edge instance.
     Kmer<k> kmer_bar_;  // Reverse complement of the k-mer spelled by the edge instance.
     const Kmer<k>* kmer_hat_ptr;    // Pointer to the canonical form of the endpoint k-mer.

@@ -88,7 +88,7 @@ void Read_CdBG_Extractor<k>::process_vertices(Kmer_SPMC_Iterator<k>* const verte
     std::size_t max_len = 0;    // Length of the longest extracted maximal unitig by this thread.
 
     Character_Buffer<BUFF_SZ, sink_t> output_buffer(output_sink.sink());  // The output buffer for maximal unitigs.
-    unipath.reserve(BUFF_SZ);
+    unipath.reserve(SEQ_SZ);
 
     while(vertex_parser->tasks_expected(thread_id))
         if(vertex_parser->value_at(thread_id, v))

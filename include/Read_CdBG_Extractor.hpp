@@ -32,7 +32,10 @@ private:
     // typedef std::ofstream sink_t;
     typedef Async_Logger_Wrapper sink_t;
     Output_Sink<sink_t> output_sink;    // Sink for the output maximal unitigs.
-    static constexpr std::size_t BUFF_SZ = 100 * 1024ULL;   // 100 KB.
+
+    // TODO: give these limits more thoughts, especially their exact impact on the memory usage.
+    static constexpr std::size_t BUFF_SZ = 100 * 1024ULL;   // 100 KB (soft limit) worth of maximal unitigs can be retained in memory, at most, before flushing.
+    static constexpr std::size_t SEQ_SZ = 5 * 1024ULL * 1024ULL;    // 5 MB (soft limit) sized maximal unitig, at most, is constructed at a time.
 
     // Members required to keep track of the total number of vertices processed across different worker (i.e. extractor) threads.
     mutable Spin_Lock lock; // Mutual exclusion lock to access various unique resources by threads spawned off this class' methods.

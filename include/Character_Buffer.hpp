@@ -103,21 +103,21 @@ template <std::size_t CAPACITY, typename T_sink_>
 template <typename T_container_>
 inline void Character_Buffer<CAPACITY, T_sink_>::operator+=(const T_container_& str)
 {
-    if(buffer.size() + str.size() >= CAPACITY)
+    if(buffer.size() + str.size() >= CAPACITY)  // Using `>=` since for async logging, a `\0` is inserted at the end of `buffer`.
     {
         flush();
         
         if(str.size() >= CAPACITY)
         {
-            std::cerr <<    "A single output string overflows the string-buffer capacity.\n"
-                            "Output string length: " << str.size() << ", string-buffer capacity: " << CAPACITY << ".\n"
-                            "Please consider increasing the buffer capacity parameter in build for future use.\n";
+            // std::cerr <<    "A single output string overflows the string-buffer capacity.\n"
+            //                 "Output string length: " << str.size() << ", string-buffer capacity: " << CAPACITY << ".\n"
+            //                 "Please consider increasing the buffer capacity parameter in build for future use.\n";
             
             buffer.reserve(str.size());
         }
     }
 
-
+    // `std::memcpy` at the end of `buffer` does not update the size of the vector `buffer`.
     buffer.insert(buffer.end(), str.begin(), str.end());
 }
 

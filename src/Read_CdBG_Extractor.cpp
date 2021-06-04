@@ -49,9 +49,7 @@ void Read_CdBG_Extractor<k>::extract_maximal_unitigs()
     close_output_sink();
 
     std::cout << "Number of processed vertices: " << vertices_processed << ".\n";
-    std::cout << "Number of maximal unitigs: " << unipath_count << ".\n";
-    std::cout << "Number of k-mers in the maximal unitigs: " << kmer_count << ".\n";
-    std::cout << "Length of the longest maximal unitig: " << max_unipath_len << ".\n";
+    unipaths_meta_info.print();
 
 
     std::chrono::high_resolution_clock::time_point t_end = std::chrono::high_resolution_clock::now();
@@ -83,9 +81,7 @@ void Read_CdBG_Extractor<k>::process_vertices(Kmer_SPMC_Iterator<k>* const verte
     std::vector<char> unipath;  // The extracted maximal unitig from the vertex `v`.
 
     uint64_t vertex_count = 0;  // Number of vertices scanned by this thread.
-    uint64_t unipaths_extracted = 0;    // Number of maximal unitigs successfully extracted by this thread.
-    uint64_t kmers_extracted = 0;   // Number of k-mers in the extracted maximal unitigs by this thread.
-    std::size_t max_len = 0;    // Length of the longest extracted maximal unitig by this thread.
+    Unipaths_Meta_info<k> extracted_unipaths_info;  // Meta-information over the maximal unitigs extracted by this thread.
 
     Character_Buffer<BUFF_SZ, sink_t> output_buffer(output_sink.sink());  // The output buffer for maximal unitigs.
     unipath.reserve(SEQ_SZ);
@@ -98,27 +94,24 @@ void Read_CdBG_Extractor<k>::process_vertices(Kmer_SPMC_Iterator<k>* const verte
             if(!state.is_outputted() && is_flanking_state(state, s_v))
                 if(extract_maximal_unitig(v, s_v, unipath))
                 {
+                    extracted_unipaths_info.add_maximal_unitig(unipath);
+
                     unipath.emplace_back('\n');
                     output_buffer += unipath;
                     // unipath.clear();
-
-                    unipaths_extracted++;
-                    kmers_extracted += (unipath.size() - 1 - (k - 1));
-                    if(max_len < unipath.size())
-                        max_len = unipath.size() - 1;
                 }
 
             vertex_count++;
         }
 
 
+    // Aggregate the meta-information over the extracted maximal unitigs and the thread-executions.
     lock.lock();
 
     std::cout << "Thread " << thread_id << " processed " << vertex_count << " vertices.\n"; // TODO: remove.
+    
     vertices_processed += vertex_count;
-    unipath_count += unipaths_extracted;
-    kmer_count += kmers_extracted;
-    max_unipath_len = std::max(max_unipath_len, max_len);
+    unipaths_meta_info.aggregate(extracted_unipaths_info);
 
     lock.unlock();
 }

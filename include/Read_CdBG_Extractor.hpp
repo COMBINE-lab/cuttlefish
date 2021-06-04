@@ -14,7 +14,9 @@
 #include "Thread_Pool.hpp"
 #include "Async_Logger_Wrapper.hpp"
 #include "Output_Sink.hpp"
+#include "Unipaths_Meta_info.hpp"
 
+#include <limits>
 #include <fstream>
 
 
@@ -37,13 +39,10 @@ private:
     static constexpr std::size_t BUFF_SZ = 100 * 1024ULL;   // 100 KB (soft limit) worth of maximal unitigs can be retained in memory, at most, before flushing.
     static constexpr std::size_t SEQ_SZ = 5 * 1024ULL * 1024ULL;    // 5 MB (soft limit) sized maximal unitig, at most, is constructed at a time.
 
-    // Members required to keep track of the total number of vertices processed across different worker (i.e. extractor) threads.
-    mutable Spin_Lock lock; // Mutual exclusion lock to access various unique resources by threads spawned off this class' methods.
     mutable uint64_t vertices_processed = 0;    // Total number of vertices scanned from the database.
+    mutable Spin_Lock lock; // Mutual exclusion lock to access various unique resources by threads spawned off this class' methods.
     
-    uint64_t unipath_count = 0; // Total number of maximal unitigs extracted from the underlying graph.
-    uint64_t kmer_count = 0;    // Total number of k-mers in the extracted maximal unitigs.
-    std::size_t max_unipath_len = 0;    // Length of the longest extracted maximal unitig.
+    Unipaths_Meta_info<k> unipaths_meta_info;   // Meta-information over the extracted maximal unitigs.
 
 
     // Distributes the maximal unitigs extraction task — disperses the graph vertices (i.e. k-mers)

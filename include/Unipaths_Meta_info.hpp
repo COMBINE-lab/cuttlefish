@@ -14,11 +14,11 @@ class Unipaths_Meta_info
 {
 private:
 
-    uint64_t unipath_count; // Total number of maximal unitigs.
-    uint64_t kmer_count;    // Total number of k-mers in the maximal unitigs.
-    std::size_t max_len;    // Length of the longest maximal unitig.
-    std::size_t min_len;    // Length of the shortest maximal unitig.
-    uint64_t sum_len;   // Sum length of the maximal unitigs.
+    uint64_t unipath_count_;    // Total number of maximal unitigs.
+    uint64_t kmer_count_;   // Total number of k-mers in the maximal unitigs.
+    std::size_t max_len_;   // Length of the longest maximal unitig.
+    std::size_t min_len_;   // Length of the shortest maximal unitig.
+    uint64_t sum_len_;  // Sum length of the maximal unitigs.
 
 
 public:
@@ -42,17 +42,17 @@ template <uint16_t k>
 template <typename T_container_>
 inline void Unipaths_Meta_info<k>::add_maximal_unitig(const T_container_& unipath)
 {
-    unipath_count++;
+    unipath_count_++;
     
-    kmer_count += unipath.size() - (k - 1);
+    kmer_count_ += unipath.size() - (k - 1);
 
-    if(max_len < unipath.size())
-        max_len = unipath.size();
+    if(max_len_ < unipath.size())
+        max_len_ = unipath.size();
 
-    if(min_len > unipath.size())
-        min_len = unipath.size();
+    if(min_len_ > unipath.size())
+        min_len_ = unipath.size();
 
-    sum_len += unipath.size();
+    sum_len_ += unipath.size();
 }
 
 

@@ -8,34 +8,34 @@
 
 template <uint16_t k>
 Unipaths_Meta_info<k>::Unipaths_Meta_info():
-    unipath_count(0),
-    kmer_count(0),
-    max_len(0),
-    min_len(std::numeric_limits<std::size_t>::max()),
-    sum_len(0)
+    unipath_count_(0),
+    kmer_count_(0),
+    max_len_(0),
+    min_len_(std::numeric_limits<std::size_t>::max()),
+    sum_len_(0)
 {}
 
 
 template <uint16_t k>
 void Unipaths_Meta_info<k>::aggregate(const Unipaths_Meta_info& other)
 {
-    unipath_count += other.unipath_count;
-    kmer_count += other.kmer_count;
+    unipath_count_ += other.unipath_count_;
+    kmer_count_ += other.kmer_count_;
     
-    max_len = std::max(max_len, other.max_len);
-    min_len = std::min(min_len, other.min_len);
-    sum_len += other.sum_len;
+    max_len_ = std::max(max_len_, other.max_len_);
+    min_len_ = std::min(min_len_, other.min_len_);
+    sum_len_ += other.sum_len_;
 }
 
 
 template <uint16_t k>
 void Unipaths_Meta_info<k>::print() const
 {
-    std::cout << "Number of maximal unitigs: " << unipath_count << ".\n";
-    std::cout << "Number of k-mers in the maximal unitigs: " << kmer_count << ".\n";
-    std::cout << "Length of the longest maximal unitig (in bases):  " << max_len << ".\n";
-    std::cout << "Length of the shortest maximal unitig (in bases): " << min_len << ".\n";
-    std::cout << "Sum length of the maximal unitigs (in bases): " << sum_len << ".\n";
+    std::cout << "Number of maximal unitigs: " << unipath_count_ << ".\n";
+    std::cout << "Number of k-mers in the maximal unitigs: " << kmer_count_ << ".\n";
+    std::cout << "Length of the longest maximal unitig (in bases):  " << max_len_ << ".\n";
+    std::cout << "Length of the shortest maximal unitig (in bases): " << min_len_ << ".\n";
+    std::cout << "Sum length of the maximal unitigs (in bases): " << sum_len_ << ".\n";
 }
 
 

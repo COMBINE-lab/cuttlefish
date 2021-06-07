@@ -29,6 +29,13 @@ void Unipaths_Meta_info<k>::aggregate(const Unipaths_Meta_info& other)
 
 
 template <uint16_t k>
+uint64_t Unipaths_Meta_info<k>::kmer_count() const
+{
+    return kmer_count_;
+}
+
+
+template <uint16_t k>
 void Unipaths_Meta_info<k>::print() const
 {
     std::cout << "Number of maximal unitigs: " << unipath_count_ << ".\n";

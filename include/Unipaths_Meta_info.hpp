@@ -33,6 +33,9 @@ public:
     // Aggregates the information of the tracker `other` to this tracker.
     void aggregate(const Unipaths_Meta_info<k>& other);
 
+    // Returns the total number of k-mers in the extracted maximal unitigs.
+    uint64_t kmer_count() const;
+
     // Prints the tracked information to the standard output.
     void print() const;
 };

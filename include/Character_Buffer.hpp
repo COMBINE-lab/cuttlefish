@@ -6,6 +6,7 @@
 
 #include "Spin_Lock.hpp"
 #include "Async_Logger_Wrapper.hpp"
+#include "FASTA_Record.hpp"
 
 #include <vector>
 #include <fstream>
@@ -26,6 +27,10 @@ private:
     T_sink_& sink;  // Reference to the sink to flush the buffer content to.
 
 
+    // Ensures that `buffer` has enough space for additional `append_size`
+    // number of bytes, using flush and allocation as necessary.
+    void ensure_space(std::size_t append_size);
+
     // Flushes the buffer content to the sink, and clears the buffer.
     void flush();
 
@@ -38,6 +43,11 @@ public:
     // Appends the content of `str` to the buffer. Flushes are possible.
     template <typename T_container_>
     void operator+=(const T_container_& str);
+
+    // Appends the content of the FASTA record `fasta_rec` to the buffer. Flushes
+    // are possible.
+    template <typename T_container_>
+    void operator+=(const FASTA_Record<T_container_>& fasta_rec);
 
     // Destructs the buffer object, flushing it if content are present.
     ~Character_Buffer();
@@ -103,22 +113,41 @@ template <std::size_t CAPACITY, typename T_sink_>
 template <typename T_container_>
 inline void Character_Buffer<CAPACITY, T_sink_>::operator+=(const T_container_& str)
 {
-    if(buffer.size() + str.size() >= CAPACITY)  // Using `>=` since for async logging, a `\0` is inserted at the end of `buffer`.
+    ensure_space(str.size());
+
+    // `std::memcpy` at the end of `buffer` does not update the size of the vector `buffer`.
+    buffer.insert(buffer.end(), str.begin(), str.end());
+}
+
+
+template <std::size_t CAPACITY, typename T_sink_>
+template <typename T_container_>
+inline void Character_Buffer<CAPACITY, T_sink_>::operator+=(const FASTA_Record<T_container_>& fasta_rec)
+{
+    ensure_space(fasta_rec.header_size() + 1 + fasta_rec.seq_size());
+
+    fasta_rec.append_header(buffer); // Append the header.
+    buffer.emplace_back('\n');  // Break-line.
+    fasta_rec.append_seq(buffer);   // Append the sequence.
+}
+
+
+template <std::size_t CAPACITY, typename T_sink_>
+inline void Character_Buffer<CAPACITY, T_sink_>::ensure_space(const std::size_t append_size)
+{
+    if(buffer.size() + append_size >= CAPACITY) // Using `>=` since for async logging, a `\0` is inserted at the end of `buffer`.
     {
         flush();
         
-        if(str.size() >= CAPACITY)
+        if(append_size >= CAPACITY)
         {
             // std::cerr <<    "A single output string overflows the string-buffer capacity.\n"
             //                 "Output string length: " << str.size() << ", string-buffer capacity: " << CAPACITY << ".\n"
             //                 "Please consider increasing the buffer capacity parameter in build for future use.\n";
             
-            buffer.reserve(str.size());
+            buffer.reserve(append_size);
         }
     }
-
-    // `std::memcpy` at the end of `buffer` does not update the size of the vector `buffer`.
-    buffer.insert(buffer.end(), str.begin(), str.end());
 }
 
 

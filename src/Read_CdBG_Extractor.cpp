@@ -1,11 +1,8 @@
 
 #include "Read_CdBG_Extractor.hpp"
+#include "FASTA_Record.hpp"
 #include "Character_Buffer.hpp"
 #include "utility.hpp"
-
-
-// Definition of static members.
-template <uint16_t k> constexpr std::size_t Read_CdBG_Extractor<k>::BUFF_SZ;
 
 
 template <uint16_t k>
@@ -76,9 +73,10 @@ void Read_CdBG_Extractor<k>::process_vertices(Kmer_SPMC_Iterator<k>* const verte
 {
     // Data structures to be reused per each vertex processed.
     Kmer<k> v;  // The vertex copy to be processed one-by-one.
-    cuttlefish::side_t s_v; // The side of the vertex `v` that connects it to the maximal unitig containing it, if `v` is flanking.
+    cuttlefish::side_t s_v; // The side of the vertex `v` that connects it to the maximal unitig `u` containing it, if `v` is flanking.
     State_Read_Space state; // State of the vertex `v`.
-    std::vector<char> unipath;  // The extracted maximal unitig from the vertex `v`.
+    uint64_t id;    // The unique ID of the maximal unitig `u`.
+    std::vector<char> unipath;  // The extracted maximal unitig `u`.
 
     uint64_t vertex_count = 0;  // Number of vertices scanned by this thread.
     Unipaths_Meta_info<k> extracted_unipaths_info;  // Meta-information over the maximal unitigs extracted by this thread.
@@ -92,12 +90,13 @@ void Read_CdBG_Extractor<k>::process_vertices(Kmer_SPMC_Iterator<k>* const verte
             state = hash_table[v].state();
             
             if(!state.is_outputted() && is_flanking_state(state, s_v))
-                if(extract_maximal_unitig(v, s_v, unipath))
+                if(extract_maximal_unitig(v, s_v, id, unipath))
                 {
                     extracted_unipaths_info.add_maximal_unitig(unipath);
 
                     unipath.emplace_back('\n');
-                    output_buffer += unipath;
+                    // output_buffer += unipath;
+                    output_buffer += FASTA_Record<std::vector<char>>(id, unipath);
                     // unipath.clear();
                 }
 
@@ -118,7 +117,7 @@ void Read_CdBG_Extractor<k>::process_vertices(Kmer_SPMC_Iterator<k>* const verte
 
 
 template <uint16_t k>
-bool Read_CdBG_Extractor<k>::extract_maximal_unitig(const Kmer<k>& v_hat, const cuttlefish::side_t s_v_hat, std::vector<char>& unipath)
+bool Read_CdBG_Extractor<k>::extract_maximal_unitig(const Kmer<k>& v_hat, const cuttlefish::side_t s_v_hat, uint64_t& id, std::vector<char>& unipath)
 {
     // Data structures to be reused per each vertex extension of the maximal unitig.
     cuttlefish::side_t s_v = s_v_hat;   // The side of the current vertex `v` through which to extend the maximal unitig, i.e. exit `v`.
@@ -160,6 +159,8 @@ bool Read_CdBG_Extractor<k>::extract_maximal_unitig(const Kmer<k>& v_hat, const 
 
     if(!in_canonical)
         reverse_complement(unipath);
+
+    id = sign_vertex.hash();
 
     return true;
 }

@@ -58,9 +58,10 @@ private:
     // Extracts the maximal unitig `p` that is flanked by the vertex `v_hat` and connects to `v_hat`
     // through its side `s_v_hat`. Returns `true` iff the extraction is successful, which happens when
     // the maximal unitig is encountered and attempted for output-marking _first_, by some thread. If
-    // the attempt is successful, then the maximal unitig is extracted in its canonical form, into the
-    // string `unipath` (it is overwritten). If not, `unipath` may contain partial form of the unitig.
-    bool extract_maximal_unitig(const Kmer<k>& v_hat, cuttlefish::side_t s_v_hat, std::vector<char>& unipath);
+    // the attempt is successful, then the maximal unitig is extracted in its canonical form into
+    // `unipath` (it is overwritten); also, a unique ID for it is put in `id`. If not, `unipath` may
+    // contain partial form of the unitig, and `id` is unaltered.
+    bool extract_maximal_unitig(const Kmer<k>& v_hat, cuttlefish::side_t s_v_hat, uint64_t& id, std::vector<char>& unipath);
 
     // Marks the vertex `v` as outputted. Returns `true` iff `v` has not been marked yet and the hash
     // table update is successful.

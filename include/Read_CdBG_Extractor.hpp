@@ -6,18 +6,20 @@
 
 #include "globals.hpp"
 #include "Kmer_Hash_Table.hpp"
-#include "Kmer_Container.hpp"
-#include "Kmer_SPMC_Iterator.hpp"
 #include "Directed_Vertex.hpp"
 #include "Build_Params.hpp"
 #include "Spin_Lock.hpp"
-#include "Thread_Pool.hpp"
 #include "Async_Logger_Wrapper.hpp"
 #include "Output_Sink.hpp"
 #include "Unipaths_Meta_info.hpp"
 
 #include <limits>
 #include <fstream>
+
+
+// Forward declarations.
+template <uint16_t k> class Kmer_SPMC_Iterator;
+template <uint16_t k> class Thread_Pool;
 
 
 // A class to extract the vertices from a compacted de Bruin graph — which are the maximal unitigs of some ordinary de Bruijn graph.

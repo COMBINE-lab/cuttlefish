@@ -127,6 +127,10 @@ public:
 
     // Extracts the maximal unitigs of the de Bruijn graph.
     void extract_maximal_unitigs();
+
+    // Extracts the chordless cycles from the de Bruijn graph that are completely disconnected from the
+    // rest of the graph. A precondition for the algorithm is the availability of the maximal unitigs.
+    void extract_detached_cycles();
 };
 
 

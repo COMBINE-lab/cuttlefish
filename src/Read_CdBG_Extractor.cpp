@@ -175,6 +175,11 @@ bool Read_CdBG_Extractor<k>::extract_maximal_unitig(const Kmer<k>& v_hat, const 
 
 
 template <uint16_t k>
+void Read_CdBG_Extractor<k>::extract_detached_cycles()
+{}
+
+
+template <uint16_t k>
 void Read_CdBG_Extractor<k>::init_output_sink()
 {
     output_sink.init_sink(params.output_file_path());

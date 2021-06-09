@@ -21,9 +21,12 @@ void Read_CdBG<k>::construct()
     Read_CdBG_Constructor<k> cdBg_constructor(params, hash_table);
     cdBg_constructor.compute_DFA_states();
 
-    std::cout << "\nExtracting the maximal unitigs.\n";
+    std::cout << (!params.extract_cycles() ?
+                    "\nExtracting the maximal unitigs.\n": "\nExtracting the detached chordless cycles.\n");
     Read_CdBG_Extractor<k> cdBg_extractor(params, hash_table);
-    cdBg_extractor.extract_maximal_unitigs();
+    !params.extract_cycles() ?
+        cdBg_extractor.extract_maximal_unitigs():
+        cdBg_extractor.extract_detached_cycles();
 
     hash_table.clear();
 }

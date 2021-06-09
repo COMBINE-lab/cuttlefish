@@ -30,6 +30,7 @@ private:
     const bool remove_kmc_db_;  // Option to remove the KMC database, once no longer required.
     const std::string& mph_file_path_;   // Optional path to file storing an MPH over the k-mer set.
     const std::string& buckets_file_path_;  // Optional path to file storing the hash table buckets for the k-mer set.
+    const bool extract_cycles_; // Option to extract detached chordless cycles from the de Bruijn graph after compaction.
 
 
 public:
@@ -48,7 +49,8 @@ public:
                     const std::string& working_dir_path,
                     const bool remove_kmc_db,
                     const std::string& mph_file_path,
-                    const std::string& buckets_file_path):
+                    const std::string& buckets_file_path,
+                    const bool extract_cycles):
         is_read_graph_(is_read_graph),
         reference_input_(ref_paths, list_paths, dir_paths),
         k_(k),
@@ -60,7 +62,8 @@ public:
         working_dir_path_(working_dir_path),
         remove_kmc_db_(remove_kmc_db),
         mph_file_path_(mph_file_path),
-        buckets_file_path_(buckets_file_path)
+        buckets_file_path_(buckets_file_path),
+        extract_cycles_(extract_cycles)
     {}
 
 
@@ -145,6 +148,13 @@ public:
     const std::string& buckets_file_path() const
     {
         return buckets_file_path_;
+    }
+
+
+    // Returns whether the option of extracting detached chordless cycles is specified.
+    bool extract_cycles() const
+    {
+        return extract_cycles_;
     }
 
 

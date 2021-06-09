@@ -1,5 +1,6 @@
 
 #include "Build_Params.hpp"
+#include "utility.hpp"
 
 
 bool Build_Params::is_valid() const
@@ -8,7 +9,7 @@ bool Build_Params::is_valid() const
 
 
     // Check if read and reference de Bruijn graph parameters are being mixed with.
-    if(is_read_graph_)
+    if(is_read_graph_)  // Is a read de Bruijn graph.
     {
         if(!reference_input_.empty())
         {
@@ -16,17 +17,52 @@ bool Build_Params::is_valid() const
             valid = false;
         }
 
-        if(edge_db_path_.empty())
+        if(!extract_cycles_)    // Construction of the compacted dBG is requested, not the detached chordless cycles extraction.
         {
-            std::cout << "The path prefix to the KMC-database for edges (i.e. (k + 1)-mers) is required.\n";
-            valid = false;
+            if(edge_db_path_.empty())
+            {
+                std::cout << "The path prefix to the KMC-database for edges (i.e. (k + 1)-mers) is required.\n";
+                valid = false;
+            }
+        }
+        else    // Detached chordless cycles extraction is requested.
+        {
+            if(vertex_db_path_.empty())
+            {
+                std::cout << "The path prefix to the KMC-database for vertices (i.e. k-mers) is required for the cycles' extraction.\n";
+                valid = false;
+            }
+
+            if(mph_file_path_.empty() || !file_exists(mph_file_path_))
+            {
+                std::cout << "The Minimal Perfect Hash Function (MPHF) file (*.bbh) is required for the cycles' extraction.\n";
+                valid = false;
+            }
+
+            if(buckets_file_path_.empty() || !file_exists(buckets_file_path_))
+            {
+                std::cout << "The hash table buckets file (*.cf) is required for the cycles' extraction.\n";
+                valid = false;
+            }
+
+            if(output_file_path_.empty() || !file_exists(output_file_path_))
+            {
+                std::cout << "The output maximal unitigs file (*.fasta) is required for the cycles' extraction.\n";
+                valid = false;
+            }
         }
     }
-    else
+    else    // Is a reference de Bruijn graph.
     {
         if(!edge_db_path_.empty())
         {
             std::cout << "No edge (i.e. (k + 1)-mer) database is required for a compacted reference de Bruijn graph construction.\n";
+            valid = false;
+        }
+
+        if(extract_cycles_)
+        {
+            std::cout << "Existence of detached chordless cycles are impossible for reference de Bruijn graphs by definition.\n";
             valid = false;
         }
     }
@@ -34,7 +70,7 @@ bool Build_Params::is_valid() const
 
     // Even `k` values are not consistent with the theory.
     // Also, `k` needs to be in the range `[1, MAX_K]`.
-    if((k_ & 1) == 0 || (k_ > cuttlefish::MAX_K))
+    if((k_ & 1U) == 0 || (k_ > cuttlefish::MAX_K))
     {
         std::cout << "The k-mer length (k) needs to be odd and within " << cuttlefish::MAX_K << ".\n";
         valid = false;

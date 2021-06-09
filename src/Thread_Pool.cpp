@@ -100,7 +100,8 @@ void Thread_Pool<k>::task(const uint16_t thread_id)
             case Task_Type::extract_unipaths_read_space:
                 {
                     const Read_dBG_Compaction_Params& params = read_dBG_compaction_params[thread_id];
-                    static_cast<Read_CdBG_Extractor<k>*>(dBG)->process_vertices(static_cast<Kmer_SPMC_Iterator<k>*>(params.parser), params.thread_id);
+                    static_cast<Read_CdBG_Extractor<k>*>(dBG)->
+                        scan_vertices(static_cast<Kmer_SPMC_Iterator<k>*>(params.parser), params.thread_id);
                 }
                 break;
             }

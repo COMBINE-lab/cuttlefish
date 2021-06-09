@@ -48,7 +48,7 @@ void Read_CdBG_Extractor<k>::extract_maximal_unitigs()
     // Close the output sink.
     close_output_sink();
 
-    std::cout << "Number of processed vertices: " << vertices_processed << ".\n";
+    std::cout << "Number of scanned vertices: " << vertices_scanned << ".\n";
     unipaths_meta_info.print();
 
     // Check for the existence of cycle(s).
@@ -77,10 +77,10 @@ void Read_CdBG_Extractor<k>::distribute_unipaths_extraction(Kmer_SPMC_Iterator<k
 
 
 template <uint16_t k>
-void Read_CdBG_Extractor<k>::process_vertices(Kmer_SPMC_Iterator<k>* const vertex_parser, const uint16_t thread_id)
+void Read_CdBG_Extractor<k>::scan_vertices(Kmer_SPMC_Iterator<k>* const vertex_parser, const uint16_t thread_id)
 {
-    // Data structures to be reused per each vertex processed.
-    Kmer<k> v;  // The vertex copy to be processed one-by-one.
+    // Data structures to be reused per each vertex scanned.
+    Kmer<k> v;  // The vertex copy to be scanned one-by-one.
     cuttlefish::side_t s_v; // The side of the vertex `v` that connects it to the maximal unitig `u` containing it, if `v` is flanking.
     State_Read_Space state; // State of the vertex `v`.
     uint64_t id;    // The unique ID of the maximal unitig `u`.
@@ -117,7 +117,7 @@ void Read_CdBG_Extractor<k>::process_vertices(Kmer_SPMC_Iterator<k>* const verte
 
     std::cout << "Thread " << thread_id << " processed " << vertex_count << " vertices.\n"; // TODO: remove.
     
-    vertices_processed += vertex_count;
+    vertices_scanned += vertex_count;
     unipaths_meta_info.aggregate(extracted_unipaths_info);
 
     lock.unlock();

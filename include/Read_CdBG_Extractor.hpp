@@ -41,7 +41,7 @@ private:
     static constexpr std::size_t BUFF_SZ = 100 * 1024ULL;   // 100 KB (soft limit) worth of maximal unitigs can be retained in memory, at most, before flushing.
     static constexpr std::size_t SEQ_SZ = 5 * 1024ULL * 1024ULL;    // 5 MB (soft limit) sized maximal unitig, at most, is constructed at a time.
 
-    mutable uint64_t vertices_processed = 0;    // Total number of vertices scanned from the database.
+    mutable uint64_t vertices_scanned = 0;    // Total number of vertices scanned from the database.
     mutable Spin_Lock lock; // Mutual exclusion lock to access various unique resources by threads spawned off this class' methods.
     
     Unipaths_Meta_info<k> unipaths_meta_info;   // Meta-information over the extracted maximal unitigs.
@@ -52,10 +52,11 @@ private:
     // for the unitpath-flanking vertices to be identified and the corresponding unipaths to be extracted.
     void distribute_unipaths_extraction(Kmer_SPMC_Iterator<k>* vertex_parser, Thread_Pool<k>& thread_pool);
 
-    // Processes the vertices provided to the thread with id `thread_id` from the parser `vertex_parser`,
-    // i.e. for each vertex `v` provided to that thread, identifies whether it is a unipath-flanking
-    // vertex, and if it is, then piece-wise constructs the corresponding unipath.
-    void process_vertices(Kmer_SPMC_Iterator<k>* vertex_parser, uint16_t thread_id);
+    // Scans the vertices provided to the thread with id `thread_id` from the parser `vertex_parser`
+    // for potential unipath-flanking vertices, i.e. for each vertex `v` provided to that thread,
+    // identifies whether it is a unipath-flanking vertex, and if it is, then piece-wise constructs
+    // the corresponding unipath.
+    void scan_vertices(Kmer_SPMC_Iterator<k>* vertex_parser, uint16_t thread_id);
 
     // Extracts the maximal unitig `p` that is flanked by the vertex `v_hat` and connects to `v_hat`
     // through its side `s_v_hat`. Returns `true` iff the extraction is successful, which happens when

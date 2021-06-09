@@ -93,7 +93,7 @@ public:
     Kmer_Hash_Entry_API<BITS_PER_KEY> operator[](const Kmer<k>& kmer);
 
     // Returns the value (in the hash-table) for the key `kmer`.
-    State operator[](const Kmer<k>& kmer) const;
+    const State operator[](const Kmer<k>& kmer) const;
 
     // Attempts to update the entry (in the hash-table) for the API object according
     // to its wrapped state values, and returns `true` or `false` as per success
@@ -148,7 +148,7 @@ inline Kmer_Hash_Entry_API<BITS_PER_KEY> Kmer_Hash_Table<k, BITS_PER_KEY>::opera
 
 
 template <uint16_t k, uint8_t BITS_PER_KEY>
-inline State Kmer_Hash_Table<k, BITS_PER_KEY>::operator[](const Kmer<k>& kmer) const
+inline const State Kmer_Hash_Table<k, BITS_PER_KEY>::operator[](const Kmer<k>& kmer) const
 {
     const uint64_t bucket = bucket_id(kmer);
 

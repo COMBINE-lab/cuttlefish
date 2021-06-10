@@ -35,6 +35,7 @@ Thread_Pool<k>::Thread_Pool(const uint16_t thread_count, void* const dBG, const 
 
     case Task_Type::compute_states_read_space:
     case Task_Type::extract_unipaths_read_space:
+    case Task_Type::mark_unipath_vertices:
         read_dBG_compaction_params.resize(thread_count);
         break;
 
@@ -93,7 +94,8 @@ void Thread_Pool<k>::task(const uint16_t thread_id)
             case Task_Type::compute_states_read_space:
                 {
                     const Read_dBG_Compaction_Params& params = read_dBG_compaction_params[thread_id];
-                    static_cast<Read_CdBG_Constructor<k>*>(dBG)->process_edges(static_cast<Kmer_SPMC_Iterator<k + 1>*>(params.parser), params.thread_id);
+                    static_cast<Read_CdBG_Constructor<k>*>(dBG)->
+                        process_edges(static_cast<Kmer_SPMC_Iterator<k + 1>*>(params.parser), params.thread_id);
                 }
                 break;
 
@@ -102,6 +104,14 @@ void Thread_Pool<k>::task(const uint16_t thread_id)
                     const Read_dBG_Compaction_Params& params = read_dBG_compaction_params[thread_id];
                     static_cast<Read_CdBG_Extractor<k>*>(dBG)->
                         scan_vertices(static_cast<Kmer_SPMC_Iterator<k>*>(params.parser), params.thread_id);
+                }
+                break;
+
+            case Task_Type::mark_unipath_vertices:
+                {
+                    const Read_dBG_Compaction_Params& params = read_dBG_compaction_params[thread_id];
+                    static_cast<Read_CdBG_Extractor<k>*>(dBG)->
+                        mark_maximal_unitig_vertices(static_cast<Kmer_SPMC_Iterator<k>*>(params.parser), params.thread_id);
                 }
                 break;
             }

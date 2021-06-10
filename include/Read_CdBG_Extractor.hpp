@@ -43,6 +43,8 @@ private:
 
     mutable uint64_t vertices_scanned = 0;    // Total number of vertices scanned from the database.
     mutable Spin_Lock lock; // Mutual exclusion lock to access various unique resources by threads spawned off this class' methods.
+
+    mutable uint64_t vertices_marked = 0;   // Total number of vertices marked as present in maximal unitigs; used for the extraction of detached chordless cycle(s), if any.
     
     Unipaths_Meta_info<k> unipaths_meta_info;   // Meta-information over the extracted maximal unitigs.
 
@@ -65,6 +67,24 @@ private:
     // `unipath` (it is overwritten); also, a unique ID for it is put in `id`. If not, `unipath` may
     // contain partial form of the unitig, and `id` is unaltered.
     bool extract_maximal_unitig(const Kmer<k>& v_hat, cuttlefish::side_t s_v_hat, uint64_t& id, std::vector<char>& unipath);
+
+    // Marks all the vertices that are present in the maximal unitigs of the graph.
+    void mark_maximal_unitig_vertices();
+
+    // Scans the vertices provided to the thread with id `thread_id` from the parser `vertex_parser`
+    // for potential unipath-flanking vertices. If a vertex `v` is found to be a flanking one, then
+    // piece-wise constructs the corresponding (partial) maximal unitig starting the traversal from
+    // `v`, and marks the vertices along the way. Premature halts before traversing the entire unitig
+    // `p` is possible, in cases when some other thread is concurrently constructing `p`, but from
+    // the opposite flank — the halt happens at the threads' meeting-point.
+    void mark_maximal_unitig_vertices(Kmer_SPMC_Iterator<k>* vertex_parser, uint16_t thread_id);
+
+    // Marks (partially) the vertices of the maximal unitig `p` that is flanked by the vertex `v_hat`
+    // from one side and connects to `v_hat` through its side `s_v_hat`. `p` might not be marked
+    // completely by this thread if some other thread is concurrently traversing `p`, but from the
+    // opposite flank. However, together these two threads mark `p` completely. Also returns the number
+    // of vertices marked in this execution.
+    std::size_t mark_maximal_unitig(const Kmer<k>& v_hat, cuttlefish::side_t s_v_hat);
 
     // Marks the vertex `v` as outputted. Returns `true` iff `v` has not been marked yet and the hash
     // table update is successful.

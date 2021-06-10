@@ -29,6 +29,7 @@ public:
         output_gfa_reduced,
         compute_states_read_space,
         extract_unipaths_read_space,
+        mark_unipath_vertices,
     };
 
 

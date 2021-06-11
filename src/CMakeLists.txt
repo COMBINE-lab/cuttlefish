@@ -27,6 +27,8 @@ set(PROJECT_SRC
         Read_CdBG_Constructor.cpp
         Read_CdBG_Extractor.cpp
         Unipaths_Meta_info.cpp
+        Detached_Cycles_Extractor.cpp
+        Character_Buffer_Flusher.cpp
         Validator.cpp
         Validator_Hash_Table.cpp
         Sequence_Validator.cpp

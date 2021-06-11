@@ -184,9 +184,6 @@ inline void Character_Buffer_Flusher<std::ofstream>::write(std::vector<char>& bu
 }
 
 
-Spin_Lock Character_Buffer_Flusher<std::ofstream>::lock; // Definition of the static lock of `Character_Buffer_Flusher`.
-
-
 inline void Character_Buffer_Flusher<Async_Logger_Wrapper>::write(std::vector<char>& buf, const Async_Logger_Wrapper& sink)
 {
     buf.emplace_back('\0');

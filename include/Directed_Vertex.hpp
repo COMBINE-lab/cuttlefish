@@ -43,6 +43,9 @@ public:
     // Copy constructs the vertex from `rhs`.
     Directed_Vertex(const Directed_Vertex<k>& rhs);
 
+    // Assigns the vertex `rhs` to this one, and returns a constant reference to this object.
+    const Directed_Vertex<k>& operator=(const Directed_Vertex<k>& rhs);
+
     // Returns `true` iff the k-mer observed for the vertex is in its canonical form.
     bool in_canonical_form() const;
 
@@ -76,6 +79,10 @@ public:
     // edge instance if this vertex instance were to be the source vertex (i.e. prefix k-mer)
     // of that edge.
     cuttlefish::side_t exit_side() const;
+
+    // Returns `true` iff this vertex and the vertex `v` are the same vertex, without the
+    // directionality.
+    bool is_same_vertex(const Directed_Vertex<k>& v) const;
 };
 
 
@@ -101,9 +108,21 @@ template <uint16_t k>
 inline Directed_Vertex<k>::Directed_Vertex(const Directed_Vertex<k>& rhs):
     kmer_(rhs.kmer_),
     kmer_bar_(rhs.kmer_bar_),
-    kmer_hat_ptr(Kmer<k>::canonical(kmer_, kmer_bar_)),
+    kmer_hat_ptr(Kmer<k>::canonical(kmer_, kmer_bar_)), // TODO: replace with pointer-check based assignment (check `operator=`).
     h(rhs.h)
 {}
+
+
+template <uint16_t k>
+inline const Directed_Vertex<k>& Directed_Vertex<k>::operator=(const Directed_Vertex<k>& rhs)
+{
+    kmer_ = rhs.kmer_;
+    kmer_bar_ = rhs.kmer_bar_;
+    kmer_hat_ptr = (rhs.kmer_hat_ptr == &rhs.kmer_ ? &kmer_ : &kmer_bar_);
+    h = rhs.h;
+
+    return *this;
+}
 
 
 template <uint16_t k>
@@ -171,6 +190,13 @@ template <uint16_t k>
 inline cuttlefish::side_t Directed_Vertex<k>::exit_side() const
 {
     return &kmer_ == kmer_hat_ptr ? cuttlefish::side_t::back : cuttlefish::side_t::front;
+}
+
+
+template <uint16_t k>
+inline bool Directed_Vertex<k>::is_same_vertex(const Directed_Vertex<k>& v) const
+{
+    return hash() == v.hash();
 }
 
 

@@ -30,6 +30,7 @@ public:
         compute_states_read_space,
         extract_unipaths_read_space,
         mark_unipath_vertices,
+        extract_cycles,
     };
 
 

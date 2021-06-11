@@ -36,6 +36,7 @@ Thread_Pool<k>::Thread_Pool(const uint16_t thread_count, void* const dBG, const 
     case Task_Type::compute_states_read_space:
     case Task_Type::extract_unipaths_read_space:
     case Task_Type::mark_unipath_vertices:
+    case Task_Type::extract_cycles:
         read_dBG_compaction_params.resize(thread_count);
         break;
 
@@ -112,6 +113,14 @@ void Thread_Pool<k>::task(const uint16_t thread_id)
                     const Read_dBG_Compaction_Params& params = read_dBG_compaction_params[thread_id];
                     static_cast<Read_CdBG_Extractor<k>*>(dBG)->
                         mark_maximal_unitig_vertices(static_cast<Kmer_SPMC_Iterator<k>*>(params.parser), params.thread_id);
+                }
+                break;
+
+            case Task_Type::extract_cycles:
+                {
+                    const Read_dBG_Compaction_Params& params = read_dBG_compaction_params[thread_id];
+                    static_cast<Read_CdBG_Extractor<k>*>(dBG)->
+                        extract_detached_chordless_cycles(static_cast<Kmer_SPMC_Iterator<k>*>(params.parser), params.thread_id);
                 }
                 break;
             }

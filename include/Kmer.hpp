@@ -121,6 +121,10 @@ public:
     // encoding of the other k-mer `rhs`.
     bool operator<(const Kmer<k>& rhs) const;
 
+    // Returns `true` iff the bitwise encoding of this k-mer is larger to
+    // the encoding of the other k-mer `rhs`.
+    bool operator>(const Kmer<k>& rhs) const;
+
     // Returns true iff this k-mer is identical to the other k-mer `rhs`.
     bool operator==(const Kmer<k>& rhs) const;
 
@@ -472,6 +476,17 @@ inline bool Kmer<k>::operator<(const Kmer<k>& rhs) const
     for(int16_t idx = NUM_INTS - 1; idx >= 0; --idx)
         if(kmer_data[idx] != rhs.kmer_data[idx])
             return kmer_data[idx] < rhs.kmer_data[idx];
+
+    return false;
+}
+
+
+template <uint16_t k>
+inline bool Kmer<k>::operator>(const Kmer<k>& rhs) const
+{
+    for(int16_t idx = NUM_INTS - 1; idx >= 0; --idx)
+        if(kmer_data[idx] != rhs.kmer_data[idx])
+            return kmer_data[idx] > rhs.kmer_data[idx];
 
     return false;
 }

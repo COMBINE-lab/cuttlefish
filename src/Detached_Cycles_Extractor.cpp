@@ -175,6 +175,7 @@ void Read_CdBG_Extractor<k>::extract_detached_chordless_cycles(Kmer_SPMC_Iterato
     State_Read_Space state; // State of the vertex `v`.
     uint64_t id;    // The unique ID of the cycle.
     std::vector<char> cycle;  // The extracted cycle.
+    std::size_t pivot;  // Index of the lexicographically lowest (canonical) k-mer in the cycle.
 
     uint64_t vertex_count = 0;  // Number of vertices scanned by this thread.
     uint64_t cycles_extracted = 0;  // Number of detached chordless cycles extracted by this thread.
@@ -189,13 +190,14 @@ void Read_CdBG_Extractor<k>::extract_detached_chordless_cycles(Kmer_SPMC_Iterato
             state = hash_table[v].state();
 
             if(!state.is_outputted())
-                if(extract_cycle(v, id, cycle))
+                if(extract_cycle(v, id, cycle, pivot))
                 {
                     cycles_extracted++;
                     cycle_vertices += cycle.size() - (k - 1);
 
-                    cycle.emplace_back('\n');
-                    output_buffer += FASTA_Record<std::vector<char>>(id, cycle);
+                    // cycle.emplace_back('\n');
+                    // output_buffer += FASTA_Record<std::vector<char>>(id, cycle);
+                    output_buffer.rotate_append(FASTA_Record<std::vector<char>>(id, cycle), pivot);
                 }
 
             vertex_count++;
@@ -217,7 +219,7 @@ void Read_CdBG_Extractor<k>::extract_detached_chordless_cycles(Kmer_SPMC_Iterato
 
 
 template <uint16_t k>
-bool Read_CdBG_Extractor<k>::extract_cycle(const Kmer<k>& v_hat, uint64_t& id, std::vector<char>& cycle)
+bool Read_CdBG_Extractor<k>::extract_cycle(const Kmer<k>& v_hat, uint64_t& id, std::vector<char>& cycle, std::size_t& pivot)
 {
     // Data structures to be reused per each vertex extension of the cycle.
     cuttlefish::side_t s_v = cuttlefish::side_t::back;  // The side of the current vertex `v` through which to extend the cycle, i.e. exit `v`.
@@ -225,10 +227,12 @@ bool Read_CdBG_Extractor<k>::extract_cycle(const Kmer<k>& v_hat, uint64_t& id, s
     State_Read_Space state = hash_table[v.hash()].state();  // State of the vertex `v`.
     cuttlefish::edge_encoding_t e_v;    // The next edge from `v` to include into the cycle.
     cuttlefish::base_t b_ext;   // The nucleobase corresponding to the edge `e_v` and the exiting side `s_v` from `v` to add to the literal cycle.
+    std::size_t kmer_idx;   // Index of the vertex in the path being traversed.
 
 
     const Directed_Vertex<k> anchor(v);
     Directed_Vertex<k> sign_vertex(anchor);
+    pivot = kmer_idx = 0;
 
     anchor.kmer().get_label(cycle);
 
@@ -248,8 +252,10 @@ bool Read_CdBG_Extractor<k>::extract_cycle(const Kmer<k>& v_hat, uint64_t& id, s
         s_v = v.exit_side();
         state = hash_table[v.hash()].state();
 
+        kmer_idx++;
         if(sign_vertex.canonical() > v.canonical())
-            sign_vertex = v;
+            sign_vertex = v,
+            pivot = kmer_idx;
         
         cycle.emplace_back(Kmer<k>::map_char(b_ext));
     }
@@ -257,6 +263,12 @@ bool Read_CdBG_Extractor<k>::extract_cycle(const Kmer<k>& v_hat, uint64_t& id, s
     
     if(!mark_vertex(sign_vertex))
         return false;
+
+    if(!sign_vertex.in_canonical_form())
+    {
+        reverse_complement(cycle);
+        pivot = (cycle.size() - 1) - pivot - (k - 1);
+    }
 
     id = sign_vertex.hash();
 

@@ -103,8 +103,9 @@ private:
     // output-marking _first_ by this thread. If the attempt is successful, then the cycle is extracted
     // in its literal form that starts with `v_hat`'s canonical representation, into `cycle` (it is
     // overwritten); also, a unique ID for it is put in `id`. If not, `cycle` may contain partial form
-    // of the unitig, and `id` is unaltered.
-    bool extract_cycle(const Kmer<k>& v_hat, uint64_t& id, std::vector<char>& cycle);
+    // of the unitig, and `id` is unaltered. The index of the lexicographically lowest (canonical) k-mer
+    // in `cycle` is recorded at `pivot`.
+    bool extract_cycle(const Kmer<k>& v_hat, uint64_t& id, std::vector<char>& cycle, std::size_t& pivot);
 
     // Marks the vertex `v` as outputted. Returns `true` iff `v` has not been marked yet and the hash
     // table update is successful.

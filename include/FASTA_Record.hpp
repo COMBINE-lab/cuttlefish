@@ -37,6 +37,11 @@ public:
 
     // Appends the FASTA sequence to the vector `buffer`.
     void append_seq(std::vector<char>& buffer) const;
+
+    // Appends the FASTA sequence to the vector `buffer` in a rotated form — the
+    // added sequence is right rotated so that the character at index `pivot` is
+    // at index 0 finally.
+    void append_rotated_seq(std::vector<char>& buffer, std::size_t pivot) const;
 };
 
 
@@ -75,6 +80,14 @@ inline void FASTA_Record<T_seq_, T_id_>::append_seq(std::vector<char>& buffer) c
 {
     // `std::memcpy` at the end of `buffer` does not update the size of the vector `buffer`.
     buffer.insert(buffer.end(), seq_.begin(), seq_.end());
+}
+
+
+template <typename T_seq_, typename T_id_>
+inline void FASTA_Record<T_seq_, T_id_>::append_rotated_seq(std::vector<char>& buffer, const std::size_t pivot) const
+{
+    buffer.insert(buffer.end(), seq_.begin() + pivot, seq_.end());
+    buffer.insert(buffer.end(), seq_.begin(), seq_.begin() + pivot);
 }
 
 

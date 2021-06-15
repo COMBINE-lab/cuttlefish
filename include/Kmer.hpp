@@ -676,8 +676,10 @@ inline void Kmer<k>::get_label(T_container_& label) const
 {
     label.resize(k);
 
+    constexpr uint16_t PACKED_BYTE_COUNT = k / 32;
+
     // Get the fully packed words' representations.
-    for(uint16_t data_idx = 0; data_idx < NUM_INTS - 1; ++data_idx)
+    for(uint16_t data_idx = 0; data_idx < PACKED_BYTE_COUNT; ++data_idx)
         for(uint16_t bit_pair_idx = 0; bit_pair_idx < 32; ++bit_pair_idx)
             label[(k - 1) - ((data_idx << 5) + bit_pair_idx)] =
                 map_char(static_cast<DNA::Base>((kmer_data[data_idx] & (0b11ULL << (2 * bit_pair_idx))) >> (2 * bit_pair_idx)));

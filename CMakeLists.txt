@@ -30,7 +30,7 @@ set(CMAKE_C_EXTENSIONS OFF)
 # Same with maybe-uninitialized (might want this one back later though).
 # Reference: https://gcc.gnu.org/onlinedocs/gcc/Warning-Options.html
 set(WARNING_FLAGS -Wall -Wextra)
-set(SUPPRESS_WARNING_FLAGS -Wno-unknown-pragmas -Wno-implicit-fallthrough)
+set(SUPPRESS_WARNING_FLAGS -Wno-unknown-pragmas)
 
 # Bundle the extra optimization flags (not associated with the `-O` levels)
 # that we want to pass on to the compiler.

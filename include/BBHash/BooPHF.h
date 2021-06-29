@@ -527,11 +527,16 @@ we need this 2-functors scheme because HashFunctors won't work with unordered_ma
 
 		//return next hash an update state s
 		uint64_t next(hash_pair_t  & s ) {
+			#pragma GCC diagnostic push
+			#pragma GCC diagnostic ignored "-Wmaybe-uninitialized"
+
 			uint64_t s1 = s[ 0 ];
 			const uint64_t s0 = s[ 1 ];
 			s[ 0 ] = s0;
 			s1 ^= s1 << 23; // a
-			return ( s[ 1 ] = ( s1 ^ s0 ^ ( s1 >> 17 ) ^ ( s0 >> 26 ) ) ) + s0; // b, c
+			return ( s[ 1 ] = s0 + ( s1 ^ s0 ^ ( s1 >> 17 ) ^ ( s0 >> 26 ) ) ); // b, c
+			
+			#pragma GCC diagnostic pop
 		}
 
         //this one returns all the  hashes

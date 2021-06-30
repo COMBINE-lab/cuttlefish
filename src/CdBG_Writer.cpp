@@ -11,7 +11,6 @@
 #include <numeric>
 
 
-
 // Define the static fields required for the GFA-reduced output.
 template <uint16_t k> const std::string CdBG<k>::SEG_FILE_EXT = ".cf_seg";
 template <uint16_t k> const std::string CdBG<k>::SEQ_FILE_EXT = ".cf_seq";

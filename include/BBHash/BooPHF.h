@@ -527,8 +527,12 @@ we need this 2-functors scheme because HashFunctors won't work with unordered_ma
 
 		//return next hash an update state s
 		uint64_t next(hash_pair_t  & s ) {
-			#pragma GCC diagnostic push
-			#pragma GCC diagnostic ignored "-Wmaybe-uninitialized"
+			#pragma GCC diagnostic push	
+			#if not defined __has_warning
+				#pragma GCC diagnostic ignored "-Wmaybe-uninitialized"
+			#elif __has_warning("-Wmaybe-uninitialized")
+				#pragma GCC diagnostic ignored "-Wmaybe-uninitialized"
+			#endif
 
 			uint64_t s1 = s[ 0 ];
 			const uint64_t s0 = s[ 1 ];

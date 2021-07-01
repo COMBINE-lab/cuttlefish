@@ -61,14 +61,14 @@ To install Cuttlefish from the source, you may use the following:
 ```bash
   git clone https://github.com/COMBINE-lab/cuttlefish.git
   cd cuttlefish && mkdir build && cd build
-  cmake ..
+  cmake -DCMAKE_INSTALL_PREFIX=../ ..
   make -j 8 install
   cd ..
 ```
 
-You may replace `8` in `make -j 8 install` with the preferred count for threads to use in the installation process.
+You may replace `8` in `make -j 8` with the preferred count for threads to use in the installation process.
 
-This compilation process installs Cuttlefish in a default sub-directory named `bin`, inside the project root directory. To specify a different installation directory, its path may be passed as the value of `-DCMAKE_INSTALL_PREFIX` with the `cmake` command, i.e. you may use `cmake -DCMAKE_INSTALL_PREFIX=custome-path/ ..` .
+This compilation process installs Cuttlefish in a sub-directory named `bin`, inside the project root directory. To specify a different installation directory, its path may be passed as the value of `-DCMAKE_INSTALL_PREFIX` with the `cmake` command, i.e. you may use `cmake -DCMAKE_INSTALL_PREFIX=custom_path/ ..` . Then the installed Cuttlefish executable will be found in `custom_path/bin/`. Skipping `-DCMAKE_INSTALL_PREFIX` entirely will install Cuttlefish in `/usr/local/bin`, for which `sudo` access might be required (i.e. `sudo make -j 8 install`).
 
 ## Usage
 

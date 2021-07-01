@@ -75,21 +75,46 @@ This compilation process installs Cuttlefish in a default sub-directory named `b
 To produce the _k_-mer set from an individual input genome reference using KMC3, the following may be used (from the KMC root directory):
 
 ```bash
-  ./bin/kmc -k<k-mer_length> -fm -ci0 -t<thread-count> <input_reference> <output_set> <working_directory>
+  ./bin/kmc -k<k-mer_length> -fm -ci1 -t<thread_count> <input_reference> <output_set> <working_directory>
 ```
 
-If working with multiple genome references, then you may use:
+If working with multiple genome references, you may use:
 
 ```bash
-  ./bin/kmc -k<k-mer_length> -fm -ci0 -t<thread-count> @<input_references_list> <output_set> <working_directory>
+  ./bin/kmc -k<k-mer_length> -fm -ci1 -t<thread_count> @<input_references_list> <output_set> <working_directory>
 ```
 
-The input file `<input_reference>` or the files listed in `<input_references_list>` should be in the FASTA format, possibly gzipped. The `k` value should be odd (required by Cuttlefish), and is 25 by default. Having executed, KMC3 will produce two files with the same prefix `<output_database>`, and extensions `.kmc_pre` and `.kmc_suf`. Note that, the maximum memory usage by KMC3 can be restrained within `M` GBs by adding `-m<M> -sm` to the invocation, if required (`M` = 12 by default).
+The input file `input_reference` or the files listed in `input_references_list` should be in the FASTA format, possibly gzipped. The `k` value should be odd (required by Cuttlefish), and is 25 by default. Having executed, KMC3 will produce two files with the same prefix `output_database`, and extensions `.kmc_pre` and `.kmc_suf`. When working within strict memory limits, you should add the arguments `-m<max_memory> -sm` with these invocations, where `max_memory` is your memory budget in gigabytes.
 
-Then to build the compacted de Bruijn graph, use Cuttlefish as following (from the project root directory):
+Cuttlefish has the following command line interface:
+```bash
+$ cuttlefish build --help
+Efficiently construct the compacted de Bruijn graph from references
+Usage:
+  cuttlefish build [OPTION...]
+
+  -r, --refs arg      reference files (default: "")
+  -l, --lists arg     reference file lists (default: "")
+  -d, --dirs arg      reference file directories (default: "")
+  -k, --kmer_len arg  k-mer length (default: 25)
+  -s, --kmc_db arg    set of k-mers (KMC database) prefix
+  -t, --threads arg   number of threads to use (default: 1)
+  -o, --output arg    output file (default: "")
+  -f, --format arg    output format (0: txt, 1: GFA 1.0, 2: GFA 2.0, 3:
+                      GFA-reduced) (default: 0)
+  -w, --work_dir arg  working directory (default: .)
+      --rm            remove the KMC database
+      --mph arg       minimal perfect hash (BBHash) file (optional) (default:
+                      "")
+      --buckets arg   hash table buckets (cuttlefish) file (optional)
+                      (default: "")
+  -h, --help          print usage
+```
+
+To build the compacted de Bruijn graph, use Cuttlefish as following (from the project root directory):
 
 ```bash
-  ./bin/cuttlefish build <input_references> -k <k-mer_length> -s <k-mer_set> -t <thread-count> -o <output_file> -f <output_format> -w <working_directory>
+  ./bin/cuttlefish build <input_references> -k <k-mer_length> -s <k-mer_set> -t <thread_count> -o <output_file> -f <output_format> -w <working_directory>
 ```
 
 The arguments are set as following:
@@ -99,7 +124,7 @@ The arguments are set as following:
   - `-l <newline-separated list file of refs>`
   - `-d <directory containing only the refs>`
 - The _k_-mer length `k` must be odd and within 63 (see [Larger _k_-mer sizes](#larger-k-mer-sizes) to increase the _k_-mer size capacity beyond this). The default value is 25.
-- The _k_-mer set prefix `s` must match exactly the output value used in the `kmc` invocation, i.e. it should be the `<output_set>` argument from the `kmc` invocation.
+- The _k_-mer set prefix `s` must match exactly the output value used in the `kmc` invocation, i.e. it should be the `output_set` argument from the `kmc` invocation.
 - Number of threads `t` is set to `1` by default, and the use of higher values is recommended.
 - The output formats (`f`) are —
   - `0`: only the maximal unitig (non-branching path) fragments;
@@ -110,9 +135,9 @@ The arguments are set as following:
 
 ## I/O formats
 
-The input references should be in the FASTA format, possibly gzipped. The currently supported output formats are —
+The input references should be in the FASTA format, possibly gzipped. Currently supported output formats are —
 
-- The set of maximal unitigs (non-branching paths) from the original de Bruijn graph;
+- The set of maximal unitigs (non-branching paths) from the original de Bruijn graph, in plain text;
 - The compacted de Bruijn graph in the [GFA 1.0](https://github.com/GFA-spec/GFA-spec/blob/master/GFA1.md) and the [GFA 2.0](https://github.com/GFA-spec/GFA-spec/blob/master/GFA2.md) formats;
 - The compacted de Bruijn graph in a ''reduced'' GFA format. It consists of two files, with the extensions — `.cf_seg` and `.cf_seq`.
   - The `.cf_seg` file contains all the maximal unitig fragments of the graph (the segment outputs from GFA, i.e. the `S`-tagged entries), each one with a unique id. This file is a list of pairs `<id segment>`.
@@ -170,7 +195,7 @@ Please use the `kmc` and the `cuttlefish` binaries from their respective paths i
   - Generate the _k_-mer set:
 
     ```bash
-      kmc -k3 -fm -ci0 -t4 refs1.fa kmers temp/
+      kmc -k3 -fm -ci1 -t4 refs1.fa kmers temp/
     ```
 
   - Build a hash function over `kmers`, compute the states of the graph vertices, and output the compacted graph (in GFA 1.0):
@@ -199,7 +224,7 @@ Please use the `kmc` and the `cuttlefish` binaries from their respective paths i
   - Generate the _k_-mer set:
 
     ```bash
-      kmc -k3 -fm -ci0 -t4 @refs.lst kmers temp/
+      kmc -k3 -fm -ci1 -t4 @refs.lst kmers temp/
     ```
 
   - Build a hash function over `kmers`, compute the states of the graph vertices, and output the compacted graph (in GFA 2.0):
@@ -216,10 +241,10 @@ Please use the `kmc` and the `cuttlefish` binaries from their respective paths i
 
 ## Larger _k_-mer sizes
 
-The default maximum _k_-mer size supported with the installation is 63. To set the maximum _k_-mer size capacity to some `MAX_K`, add `-DINSTANCE_COUNT=<instance_count>` with the `cmake` command — where `instance_count` is the number of `k`-values that are to be supported by Cuttlefish, and should be set to `(MAX_K + 1) / 2`. For example, to support a `MAX_K` of 201, use the following:
+The default maximum _k_-mer size supported with the installation is 63. To set the maximum _k_-mer size capacity to some `MAX_K`, add `-DINSTANCE_COUNT=<instance_count>` with the `cmake` command — where `instance_count` is the number of `k`-values that are to be supported by Cuttlefish, and should be set to `(MAX_K + 1) / 2`. For example, to support a `MAX_K` of 127, use the following:
 
 ```bash
-  cmake -DINSTANCE_COUNT=101 ..
+  cmake -DINSTANCE_COUNT=64 ..
 ```
 
 Cuttlefish supports only the odd `k` values within `MAX_K` due to theoretical reasons. Increasing the `MAX_K` bound incurs additional compilation cost, slowing down the installation. Currently, KMC3 supports a `MAX_K` of 255. <!-- Also, to increase `MAX_K` beyond 255, the maximum supported _k_ should also be updated with KMC3. --> Please note that, the second step of the pipeline, i.e. the construction of a minimal perfect hash function (using [BBHash](https://github.com/rizkg/BBHash)) gets less efficient (time-wise) with increasing _k_, due to disk-read throughput bottlenecks associated with reading the _k_-mers from the KMC database.
@@ -258,7 +283,6 @@ This work is supported by _NIH R01 HG009937_, and by _NSF CCF-1750472_, and _CNS
 - The [(ghc) filesystem](https://github.com/gulrak/filesystem) library is MIT licensed.
 - The [KMC](https://github.com/refresh-bio/KMC) software is GNU GPL 3 licensed.
 - The [kseq](http://lh3lh3.users.sourceforge.net/kseq.shtml) library is MIT licensed.
-- The [readerwriterqueue](https://github.com/cameron314/readerwriterqueue) is FreeBSD licensed.
 - The [spdlog](https://github.com/gabime/spdlog) library is MIT licensed.
 - The [xxHash](https://github.com/Cyan4973/xxHash) library is BSD licensed.
 - Cuttlefish is Revised BSD licensed.

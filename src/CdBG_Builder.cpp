@@ -605,27 +605,6 @@ bool CdBG<k>::process_isolated_kmer(const Directed_Kmer<k>& kmer)
 }
 
 
-template <uint16_t k> 
-void CdBG<k>::print_state_class_dist() const
-{
-    const std::string& kmc_db_path = params.kmc_db_path();
-
-    Kmer_Container<k> kmers(kmc_db_path);
-    auto it_beg = kmers.begin();
-    auto it_end = kmers.end();
-    size_t C[4] = {0, 0, 0, 0};
-
-    for(auto it = it_beg; it != it_end; ++it)
-        C[uint8_t(Vertices[*it].decode().state_class_)]++;
-
-
-    std::cout << "Single-In-Single-Out:\t" << C[0] << "\n";
-    std::cout << "Multi-In-Single-Out:\t" << C[1] << "\n";
-    std::cout << "Single-In-Multi-Out:\t" << C[2] << "\n";
-    std::cout << "Multi-In-Multi-Out:\t" << C[3] << "\n";
-}
-
-
 
 // Template instantiations for the required specializations.
 ENUMERATE(INSTANCE_COUNT, INSTANTIATE, CdBG)

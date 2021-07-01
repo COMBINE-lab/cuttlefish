@@ -1,8 +1,6 @@
 
 #include "Directed_Kmer.hpp"
 #include "Kmer_Container.hpp"
-#include "Kmer_Iterator.hpp"
-#include "Kmer_Buffered_Iterator.hpp"
 #include "Kmer_SPMC_Iterator.hpp"
 #include "BBHash/BooPHF.h"
 #include "Kmer_Hasher.hpp"

@@ -53,12 +53,12 @@ namespace cuttlefish
     constexpr dir_t BWD = false;
 
 
-    enum class Vertex_Class: uint8_t
+    enum class State_Class: uint8_t
     {
         single_in_single_out = 0,
         multi_in_single_out = 1,
         single_in_multi_out = 2,
-        multi_in_multi_out = 3
+        multi_in_multi_out = 3,
     };
 
 

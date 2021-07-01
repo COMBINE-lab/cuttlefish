@@ -252,7 +252,7 @@ bool CdBG<k>::process_loop(const Directed_Kmer<k>& kmer, const Directed_Kmer<k>&
         const Kmer<k>& kmer_hat = kmer.canonical();
         Kmer_Hash_Entry_API hash_table_entry = Vertices[kmer_hat];
         State& state = hash_table_entry.get_state();
-        state = State(Vertex(cuttlefish::Vertex_Class::multi_in_multi_out));
+        state = State(Vertex(cuttlefish::State_Class::multi_in_multi_out));
 
         return Vertices.update(hash_table_entry);
     }
@@ -292,32 +292,32 @@ bool CdBG<k>::process_leftmost_kmer(const Directed_Kmer<k>& kmer, const Directed
     {
         // The sentinel k-mer is encountered for the first time, and in the forward direction.
         if(!state.is_visited())
-            state = State(Vertex(cuttlefish::Vertex_Class::multi_in_single_out, next_base));
+            state = State(Vertex(cuttlefish::State_Class::multi_in_single_out, next_base));
         else    // The sentinel k-mer has been visited earlier and has some state; modify it accordingly.
         {
             Vertex vertex = state.decode();
 
-            if(vertex.vertex_class_ == cuttlefish::Vertex_Class::single_in_single_out)
+            if(vertex.state_class_ == cuttlefish::State_Class::single_in_single_out)
             {
-                if(vertex.exit_ == next_base)
-                    vertex.vertex_class_ = cuttlefish::Vertex_Class::multi_in_single_out;
+                if(vertex.back_ == next_base)
+                    vertex.state_class_ = cuttlefish::State_Class::multi_in_single_out;
                 else
-                    vertex.vertex_class_ = cuttlefish::Vertex_Class::multi_in_multi_out;
+                    vertex.state_class_ = cuttlefish::State_Class::multi_in_multi_out;
 
                 state = State(vertex);
             }
-            else if(vertex.vertex_class_ == cuttlefish::Vertex_Class::multi_in_single_out)
+            else if(vertex.state_class_ == cuttlefish::State_Class::multi_in_single_out)
             {
-                if(vertex.exit_ != next_base)
+                if(vertex.back_ != next_base)
                 {
-                    vertex.vertex_class_ = cuttlefish::Vertex_Class::multi_in_multi_out;
+                    vertex.state_class_ = cuttlefish::State_Class::multi_in_multi_out;
 
                     state = State(vertex);
                 }
             }
-            else    // vertex.vertex_class == cuttlefish::Vertex_Class::single_in_multi_out
+            else    // vertex.state_class_ == cuttlefish::State_Class::single_in_multi_out
             {
-                vertex.vertex_class_ = cuttlefish::Vertex_Class::multi_in_multi_out;
+                vertex.state_class_ = cuttlefish::State_Class::multi_in_multi_out;
 
                 state = State(vertex);
             }
@@ -327,31 +327,31 @@ bool CdBG<k>::process_leftmost_kmer(const Directed_Kmer<k>& kmer, const Directed
     {
         // The sentinel k-mer is encountered for the first time, and in the backward direction.
         if(!state.is_visited())
-            state = State(Vertex(cuttlefish::Vertex_Class::single_in_multi_out, Kmer<k>::complement(next_base)));
+            state = State(Vertex(cuttlefish::State_Class::single_in_multi_out, Kmer<k>::complement(next_base)));
         else    // The sentinel k-mer has been visited earlier and has some state; modify it accordingly.
         {
             Vertex vertex = state.decode();
 
-            if(vertex.vertex_class_ == cuttlefish::Vertex_Class::single_in_single_out)
+            if(vertex.state_class_ == cuttlefish::State_Class::single_in_single_out)
             {
-                if(vertex.enter_ == Kmer<k>::complement(next_base))
-                    vertex.vertex_class_ = cuttlefish::Vertex_Class::single_in_multi_out;
+                if(vertex.front_ == Kmer<k>::complement(next_base))
+                    vertex.state_class_ = cuttlefish::State_Class::single_in_multi_out;
                 else
-                    vertex.vertex_class_ = cuttlefish::Vertex_Class::multi_in_multi_out;
+                    vertex.state_class_ = cuttlefish::State_Class::multi_in_multi_out;
 
                 state = State(vertex);
             }
-            else if(vertex.vertex_class_ == cuttlefish::Vertex_Class::multi_in_single_out)
+            else if(vertex.state_class_ == cuttlefish::State_Class::multi_in_single_out)
             {
-                vertex.vertex_class_ = cuttlefish::Vertex_Class::multi_in_multi_out;
+                vertex.state_class_ = cuttlefish::State_Class::multi_in_multi_out;
 
                 state = State(vertex);
             }
-            else    // vertex.vertex_class == cuttlefish::Vertex_Class::single_in_multi_out
+            else    // vertex.state_class_ == cuttlefish::State_Class::single_in_multi_out
             {
-                if(vertex.enter_ != Kmer<k>::complement(next_base))
+                if(vertex.front_ != Kmer<k>::complement(next_base))
                 {
-                    vertex.vertex_class_ = cuttlefish::Vertex_Class::multi_in_multi_out;
+                    vertex.state_class_ = cuttlefish::State_Class::multi_in_multi_out;
 
                     state = State(vertex);
                 }
@@ -391,31 +391,31 @@ bool CdBG<k>::process_rightmost_kmer(const Directed_Kmer<k>& kmer, const char pr
     {
         // The sentinel k-mer is encountered for the first time, and in the forward direction.
         if(!state.is_visited())
-            state = State(Vertex(cuttlefish::Vertex_Class::single_in_multi_out, prev_base));
+            state = State(Vertex(cuttlefish::State_Class::single_in_multi_out, prev_base));
         else    // The sentinel k-mer has been visited earlier and has some state; modify it accordingly.
         {
             Vertex vertex = state.decode();
 
-            if(vertex.vertex_class_ == cuttlefish::Vertex_Class::single_in_single_out)
+            if(vertex.state_class_ == cuttlefish::State_Class::single_in_single_out)
             {
-                if(vertex.enter_ == prev_base)
-                    vertex.vertex_class_ = cuttlefish::Vertex_Class::single_in_multi_out;
+                if(vertex.front_ == prev_base)
+                    vertex.state_class_ = cuttlefish::State_Class::single_in_multi_out;
                 else
-                    vertex.vertex_class_ = cuttlefish::Vertex_Class::multi_in_multi_out;
+                    vertex.state_class_ = cuttlefish::State_Class::multi_in_multi_out;
 
                 state = State(vertex);
             }
-            else if(vertex.vertex_class_ == cuttlefish::Vertex_Class::multi_in_single_out)
+            else if(vertex.state_class_ == cuttlefish::State_Class::multi_in_single_out)
             {
-                vertex.vertex_class_ = cuttlefish::Vertex_Class::multi_in_multi_out;
+                vertex.state_class_ = cuttlefish::State_Class::multi_in_multi_out;
                 
                 state = State(vertex);
             }
-            else    // vertex.vertex_class == cuttlefish::Vertex_Class::single_in_multi_out
+            else    // vertex.state_class_ == cuttlefish::State_Class::single_in_multi_out
             {
-                if(vertex.enter_ != prev_base)
+                if(vertex.front_ != prev_base)
                 {
-                    vertex.vertex_class_ = cuttlefish::Vertex_Class::multi_in_multi_out;
+                    vertex.state_class_ = cuttlefish::State_Class::multi_in_multi_out;
 
                     state = State(vertex);
                 }
@@ -426,32 +426,32 @@ bool CdBG<k>::process_rightmost_kmer(const Directed_Kmer<k>& kmer, const char pr
     {
         // The sentinel k-mer is encountered for the first time, and in the backward direction.
         if(!state.is_visited())
-            state = State(Vertex(cuttlefish::Vertex_Class::multi_in_single_out, Kmer<k>::complement(prev_base)));
+            state = State(Vertex(cuttlefish::State_Class::multi_in_single_out, Kmer<k>::complement(prev_base)));
         else    // The sentinel k-mer has been visited earlier and has some state; modify it accordingly.
         {
             Vertex vertex = state.decode();
 
-            if(vertex.vertex_class_ == cuttlefish::Vertex_Class::single_in_single_out)
+            if(vertex.state_class_ == cuttlefish::State_Class::single_in_single_out)
             {
-                if(vertex.exit_ == Kmer<k>::complement(prev_base))
-                    vertex.vertex_class_ = cuttlefish::Vertex_Class::multi_in_single_out;
+                if(vertex.back_ == Kmer<k>::complement(prev_base))
+                    vertex.state_class_ = cuttlefish::State_Class::multi_in_single_out;
                 else
-                    vertex.vertex_class_ = cuttlefish::Vertex_Class::multi_in_multi_out;
+                    vertex.state_class_ = cuttlefish::State_Class::multi_in_multi_out;
 
                 state= State(vertex);
             }
-            else if(vertex.vertex_class_ == cuttlefish::Vertex_Class::multi_in_single_out)
+            else if(vertex.state_class_ == cuttlefish::State_Class::multi_in_single_out)
             {
-                if(vertex.exit_ != Kmer<k>::complement(prev_base))
+                if(vertex.back_ != Kmer<k>::complement(prev_base))
                 {
-                    vertex.vertex_class_ = cuttlefish::Vertex_Class::multi_in_multi_out;
+                    vertex.state_class_ = cuttlefish::State_Class::multi_in_multi_out;
 
                     state = State(vertex);
                 }
             }
-            else    // vertex.vertex_class == cuttlefish::Vertex_Class::single_in_multi_out
+            else    // vertex.state_class_ == cuttlefish::State_Class::single_in_multi_out
             {
-                vertex.vertex_class_ = cuttlefish::Vertex_Class::multi_in_multi_out;
+                vertex.state_class_ = cuttlefish::State_Class::multi_in_multi_out;
 
                 state = State(vertex);
             }
@@ -495,38 +495,38 @@ bool CdBG<k>::process_internal_kmer(const Directed_Kmer<k>& kmer, const Directed
     {
         // The k-mer is encountered for the first time, and in the forward direction.
         if(!state.is_visited())
-            state = State(Vertex(cuttlefish::Vertex_Class::single_in_single_out, prev_base, next_base));
+            state = State(Vertex(cuttlefish::State_Class::single_in_single_out, prev_base, next_base));
         else    // The k-mer has been visited earlier and has some state; modify it accordingly.
         {
             Vertex vertex = state.decode();
 
-            if(vertex.vertex_class_ == cuttlefish::Vertex_Class::single_in_single_out)
+            if(vertex.state_class_ == cuttlefish::State_Class::single_in_single_out)
             {
-                if(vertex.enter_ == prev_base && vertex.exit_ == next_base)
+                if(vertex.front_ == prev_base && vertex.back_ == next_base)
                     return true;    // See note at the end on early return w/o hash table update.
-                else if(vertex.enter_ != prev_base && vertex.exit_ != next_base)
-                    vertex.vertex_class_ = cuttlefish::Vertex_Class::multi_in_multi_out;
-                else if(vertex.enter_ != prev_base)
-                    vertex.vertex_class_ = cuttlefish::Vertex_Class::multi_in_single_out;
-                else    // vertex.exit != next_base
-                    vertex.vertex_class_ = cuttlefish::Vertex_Class::single_in_multi_out;
+                else if(vertex.front_ != prev_base && vertex.back_ != next_base)
+                    vertex.state_class_ = cuttlefish::State_Class::multi_in_multi_out;
+                else if(vertex.front_ != prev_base)
+                    vertex.state_class_ = cuttlefish::State_Class::multi_in_single_out;
+                else    // vertex.back_ != next_base
+                    vertex.state_class_ = cuttlefish::State_Class::single_in_multi_out;
 
                 state = State(vertex);
             }
-            else if(vertex.vertex_class_ == cuttlefish::Vertex_Class::multi_in_single_out)
+            else if(vertex.state_class_ == cuttlefish::State_Class::multi_in_single_out)
             {
-                if(vertex.exit_ != next_base)
+                if(vertex.back_ != next_base)
                 {
-                    vertex.vertex_class_ = cuttlefish::Vertex_Class::multi_in_multi_out;
+                    vertex.state_class_ = cuttlefish::State_Class::multi_in_multi_out;
 
                     state = State(vertex);
                 }
             }
-            else    // vertex.vertex_class == cuttlefish::Vertex_Class::single_in_multi_out
+            else    // vertex.state_class_ == cuttlefish::State_Class::single_in_multi_out
             {
-                if(vertex.enter_ != prev_base)
+                if(vertex.front_ != prev_base)
                 {
-                    vertex.vertex_class_ = cuttlefish::Vertex_Class::multi_in_multi_out;
+                    vertex.state_class_ = cuttlefish::State_Class::multi_in_multi_out;
 
                     state = State(vertex);
                 }
@@ -537,38 +537,38 @@ bool CdBG<k>::process_internal_kmer(const Directed_Kmer<k>& kmer, const Directed
     {
         // The k-mer is encountered for the first time, and in the backward direction.
         if(!state.is_visited())
-            state = State(Vertex(cuttlefish::Vertex_Class::single_in_single_out, Kmer<k>::complement(next_base), Kmer<k>::complement(prev_base)));
+            state = State(Vertex(cuttlefish::State_Class::single_in_single_out, Kmer<k>::complement(next_base), Kmer<k>::complement(prev_base)));
         else    // The k-mer has been visited earlier and has some state; modify it accordingly.
         {
             Vertex vertex = state.decode();
 
-            if(vertex.vertex_class_ == cuttlefish::Vertex_Class::single_in_single_out)
+            if(vertex.state_class_ == cuttlefish::State_Class::single_in_single_out)
             {
-                if(vertex.enter_ == Kmer<k>::complement(next_base) && vertex.exit_ == Kmer<k>::complement(prev_base))
+                if(vertex.front_ == Kmer<k>::complement(next_base) && vertex.back_ == Kmer<k>::complement(prev_base))
                     return true;    // See note at the end on early return w/o hash table update.
-                else if(vertex.enter_ != Kmer<k>::complement(next_base) && vertex.exit_ != Kmer<k>::complement(prev_base))
-                    vertex.vertex_class_ = cuttlefish::Vertex_Class::multi_in_multi_out;
-                else if(vertex.enter_ != Kmer<k>::complement(next_base))
-                    vertex.vertex_class_ = cuttlefish::Vertex_Class::multi_in_single_out;
-                else    // vertex.exit != complement(prev_base)
-                    vertex.vertex_class_ = cuttlefish::Vertex_Class::single_in_multi_out;
+                else if(vertex.front_ != Kmer<k>::complement(next_base) && vertex.back_ != Kmer<k>::complement(prev_base))
+                    vertex.state_class_ = cuttlefish::State_Class::multi_in_multi_out;
+                else if(vertex.front_ != Kmer<k>::complement(next_base))
+                    vertex.state_class_ = cuttlefish::State_Class::multi_in_single_out;
+                else    // vertex.back_ != complement(prev_base)
+                    vertex.state_class_ = cuttlefish::State_Class::single_in_multi_out;
 
                 state = State(vertex);
             }
-            else if(vertex.vertex_class_ == cuttlefish::Vertex_Class::multi_in_single_out)
+            else if(vertex.state_class_ == cuttlefish::State_Class::multi_in_single_out)
             {
-                if(vertex.exit_ != Kmer<k>::complement(prev_base))
+                if(vertex.back_ != Kmer<k>::complement(prev_base))
                 {
-                    vertex.vertex_class_ = cuttlefish::Vertex_Class::multi_in_multi_out;
+                    vertex.state_class_ = cuttlefish::State_Class::multi_in_multi_out;
 
                     state = State(vertex);
                 }
             }
-            else    // vertex.vertex_class == cuttlefish::Vertex_Class::single_in_multi_out
+            else    // vertex.state_class_ == cuttlefish::State_Class::single_in_multi_out
             {
-                if(vertex.enter_ != Kmer<k>::complement(next_base))
+                if(vertex.front_ != Kmer<k>::complement(next_base))
                 {
-                    vertex.vertex_class_ = cuttlefish::Vertex_Class::multi_in_multi_out;
+                    vertex.state_class_ = cuttlefish::State_Class::multi_in_multi_out;
 
                     state = State(vertex);
                 }
@@ -600,29 +600,8 @@ bool CdBG<k>::process_isolated_kmer(const Directed_Kmer<k>& kmer)
         return true;    // Early return is safe from here as this vertex is a dead-end for state transitions.
     
     // Classify the isolated k-mer as a complex node.
-    state = State(Vertex(cuttlefish::Vertex_Class::multi_in_multi_out));
+    state = State(Vertex(cuttlefish::State_Class::multi_in_multi_out));
     return Vertices.update(hash_table_entry);
-}
-
-
-template <uint16_t k> 
-void CdBG<k>::print_vertex_class_dist() const
-{
-    const std::string& kmc_db_path = params.kmc_db_path();
-
-    Kmer_Container<k> kmers(kmc_db_path);
-    auto it_beg = kmers.begin();
-    auto it_end = kmers.end();
-    size_t C[4] = {0, 0, 0, 0};
-
-    for(auto it = it_beg; it != it_end; ++it)
-        C[uint8_t(Vertices[*it].decode().vertex_class_)]++;
-
-
-    std::cout << "Single-In-Single-Out:\t" << C[0] << "\n";
-    std::cout << "Multi-In-Single-Out:\t" << C[1] << "\n";
-    std::cout << "Single-In-Multi-Out:\t" << C[2] << "\n";
-    std::cout << "Multi-In-Multi-Out:\t" << C[3] << "\n";
 }
 
 

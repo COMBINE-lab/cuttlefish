@@ -3,37 +3,37 @@
 #include <cassert>
 
 
-Vertex::Vertex(const cuttlefish::Vertex_Class vertex_class, const cuttlefish::base_t enter, const cuttlefish::base_t exit):
-    vertex_class_(vertex_class), enter_(enter), exit_(exit), visited_(true), outputted_(false)
+Vertex::Vertex(const cuttlefish::State_Class state_class, const cuttlefish::base_t front, const cuttlefish::base_t back):
+    state_class_(state_class), front_(front), back_(back), visited_(true), outputted_(false)
 {
-    assert(vertex_class == cuttlefish::Vertex_Class::single_in_single_out);
+    assert(state_class == cuttlefish::State_Class::single_in_single_out);
 }
 
 
-Vertex::Vertex(const cuttlefish::Vertex_Class vertex_class, const cuttlefish::base_t base):
-    vertex_class_(vertex_class), visited_(true), outputted_(false)
+Vertex::Vertex(const cuttlefish::State_Class state_class, const cuttlefish::base_t base):
+    state_class_(state_class), visited_(true), outputted_(false)
 {
-    assert(vertex_class == cuttlefish::Vertex_Class::multi_in_single_out || vertex_class == cuttlefish::Vertex_Class::single_in_multi_out);
+    assert(state_class == cuttlefish::State_Class::multi_in_single_out || state_class == cuttlefish::State_Class::single_in_multi_out);
 
 
-    if(vertex_class == cuttlefish::Vertex_Class::multi_in_single_out)
+    if(state_class == cuttlefish::State_Class::multi_in_single_out)
     {
-        enter_ = DNA::N;
-        exit_ = base;
+        front_ = DNA::N;
+        back_ = base;
     }
     else
     {
-        enter_ = base;
-        exit_ = DNA::N;
+        front_ = base;
+        back_ = DNA::N;
     }
 }
 
 
-Vertex::Vertex(const cuttlefish::Vertex_Class vertex_class, const bool outputted):
-    vertex_class_(vertex_class), visited_(true), outputted_(outputted)
+Vertex::Vertex(const cuttlefish::State_Class state_class, const bool outputted):
+    state_class_(state_class), visited_(true), outputted_(outputted)
 {
-    enter_ = DNA::N;
-    exit_ = DNA::N;
+    front_ = DNA::N;
+    back_ = DNA::N;
 }
 
 
@@ -41,21 +41,21 @@ std::ostream& operator <<(std::ostream& out, const Vertex& vertex)
 {
     std::string label;
 
-    switch (vertex.vertex_class_)
+    switch (vertex.state_class_)
     {
-    case cuttlefish::Vertex_Class::single_in_single_out:
+    case cuttlefish::State_Class::single_in_single_out:
         label = "Single_In_Single_Out";
         break;
     
-    case cuttlefish::Vertex_Class::multi_in_single_out:
+    case cuttlefish::State_Class::multi_in_single_out:
         label = "Multi_In_Single_Out";
         break;
 
-    case cuttlefish::Vertex_Class::single_in_multi_out:
+    case cuttlefish::State_Class::single_in_multi_out:
         label = "Single_In_Multi_Out";
         break;
     
-    case cuttlefish::Vertex_Class::multi_in_multi_out:
+    case cuttlefish::State_Class::multi_in_multi_out:
         label = "Multi_In_Multi_Out";
         break;
     

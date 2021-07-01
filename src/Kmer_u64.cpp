@@ -72,7 +72,7 @@ std::string Kmer_u64::string_label() const
     std::reverse(label, label + k);
     std::string str_label(label);
     
-    delete label;
+    delete[] label;
 
     return str_label;
 }

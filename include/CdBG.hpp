@@ -98,6 +98,8 @@ private:
 
 
     /* Build methods */
+
+    // TODO: rename the "classify" methods with appropriate terminology that are consistent with the theory.
     
     // Classifies the vertices into different types (or, classes).
     void classify_vertices();
@@ -235,17 +237,17 @@ private:
     // process is executed by the thread number `thread_id`.
     size_t output_maximal_unitigs_plain(uint16_t thread_id, const char* seq, size_t seq_len, size_t right_end, size_t start_idx);
 
-    // Returns a Boolean denoting whether a k-mer with state `state` traversed in
-    // the direction `dir` starts a maximal unitig, where `prev_kmer_state` and
-    // `prev_kmer_dir` are the state and the direction of the previous k-mer in
-    // the sequence, respectively.
-    bool is_unipath_start(cuttlefish::Vertex_Class vertex_class, cuttlefish::dir_t dir, cuttlefish::Vertex_Class prev_kmer_class, cuttlefish::dir_t prev_kmer_dir) const;
+    // Returns a Boolean denoting whether a k-mer with state-class `state_class`
+    // traversed in the direction `dir` initiates a maximal unitig traversal, where
+    // `prev_kmer_class` and `prev_kmer_dir` are the state-class and the direction
+    // of the previous k-mer in the walk, respectively.
+    bool is_unipath_start(cuttlefish::State_Class state_class, cuttlefish::dir_t dir, cuttlefish::State_Class prev_kmer_class, cuttlefish::dir_t prev_kmer_dir) const;
 
-    // Returns a Boolean denoting whether a k-mer with state `state` traversed in
-    // the direction `dir` ends a maximal unitig, where `next_kmer_state` and
-    // `next_kmer_dir` are the state and the direction of the next k-mer in the
-    // sequence, respectively.
-    bool is_unipath_end(cuttlefish::Vertex_Class vertex_class, cuttlefish::dir_t dir, cuttlefish::Vertex_Class next_kmer_class, cuttlefish::dir_t next_kmer_dir) const;
+    // Returns a Boolean denoting whether a k-mer with state-class `state_class`
+    // traversed in the direction `dir` terminates a maximal unitig traversal,
+    // where `next_kmer_class` and `next_kmer_dir` are the state-class and the
+    // direction of the next k-mer in the walk, respectively.
+    bool is_unipath_end(cuttlefish::State_Class state_class, cuttlefish::dir_t dir, cuttlefish::State_Class next_kmer_class, cuttlefish::dir_t next_kmer_dir) const;
 
     // Outputs the unitig at the k-mer range between the annotated k-mers
     // `start_kmer` and `end_kmer` of the sequence `seq` (if the unitig had not
@@ -408,11 +410,6 @@ private:
     // (depending on the GFA version) from the disk. The thread-specific output file
     // names have a suffix `file_id` if a non-zero value is provided.
     void remove_temp_files(uint64_t file_id = 0) const;
-
-    // Prints the distribution of the vertex classes for the canonical k-mers present
-    // at the database named `kmc_file_name`.
-    // For debugging purposes.
-    void print_vertex_class_dist() const;
 
 
 public:

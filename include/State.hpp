@@ -63,8 +63,8 @@ public:
     // Returns the state of the underlying vertex simulating if it had been outputted.
     State outputted() const;
 
-    // Returns the class (or, type) that any vertex with this state has.
-    cuttlefish::Vertex_Class vertex_class() const;
+    // Returns the class of this state.
+    cuttlefish::State_Class state_class() const;
 
     // Returns the output status of a vertex that has this state.
     bool is_outputted() const;
@@ -93,7 +93,7 @@ private:
 
     const static State outputted_vertex_state[32];
 
-    const static cuttlefish::Vertex_Class decoded_vertex_class[32];
+    const static cuttlefish::State_Class decoded_vertex_class[32];
 
     const static bool decoded_output_status[32];
 };
@@ -134,7 +134,7 @@ inline cuttlefish::state_code_t State::get_state() const
 
 inline bool State::is_dead_end() const
 {
-    return is_visited() && vertex_class() == cuttlefish::Vertex_Class::multi_in_multi_out;
+    return is_visited() && state_class() == cuttlefish::State_Class::multi_in_multi_out;
 }
 
 

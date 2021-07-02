@@ -70,7 +70,7 @@ Cuttlefish also makes use of [KMC3](https://github.com/refresh-bio/KMC), which i
   ```bash
     conda install -c bioconda cuttlefish
   ```
-  The Conda package supports _k_ values up-to 63. To use larger _k_ values, please install Cuttlefish from the source.
+  The Conda package supports _k_ values up-to 127. To use larger _k_ values, please install Cuttlefish from the source.
 
 - From source:
   ```bash

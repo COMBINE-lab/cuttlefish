@@ -1,5 +1,11 @@
 # Cuttlefish
 
+[![Anaconda-Server Badge](https://anaconda.org/bioconda/cuttlefish/badges/version.svg)](https://anaconda.org/bioconda/cuttlefish)
+[![Anaconda-Server Badge](https://anaconda.org/bioconda/cuttlefish/badges/platforms.svg)](https://anaconda.org/bioconda/cuttlefish)
+[![Anaconda-Server Badge](https://anaconda.org/bioconda/cuttlefish/badges/license.svg)](https://anaconda.org/bioconda/cuttlefish)
+
+[![install with bioconda](https://img.shields.io/badge/install%20with-bioconda-brightgreen.svg?style=flat)](http://bioconda.github.io/recipes/cuttlefish/README.html)
+
 Cuttlefish is a fast, parallel, and very lightweight memory tool to construct the compacted de Bruijn graph from genome reference(s).
 
 ## Table of contents

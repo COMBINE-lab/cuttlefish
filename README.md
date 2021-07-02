@@ -54,11 +54,15 @@ These should already be available in your platform; and if not, then these can b
   ```
 
 Cuttlefish also makes use of [KMC3](https://github.com/refresh-bio/KMC), which is a disk-based _k_-mer counting tool. To install KMC3, you may use the following:
-
-```bash
-  git clone https://github.com/refresh-bio/KMC.git
-  cd KMC && make
-```
+- From [Bioconda](https://bioconda.github.io/user/install.html):
+  ```bash
+    conda install -c bioconda kmc
+  ```
+- From source:
+  ```bash
+    git clone https://github.com/refresh-bio/KMC.git
+    cd KMC && make
+  ```
 
 ## Installation
 

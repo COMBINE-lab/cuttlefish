@@ -101,6 +101,10 @@ public:
     // state than the one that had been read earlier, then the update fails.
     bool update(Kmer_Hash_Entry_API<BITS_PER_KEY>& api);
 
+    // Updates the state-entry in the hash-table that's at the bucket with ID
+    // `bucket_id` with the state-value `state`.
+    void update(uint64_t bucket_id, const State_Read_Space& state);
+
     // Clears the hash-table. Do not invoke on an unused object.
     void clear();
 
@@ -182,6 +186,15 @@ inline bool Kmer_Hash_Table<k, BITS_PER_KEY>::update(Kmer_Hash_Entry_API<BITS_PE
     sparse_lock.unlock(bucket);
     
     return success;
+}
+
+
+template <uint16_t k, uint8_t BITS_PER_KEY>
+inline void Kmer_Hash_Table<k, BITS_PER_KEY>::update(const uint64_t bucket_id, const State_Read_Space& state)
+{
+    sparse_lock.lock(bucket_id);
+    hash_table[bucket_id] = state.get_state();
+    sparse_lock.unlock(bucket_id);
 }
 
 

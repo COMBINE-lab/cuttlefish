@@ -66,9 +66,13 @@ private:
     // through its side `s_v_hat`. Returns `true` iff the extraction is successful, which happens when
     // the maximal unitig is encountered and attempted for output-marking _first_, by some thread. If
     // the attempt is successful, then the maximal unitig is extracted in its canonical form into
-    // `unipath` (it is overwritten); also, a unique ID for it is put in `id`. If not, `unipath` may
-    // contain partial form of the unitig, and `id` is unaltered.
-    bool extract_maximal_unitig(const Kmer<k>& v_hat, cuttlefish::side_t s_v_hat, uint64_t& id, std::vector<char>& unipath);
+    // `unipath` (it is overwritten), a unique ID for it is put in `id`, and the hashes of the vertices
+    // constituting the path overwrites `path_hashes` (when the user-option is specified). If not,
+    // `unipath` and `path_hashes` may contain partial form of the path, and `id` is unaltered.
+    bool extract_maximal_unitig(const Kmer<k>& v_hat, cuttlefish::side_t s_v_hat, uint64_t& id, std::vector<char>& unipath, std::vector<uint64_t>& path_hashes);
+
+    // Marks all the vertices which have their hashes present in `path_hashes` as outputted.
+    void mark_path(const std::vector<uint64_t>& path_hashes);
 
     // Marks all the vertices that are present in the maximal unitigs of the graph.
     void mark_maximal_unitig_vertices();
@@ -243,6 +247,14 @@ inline void Read_CdBG_Extractor<k>::reverse_complement(T_container_& seq)
 
     if(fwd == bwd)
         *fwd = DNA_Utility::complement(*fwd);
+}
+
+
+template <uint16_t k>
+void Read_CdBG_Extractor<k>::mark_path(const std::vector<uint64_t>& path_hashes)
+{
+    for(const uint64_t hash: path_hashes)
+        hash_table.update(hash, State_Read_Space::get_outputted_state());
 }
 
 

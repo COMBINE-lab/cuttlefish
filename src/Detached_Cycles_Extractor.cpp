@@ -12,9 +12,12 @@ void Read_CdBG_Extractor<k>::extract_detached_cycles()
     std::chrono::high_resolution_clock::time_point t_start = std::chrono::high_resolution_clock::now();
 
 
-    std::cout << "Marking the vertices present in the extracted maximal unitigs.\n";
-    mark_maximal_unitig_vertices();
-    std::cout << "Done marking the vertices.\n";
+    if(!params.dcc_opt())
+    {
+        std::cout << "Marking the vertices present in the extracted maximal unitigs.\n";
+        mark_maximal_unitig_vertices();
+        std::cout << "Done marking the vertices.\n";
+    }
 
     std::cout << "Extracting the cycles.\n";
     extract_detached_chordless_cycles();
@@ -133,11 +136,12 @@ std::size_t Read_CdBG_Extractor<k>::mark_maximal_unitig(const Kmer<k>& v_hat, co
 template <uint16_t k>
 void Read_CdBG_Extractor<k>::extract_detached_chordless_cycles()
 {
-    if(vertices_marked == vertices_scanned)
-    {
-        std::cout << "\nNo detached chordless cycle exists in the de Bruijn graph.\n";
-        return;
-    }
+    // TODO: put the information for this utility check in a meta JSON file.
+    // if(vertices_marked == vertices_scanned)
+    // {
+    //     std::cout << "\nNo detached chordless cycle exists in the de Bruijn graph.\n";
+    //     return;
+    // }
 
      // Construct a thread pool.
     const uint16_t thread_count = params.thread_count();

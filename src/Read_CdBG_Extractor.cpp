@@ -60,6 +60,16 @@ void Read_CdBG_Extractor<k>::extract_maximal_unitigs()
     std::chrono::high_resolution_clock::time_point t_end = std::chrono::high_resolution_clock::now();
     double elapsed_seconds = std::chrono::duration_cast<std::chrono::duration<double>>(t_end - t_start).count();
     std::cout << "Done extracting the maximal unitigs. Time taken = " << elapsed_seconds << " seconds.\n";
+
+    if(params.dcc_opt())    // Save the hash table buckets.
+    {
+        // TODO: `params.buckets_file_path()` might be empty.
+        // TODO: Rectify the CLI.
+        const std::string buckets_file_path = params.buckets_file_path();
+        std::cout << "Saving the hash table buckets in file " << buckets_file_path << ".\n";
+        hash_table.save_hash_buckets(buckets_file_path);
+        std::cout << "Saved the buckets in disk.\n";
+    }
 }
 
 
@@ -85,6 +95,7 @@ void Read_CdBG_Extractor<k>::scan_vertices(Kmer_SPMC_Iterator<k>* const vertex_p
     State_Read_Space state; // State of the vertex `v`.
     uint64_t id;    // The unique ID of the maximal unitig `p`.
     std::vector<char> unipath;  // The extracted maximal unitig `p`.
+    std::vector<uint64_t> path_hashes;  // Hash values of the vertices constituting the maximal unitig `p`.
 
     uint64_t vertex_count = 0;  // Number of vertices scanned by this thread.
     Unipaths_Meta_info<k> extracted_unipaths_info;  // Meta-information over the maximal unitigs extracted by this thread.
@@ -92,13 +103,17 @@ void Read_CdBG_Extractor<k>::scan_vertices(Kmer_SPMC_Iterator<k>* const vertex_p
     Character_Buffer<BUFF_SZ, sink_t> output_buffer(output_sink.sink());  // The output buffer for maximal unitigs.
     unipath.reserve(SEQ_SZ);
 
+    if(params.dcc_opt())
+        path_hashes.reserve(BUFF_SZ);
+
+
     while(vertex_parser->tasks_expected(thread_id))
         if(vertex_parser->value_at(thread_id, v))
         {
             state = hash_table[v].state();
             
             if(!state.is_outputted() && is_flanking_state(state, s_v))
-                if(extract_maximal_unitig(v, s_v, id, unipath))
+                if(extract_maximal_unitig(v, s_v, id, unipath, path_hashes))
                 {
                     extracted_unipaths_info.add_maximal_unitig(unipath);
 
@@ -106,6 +121,9 @@ void Read_CdBG_Extractor<k>::scan_vertices(Kmer_SPMC_Iterator<k>* const vertex_p
                     // output_buffer += unipath;
                     output_buffer += FASTA_Record<std::vector<char>>(id, unipath);
                     // unipath.clear();
+
+                    if(params.dcc_opt())
+                        mark_path(path_hashes);
                 }
 
             vertex_count++;
@@ -125,7 +143,7 @@ void Read_CdBG_Extractor<k>::scan_vertices(Kmer_SPMC_Iterator<k>* const vertex_p
 
 
 template <uint16_t k>
-bool Read_CdBG_Extractor<k>::extract_maximal_unitig(const Kmer<k>& v_hat, const cuttlefish::side_t s_v_hat, uint64_t& id, std::vector<char>& unipath)
+bool Read_CdBG_Extractor<k>::extract_maximal_unitig(const Kmer<k>& v_hat, const cuttlefish::side_t s_v_hat, uint64_t& id, std::vector<char>& unipath, std::vector<uint64_t>& path_hashes)
 {
     // Data structures to be reused per each vertex extension of the maximal unitig.
     cuttlefish::side_t s_v = s_v_hat;   // The side of the current vertex `v` through which to extend the maximal unitig, i.e. exit `v`.
@@ -136,6 +154,12 @@ bool Read_CdBG_Extractor<k>::extract_maximal_unitig(const Kmer<k>& v_hat, const 
 
     const Directed_Vertex<k> init_vertex(v);
     init_vertex.kmer().get_label(unipath);
+    if(params.dcc_opt())
+    {
+        path_hashes.clear();
+        path_hashes.emplace_back(init_vertex.hash());
+    }
+
 
     while(true)
     {
@@ -154,6 +178,8 @@ bool Read_CdBG_Extractor<k>::extract_maximal_unitig(const Kmer<k>& v_hat, const 
         state = hash_table[v.hash()].state();
         
         unipath.emplace_back(Kmer<k>::map_char(b_ext));
+        if(params.dcc_opt())
+            path_hashes.emplace_back(v.hash());
     }
 
     const Directed_Vertex<k>& term_vertex = v;

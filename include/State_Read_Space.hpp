@@ -32,9 +32,12 @@ private:
     // Bitmask used to extract the 'Extended_Base`-encoding of the edge(s) incident to the back side of a vertex.
     static constexpr cuttlefish::state_code_t BACK_MASK = SIDE_MASK << BACK_IDX;
 
-    // State code for vertices that has been outputted.
+    // State code for vertices that have been outputted.
     // TODO: Use a well-thought-out value as the marker.
     static constexpr cuttlefish::state_code_t OUTPUTTED = static_cast<cuttlefish::state_code_t>((0b101 << FRONT_IDX) | 0b101 << BACK_IDX);
+
+    // State for the vertices that have been outputted.
+    static const State_Read_Space outputted_state;
 
 
     // Constructs a state that wraps the provided numeric value `code`.
@@ -48,14 +51,14 @@ private:
     // Requirement: except while for setting `Extended_Base::N`, the bits must be zero beforehand.
     void set_front_encoding(cuttlefish::edge_encoding_t edge);
 
-    // Returns the wrapped state-code value.
-    cuttlefish::state_code_t get_state() const;
-
 
 public:
 
     // Constructs the state of a vertex having both its sides unvisited.
     constexpr State_Read_Space();
+
+    // Returns the wrapped state-code value.
+    cuttlefish::state_code_t get_state() const;
 
     // Returns `true` iff some vertex having this state has been outputted.
     bool is_outputted() const;
@@ -74,6 +77,9 @@ public:
 
     // Returns `true` iff the underlying code is the same as that one of `rhs`.
     bool operator==(const State_Read_Space& rhs) const;
+
+    // Returns the state for the vertices that have been marked as outputted.
+    static const State_Read_Space& get_outputted_state();
 };
 
 
@@ -132,6 +138,12 @@ inline void State_Read_Space::mark_outputted()
 inline bool State_Read_Space::operator==(const State_Read_Space& rhs) const
 {
     return code == rhs.code;
+}
+
+
+inline const State_Read_Space& State_Read_Space::get_outputted_state()
+{
+    return outputted_state;
 }
 
 

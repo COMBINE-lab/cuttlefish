@@ -60,7 +60,7 @@ bool Build_Params::is_valid() const
             valid = false;
         }
 
-        if(extract_cycles_)
+        if(dcc_opt_ || extract_cycles_)
         {
             std::cout << "Existence of detached chordless cycles are impossible for reference de Bruijn graphs by definition.\n";
             valid = false;

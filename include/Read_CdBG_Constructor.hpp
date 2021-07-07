@@ -24,6 +24,8 @@ private:
 
     const Build_Params params;  // Required parameters (wrapped inside).
     Kmer_Hash_Table<k, cuttlefish::BITS_PER_READ_KMER>& hash_table; // Hash table for the vertices (canonical k-mers) of the graph.
+
+    uint64_t edge_count_;    // Number of edges in the underlying graph.
     
     // Members required to keep track of the total number of edges processed across different threads.
     mutable Spin_Lock lock;

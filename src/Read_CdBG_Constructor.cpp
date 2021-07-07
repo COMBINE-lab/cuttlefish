@@ -19,6 +19,12 @@ void Read_CdBG_Constructor<k>::compute_DFA_states()
     std::chrono::high_resolution_clock::time_point t_start = std::chrono::high_resolution_clock::now();
 
 
+    const Kmer_Container<k + 1> edge_container(params.edge_db_path());  // Wrapper container for the edge-database.
+    Kmer_SPMC_Iterator<k + 1> edge_parser(&edge_container, params.thread_count());  // Parser for the edges from the edge-database.
+    edge_count_ = edge_container.size();
+    std::cout << "Total number of distinct edges: " << edge_count_ << ".\n";
+
+
     const std::string& buckets_file_path = params.buckets_file_path();
     if(!buckets_file_path.empty() && file_exists(buckets_file_path))    // The serialized hash table buckets, saved from some earlier execution, exists.
     {
@@ -34,10 +40,6 @@ void Read_CdBG_Constructor<k>::compute_DFA_states()
         Thread_Pool<k> thread_pool(thread_count, this, Thread_Pool<k>::Task_Type::compute_states_read_space);
 
         // Launch the reading (and parsing per demand) of the edges from disk.
-        const Kmer_Container<k + 1> edge_container(params.edge_db_path());  // Wrapper container for the edge-database.
-        Kmer_SPMC_Iterator<k + 1> edge_parser(&edge_container, params.thread_count());  // Parser for the edges from the edge-database.
-        std::cout << "Total number of distinct edges: " << edge_container.size() << ".\n";
-
         edge_parser.launch_production();
 
         // Launch (multi-threaded) computation of the states.
@@ -135,7 +137,7 @@ void Read_CdBG_Constructor<k>::process_edges(Kmer_SPMC_Iterator<k + 1>* const ed
 template <uint16_t k>
 uint64_t Read_CdBG_Constructor<k>::edge_count() const
 {
-    return edges_processed;
+    return edge_count_;
 }
 
 

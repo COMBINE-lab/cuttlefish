@@ -135,6 +135,13 @@ void Read_CdBG_Constructor<k>::process_edges(Kmer_SPMC_Iterator<k + 1>* const ed
 
 
 template <uint16_t k>
+uint64_t Read_CdBG_Constructor<k>::vertex_count() const
+{
+    return hash_table.size();
+}
+
+
+template <uint16_t k>
 uint64_t Read_CdBG_Constructor<k>::edge_count() const
 {
     return edge_count_;

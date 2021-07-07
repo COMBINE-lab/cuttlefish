@@ -6,8 +6,10 @@
 
 #include "Kmer.hpp"
 
-#include <memory>
 #include "boost/preprocessor/repetition/repeat.hpp"
+#include "nlohmann/json_fwd.hpp"
+
+#include <memory>
 
 
 // The macro `INSTANCE_COUNT` must be set exactly to `(MAX_K + 1) / 2` for a required maximum k-value.
@@ -74,6 +76,9 @@ namespace cuttlefish
 
 
     typedef std::shared_ptr<spdlog::logger> logger_t;
+
+
+    typedef nlohmann::ordered_json json_t;
 }
 
 

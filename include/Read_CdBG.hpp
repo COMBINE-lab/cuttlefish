@@ -4,6 +4,7 @@
 
 
 
+#include "globals.hpp"
 #include "Build_Params.hpp"
 #include "Kmer_Hash_Table.hpp"
 
@@ -19,7 +20,7 @@ private:
     const Build_Params params;  // Required parameters (wrapped inside).
     Kmer_Hash_Table<k, cuttlefish::BITS_PER_READ_KMER> hash_table;  // Hash table for the vertices (canonical k-mers) of the graph.
 
-    nlohmann::ordered_json dBg_info;    // JSON object to store structural information over the de Bruijn graph.
+    cuttlefish::json_t dBg_info;    // JSON object to store structural information over the de Bruijn graph.
 
 
     // Writes the structural information about the de Bruijn graph — obtained from the algorithm

@@ -4,6 +4,8 @@
 
 
 
+#include "globals.hpp"
+
 #include <cstdint>
 #include <limits>
 
@@ -35,6 +37,10 @@ public:
 
     // Returns the total number of k-mers in the extracted maximal unitigs.
     uint64_t kmer_count() const;
+
+    // Populates the JSON file `dBg_info` with the tracked information over
+    // the maximal unitigs.
+    void populate(cuttlefish::json_t& dBg_info) const;
 
     // Prints the tracked information to the standard output.
     void print() const;

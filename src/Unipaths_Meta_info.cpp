@@ -1,9 +1,11 @@
 
 #include "Unipaths_Meta_info.hpp"
-#include "globals.hpp"
+
+#include "nlohmann/json.hpp"
 
 #include <algorithm>
 #include <iostream>
+#include <cmath>
 
 
 template <uint16_t k>
@@ -32,6 +34,21 @@ template <uint16_t k>
 uint64_t Unipaths_Meta_info<k>::kmer_count() const
 {
     return kmer_count_;
+}
+
+
+template <uint16_t k>
+void Unipaths_Meta_info<k>::populate(cuttlefish::json_t& dBg_info) const
+{
+    const char* const field_type = "contigs info";
+
+    dBg_info[field_type]["maximal unitig count"] = unipath_count_;
+    dBg_info[field_type]["vertex count in the maximal unitigs"] = kmer_count_;
+    dBg_info[field_type]["shortest maximal unitig length"] = min_len_;
+    dBg_info[field_type]["longest maximal unitig length"] = max_len_;
+    dBg_info[field_type]["sum maximal unitig length"] = sum_len_;
+    dBg_info[field_type]["avg. maximal unitig length"] = static_cast<uint64_t>(std::round(static_cast<double>(sum_len_) / unipath_count_));
+    dBg_info[field_type]["_comment"] = "lengths are in bases";
 }
 
 

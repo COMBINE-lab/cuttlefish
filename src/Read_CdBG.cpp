@@ -29,7 +29,7 @@ void Read_CdBG<k>::construct()
 
     std::cout << (!params.extract_cycles() ?
                     "\nExtracting the maximal unitigs.\n": "\nExtracting the detached chordless cycles.\n");
-    Read_CdBG_Extractor<k> cdBg_extractor(params, hash_table);
+    Read_CdBG_Extractor<k> cdBg_extractor(params, hash_table, dBg_info);
     !params.extract_cycles() ?
         cdBg_extractor.extract_maximal_unitigs():
         cdBg_extractor.extract_detached_cycles();

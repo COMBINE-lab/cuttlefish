@@ -50,6 +50,8 @@ private:
     
     Unipaths_Meta_info<k> unipaths_meta_info;   // Meta-information over the extracted maximal unitigs.
 
+    cuttlefish::json_t& dBg_info;   // Reference to a JSON object that contains structural information of the graph.
+
 
     // Distributes the maximal unitigs extraction task — disperses the graph vertices (i.e. k-mers)
     // parsed by the parser `vertex_parser` to the worker threads in the thread pool `thread_pool`,
@@ -168,7 +170,7 @@ public:
 
     // Constructs a vertex-extractor object for some compacted read de Bruijn graph, with the required
     // parameters wrapped inside `params`, and uses the Cuttlefish hash table `hash_table`.
-    Read_CdBG_Extractor(const Build_Params& params, Kmer_Hash_Table<k, cuttlefish::BITS_PER_READ_KMER>& hash_table);
+    Read_CdBG_Extractor(const Build_Params& params, Kmer_Hash_Table<k, cuttlefish::BITS_PER_READ_KMER>& hash_table, cuttlefish::json_t& dBg_info);
 
     // Extracts the maximal unitigs of the de Bruijn graph.
     void extract_maximal_unitigs();

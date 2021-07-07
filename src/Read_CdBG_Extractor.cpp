@@ -9,9 +9,10 @@
 
 
 template <uint16_t k>
-Read_CdBG_Extractor<k>::Read_CdBG_Extractor(const Build_Params& params, Kmer_Hash_Table<k, cuttlefish::BITS_PER_READ_KMER>& hash_table):
+Read_CdBG_Extractor<k>::Read_CdBG_Extractor(const Build_Params& params, Kmer_Hash_Table<k, cuttlefish::BITS_PER_READ_KMER>& hash_table, cuttlefish::json_t& dBg_info):
     params(params),
-    hash_table(hash_table)
+    hash_table(hash_table),
+    dBg_info(dBg_info)
 {}
 
 
@@ -49,6 +50,7 @@ void Read_CdBG_Extractor<k>::extract_maximal_unitigs()
     close_output_sink();
 
     std::cout << "Number of scanned vertices: " << vertices_scanned << ".\n";
+    unipaths_meta_info.populate(dBg_info);
     unipaths_meta_info.print();
 
     // Check for the existence of cycle(s).

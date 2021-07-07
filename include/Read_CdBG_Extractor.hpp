@@ -176,6 +176,9 @@ public:
     // Extracts the chordless cycles from the de Bruijn graph that are completely disconnected from the
     // rest of the graph. A precondition for the algorithm is the availability of the maximal unitigs.
     void extract_detached_cycles();
+
+    // Returns the number of vertices in the underlying graph.
+    uint64_t vertex_count() const;
 };
 
 

@@ -89,6 +89,9 @@ public:
 
     // Computes the states of the DFA in the de Bruijn graph.
     void compute_DFA_states();
+
+    // Returns the number of distinct edges in the underlying graph.
+    uint64_t edge_count() const;
 };
 
 

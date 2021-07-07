@@ -200,6 +200,13 @@ bool Read_CdBG_Extractor<k>::extract_maximal_unitig(const Kmer<k>& v_hat, const 
 }
 
 
+template <uint16_t k>
+uint64_t Read_CdBG_Extractor<k>::vertex_count() const
+{
+    return vertices_scanned;
+}
+
+
 
 // Template instantiations for the required instances.
 ENUMERATE(INSTANCE_COUNT, INSTANTIATE, Read_CdBG_Extractor)

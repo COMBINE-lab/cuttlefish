@@ -132,6 +132,13 @@ void Read_CdBG_Constructor<k>::process_edges(Kmer_SPMC_Iterator<k + 1>* const ed
 }
 
 
+template <uint16_t k>
+uint64_t Read_CdBG_Constructor<k>::edge_count() const
+{
+    return edges_processed;
+}
+
+
 
 // Template instantiations for the required instances.
 ENUMERATE(INSTANCE_COUNT, INSTANTIATE, Read_CdBG_Constructor)

@@ -105,6 +105,9 @@ public:
     // `bucket_id` with the state-value `state`.
     void update(uint64_t bucket_id, const State_Read_Space& state);
 
+    // Returns the number of keys in the hash table.
+    uint64_t size() const;
+
     // Clears the hash-table. Do not invoke on an unused object.
     void clear();
 

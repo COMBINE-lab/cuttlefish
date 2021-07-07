@@ -160,6 +160,13 @@ void Kmer_Hash_Table<k, BITS_PER_KEY>::construct(const uint16_t thread_count, co
 
 
 template <uint16_t k, uint8_t BITS_PER_KEY>
+uint64_t Kmer_Hash_Table<k, BITS_PER_KEY>::size() const
+{
+    return kmer_count;
+}
+
+
+template <uint16_t k, uint8_t BITS_PER_KEY>
 void Kmer_Hash_Table<k, BITS_PER_KEY>::clear()
 {
     if(mph != NULL)

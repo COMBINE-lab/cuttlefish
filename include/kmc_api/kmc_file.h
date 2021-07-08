@@ -80,7 +80,7 @@ class CKMCFile
 	bool OpenASingleFile(const std::string &file_name, FILE *&file_handler, uint64 &size, char marker[]);	
 
 	// Recognize current parameters. Auxiliary function.
-	bool ReadParamsFrom_prefix_file_buf(uint64 &size);	
+	bool ReadParamsFrom_prefix_file_buf(uint64 &size, bool load_pref_file = true);	
 
 	// Reload a contents of an array "sufix_file_buf" for listing mode. Auxiliary function. 
 	void Reload_sufix_file_buf();
@@ -112,6 +112,9 @@ public:
 
 	// Open files `*kmc_pre` & `*.kmc_suf`, read `*.kmc_pre` to RAM; `*.kmc_suf` is not buffered internally.
 	bool open_for_listing_unbuffered(const std::string& file_name);
+
+	// Open files `*kmc_pre` & `*.kmc_suf`, and read KMC DB parameters to RAM.
+	bool read_parameters(const std::string& file_name);
 
 	// Returns the size of a suffix-record in disk (in bytes); i.e. suffix-size plus counter-size.
 	uint32_t suff_record_size() const;

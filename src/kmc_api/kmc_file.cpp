@@ -136,22 +136,46 @@ bool CKMCFile::open_for_listing_unbuffered(const std::string& file_name)
 
 	suffix_file_total_to_read = size;
 	suf_file_left_to_read = suffix_file_total_to_read;
-
-
 	sufix_file_buf = NULL;
-	/*
-	sufix_file_buf = new uchar[part_size];
 
-	auto to_read = MIN(suf_file_left_to_read, part_size);
-	auto readed = fread(sufix_file_buf, 1, to_read, file_suf);
-	if (readed != to_read)
-	{
-		std::cerr << "Error: some error while reading suffix file\n";
+	is_opened = opened_for_listing;
+	prefix_index = 0;
+	sufix_number = 0;
+	index_in_partial_buf = 0;
+	return true;
+}
+
+//----------------------------------------------------------------------------------
+// Open files *kmc_pre & *.kmc_suf and reads KMC DB parameters to RAM.
+// *.kmc_suf is not buffered
+// IN	: file_name - the name of kmer_counter's output
+// RET	: true		- if successful
+//----------------------------------------------------------------------------------
+bool CKMCFile::read_parameters(const std::string& file_name)
+{
+	uint64 size;
+
+	if (is_opened)
 		return false;
-	}
+	
+	if (file_pre || file_suf)
+		return false;
 
-	suf_file_left_to_read -= readed;
-	*/
+	if (!OpenASingleFile(file_name + ".kmc_pre", file_pre, size, (char *)"KMCP"))
+		return false;
+
+	ReadParamsFrom_prefix_file_buf(size, false);
+	fclose(file_pre);
+	file_pre = NULL;
+
+	end_of_file = total_kmers == 0;
+
+	if (!OpenASingleFile(file_name + ".kmc_suf", file_suf, size, (char *)"KMCS"))
+		return false;
+
+	suffix_file_total_to_read = size;
+	suf_file_left_to_read = suffix_file_total_to_read;
+	sufix_file_buf = NULL;
 
 	is_opened = opened_for_listing;
 	prefix_index = 0;
@@ -236,7 +260,7 @@ bool CKMCFile::OpenASingleFile(const std::string &file_name, FILE *&file_handler
 // IN	: the size of the file *.kmc_pre, without initial and terminal markers 
 // RET	: true - if succesfull
 //----------------------------------------------------------------------------------
-bool CKMCFile::ReadParamsFrom_prefix_file_buf(uint64 &size)
+bool CKMCFile::ReadParamsFrom_prefix_file_buf(uint64 &size, const bool load_pref_file)
 {
 	size_t prev_pos = my_ftell(file_pre);
 	my_fseek(file_pre, -12, SEEK_END);
@@ -277,19 +301,22 @@ bool CKMCFile::ReadParamsFrom_prefix_file_buf(uint64 &size)
 		single_LUT_size = 1 << (2 * lut_prefix_length);
 		uint64 last_data_index = lut_area_size_in_bytes / sizeof(uint64);
 
-		rewind(file_pre);
-		my_fseek(file_pre, +4, SEEK_CUR);
-		prefix_file_buf_size = (lut_area_size_in_bytes + 8) / sizeof(uint64);		//reads without 4 bytes of a header_offset (and without markers)		
-		prefix_file_buf = new uint64[prefix_file_buf_size];
-		result = fread(prefix_file_buf, 1, (size_t)(lut_area_size_in_bytes + 8), file_pre);
-		if (result == 0)
-			return false;
-		prefix_file_buf[last_data_index] = total_kmers + 1;
+		if(load_pref_file)
+		{
+			rewind(file_pre);
+			my_fseek(file_pre, +4, SEEK_CUR);
+			prefix_file_buf_size = (lut_area_size_in_bytes + 8) / sizeof(uint64);		//reads without 4 bytes of a header_offset (and without markers)		
+			prefix_file_buf = new uint64[prefix_file_buf_size];
+			result = fread(prefix_file_buf, 1, (size_t)(lut_area_size_in_bytes + 8), file_pre);
+			if (result == 0)
+				return false;
+			prefix_file_buf[last_data_index] = total_kmers + 1;
 
-		signature_map = new uint32[signature_map_size];
-		result = fread(signature_map, 1, signature_map_size * sizeof(uint32), file_pre);
-		if (result == 0)
-			return false;
+			signature_map = new uint32[signature_map_size];
+			result = fread(signature_map, 1, signature_map_size * sizeof(uint32), file_pre);
+			if (result == 0)
+				return false;
+		}
 
 		sufix_size = (kmer_length - lut_prefix_length) / 4;		 
 	
@@ -297,7 +324,7 @@ bool CKMCFile::ReadParamsFrom_prefix_file_buf(uint64 &size)
 
 		return true;
 	}
-	else if (kmc_version == 0)
+	else if (kmc_version == 0)	// Not used with cuttlefish.
 	{
 		prefix_file_buf_size = (size - 4) / sizeof(uint64);		//reads without 4 bytes of a header_offset (and without markers)		
 		prefix_file_buf = new uint64[prefix_file_buf_size];

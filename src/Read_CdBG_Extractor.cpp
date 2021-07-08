@@ -180,6 +180,8 @@ bool Read_CdBG_Extractor<k>::extract_maximal_unitig(const Kmer<k>& v_hat, const 
         unipath.emplace_back(Kmer<k>::map_char(b_ext));
         if(params.dcc_opt())
             path_hashes.emplace_back(v.hash());
+            // TODO: write-out to disk in case of the size crossing some threshold, and modify `mark_path` accordingly —
+            // would prevent unwanted memory blow-up in presence of very large maximal unitigs.
     }
 
     const Directed_Vertex<k>& term_vertex = v;

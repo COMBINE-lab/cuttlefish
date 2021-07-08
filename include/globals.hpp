@@ -7,7 +7,6 @@
 #include "Kmer.hpp"
 
 #include "boost/preprocessor/repetition/repeat.hpp"
-#include "nlohmann/json_fwd.hpp"
 
 #include <memory>
 
@@ -76,9 +75,6 @@ namespace cuttlefish
 
 
     typedef std::shared_ptr<spdlog::logger> logger_t;
-
-
-    typedef nlohmann::ordered_json json_t;
 }
 
 

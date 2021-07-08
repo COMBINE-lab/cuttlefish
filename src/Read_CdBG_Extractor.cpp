@@ -9,10 +9,9 @@
 
 
 template <uint16_t k>
-Read_CdBG_Extractor<k>::Read_CdBG_Extractor(const Build_Params& params, Kmer_Hash_Table<k, cuttlefish::BITS_PER_READ_KMER>& hash_table, cuttlefish::json_t& dBg_info):
+Read_CdBG_Extractor<k>::Read_CdBG_Extractor(const Build_Params& params, Kmer_Hash_Table<k, cuttlefish::BITS_PER_READ_KMER>& hash_table):
     params(params),
-    hash_table(hash_table),
-    dBg_info(dBg_info)
+    hash_table(hash_table)
 {}
 
 
@@ -50,11 +49,10 @@ void Read_CdBG_Extractor<k>::extract_maximal_unitigs()
     close_output_sink();
 
     std::cout << "Number of scanned vertices: " << vertices_scanned << ".\n";
-    unipaths_meta_info.populate(dBg_info);
-    unipaths_meta_info.print();
+    unipaths_meta_info_.print();
 
     // Check for the existence of cycle(s).
-    if(unipaths_meta_info.kmer_count() != vertex_container.size())
+    if(unipaths_meta_info_.kmer_count() != vertex_container.size())
         std::cout <<    "\nCycles disconnected from the rest of the graph are present."
                         " I.e. the cycles are graph components exclusively on their own.\n\n";
 
@@ -138,7 +136,7 @@ void Read_CdBG_Extractor<k>::scan_vertices(Kmer_SPMC_Iterator<k>* const vertex_p
     std::cout << "Thread " << thread_id << " processed " << vertex_count << " vertices.\n"; // TODO: remove.
     
     vertices_scanned += vertex_count;
-    unipaths_meta_info.aggregate(extracted_unipaths_info);
+    unipaths_meta_info_.aggregate(extracted_unipaths_info);
 
     lock.unlock();
 }
@@ -199,6 +197,13 @@ bool Read_CdBG_Extractor<k>::extract_maximal_unitig(const Kmer<k>& v_hat, const 
     id = sign_vertex.hash();
 
     return true;
+}
+
+
+template <uint16_t k>
+const Unipaths_Meta_info<k>& Read_CdBG_Extractor<k>::unipaths_meta_info() const
+{
+    return unipaths_meta_info_;
 }
 
 

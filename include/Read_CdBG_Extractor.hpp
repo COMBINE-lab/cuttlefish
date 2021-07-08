@@ -48,9 +48,7 @@ private:
     mutable uint64_t cycle_count = 0;   // Total number of detached chordless cycles.
     mutable uint64_t cycle_vertex_count = 0;    // Total number of vertices present in the detached chordless cycles.
     
-    Unipaths_Meta_info<k> unipaths_meta_info;   // Meta-information over the extracted maximal unitigs.
-
-    cuttlefish::json_t& dBg_info;   // Reference to a JSON object that contains structural information of the graph.
+    Unipaths_Meta_info<k> unipaths_meta_info_;  // Meta-information over the extracted maximal unitigs.
 
 
     // Distributes the maximal unitigs extraction task — disperses the graph vertices (i.e. k-mers)
@@ -170,7 +168,7 @@ public:
 
     // Constructs a vertex-extractor object for some compacted read de Bruijn graph, with the required
     // parameters wrapped inside `params`, and uses the Cuttlefish hash table `hash_table`.
-    Read_CdBG_Extractor(const Build_Params& params, Kmer_Hash_Table<k, cuttlefish::BITS_PER_READ_KMER>& hash_table, cuttlefish::json_t& dBg_info);
+    Read_CdBG_Extractor(const Build_Params& params, Kmer_Hash_Table<k, cuttlefish::BITS_PER_READ_KMER>& hash_table);
 
     // Extracts the maximal unitigs of the de Bruijn graph.
     void extract_maximal_unitigs();
@@ -178,6 +176,9 @@ public:
     // Extracts the chordless cycles from the de Bruijn graph that are completely disconnected from the
     // rest of the graph. A precondition for the algorithm is the availability of the maximal unitigs.
     void extract_detached_cycles();
+
+    // Returns a wrapper over the meta-information of the extracted unitigs.
+    const Unipaths_Meta_info<k>& unipaths_meta_info() const;
 
     // Returns the number of vertices in the underlying graph.
     uint64_t vertex_count() const;

@@ -30,6 +30,7 @@ set(PROJECT_SRC
         Unipaths_Meta_info.cpp
         Detached_Cycles_Extractor.cpp
         Character_Buffer_Flusher.cpp
+        dBG_Info.cpp
         Validator.cpp
         Validator_Hash_Table.cpp
         Sequence_Validator.cpp

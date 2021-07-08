@@ -35,12 +35,23 @@ public:
     // Aggregates the information of the tracker `other` to this tracker.
     void aggregate(const Unipaths_Meta_info<k>& other);
 
+    // Returns the total number of maximal unitigs.
+    uint64_t unipath_count() const;
+
     // Returns the total number of k-mers in the extracted maximal unitigs.
     uint64_t kmer_count() const;
 
-    // Populates the JSON file `dBg_info` with the tracked information over
-    // the maximal unitigs.
-    void populate(cuttlefish::json_t& dBg_info) const;
+    // Returns the length of the longest maximal unitig.
+    std::size_t max_len() const;
+
+    // Returns the length of the shortest maximal unitig.
+    std::size_t min_len() const;
+
+    // Returns the sum length of the maximal unitigs.
+    uint64_t sum_len() const;
+
+    // Returns the average length of the maximal unitigs.
+    uint64_t avg_len() const;
 
     // Prints the tracked information to the standard output.
     void print() const;

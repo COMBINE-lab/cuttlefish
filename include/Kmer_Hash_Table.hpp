@@ -201,5 +201,12 @@ inline void Kmer_Hash_Table<k, BITS_PER_KEY>::update(const uint64_t bucket_id, c
 }
 
 
+template <uint16_t k, uint8_t BITS_PER_KEY>
+inline uint64_t Kmer_Hash_Table<k, BITS_PER_KEY>::size() const
+{
+    return kmer_count;
+}
+
+
 
 #endif

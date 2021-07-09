@@ -22,8 +22,8 @@ void Read_CdBG_Extractor<k>::extract_detached_cycles()
     std::cout << "Extracting the cycles.\n";
     extract_detached_chordless_cycles();
 
-    std::cout <<    "\nNumber of detached chordless cycles: " << cycle_count << ".\n"
-                    "Number of vertices in the cycles: " << cycle_vertex_count << ".\n";
+    std::cout <<    "\nNumber of detached chordless cycles: " << unipaths_meta_info_.dcc_count() << ".\n"
+                    "Number of vertices in the cycles: " << unipaths_meta_info_.dcc_kmer_count() << ".\n";
 
 
     std::chrono::high_resolution_clock::time_point t_end = std::chrono::high_resolution_clock::now();
@@ -198,6 +198,7 @@ void Read_CdBG_Extractor<k>::extract_detached_chordless_cycles(Kmer_SPMC_Iterato
                 {
                     cycles_extracted++;
                     cycle_vertices += cycle.size() - (k - 1);
+                    unipaths_meta_info_.add_DCC(cycle);
 
                     // cycle.emplace_back('\n');
                     // output_buffer += FASTA_Record<std::vector<char>>(id, cycle);
@@ -215,8 +216,6 @@ void Read_CdBG_Extractor<k>::extract_detached_chordless_cycles(Kmer_SPMC_Iterato
                 " and extracted " << cycles_extracted << " cycles.\n";
     
     vertices_scanned += vertex_count;
-    cycle_count += cycles_extracted;
-    cycle_vertex_count += cycle_vertices;
 
     lock.unlock();
 }

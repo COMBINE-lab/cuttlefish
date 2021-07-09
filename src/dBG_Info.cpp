@@ -2,8 +2,36 @@
 #include "dBG_Info.hpp"
 #include "Read_CdBG_Constructor.hpp"
 #include "Read_CdBG_Extractor.hpp"
+#include "utility.hpp"
 
 #include <iomanip>
+#include <fstream>
+
+
+template <uint16_t k>
+dBG_Info<k>::dBG_Info(const std::string& file_path):
+    file_path(file_path)
+{
+    if(file_exists(file_path))
+        load_from_file();
+}
+
+
+template <uint16_t k>
+void dBG_Info<k>::load_from_file()
+{
+    std::ifstream input(file_path.c_str());
+        
+    input >> dBg_info;
+
+    if(input.fail())
+    {
+        std::cerr << "Error loading JSON object from file " << file_path << ". Aborting.\n";
+        std::exit(EXIT_FAILURE);
+    }
+
+    input.close();
+}
 
 
 template <uint16_t k>
@@ -30,7 +58,18 @@ void dBG_Info<k>::add_unipaths_info(const Read_CdBG_Extractor<k>& cdbg_extractor
 
 
 template <uint16_t k>
-void dBG_Info<k>::dump_info(const std::string& file_path) const
+void dBG_Info<k>::add_DCC_info(const Read_CdBG_Extractor<k>& cdbg_extractor)
+{
+    const Unipaths_Meta_info<k>& unipaths_info = cdbg_extractor.unipaths_meta_info();
+
+    dBg_info[dcc_field]["DCC count"] = unipaths_info.dcc_count();
+    dBg_info[dcc_field]["vertex count in the DCCs"] = unipaths_info.dcc_kmer_count();
+    dBg_info[dcc_field]["sum DCC length (in bases)"] = unipaths_info.dcc_sum_len();
+}
+
+
+template <uint16_t k>
+void dBG_Info<k>::dump_info() const
 {
     std::ofstream output(file_path.c_str());
     output << std::setw(4) << dBg_info << "\n"; // Pretty-print the JSON wrapper with overloaded `std::setw`.
@@ -42,6 +81,8 @@ void dBG_Info<k>::dump_info(const std::string& file_path) const
     }
 
     output.close();
+
+    std::cout << "\nStructural information for the de Bruijn graph is written to " << file_path << ".\n";
 }
 
 

@@ -45,8 +45,6 @@ private:
     mutable Spin_Lock lock; // Mutual exclusion lock to access various unique resources by threads spawned off this class' methods.
 
     mutable uint64_t vertices_marked = 0;   // Total number of vertices marked as present in maximal unitigs; used for the extraction of detached chordless cycle(s), if any.
-    mutable uint64_t cycle_count = 0;   // Total number of detached chordless cycles.
-    mutable uint64_t cycle_vertex_count = 0;    // Total number of vertices present in the detached chordless cycles.
     
     Unipaths_Meta_info<k> unipaths_meta_info_;  // Meta-information over the extracted maximal unitigs.
 

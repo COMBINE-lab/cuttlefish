@@ -9,7 +9,8 @@
 template <uint16_t k>
 Read_CdBG<k>::Read_CdBG(const Build_Params& params):
     params(params),
-    hash_table(params.vertex_db_path())
+    hash_table(params.vertex_db_path()),
+    dbg_info(params.json_file_path().empty() ? (params.output_file_path() + ".json") : params.json_file_path())
 {}
 
 
@@ -31,15 +32,13 @@ void Read_CdBG<k>::construct()
                     "\nExtracting the maximal unitigs.\n": "\nExtracting the detached chordless cycles.\n");
     Read_CdBG_Extractor<k> cdBg_extractor(params, hash_table);
     !params.extract_cycles() ?
-        cdBg_extractor.extract_maximal_unitigs(), dbg_info.add_unipaths_info(cdBg_extractor):
-        cdBg_extractor.extract_detached_cycles();
+        (cdBg_extractor.extract_maximal_unitigs(), dbg_info.add_unipaths_info(cdBg_extractor)):
+        (cdBg_extractor.extract_detached_cycles(), dbg_info.add_DCC_info(cdBg_extractor));
 
 
     hash_table.clear();
 
-    const std::string info_file_path = params.output_file_path() + ".json";
-    dbg_info.dump_info(info_file_path);
-    std::cout << "\nStructural information for the de Bruijn graph is written to " << info_file_path << ".\n";
+    dbg_info.dump_info();
 }
 
 

@@ -36,6 +36,7 @@ void build(int argc, char** argv)
         ("rm", "remove the KMC database")
         ("mph", "minimal perfect hash (BBHash) file (optional)", cxxopts::value<std::string>()->default_value(cuttlefish::_default::EMPTY))
         ("buckets", "hash table buckets (cuttlefish) file (optional)", cxxopts::value<std::string>()->default_value(cuttlefish::_default::EMPTY))
+        ("json", "meta-info (JSON) file", cxxopts::value<std::string>()->default_value(cuttlefish::_default::EMPTY))
         ("dcc", "turn on optimization for post-construction extraction of DCCs (Detached Chordless Cycles)")
         ("cycles", "extract the detached chordless cycles of the graph")
         ("h,help", "print usage");
@@ -63,10 +64,13 @@ void build(int argc, char** argv)
         const auto working_dir = result["work_dir"].as<std::string>();
         const auto mph_file = result["mph"].as<std::string>();
         const auto buckets_file = result["buckets"].as<std::string>();
+        const auto json_file = result["json"].as<std::string>();
         const auto dcc_opt = result["dcc"].as<bool>();
         const auto extract_cycles = result["cycles"].as<bool>();
 
-        const Build_Params params(is_read_graph, refs, lists, dirs, k, kmer_database, edge_database, thread_count, output_file, format, working_dir, remove_kmc_db, mph_file, buckets_file, dcc_opt, extract_cycles);
+        const Build_Params params(  is_read_graph, refs, lists, dirs, k, kmer_database, edge_database, thread_count,
+                                    output_file, format, working_dir, remove_kmc_db, mph_file, buckets_file, json_file,
+                                    dcc_opt, extract_cycles);
         if(!params.is_valid())
         {
             std::cerr << "Invalid input configuration. Aborting.\n";

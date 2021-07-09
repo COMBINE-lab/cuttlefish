@@ -14,7 +14,10 @@ Unipaths_Meta_info<k>::Unipaths_Meta_info():
     kmer_count_(0),
     max_len_(0),
     min_len_(std::numeric_limits<std::size_t>::max()),
-    sum_len_(0)
+    sum_len_(0),
+    dcc_count_(0),
+    dcc_kmer_count_(0),
+    dcc_sum_len_(0)
 {}
 
 
@@ -69,6 +72,27 @@ template <uint16_t k>
 uint64_t Unipaths_Meta_info<k>::avg_len() const
 {
     return static_cast<uint64_t>(std::round(static_cast<double>(sum_len_) / unipath_count_));
+}
+
+
+template <uint16_t k>
+uint64_t Unipaths_Meta_info<k>::dcc_count() const
+{
+    return dcc_count_;
+}
+
+
+template <uint16_t k>
+uint64_t Unipaths_Meta_info<k>::dcc_kmer_count() const
+{
+    return dcc_kmer_count_;
+}
+
+
+template <uint16_t k>
+uint64_t Unipaths_Meta_info<k>::dcc_sum_len() const
+{
+    return dcc_sum_len_;
 }
 
 

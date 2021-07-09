@@ -61,7 +61,7 @@ void Read_CdBG_Extractor<k>::extract_maximal_unitigs()
     double elapsed_seconds = std::chrono::duration_cast<std::chrono::duration<double>>(t_end - t_start).count();
     std::cout << "Done extracting the maximal unitigs. Time taken = " << elapsed_seconds << " seconds.\n";
 
-    if(params.dcc_opt())    // Save the hash table buckets.
+    if(params.dcc_opt() && !params.buckets_file_path().empty())    // Save the hash table buckets.
     {
         // TODO: `params.buckets_file_path()` might be empty.
         // TODO: Rectify the CLI.

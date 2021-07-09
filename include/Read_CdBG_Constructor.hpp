@@ -12,6 +12,7 @@
 #include "Thread_Pool.hpp"
 #include "Kmer_Container.hpp"
 #include "Kmer_SPMC_Iterator.hpp"
+#include "Progress_Tracker.hpp"
 
 
 // A class to construct compacted read de Bruijn graphs.
@@ -30,6 +31,8 @@ private:
     // Members required to keep track of the total number of edges processed across different threads.
     mutable Spin_Lock lock;
     mutable uint64_t edges_processed = 0;
+    
+    Progress_Tracker progress_tracker;  // Progress tracker for the DFA states computation task.
 
 
     // Distributes the DFA-states computation task — disperses the graph edges (i.e. (k + 1)-mers)

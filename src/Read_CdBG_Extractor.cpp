@@ -37,6 +37,8 @@ void Read_CdBG_Extractor<k>::extract_maximal_unitigs()
     init_output_sink();
 
     // Launch (multi-threaded) extraction of the maximal unitigs.
+    const uint64_t thread_load_percentile = static_cast<uint64_t>(std::round((vertex_count() / 100.0) / params.thread_count()));
+    progress_tracker.setup(vertex_count(), thread_load_percentile, "Extracting maximal unitigs");
     distribute_unipaths_extraction(&vertex_parser, thread_pool);
 
     // Wait for the vertices to be depleted from the database.
@@ -48,7 +50,7 @@ void Read_CdBG_Extractor<k>::extract_maximal_unitigs()
     // Close the output sink.
     close_output_sink();
 
-    std::cout << "Number of scanned vertices: " << vertices_scanned << ".\n";
+    std::cout << "\nNumber of scanned vertices: " << vertices_scanned << ".\n";
     unipaths_meta_info_.print();
 
     // Check for the existence of cycle(s).
@@ -99,6 +101,7 @@ void Read_CdBG_Extractor<k>::scan_vertices(Kmer_SPMC_Iterator<k>* const vertex_p
 
     uint64_t vertex_count = 0;  // Number of vertices scanned by this thread.
     Unipaths_Meta_info<k> extracted_unipaths_info;  // Meta-information over the maximal unitigs extracted by this thread.
+    uint64_t progress = 0;  // Number of vertices scanned by the thread; is reset at reaching 1% of its approximate workload.
 
     Character_Buffer<BUFF_SZ, sink_t> output_buffer(output_sink.sink());  // The output buffer for maximal unitigs.
     unipath.reserve(SEQ_SZ);
@@ -127,14 +130,16 @@ void Read_CdBG_Extractor<k>::scan_vertices(Kmer_SPMC_Iterator<k>* const vertex_p
                 }
 
             vertex_count++;
+
+
+            progress_tracker.track_work(++progress);
         }
 
 
     // Aggregate the meta-information over the extracted maximal unitigs and the thread-executions.
     lock.lock();
+    // std::cout << "Thread " << thread_id << " processed " << vertex_count << " vertices.\n";
 
-    std::cout << "Thread " << thread_id << " processed " << vertex_count << " vertices.\n"; // TODO: remove.
-    
     vertices_scanned += vertex_count;
     unipaths_meta_info_.aggregate(extracted_unipaths_info);
 
@@ -212,7 +217,7 @@ const Unipaths_Meta_info<k>& Read_CdBG_Extractor<k>::unipaths_meta_info() const
 template <uint16_t k>
 uint64_t Read_CdBG_Extractor<k>::vertex_count() const
 {
-    return vertices_scanned;
+    return hash_table.size();
 }
 
 

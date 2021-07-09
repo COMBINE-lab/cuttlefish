@@ -12,6 +12,7 @@
 #include "Async_Logger_Wrapper.hpp"
 #include "Output_Sink.hpp"
 #include "Unipaths_Meta_info.hpp"
+#include "Progress_Tracker.hpp"
 
 #include <limits>
 #include <fstream>
@@ -47,6 +48,8 @@ private:
     mutable uint64_t vertices_marked = 0;   // Total number of vertices marked as present in maximal unitigs; used for the extraction of detached chordless cycle(s), if any.
     
     Unipaths_Meta_info<k> unipaths_meta_info_;  // Meta-information over the extracted maximal unitigs.
+
+    Progress_Tracker progress_tracker;  // Progress tracker for the maximal unitigs extraction task.
 
 
     // Distributes the maximal unitigs extraction task — disperses the graph vertices (i.e. k-mers)

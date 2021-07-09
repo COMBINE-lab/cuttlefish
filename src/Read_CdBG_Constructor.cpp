@@ -3,7 +3,8 @@
 #include "Edge.hpp"
 #include "utility.hpp"
 
-#include "chrono"
+#include <cmath>
+#include <chrono>
 
 
 template <uint16_t k>
@@ -43,6 +44,8 @@ void Read_CdBG_Constructor<k>::compute_DFA_states()
         edge_parser.launch_production();
 
         // Launch (multi-threaded) computation of the states.
+        const uint64_t thread_load_percentile = static_cast<uint64_t>(std::round((edge_count_ / 100.0) / params.thread_count()));
+        progress_tracker.setup(edge_count_, thread_load_percentile, "Computing DFA states");
         distribute_states_computation(&edge_parser, thread_pool);
 
         // Wait for the edges to be depleted from the database.
@@ -51,7 +54,7 @@ void Read_CdBG_Constructor<k>::compute_DFA_states()
         // Wait for the consumer threads to finish parsing and processing the edges.
         thread_pool.close();
 
-        std::cout << "Number of processed edges: " << edges_processed << "\n";
+        std::cout << "\nNumber of processed edges: " << edges_processed << "\n";
 
         
         if(!buckets_file_path.empty() && !params.dcc_opt()) // Save the hash table buckets, if a file path is provided.
@@ -92,6 +95,7 @@ void Read_CdBG_Constructor<k>::process_edges(Kmer_SPMC_Iterator<k + 1>* const ed
     cuttlefish::edge_encoding_t e_v_old, e_v_new;   // Edges incident to some particular side of a vertex `v`, before and after the addition of a new edge.
 
     uint64_t edge_count = 0;    // Number of edges processed by this thread.
+    uint64_t progress = 0;  // Number of edges processed by the thread; is reset at reaching 1% of its approximate workload.
 
     while(edge_parser->tasks_expected(thread_id))
         if(edge_parser->value_at(thread_id, e.e()))
@@ -125,10 +129,13 @@ void Read_CdBG_Constructor<k>::process_edges(Kmer_SPMC_Iterator<k + 1>* const ed
             }
 
             edge_count++;
+
+
+            progress_tracker.track_work(++progress);
         }
 
     lock.lock();
-    std::cout << "Thread " << thread_id << " processed " << edge_count << " edges.\n";  // Temporary log. TODO: remove.
+    // std::cout << "Thread " << thread_id << " processed " << edge_count << " edges.\n";
     edges_processed += edge_count;
     lock.unlock();
 }

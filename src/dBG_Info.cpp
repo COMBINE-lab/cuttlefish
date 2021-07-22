@@ -2,6 +2,7 @@
 #include "dBG_Info.hpp"
 #include "Read_CdBG_Constructor.hpp"
 #include "Read_CdBG_Extractor.hpp"
+#include "Build_Params.hpp"
 #include "utility.hpp"
 
 #include <iomanip>
@@ -54,6 +55,11 @@ void dBG_Info<k>::add_unipaths_info(const Read_CdBG_Extractor<k>& cdbg_extractor
     dBg_info[contigs_field]["sum maximal unitig length"] = unipaths_info.sum_len();
     dBg_info[contigs_field]["avg. maximal unitig length"] = unipaths_info.avg_len();
     dBg_info[contigs_field]["_comment"] = "lengths are in bases";
+
+    const Build_Params& params = cdbg_extractor.get_params();
+    dBg_info[dcc_field]["DCCs present?"] = cdbg_extractor.has_dcc();
+    dBg_info[dcc_field]["DCCs extracted?"] = false;
+    dBg_info[dcc_field]["DCC optimization performed?"] = (params.extract_cycles() || params.dcc_opt());
 }
 
 
@@ -62,9 +68,19 @@ void dBG_Info<k>::add_DCC_info(const Read_CdBG_Extractor<k>& cdbg_extractor)
 {
     const Unipaths_Meta_info<k>& unipaths_info = cdbg_extractor.unipaths_meta_info();
 
+    dBg_info[dcc_field]["DCCs extracted?"] = true;
     dBg_info[dcc_field]["DCC count"] = unipaths_info.dcc_count();
     dBg_info[dcc_field]["vertex count in the DCCs"] = unipaths_info.dcc_kmer_count();
     dBg_info[dcc_field]["sum DCC length (in bases)"] = unipaths_info.dcc_sum_len();
+}
+
+
+template <uint16_t k>
+void dBG_Info<k>::add_build_params(const Build_Params& params)
+{
+    // TODO: add input files information — after major generalization of the class `Reference_Input` and KMC library integration.
+    dBg_info[params_field]["k"] = params.k();
+    dBg_info[params_field]["output prefix"] = params.output_prefix();
 }
 
 
@@ -83,6 +99,27 @@ void dBG_Info<k>::dump_info() const
     output.close();
 
     std::cout << "\nStructural information for the de Bruijn graph is written to " << file_path << ".\n";
+}
+
+
+template <uint16_t k>
+bool dBG_Info<k>::has_dcc() const
+{
+    return dBg_info[dcc_field]["DCCs present?"];
+}
+
+
+template <uint16_t k>
+bool dBG_Info<k>::dcc_opt_performed() const
+{
+    return dBg_info[dcc_field]["DCC optimization performed?"];
+}
+
+
+template <uint16_t k>
+bool dBG_Info<k>::dcc_extracted() const
+{
+    return dBg_info[dcc_field]["DCCs extracted?"];
 }
 
 

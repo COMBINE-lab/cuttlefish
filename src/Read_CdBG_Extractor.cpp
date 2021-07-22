@@ -54,7 +54,7 @@ void Read_CdBG_Extractor<k>::extract_maximal_unitigs()
     unipaths_meta_info_.print();
 
     // Check for the existence of cycle(s).
-    if(unipaths_meta_info_.kmer_count() != vertex_container.size())
+    if(has_dcc())
         std::cout <<    "\nCycles disconnected from the rest of the graph are present."
                         " I.e. the cycles are graph components exclusively on their own.\n\n";
 
@@ -62,16 +62,6 @@ void Read_CdBG_Extractor<k>::extract_maximal_unitigs()
     std::chrono::high_resolution_clock::time_point t_end = std::chrono::high_resolution_clock::now();
     double elapsed_seconds = std::chrono::duration_cast<std::chrono::duration<double>>(t_end - t_start).count();
     std::cout << "Done extracting the maximal unitigs. Time taken = " << elapsed_seconds << " seconds.\n";
-
-    if(params.dcc_opt() && !params.buckets_file_path().empty())    // Save the hash table buckets.
-    {
-        // TODO: `params.buckets_file_path()` might be empty.
-        // TODO: Rectify the CLI.
-        const std::string buckets_file_path = params.buckets_file_path();
-        std::cout << "Saving the hash table buckets in file " << buckets_file_path << ".\n";
-        hash_table.save_hash_buckets(buckets_file_path);
-        std::cout << "Saved the buckets in disk.\n";
-    }
 }
 
 
@@ -106,7 +96,8 @@ void Read_CdBG_Extractor<k>::scan_vertices(Kmer_SPMC_Iterator<k>* const vertex_p
     Character_Buffer<BUFF_SZ, sink_t> output_buffer(output_sink.sink());  // The output buffer for maximal unitigs.
     unipath.reserve(SEQ_SZ);
 
-    if(params.dcc_opt())
+    const bool mark_unipaths = params.extract_cycles() || params.dcc_opt();
+    if(mark_unipaths)
         path_hashes.reserve(BUFF_SZ);
 
 
@@ -125,7 +116,7 @@ void Read_CdBG_Extractor<k>::scan_vertices(Kmer_SPMC_Iterator<k>* const vertex_p
                     output_buffer += FASTA_Record<std::vector<char>>(id, unipath);
                     // unipath.clear();
 
-                    if(params.dcc_opt())
+                    if(mark_unipaths)
                         mark_path(path_hashes);
                 }
 
@@ -156,10 +147,11 @@ bool Read_CdBG_Extractor<k>::extract_maximal_unitig(const Kmer<k>& v_hat, const 
     State_Read_Space state = hash_table[v.hash()].state();  // State of the vertex `v`.
     cuttlefish::edge_encoding_t e_v;    // The next edge from `v` to include into the maximal unitig.
     cuttlefish::base_t b_ext;   // The nucleobase corresponding to the edge `e_v` and the exiting side `s_v` from `v` to add to the literal maximal unitig.
+    const bool mark_unipaths = params.extract_cycles() || params.dcc_opt(); // Whether to mark the vertices present in the maximal unitigs.
 
     const Directed_Vertex<k> init_vertex(v);
     init_vertex.kmer().get_label(unipath);
-    if(params.dcc_opt())
+    if(mark_unipaths)
     {
         path_hashes.clear();
         path_hashes.emplace_back(init_vertex.hash());
@@ -183,7 +175,7 @@ bool Read_CdBG_Extractor<k>::extract_maximal_unitig(const Kmer<k>& v_hat, const 
         state = hash_table[v.hash()].state();
         
         unipath.emplace_back(Kmer<k>::map_char(b_ext));
-        if(params.dcc_opt())
+        if(mark_unipaths)
             path_hashes.emplace_back(v.hash());
             // TODO: write-out to disk in case of the size crossing some threshold, and modify `mark_path` accordingly —
             // would prevent unwanted memory blow-up in presence of very large maximal unitigs.
@@ -208,6 +200,13 @@ bool Read_CdBG_Extractor<k>::extract_maximal_unitig(const Kmer<k>& v_hat, const 
 
 
 template <uint16_t k>
+const Build_Params& Read_CdBG_Extractor<k>::get_params() const
+{
+    return params;
+}
+
+
+template <uint16_t k>
 const Unipaths_Meta_info<k>& Read_CdBG_Extractor<k>::unipaths_meta_info() const
 {
     return unipaths_meta_info_;
@@ -218,6 +217,20 @@ template <uint16_t k>
 uint64_t Read_CdBG_Extractor<k>::vertex_count() const
 {
     return hash_table.size();
+}
+
+
+template <uint16_t k>
+uint64_t Read_CdBG_Extractor<k>::unipaths_vertex_count() const
+{
+    return unipaths_meta_info_.kmer_count();
+}
+
+
+template <uint16_t k>
+bool Read_CdBG_Extractor<k>::has_dcc() const
+{
+    return unipaths_vertex_count() != vertex_count();
 }
 
 

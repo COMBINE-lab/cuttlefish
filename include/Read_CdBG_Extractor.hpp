@@ -21,6 +21,7 @@
 // Forward declarations.
 template <uint16_t k> class Kmer_SPMC_Iterator;
 template <uint16_t k> class Thread_Pool;
+template <uint16_t k> class dBG_Info;
 
 
 // A class to extract the vertices from a compacted de Bruin graph — which are the maximal unitigs of some ordinary de Bruijn graph.
@@ -175,14 +176,24 @@ public:
     void extract_maximal_unitigs();
 
     // Extracts the chordless cycles from the de Bruijn graph that are completely disconnected from the
-    // rest of the graph. A precondition for the algorithm is the availability of the maximal unitigs.
-    void extract_detached_cycles();
+    // rest of the graph. `dbg_info` is used to determine whether the compacted graph had been constructed
+    // earlier — in which case some data structures are re-used from the earlier construction.
+    void extract_detached_cycles(const dBG_Info<k>& dbg_info);
+
+    // Returns the parameters collection for the compacted graph construction.
+    const Build_Params& get_params() const;
 
     // Returns a wrapper over the meta-information of the extracted unitigs.
     const Unipaths_Meta_info<k>& unipaths_meta_info() const;
 
     // Returns the number of vertices in the underlying graph.
     uint64_t vertex_count() const;
+
+    // Returns `true` iff the de Bruijn graph has DCCs (Detached Chordless Cycles).
+    bool has_dcc() const;
+
+    // Returns the number of vertices present in maximal unitigs (excluding the DCCs).
+    uint64_t unipaths_vertex_count() const;
 };
 
 

@@ -13,6 +13,7 @@
 #include "Kmer_Hash_Entry_API.hpp"
 #include "Spin_Lock.hpp"
 #include "Sparse_Lock.hpp"
+#include "Build_Params.hpp"
 
 
 template <uint16_t k, uint8_t BITS_PER_KEY>
@@ -116,6 +117,14 @@ public:
 
     // Loads the hash table buckets `hash_table` from the file at `file_path`.
     void load_hash_buckets(const std::string& file_path);
+
+    // Saves the hash table (i.e. the hash function and the buckets) into file
+    // paths determined from the parameters collection `params`.
+    void save(const Build_Params& params) const;
+
+    // Removes the hash table files (if exists) from disk, with the file paths
+    // being determined from the parameters collection `params`.
+    void remove(const Build_Params& params) const;
 
     // Destructs the hash table.
     ~Kmer_Hash_Table();

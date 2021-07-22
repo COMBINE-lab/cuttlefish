@@ -1,11 +1,13 @@
 
 #include "Kmer_Hash_Table.hpp"
 #include "Kmer_SPMC_Iterator.hpp"
+#include "utility.hpp"
 
 #include <fstream>
 #include <vector>
 #include <chrono>
 #include <sys/stat.h>
+#include <cstdio>
 
 
 template <uint16_t k, uint8_t BITS_PER_KEY>
@@ -48,14 +50,7 @@ void Kmer_Hash_Table<k, BITS_PER_KEY>::build_mph_function(const uint16_t thread_
         
 
         // Save the MPHF if specified.
-        if(!mph_file_path.empty())
-        {
-            std::cout << "Saving the MPHF in file " << mph_file_path << ".\n";
-
-            save_mph_function(mph_file_path);
-
-            std::cout << "Saved the MPHF in disk.\n";
-        }
+        // TODO: add `--save-hash` CL-parameter in main, replacing `--mph`.
     }
 }
 
@@ -123,6 +118,29 @@ void Kmer_Hash_Table<k, BITS_PER_KEY>::load_hash_buckets(const std::string& file
 
 
     hash_table.deserialize(file_path, false);
+}
+
+
+template <uint16_t k, uint8_t BITS_PER_KEY>
+void Kmer_Hash_Table<k, BITS_PER_KEY>::save(const Build_Params& params) const
+{
+    save_mph_function(params.mph_file_path());
+    save_hash_buckets(params.buckets_file_path());
+}
+
+
+template <uint16_t k, uint8_t BITS_PER_KEY>
+void Kmer_Hash_Table<k, BITS_PER_KEY>::remove(const Build_Params& params) const
+{
+    const std::string mph_file_path = params.mph_file_path();
+    const std::string buckets_file_path = params.buckets_file_path();
+
+    if( (file_exists(mph_file_path) && std::remove(mph_file_path.c_str()) != 0) ||
+        (file_exists(buckets_file_path) && std::remove(buckets_file_path.c_str()) != 0))
+    {
+        std::cerr << "Error removing the hash table files from disk. Aborting.\n";
+        std::exit(EXIT_FAILURE);
+    }
 }
 
 

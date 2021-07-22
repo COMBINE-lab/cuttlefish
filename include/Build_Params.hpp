@@ -7,6 +7,7 @@
 #include "globals.hpp"
 #include "Reference_Input.hpp"
 #include "Output_Format.hpp"
+#include "File_Extensions.hpp"
 
 #include <string>
 #include <vector>
@@ -115,10 +116,17 @@ public:
     }
 
 
-    // Returns the path to the output file.
-    const std::string& output_file_path() const
+    // Returns the path prefix for all outputs of the algorithm.
+    const std::string output_prefix() const
     {
         return output_file_path_;
+    }
+
+
+    // Returns the path to the output file.
+    const std::string output_file_path() const
+    {
+        return is_read_graph() ? (output_file_path_ + cuttlefish::file_ext::unipaths_ext) : output_file_path_;
     }
 
 
@@ -144,23 +152,23 @@ public:
 
 
     // Returns the path to the optional MPH file.
-    const std::string& mph_file_path() const
+    const std::string mph_file_path() const
     {
-        return mph_file_path_;
+        return is_read_graph() ? (output_file_path_ + cuttlefish::file_ext::hash_ext) : mph_file_path_;
     }
 
 
     // Returns the path to the optional file storing the hash table buckets.
-    const std::string& buckets_file_path() const
+    const std::string buckets_file_path() const
     {
-        return buckets_file_path_;
+        return is_read_graph() ? (output_file_path_ + cuttlefish::file_ext::buckets_ext) : buckets_file_path_;
     }
 
 
     // Returns the path to the optional file storing meta-information about the graph and cuttlefish executions.
-    const std::string& json_file_path() const
+    const std::string json_file_path() const
     {
-        return json_file_path_;
+        return is_read_graph() ? (output_file_path_ + cuttlefish::file_ext::json_ext) : json_file_path_;
     }
 
 

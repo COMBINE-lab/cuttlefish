@@ -5,6 +5,8 @@
 
 bool Build_Params::is_valid() const
 {
+    // TODO: do better — is a mess.
+    
     bool valid = true;
 
 
@@ -17,39 +19,10 @@ bool Build_Params::is_valid() const
             valid = false;
         }
 
-        if(!extract_cycles_)    // Construction of the compacted dBG is requested, not the detached chordless cycles extraction.
+        if(edge_db_path_.empty())
         {
-            if(edge_db_path_.empty())
-            {
-                std::cout << "The path prefix to the KMC-database for edges (i.e. (k + 1)-mers) is required.\n";
-                valid = false;
-            }
-        }
-        else    // Detached chordless cycles extraction is requested.
-        {
-            if(vertex_db_path_.empty())
-            {
-                std::cout << "The path prefix to the KMC-database for vertices (i.e. k-mers) is required for the cycles' extraction.\n";
-                valid = false;
-            }
-
-            if(mph_file_path_.empty() || !file_exists(mph_file_path_))
-            {
-                std::cout << "The Minimal Perfect Hash Function (MPHF) file (*.bbh) is required for the cycles' extraction.\n";
-                valid = false;
-            }
-
-            if(buckets_file_path_.empty() || !file_exists(buckets_file_path_))
-            {
-                std::cout << "The hash table buckets file (*.cf) is required for the cycles' extraction.\n";
-                valid = false;
-            }
-
-            if(output_file_path_.empty() || !file_exists(output_file_path_))
-            {
-                std::cout << "The output maximal unitigs file (*.fasta) is required for the cycles' extraction.\n";
-                valid = false;
-            }
+            std::cout << "The path prefix to the KMC-database for edges (i.e. (k + 1)-mers) is required.\n";
+            valid = false;
         }
     }
     else    // Is a reference de Bruijn graph.

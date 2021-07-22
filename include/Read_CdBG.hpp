@@ -22,6 +22,13 @@ private:
     dBG_Info<k> dbg_info;   // Wrapper object for structural information of the graph.
 
 
+    // Computes the states of the automata, i.e. the vertices in the graph.
+    void compute_DFA_states();
+
+    // Extracts the maximal unitigs from the graph.
+    void extract_maximal_unitigs();
+
+
 public:
 
     // Constructs a `Read_CdBG` object with the parameters required for the construction of
@@ -31,6 +38,11 @@ public:
     // Constructs the compacted read de Bruijn graph, employing the parameters received
     // with the object-constructor.
     void construct();
+
+    // Returns `true` iff the compacted de Bruijn graph to be built from the parameters
+    // collection `params` had been constructed in an earlier execution.
+    // NB: only the existence of the output meta-info file is checked for this purpose.
+    static bool is_constructed(const Build_Params& params);
 };
 
 

@@ -1,18 +1,20 @@
 
 #include "Read_CdBG_Extractor.hpp"
+#include "Read_CdBG.hpp"
 #include "Kmer_SPMC_Iterator.hpp"
 #include "FASTA_Record.hpp"
 #include "Character_Buffer.hpp"
 #include "Thread_Pool.hpp"
+#include "dBG_Info.hpp"
 
 
 template <uint16_t k>
-void Read_CdBG_Extractor<k>::extract_detached_cycles()
+void Read_CdBG_Extractor<k>::extract_detached_cycles(const dBG_Info<k>& dbg_info)
 {
     std::chrono::high_resolution_clock::time_point t_start = std::chrono::high_resolution_clock::now();
 
 
-    if(!params.dcc_opt())
+    if(Read_CdBG<k>::is_constructed(params) && !dbg_info.dcc_opt_performed())
     {
         std::cout << "Marking the vertices present in the extracted maximal unitigs.\n";
         mark_maximal_unitig_vertices();

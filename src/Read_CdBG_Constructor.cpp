@@ -55,14 +55,6 @@ void Read_CdBG_Constructor<k>::compute_DFA_states()
         thread_pool.close();
 
         std::cout << "\nNumber of processed edges: " << edges_processed << "\n";
-
-        
-        if(!buckets_file_path.empty() && !params.dcc_opt()) // Save the hash table buckets, if a file path is provided.
-        {
-            std::cout << "Saving the hash table buckets in file " << buckets_file_path << ".\n";
-            hash_table.save_hash_buckets(buckets_file_path);
-            std::cout << "Saved the buckets in disk.\n";
-        }
     }
 
 

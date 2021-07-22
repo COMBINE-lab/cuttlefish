@@ -50,6 +50,8 @@ void Read_CdBG_Extractor<k>::mark_maximal_unitig_vertices()
 
 
     // Launch (multi-threaded) marking of the vertices present in the maximal unitigs.
+    const uint64_t thread_load_percentile = static_cast<uint64_t>(std::round((vertex_count() / 100.0) / params.thread_count()));
+    progress_tracker.setup(vertex_count(), thread_load_percentile, "Extracting maximal unitigs");
     distribute_unipaths_extraction(&vertex_parser, thread_pool);
 
     // Wait for the vertices to be depleted from the database.
@@ -74,6 +76,7 @@ void Read_CdBG_Extractor<k>::mark_maximal_unitig_vertices(Kmer_SPMC_Iterator<k>*
 
     uint64_t vertex_count = 0;  // Number of vertices scanned by this thread.
     uint64_t marked_count = 0;  // Number of vertices marked as present in maximal unitigs by this thread.
+    uint64_t progress = 0;  // Number of vertices scanned by the thread; is reset at reaching 1% of its approximate workload.
 
     while(vertex_parser->tasks_expected(thread_id))
         if(vertex_parser->value_at(thread_id, v))
@@ -84,6 +87,9 @@ void Read_CdBG_Extractor<k>::mark_maximal_unitig_vertices(Kmer_SPMC_Iterator<k>*
                 marked_count += mark_maximal_unitig(v, s_v);
 
             vertex_count++;
+
+
+            progress_tracker.track_work(++progress);
         }
 
 
@@ -160,6 +166,8 @@ void Read_CdBG_Extractor<k>::extract_detached_chordless_cycles()
     init_output_sink();
 
     // Launch (multi-threaded) marking of the vertices present in the maximal unitigs.
+    const uint64_t thread_load_percentile = static_cast<uint64_t>(std::round((vertex_count() / 100.0) / params.thread_count()));
+    progress_tracker.setup(vertex_count(), thread_load_percentile, "Extracting maximal unitigs");
     distribute_unipaths_extraction(&vertex_parser, thread_pool);
 
     // Wait for the vertices to be depleted from the database.
@@ -186,6 +194,7 @@ void Read_CdBG_Extractor<k>::extract_detached_chordless_cycles(Kmer_SPMC_Iterato
     uint64_t vertex_count = 0;  // Number of vertices scanned by this thread.
     uint64_t cycles_extracted = 0;  // Number of detached chordless cycles extracted by this thread.
     uint64_t cycle_vertices = 0;    // Number of vertices found to be in detached chordless cycles by this thread.
+    uint64_t progress = 0;  // Number of vertices scanned by the thread; is reset at reaching 1% of its approximate workload.
 
     Character_Buffer<BUFF_SZ, sink_t> output_buffer(output_sink.sink());  // The output buffer for the cycles.
     cycle.reserve(SEQ_SZ);
@@ -208,14 +217,14 @@ void Read_CdBG_Extractor<k>::extract_detached_chordless_cycles(Kmer_SPMC_Iterato
                 }
 
             vertex_count++;
+
+
+            progress_tracker.track_work(++progress);
         }
 
 
     // Aggregate the meta-information over the marked maximal unitigs and the thread-executions.
     lock.lock();
-
-    std::cout << "Thread " << thread_id << " processed " << vertex_count << " vertices," // TODO: remove.
-                " and extracted " << cycles_extracted << " cycles.\n";
     
     vertices_scanned += vertex_count;
 

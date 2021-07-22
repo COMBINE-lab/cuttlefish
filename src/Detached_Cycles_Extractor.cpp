@@ -51,7 +51,7 @@ void Read_CdBG_Extractor<k>::mark_maximal_unitig_vertices()
 
     // Launch (multi-threaded) marking of the vertices present in the maximal unitigs.
     const uint64_t thread_load_percentile = static_cast<uint64_t>(std::round((vertex_count() / 100.0) / params.thread_count()));
-    progress_tracker.setup(vertex_count(), thread_load_percentile, "Extracting maximal unitigs");
+    progress_tracker.setup(vertex_count(), thread_load_percentile, "Marking maximal unitigs");
     distribute_unipaths_extraction(&vertex_parser, thread_pool);
 
     // Wait for the vertices to be depleted from the database.
@@ -144,13 +144,6 @@ std::size_t Read_CdBG_Extractor<k>::mark_maximal_unitig(const Kmer<k>& v_hat, co
 template <uint16_t k>
 void Read_CdBG_Extractor<k>::extract_detached_chordless_cycles()
 {
-    // TODO: put the information for this utility check in a meta JSON file.
-    // if(vertices_marked == vertices_scanned)
-    // {
-    //     std::cout << "\nNo detached chordless cycle exists in the de Bruijn graph.\n";
-    //     return;
-    // }
-
      // Construct a thread pool.
     const uint16_t thread_count = params.thread_count();
     Thread_Pool<k> thread_pool(thread_count, this, Thread_Pool<k>::Task_Type::extract_cycles);
@@ -167,7 +160,7 @@ void Read_CdBG_Extractor<k>::extract_detached_chordless_cycles()
 
     // Launch (multi-threaded) marking of the vertices present in the maximal unitigs.
     const uint64_t thread_load_percentile = static_cast<uint64_t>(std::round((vertex_count() / 100.0) / params.thread_count()));
-    progress_tracker.setup(vertex_count(), thread_load_percentile, "Extracting maximal unitigs");
+    progress_tracker.setup(vertex_count(), thread_load_percentile, "Extracting detached chordless cycles");
     distribute_unipaths_extraction(&vertex_parser, thread_pool);
 
     // Wait for the vertices to be depleted from the database.

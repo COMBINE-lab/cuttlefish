@@ -25,7 +25,7 @@ std::string get_random_string(const size_t len)
 
 
     const std::string str(s);
-    delete s;
+    delete[] s;
 
     return str;
 }

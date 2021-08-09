@@ -392,7 +392,7 @@ inline std::string Kmer<k>::string_label() const
     std::string str_label(label, label + k);
 
     
-    delete label;
+    delete[] label;
     
     return str_label;
 }

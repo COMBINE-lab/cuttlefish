@@ -7,7 +7,7 @@ cmake_minimum_required(VERSION 3.14)
 # Name the project, its version, and languages used in it.
 set(PROJECT_NAME cuttlefish)
 project(${PROJECT_NAME}
-        VERSION 0.1.0
+        VERSION 1.0.0
         LANGUAGES CXX C
         )
 
@@ -27,10 +27,9 @@ set(CMAKE_C_EXTENSIONS OFF)
 
 # Bundle the warning flags that we want to pass on to the compiler.
 # Disable unknown pragmas, b/c bbhash uses them extensively.
-# Same with maybe-uninitialized (might want this one back later though).
 # Reference: https://gcc.gnu.org/onlinedocs/gcc/Warning-Options.html
 set(WARNING_FLAGS -Wall -Wextra)
-set(SUPPRESS_WARNING_FLAGS -Wno-unknown-pragmas -Wno-maybe-uninitialized -Wno-implicit-fallthrough)
+set(SUPPRESS_WARNING_FLAGS -Wno-unknown-pragmas)
 
 # Bundle the extra optimization flags (not associated with the `-O` levels)
 # that we want to pass on to the compiler.
@@ -61,6 +60,11 @@ find_package(ZLIB REQUIRED)
 if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release)
 endif()
+
+set(CMAKE_CXX_FLAGS_DEBUG "-g")
+set(CMAKE_CXX_FLAGS_RELEASE "-O3")
+set(CMAKE_C_FLAGS_DEBUG "-g")
+set(CMAKE_C_FLAGS_RELEASE "-O3")
 
 
 # Add subdirectory `src` to the build; CMake will open `src/CMakeLists.txt` for such.

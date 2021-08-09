@@ -13,61 +13,61 @@ State::State(): code(0b00000)
 State::State(const Vertex& vertex)
 {
     if(!vertex.outputted())
-        switch(vertex.vertex_class())
+        switch(vertex.state_class())
         {
-        case cuttlefish::Vertex_Class::single_in_single_out:
+        case cuttlefish::State_Class::single_in_single_out:
             code = 0b10000;
-            set_nibble_upper_half(vertex.enter());
-            set_nibble_lower_half(vertex.exit());
+            set_nibble_upper_half(vertex.front());
+            set_nibble_lower_half(vertex.back());
 
             break;
 
-        case cuttlefish::Vertex_Class::multi_in_single_out:
+        case cuttlefish::State_Class::multi_in_single_out:
             code = 0b00100;
-            set_nibble_lower_half(vertex.exit());
+            set_nibble_lower_half(vertex.back());
 
             break;
 
-        case cuttlefish::Vertex_Class::single_in_multi_out:
+        case cuttlefish::State_Class::single_in_multi_out:
             code = 0b01000;
-            set_nibble_lower_half(vertex.enter());
+            set_nibble_lower_half(vertex.front());
 
             break;
 
-        case cuttlefish::Vertex_Class::multi_in_multi_out:
+        case cuttlefish::State_Class::multi_in_multi_out:
             code = 0b00011;
 
             break;
 
         default:
-            std::cerr << "Invalid vertex class " << (uint16_t)vertex.vertex_class() << " encountered during state construction. Aborting.\n";
+            std::cerr << "Invalid vertex class " << (uint16_t)vertex.state_class() << " encountered during state construction. Aborting.\n";
             std::exit(EXIT_FAILURE);
         }
     else
-        switch(vertex.vertex_class())
+        switch(vertex.state_class())
         {
-        case cuttlefish::Vertex_Class::single_in_single_out:
+        case cuttlefish::State_Class::single_in_single_out:
             code = 0b01100;
 
             break;
 
-        case cuttlefish::Vertex_Class::multi_in_single_out:
+        case cuttlefish::State_Class::multi_in_single_out:
             code = 0b01101;
 
             break;
 
-        case cuttlefish::Vertex_Class::single_in_multi_out:
+        case cuttlefish::State_Class::single_in_multi_out:
             code = 0b01110;
 
             break;
 
-        case cuttlefish::Vertex_Class::multi_in_multi_out:
+        case cuttlefish::State_Class::multi_in_multi_out:
             code = 0b01111;
 
             break;
 
         default:
-            std::cerr << "Invalid vertex class " << (uint16_t)vertex.vertex_class() << " encountered during state construction. Aborting.\n";
+            std::cerr << "Invalid vertex class " << (uint16_t)vertex.state_class() << " encountered during state construction. Aborting.\n";
             std::exit(EXIT_FAILURE);
         }
 }
@@ -141,91 +141,91 @@ Vertex State::decode() const
         std::exit(EXIT_FAILURE);
 
     case 0b00011:   // 3
-        return Vertex(cuttlefish::Vertex_Class::multi_in_multi_out);
+        return Vertex(cuttlefish::State_Class::multi_in_multi_out);
 
     case 0b00100:   // 4
-        return Vertex(cuttlefish::Vertex_Class::multi_in_single_out, DNA::A);
+        return Vertex(cuttlefish::State_Class::multi_in_single_out, DNA::A);
 
     case 0b00101:   // 5
-        return Vertex(cuttlefish::Vertex_Class::multi_in_single_out, DNA::C);
+        return Vertex(cuttlefish::State_Class::multi_in_single_out, DNA::C);
 
     case 0b00110:   // 6
-        return Vertex(cuttlefish::Vertex_Class::multi_in_single_out, DNA::G);
+        return Vertex(cuttlefish::State_Class::multi_in_single_out, DNA::G);
 
     case 0b00111:   // 7
-        return Vertex(cuttlefish::Vertex_Class::multi_in_single_out, DNA::T);
+        return Vertex(cuttlefish::State_Class::multi_in_single_out, DNA::T);
 
     case 0b01000:   // 8
-        return Vertex(cuttlefish::Vertex_Class::single_in_multi_out, DNA::A);
+        return Vertex(cuttlefish::State_Class::single_in_multi_out, DNA::A);
 
     case 0b01001:   // 9
-        return Vertex(cuttlefish::Vertex_Class::single_in_multi_out, DNA::C);
+        return Vertex(cuttlefish::State_Class::single_in_multi_out, DNA::C);
 
     case 0b01010:   // 10
-        return Vertex(cuttlefish::Vertex_Class::single_in_multi_out, DNA::G);
+        return Vertex(cuttlefish::State_Class::single_in_multi_out, DNA::G);
 
     case 0b01011:   // 11
-        return Vertex(cuttlefish::Vertex_Class::single_in_multi_out, DNA::T);
+        return Vertex(cuttlefish::State_Class::single_in_multi_out, DNA::T);
 
     case 0b01100:   // 12
-        return Vertex(cuttlefish::Vertex_Class::single_in_single_out, true);
+        return Vertex(cuttlefish::State_Class::single_in_single_out, true);
 
     case 0b01101:   // 13
-        return Vertex(cuttlefish::Vertex_Class::multi_in_single_out, true);
+        return Vertex(cuttlefish::State_Class::multi_in_single_out, true);
 
     case 0b01110:   // 14
-        return Vertex(cuttlefish::Vertex_Class::single_in_multi_out, true);
+        return Vertex(cuttlefish::State_Class::single_in_multi_out, true);
 
     case 0b01111:   // 15
-        return Vertex(cuttlefish::Vertex_Class::multi_in_multi_out, true);
+        return Vertex(cuttlefish::State_Class::multi_in_multi_out, true);
 
     case 0b10000:   // 16
-        return Vertex(cuttlefish::Vertex_Class::single_in_single_out, DNA::A, DNA::A);
+        return Vertex(cuttlefish::State_Class::single_in_single_out, DNA::A, DNA::A);
 
     case 0b10001:   // 17
-        return Vertex(cuttlefish::Vertex_Class::single_in_single_out, DNA::A, DNA::C);
+        return Vertex(cuttlefish::State_Class::single_in_single_out, DNA::A, DNA::C);
 
     case 0b10010:   // 18
-        return Vertex(cuttlefish::Vertex_Class::single_in_single_out, DNA::A, DNA::G);
+        return Vertex(cuttlefish::State_Class::single_in_single_out, DNA::A, DNA::G);
 
     case 0b10011:   // 19
-        return Vertex(cuttlefish::Vertex_Class::single_in_single_out, DNA::A, DNA::T);
+        return Vertex(cuttlefish::State_Class::single_in_single_out, DNA::A, DNA::T);
 
     case 0b10100:   // 20
-        return Vertex(cuttlefish::Vertex_Class::single_in_single_out, DNA::C, DNA::A);
+        return Vertex(cuttlefish::State_Class::single_in_single_out, DNA::C, DNA::A);
 
     case 0b10101:   // 21
-        return Vertex(cuttlefish::Vertex_Class::single_in_single_out, DNA::C, DNA::C);
+        return Vertex(cuttlefish::State_Class::single_in_single_out, DNA::C, DNA::C);
 
     case 0b10110:   // 22
-        return Vertex(cuttlefish::Vertex_Class::single_in_single_out, DNA::C, DNA::G);
+        return Vertex(cuttlefish::State_Class::single_in_single_out, DNA::C, DNA::G);
 
     case 0b10111:   // 23
-        return Vertex(cuttlefish::Vertex_Class::single_in_single_out, DNA::C, DNA::T);
+        return Vertex(cuttlefish::State_Class::single_in_single_out, DNA::C, DNA::T);
 
     case 0b11000:   // 24
-        return Vertex(cuttlefish::Vertex_Class::single_in_single_out, DNA::G, DNA::A);
+        return Vertex(cuttlefish::State_Class::single_in_single_out, DNA::G, DNA::A);
 
     case 0b11001:   // 25
-        return Vertex(cuttlefish::Vertex_Class::single_in_single_out, DNA::G, DNA::C);
+        return Vertex(cuttlefish::State_Class::single_in_single_out, DNA::G, DNA::C);
 
     case 0b11010:   // 26
-        return Vertex(cuttlefish::Vertex_Class::single_in_single_out, DNA::G, DNA::G);
+        return Vertex(cuttlefish::State_Class::single_in_single_out, DNA::G, DNA::G);
 
     case 0b11011:   // 27
-        return Vertex(cuttlefish::Vertex_Class::single_in_single_out, DNA::G, DNA::T);
+        return Vertex(cuttlefish::State_Class::single_in_single_out, DNA::G, DNA::T);
 
     case 0b11100:   // 28
-        return Vertex(cuttlefish::Vertex_Class::single_in_single_out, DNA::T, DNA::A);
+        return Vertex(cuttlefish::State_Class::single_in_single_out, DNA::T, DNA::A);
 
     case 0b11101:   // 29
-        return Vertex(cuttlefish::Vertex_Class::single_in_single_out, DNA::T, DNA::C);
+        return Vertex(cuttlefish::State_Class::single_in_single_out, DNA::T, DNA::C);
 
     case 0b11110:   // 30
-        return Vertex(cuttlefish::Vertex_Class::single_in_single_out, DNA::T, DNA::G);
+        return Vertex(cuttlefish::State_Class::single_in_single_out, DNA::T, DNA::G);
 
     case 0b11111:   // 31
-        return Vertex(cuttlefish::Vertex_Class::single_in_single_out, DNA::T, DNA::T);
+        return Vertex(cuttlefish::State_Class::single_in_single_out, DNA::T, DNA::T);
 
     default:
         std::cerr << "Invalid state " << (uint16_t)code << " encountered during state decoding. Aborting.\n";
@@ -349,7 +349,7 @@ State State::outputted() const
 }
 
 
-cuttlefish::Vertex_Class State::vertex_class() const
+cuttlefish::State_Class State::state_class() const
 {
     switch(code)
     {
@@ -363,31 +363,31 @@ cuttlefish::Vertex_Class State::vertex_class() const
         std::exit(EXIT_FAILURE);
 
     case 0b00011:   // 3
-        return cuttlefish::Vertex_Class::multi_in_multi_out;
+        return cuttlefish::State_Class::multi_in_multi_out;
 
     case 0b00100:   // 4
     case 0b00101:   // 5
     case 0b00110:   // 6
     case 0b00111:   // 7
-        return cuttlefish::Vertex_Class::multi_in_single_out;
+        return cuttlefish::State_Class::multi_in_single_out;
 
     case 0b01000:   // 8
     case 0b01001:   // 9
     case 0b01010:   // 10
     case 0b01011:   // 11
-        return cuttlefish::Vertex_Class::single_in_multi_out;
+        return cuttlefish::State_Class::single_in_multi_out;
 
     case 0b01100:   // 12
-        return cuttlefish::Vertex_Class::single_in_single_out;
+        return cuttlefish::State_Class::single_in_single_out;
 
     case 0b01101:   // 13
-        return cuttlefish::Vertex_Class::multi_in_single_out;
+        return cuttlefish::State_Class::multi_in_single_out;
 
     case 0b01110:   // 14
-        return cuttlefish::Vertex_Class::single_in_multi_out;
+        return cuttlefish::State_Class::single_in_multi_out;
 
     case 0b01111:   // 15
-        return cuttlefish::Vertex_Class::multi_in_multi_out;
+        return cuttlefish::State_Class::multi_in_multi_out;
 
     case 0b10000:   // 16
     case 0b10001:   // 17
@@ -405,7 +405,7 @@ cuttlefish::Vertex_Class State::vertex_class() const
     case 0b11101:   // 29
     case 0b11110:   // 30
     case 0b11111:   // 31
-        return cuttlefish::Vertex_Class::single_in_single_out;
+        return cuttlefish::State_Class::single_in_single_out;
 
     default:
         std::cerr << "Invalid state " << (uint16_t)code << " encountered during vertex class decoding. Aborting.\n";

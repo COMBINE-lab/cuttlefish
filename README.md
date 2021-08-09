@@ -232,17 +232,21 @@ The Cuttlefish pipeline uses a non-trivial amount of intermediate disk space, in
 
 ## Acknowledgements
 
-Please cite Cuttlefish when using it, including —
+Please cite Cuttlefish when using it, including—
 
 ```bibtex
-  @article{Khan_2020,
-  doi = {10.1101/2020.10.21.349605},
-  url = {https://doi.org/10.1101%2F2020.10.21.349605},
-  year = 2020,
-  month = {oct},
-  publisher = {Cold Spring Harbor Laboratory},
-  author = {Jamshed Khan and Rob Patro},
-  title = {Cuttlefish: Fast, parallel, and low-memory compaction of de Bruijn graphs from large-scale genome collections}
+  @article{10.1093/bioinformatics/btab309,
+    author = {Khan, Jamshed and Patro, Rob},
+    title = "{Cuttlefish: fast, parallel and low-memory compaction of de Bruijn graphs from large-scale genome collections}",
+    journal = {Bioinformatics},
+    volume = {37},
+    number = {Supplement\_1},
+    pages = {i177-i186},
+    year = {2021},
+    month = {07},
+    issn = {1367-4803},
+    doi = {10.1093/bioinformatics/btab309},
+    url = {https://doi.org/10.1093/bioinformatics/btab309},
 }
 ```
 

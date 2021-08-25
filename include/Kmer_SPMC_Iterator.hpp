@@ -17,10 +17,10 @@
 struct Consumer_Data
 {
     uint8_t* buffer{nullptr};   // Buffer for the raw binary k-mers.
-    uint64_t pref_idx;          // Index of the prefix (into the in-memory KMC prefix buffer) to start parsing (and using) k-mers from.
+    uint64_t prefix;            // The potential prefix to start parsing (and using) k-mers from (used as index into the in-memory KMC prefix-buffer).
     uint64_t suff_idx;          // Index of the suffix (into the in-disk KMC suffix collection) to start parsing (and using) k-mers from.
     uint64_t kmers_available;   // Number of raw suffixes present in the current buffer.
-    uint64_t kmers_parsed;      // Number of k-mers parsed by from the current buffer.
+    uint64_t kmers_parsed;      // Number of k-mers parsed from the current buffer.
     uint64_t pad_[3];           // Padding to avoid false-sharing.
                                 // TODO: use better soln: https://en.cppreference.com/w/cpp/thread/hardware_destructive_interference_size
 };
@@ -47,7 +47,7 @@ private:
 
     std::unique_ptr<std::thread> reader{nullptr};   // The thread doing the actual disk-read of the binary data, i.e. the producer thread.
 
-    static constexpr size_t BUF_SZ_PER_CONSUMER = (1 << 24);   // Size of the consumer-specific buffers (in bytes).
+    static constexpr size_t BUF_SZ_PER_CONSUMER = (1 << 24);   // Size of the consumer-specific buffers (in bytes): 16 MB.
 
     std::vector<Consumer_Data> consumer;   // Parsing data required for each consumer.
 
@@ -212,7 +212,7 @@ inline void Kmer_SPMC_Iterator<k>::launch_production()
     {
         auto& consumer_state = consumer[id];
         consumer_state.buffer = new uint8_t[BUF_SZ_PER_CONSUMER];
-        consumer_state.pref_idx = 0;
+        consumer_state.prefix = 0;
         consumer_state.suff_idx = 0;
         consumer_state.kmers_available = 0;
         consumer_state.kmers_parsed = 0;
@@ -248,7 +248,7 @@ inline void Kmer_SPMC_Iterator<k>::read_raw_kmers()
         const size_t consumer_id = get_idle_consumer();
         auto& consumer_state = consumer[consumer_id];
 
-        consumer_state.pref_idx = kmer_database.curr_prefix_idx();
+        consumer_state.prefix = kmer_database.curr_prefix();
         consumer_state.suff_idx = kmer_database.curr_suffix_idx();
 
         consumer_state.kmers_available = kmer_database.read_raw_suffixes(consumer_state.buffer, BUF_SZ_PER_CONSUMER);
@@ -323,7 +323,7 @@ inline bool Kmer_SPMC_Iterator<k>::value_at(const size_t consumer_id, Kmer<k>& k
         return false;
     }
 
-    kmer_database.parse_kmer<k>(ts.pref_idx, ts.suff_idx, ts.buffer,
+    kmer_database.parse_kmer<k>(ts.prefix, ts.suff_idx, ts.buffer,
                                 ts.kmers_parsed * kmer_database.suff_record_size(), kmer);
     ts.kmers_parsed++;
 

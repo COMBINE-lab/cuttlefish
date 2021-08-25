@@ -419,20 +419,20 @@ void test_SPMC_iterator_performance(const char* const db_path, const size_t cons
                     std::cout << "Launched consumer " << consumer_id << ".\n";
                     Kmer<k> kmer;
                     Kmer<k> max_kmer;
-                    uint64_t local_count{0};
+                    // uint64_t local_count{0};
                     while(it.tasks_expected(consumer_id))
                         if(it.value_at(consumer_id, kmer))
                         {
                             max_kmer = std::max(max_kmer, kmer);
-                            local_count++;
-                            if (local_count % 5000000 == 0) {
-                                ctr += local_count;
-                                local_count = 0;
-                                std::cerr << "parsed " << ctr << " k-mers\n";
-                            }
+                            // local_count++;
+                            // if (local_count % 5000000 == 0) {
+                            //     ctr += local_count;
+                            //     local_count = 0;
+                            //     std::cerr << "parsed " << ctr << " k-mers\n";
+                            // }
                         }
 
-                    ctr += local_count;
+                    // ctr += local_count;
                     mk = max_kmer;
                 }
             )
@@ -631,11 +631,11 @@ int main(int argc, char** argv)
 
     // count_kmers_in_unitigs(argv[1], atoi(argv[2]));
 
-    // static constexpr uint16_t k = 26;
-    // static const size_t consumer_count = std::atoi(argv[2]);
+    static constexpr uint16_t k = 28;
+    static const size_t consumer_count = std::atoi(argv[2]);
 
     // test_buffered_iterator_performance<k>(argv[1]);
-    // test_SPMC_iterator_performance<k>(argv[1], consumer_count);
+    test_SPMC_iterator_performance<k>(argv[1], consumer_count);
 
     // write_kmers<32>(argv[1], std::atoi(argv[2]), argv[3]);
 

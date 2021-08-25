@@ -7,6 +7,9 @@
 #include "BBHash/BooPHF.h"
 #include "Kmer_Hasher.hpp"
 #include "Validator.hpp"
+#include "Character_Buffer.hpp"
+#include "Kmer_SPMC_Iterator.hpp"
+#include "FASTA_Record.hpp"
 #include "kseq/kseq.h"
 #include "spdlog/spdlog.h"
 #include "spdlog/async.h"
@@ -546,6 +549,58 @@ void test_iterator_correctness(const char* const db_path, const size_t consumer_
 }
 
 
+template <uint16_t k>
+void write_kmers(const std::string& kmc_db_path, const uint16_t thread_count, const std::string& output_file_path)
+{
+    const Kmer_Container<k> kmer_container(kmc_db_path);
+    Kmer_SPMC_Iterator<k> parser(&kmer_container, thread_count);
+
+    parser.launch_production();
+    
+    std::ofstream output(output_file_path);
+
+    std::vector<std::unique_ptr<std::thread>> T(thread_count);
+
+    for(size_t i = 0; i < thread_count; ++i)
+    {
+        const size_t consumer_id = i;
+        
+        T[consumer_id].reset(
+            new std::thread([&parser, consumer_id, &output]()
+                {
+                    Kmer<k> kmer;
+                    std::vector<char> str;
+                    str.reserve(k + 2);
+
+                    uint64_t local_count{0};
+                    Character_Buffer<10485760, std::ofstream> buffer(output);
+
+                    while(parser.tasks_expected(consumer_id))
+                        if(parser.value_at(consumer_id, kmer))
+                        {
+                            kmer.get_label(str);
+                            str.emplace_back('\n');
+                            // buffer += str;
+                            buffer += FASTA_Record<std::vector<char>>(0, str);
+
+                            local_count++;
+                            if(local_count % 10000000 == 0)
+                                std::cout << "Thread " << consumer_id << " parsed " << local_count << " k-mers\n";
+                        }
+                }
+            )
+        );
+    }
+
+
+    parser.seize_production();
+    for(std::size_t id = 0; id < thread_count; ++id)
+        T[id]->join();
+
+    output.close();
+}
+
+
 int main(int argc, char** argv)
 {
     (void)argc;
@@ -582,6 +637,7 @@ int main(int argc, char** argv)
     // test_buffered_iterator_performance<k>(argv[1]);
     // test_SPMC_iterator_performance<k>(argv[1], consumer_count);
 
+    // write_kmers<32>(argv[1], std::atoi(argv[2]), argv[3]);
 
     return 0;
 }

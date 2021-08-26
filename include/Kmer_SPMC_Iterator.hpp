@@ -21,6 +21,8 @@ struct Consumer_Data
     uint64_t suff_idx;          // Index of the suffix (into the in-disk KMC suffix collection) to start parsing (and using) k-mers from.
     uint64_t kmers_available;   // Number of raw suffixes present in the current buffer.
     uint64_t kmers_parsed;      // Number of k-mers parsed from the current buffer.
+    std::vector<std::pair<uint64_t, uint64_t>> prefix_vec;
+    std::vector<std::pair<uint64_t, uint64_t>>::iterator prefix_iterator;
     uint64_t pad_[3];           // Padding to avoid false-sharing.
                                 // TODO: use better soln: https://en.cppreference.com/w/cpp/thread/hardware_destructive_interference_size
 };
@@ -251,7 +253,10 @@ inline void Kmer_SPMC_Iterator<k>::read_raw_kmers()
         consumer_state.prefix = kmer_database.curr_prefix();
         consumer_state.suff_idx = kmer_database.curr_suffix_idx();
 
-        consumer_state.kmers_available = kmer_database.read_raw_suffixes(consumer_state.buffer, BUF_SZ_PER_CONSUMER);
+        consumer_state.kmers_available = kmer_database.read_raw_suffixes(
+            consumer_state.buffer, consumer_state.prefix_vec, BUF_SZ_PER_CONSUMER);
+        consumer_state.prefix_iterator = consumer_state.prefix_vec.begin();
+
         if(!consumer_state.kmers_available)
         {
             std::cerr << "Error reading the suffix file. Aborting.\n";
@@ -323,7 +328,7 @@ inline bool Kmer_SPMC_Iterator<k>::value_at(const size_t consumer_id, Kmer<k>& k
         return false;
     }
 
-    kmer_database.parse_kmer<k>(ts.prefix, ts.suff_idx, ts.buffer,
+    kmer_database.parse_kmer_buf<k>(ts.prefix_iterator, ts.suff_idx, ts.buffer,
                                 ts.kmers_parsed * kmer_database.suff_record_size(), kmer);
     ts.kmers_parsed++;
 

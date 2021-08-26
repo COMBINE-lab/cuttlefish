@@ -36,8 +36,7 @@ bool CKMCFile::OpenForRA(const std::string &file_name)
 		return false;
 
 	ReadParamsFrom_prefix_file_buf(size);
-
-	fclose(file_pre);
+	if (file_pre) { fclose(file_pre); }
 	file_pre = NULL;
 		
 	if (!OpenASingleFile(file_name + ".kmc_suf", file_suf, size, (char *)"KMCS"))
@@ -77,7 +76,7 @@ bool CKMCFile::OpenForListing(const std::string &file_name)
 		return false;
 
 	ReadParamsFrom_prefix_file_buf(size);
-	fclose(file_pre);
+	if (file_pre) { fclose(file_pre); }
 	file_pre = NULL;
 
 	end_of_file = total_kmers == 0;
@@ -124,9 +123,9 @@ bool CKMCFile::open_for_listing_unbuffered(const std::string& file_name)
 
 	if (!OpenASingleFile(file_name + ".kmc_pre", file_pre, size, (char *)"KMCP"))
 		return false;
-
-	ReadParamsFrom_prefix_file_buf(size);
-	fclose(file_pre);
+	
+	ReadParamsFrom_prefix_file_buf(size, false);
+	if (file_pre) { fclose(file_pre); }
 	file_pre = NULL;
 
 	end_of_file = total_kmers == 0;
@@ -165,7 +164,7 @@ bool CKMCFile::read_parameters(const std::string& file_name)
 		return false;
 
 	ReadParamsFrom_prefix_file_buf(size, false);
-	fclose(file_pre);
+	if (file_pre) { fclose(file_pre); }
 	file_pre = NULL;
 
 	end_of_file = total_kmers == 0;
@@ -313,9 +312,13 @@ bool CKMCFile::ReadParamsFrom_prefix_file_buf(uint64 &size, const bool load_pref
 			prefix_file_buf[last_data_index] = total_kmers + 1;
 
 			signature_map = new uint32[signature_map_size];
+	
 			result = fread(signature_map, 1, signature_map_size * sizeof(uint32), file_pre);
 			if (result == 0)
 				return false;
+		} else {
+			rewind(file_pre);
+			prefix_virt_buf.init(file_pre, lut_area_size_in_bytes, total_kmers);
 		}
 
 		sufix_size = (kmer_length - lut_prefix_length) / 4;		 

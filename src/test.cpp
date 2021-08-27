@@ -540,6 +540,12 @@ void test_iterator_correctness(const char* const db_path, const size_t consumer_
             if(!(buf_kmers[i] == spmc_kmers[i]))
             {
                 // std::cout << "Mismatching k-mers found\n";
+                if (mis == 0) {
+                    std::cout << "first mismatching k-mers were:\n";
+                    std::cout << "buf[" << i << "] = " 
+                              << buf_kmers[i].string_label() << " != spmc[" 
+                              << i << "] = " << spmc_kmers[i].string_label() << "\n"; 
+                }
                 mis++;
             }
 
@@ -635,9 +641,8 @@ int main(int argc, char** argv)
     static const size_t consumer_count = std::atoi(argv[2]);
 
     // test_buffered_iterator_performance<k>(argv[1]);
-    test_SPMC_iterator_performance<k>(argv[1], consumer_count);
-
+    // test_SPMC_iterator_performance<k>(argv[1], consumer_count);
+    test_iterator_correctness<k>(argv[1], consumer_count);
     // write_kmers<32>(argv[1], std::atoi(argv[2]), argv[3]);
-
     return 0;
 }

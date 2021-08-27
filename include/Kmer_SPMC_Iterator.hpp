@@ -218,6 +218,8 @@ inline void Kmer_SPMC_Iterator<k>::launch_production()
         consumer_state.suff_idx = 0;
         consumer_state.kmers_available = 0;
         consumer_state.kmers_parsed = 0;
+        consumer_state.prefix_vec.clear();
+        consumer_state.prefix_iterator = consumer_state.prefix_vec.begin();
         task_status[id] = Task_Status::pending;
     }
 
@@ -256,7 +258,7 @@ inline void Kmer_SPMC_Iterator<k>::read_raw_kmers()
         consumer_state.kmers_available = kmer_database.read_raw_suffixes(
             consumer_state.buffer, consumer_state.prefix_vec, BUF_SZ_PER_CONSUMER);
         consumer_state.prefix_iterator = consumer_state.prefix_vec.begin();
-
+        
         if(!consumer_state.kmers_available)
         {
             std::cerr << "Error reading the suffix file. Aborting.\n";
@@ -324,6 +326,12 @@ inline bool Kmer_SPMC_Iterator<k>::value_at(const size_t consumer_id, Kmer<k>& k
     auto& ts = consumer[consumer_id];
     if(ts.kmers_parsed == ts.kmers_available)
     {
+        /*
+        auto d = std::distance(ts.prefix_iterator, ts.prefix_vec.end());
+        std::cerr << "pref. remaining = " 
+                  << d << ", "
+                  << "count of last pref = " << ((d > 0) ? (ts.prefix_iterator->second) : 0) << "\n";
+        */
         task_status[consumer_id] = Task_Status::pending;
         return false;
     }

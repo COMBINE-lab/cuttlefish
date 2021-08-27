@@ -574,6 +574,7 @@ inline uint64_t CKMCFile::read_raw_suffixes(uint8_t* const suff_buf,
 
 	const size_t max_suff_count = max_bytes_to_read / suff_record_size();
 	uint64_t suff_read_count = 0;	// Count of suffixes to be read into the buffer `suff_buf`.
+	uint64_t pref_sum = 0;
 	prefix_vec.clear();
 
 	while(!end_of_file)
@@ -596,6 +597,11 @@ inline uint64_t CKMCFile::read_raw_suffixes(uint8_t* const suff_buf,
 				suff_read_count += suff_to_read;
 				sufix_number += suff_to_read;
 
+				// number of suffixes this prefix corrresponds to
+				int64_t num_suf = sufix_number - prev_sufix_number;
+				pref_sum += num_suf;
+				prefix_vec.emplace_back(prefix_index, num_suf);
+
 				if(sufix_number == total_kmers)
 					end_of_file = true;
 			}
@@ -604,14 +610,21 @@ inline uint64_t CKMCFile::read_raw_suffixes(uint8_t* const suff_buf,
 				sufix_number += (max_suff_count - suff_read_count);
 				suff_read_count = max_suff_count;
 
+				// number of suffixes this prefix corrresponds to
+				int64_t num_suf = sufix_number - prev_sufix_number;
+				pref_sum += num_suf;
+				prefix_vec.emplace_back(prefix_index, num_suf);
+
 				break;
 			}
-			// number of suffixes this prefix corrresponds to
-			int64_t num_suf = sufix_number - prev_sufix_number;
-			prefix_vec.emplace_back(prefix_index, num_suf);
+
 		}
 
 		prefix_index++;
+	}
+	if (pref_sum != suff_read_count) {
+		std::cerr << "pref_sum = " << pref_sum 
+			  << ", suff_read_count = "  << suff_read_count << "\n";
 	}
  
 	const size_t bytes_to_read = suff_read_count * suff_record_size();

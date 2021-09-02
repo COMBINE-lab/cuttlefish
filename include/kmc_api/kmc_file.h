@@ -27,10 +27,9 @@ class Virtual_Prefix_File
 {
 private:
 
-	static constexpr size_t buffer_elem_count = (1 << 16);	// Number of prefixes to be kept in memory buffer at a time.
-	static constexpr size_t buffer_sz = buffer_elem_count * sizeof(uint64_t); // Size of buffer in bytes: 512KB. TODO: try small benchmarking for this size.
+	static constexpr size_t buffer_elem_count = (1 << 21);	// Number of prefixes to be kept in memory buffer at a time.
 	size_t prefix_file_elem_count;	// Size of the KMC3 prefix-file (*.kmc_pre) in elements (i.e. 64-bit prefixes).
-	std::array<uint64_t, buffer_elem_count> prefix_file_buf;	// The in-memory prefix-file buffer.
+	std::vector<uint64_t> prefix_file_buf;	// The in-memory prefix-file buffer.
 
 	uint64_t lut_area_size_in_bytes;	// From KMC3.
 	size_t prefix_chunk_start_index;	// The index into the prefix-file where the prefix chunk currently loaded into memory starts.
@@ -100,6 +99,9 @@ inline void Virtual_Prefix_File::init(FILE*& fptr, const uint64_t lut_area_bytes
 	lut_area_size_in_bytes = lut_area_bytes;
 	prefix_file_elem_count = (lut_area_size_in_bytes + 8) / sizeof(uint64_t);	// What's that extra 1 element for? KMC3 comment: reads without 4 bytes of a header_offset (and without markers)
 	total_kmers = kmer_count;
+
+	// Allocate the prefix-file buffer.
+	prefix_file_buf.reserve(buffer_elem_count);
 
 	// Read in some prefix-file data, and initialize the virtual indices into the prefix-file.
 	prefix_chunk_start_index = 0;

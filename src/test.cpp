@@ -419,20 +419,20 @@ void test_SPMC_iterator_performance(const char* const db_path, const size_t cons
                     std::cout << "Launched consumer " << consumer_id << ".\n";
                     Kmer<k> kmer;
                     Kmer<k> max_kmer;
-                    // uint64_t local_count{0};
+                    uint64_t local_count{0};
                     while(it.tasks_expected(consumer_id))
                         if(it.value_at(consumer_id, kmer))
                         {
                             max_kmer = std::max(max_kmer, kmer);
-                            // local_count++;
-                            // if (local_count % 5000000 == 0) {
-                            //     ctr += local_count;
-                            //     local_count = 0;
-                            //     std::cerr << "parsed " << ctr << " k-mers\n";
-                            // }
+                            local_count++;
+                            if (local_count % 10000000 == 0) {
+                                ctr += local_count;
+                                local_count = 0;
+                                std::cerr << "\rparsed " << ctr << " k-mers";
+                            }
                         }
 
-                    // ctr += local_count;
+                    ctr += local_count;
                     mk = max_kmer;
                 }
             )
@@ -448,7 +448,7 @@ void test_SPMC_iterator_performance(const char* const db_path, const size_t cons
     //for (size_t i = 0; i < consumer_count; ++i) {
     //    global_max = std::max(global_max, max_kmer[i]);
     //}
-    std::cout << "Parsed " << ctr << " k-mers\n";
+    std::cout << "\nParsed " << ctr << " k-mers\n";
     std::cout << "Max k-mer: " << std::max_element(max_kmer.begin(), max_kmer.end())->string_label() << "\n";
 }
 
@@ -539,13 +539,6 @@ void test_iterator_correctness(const char* const db_path, const size_t consumer_
         for(size_t i = 0; i < buf_kmers.size(); ++i)
             if(!(buf_kmers[i] == spmc_kmers[i]))
             {
-                // std::cout << "Mismatching k-mers found\n";
-                if (mis == 0) {
-                    std::cout << "first mismatching k-mers were:\n";
-                    std::cout << "buf[" << i << "] = " 
-                              << buf_kmers[i].string_label() << " != spmc[" 
-                              << i << "] = " << spmc_kmers[i].string_label() << "\n"; 
-                }
                 mis++;
             }
 

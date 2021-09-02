@@ -3,6 +3,7 @@
   The homepage of the KMC project is http://sun.aei.polsl.pl/kmc
 
   Authors: Sebastian Deorowicz, Agnieszka Debudaj-Grabysz, Marek Kokot
+  Cuttlefish support: Jamshed Khan, Rob Patro
 
   Version: 3.1.1
   Date   : 2019-05-19
@@ -17,95 +18,126 @@
 #include <string>
 #include <vector>
 #include <unistd.h>
+#include <utility>
 
 
-class VirtualFileBuffer {
-  private:
-	static constexpr uint64 buffelem = 65536;//1048576;
-	static constexpr uint64 buffsize = buffelem * sizeof(uint64); // 8MB buffer, why not?
-	uint64 prefix_file_buf_size;
-	std::array<uint64, buffelem> prefix_file_buf;
-	uint64 last_data_index;
+// A class to imitate the KMC3 prefix-file access as if it's in memory.
+// Note: only linear indexing is supported.
+class Virtual_Prefix_File
+{
+private:
 
-	uint64 lut_area_size_in_bytes;	
-	uint64 prefix_chunk_start_index;	// The index where the prefix chunk currently loaded into memory starts
-	uint64 prefix_chunk_end_index;
+	static constexpr size_t buffer_elem_count = (1 << 16);	// Number of prefixes to be kept in memory buffer at a time.
+	static constexpr size_t buffer_sz = buffer_elem_count * sizeof(uint64_t); // Size of buffer in bytes: 512KB. TODO: try small benchmarking for this size.
+	size_t prefix_file_elem_count;	// Size of the KMC3 prefix-file (*.kmc_pre) in elements (i.e. 64-bit prefixes).
+	std::array<uint64_t, buffer_elem_count> prefix_file_buf;	// The in-memory prefix-file buffer.
 
-	uint64 total_kmers;
-	FILE* fp = nullptr;
-  public:
-  VirtualFileBuffer() {
-    fp = nullptr;
-  }
+	uint64_t lut_area_size_in_bytes;	// From KMC3.
+	size_t prefix_chunk_start_index;	// The index into the prefix-file where the prefix chunk currently loaded into memory starts.
+	size_t prefix_chunk_end_index;	// The (non-inclusive) index into the prefix-file where the prefix chunk currently loaded into memory ends.
 
-  VirtualFileBuffer(VirtualFileBuffer&& o) {
-	  prefix_file_buf_size = o.prefix_file_buf_size;
-	  prefix_file_buf = std::move(prefix_file_buf);
-	  last_data_index = o.last_data_index;
-	  lut_area_size_in_bytes = o.lut_area_size_in_bytes;
-	  prefix_chunk_start_index = o.prefix_chunk_start_index;
-	  prefix_chunk_end_index = o.prefix_chunk_end_index;
-	  total_kmers = o.total_kmers;
-	  fp = o.fp;
-	  o.fp = nullptr;
-  }
-  
-  VirtualFileBuffer(const VirtualFileBuffer& o) = delete;
-  VirtualFileBuffer& operator=(const VirtualFileBuffer& o) = delete;
-  VirtualFileBuffer& operator=(VirtualFileBuffer& o) = delete;
+	uint64_t total_kmers;	// Total number of k-mers in the KMC3 database.
+	FILE* fp;	// File handle to the KMC3 prefix-file.
 
-  void init(FILE*& fptr, uint64 lut_area_size_in_bytes_in, uint64 total_kmers_in) {
-	// here, we *take ownership* of fptr
+
+	// Reads in as much data as possible from the prefix-file into the in-memory buffer,
+	// and returns the number of elements read.
+	size_t read_prefixes();
+
+
+public:
+
+	// Constructs an empty virtual file buffer.
+	Virtual_Prefix_File();
+
+	// Invalidate move and copy constructors, and copy-assignment operators.
+	Virtual_Prefix_File(Virtual_Prefix_File&& rhs) = delete;
+	Virtual_Prefix_File(const Virtual_Prefix_File& rhs) = delete;
+	Virtual_Prefix_File& operator=(const Virtual_Prefix_File& rhs) = delete;
+	Virtual_Prefix_File& operator=(Virtual_Prefix_File& rhs) = delete;
+
+	// Destructs the virtual file.
+	~Virtual_Prefix_File();
+
+	// Initializes the file buffer with the file handle `fptr` that is supposed to contain
+	// `lut_area_bytes` amount of bytes for its prefix-content, and the associated KMC3
+	// database has `kmer_count` number of k-mers.
+	void init(FILE*& fptr, uint64_t lut_area_bytes, uint64_t kmer_count);
+
+	// Returns the data at index `idx` of the prefix-file.
+	uint64_t operator[](size_t idx);
+};
+
+
+inline Virtual_Prefix_File::Virtual_Prefix_File():
+	prefix_file_elem_count(0),
+	lut_area_size_in_bytes(0),
+	prefix_chunk_start_index(0),
+	prefix_chunk_end_index(0),
+	total_kmers(0),
+	fp(nullptr)
+{}
+
+
+inline Virtual_Prefix_File::~Virtual_Prefix_File()
+{
+	if(fp)
+	{ 
+		std::fclose(fp); 
+		fp = nullptr;
+	}
+}
+
+
+inline void Virtual_Prefix_File::init(FILE*& fptr, const uint64_t lut_area_bytes, const uint64_t kmer_count)
+{
+	// *Take ownership* of `fptr`.
 	fp = fptr;
 	fptr = NULL;
 	
-	// skip the first 4 bytes of header to get to the start of
-	// the prefixes
+	// Skip the first 4 bytes of header to get to the start of the prefixes.
 	my_fseek(fp, +4, SEEK_CUR);
-	lut_area_size_in_bytes = lut_area_size_in_bytes_in;
-	prefix_file_buf_size = (lut_area_size_in_bytes + 8) / sizeof(uint64);		//reads without 4 bytes of a header_offset (and without markers)		
-	last_data_index = (lut_area_size_in_bytes + 8) / sizeof(uint64);		
-	total_kmers = total_kmers_in;
-	
-	// read the minimum of whatever is left or our buffersize
-	auto amount_to_read = std::min((lut_area_size_in_bytes + 8), buffsize);
-	auto result = fread(prefix_file_buf.data(), 1, static_cast<size_t>(amount_to_read), fp);
-	if (result == 0) {
-		std::cerr << "fread returned 0 in init(), should not happen\n\n";
-	}
+	lut_area_size_in_bytes = lut_area_bytes;
+	prefix_file_elem_count = (lut_area_size_in_bytes + 8) / sizeof(uint64_t);	// What's that extra 1 element for? KMC3 comment: reads without 4 bytes of a header_offset (and without markers)
+	total_kmers = kmer_count;
+
+	// Read in some prefix-file data, and initialize the virtual indices into the prefix-file.
 	prefix_chunk_start_index = 0;
-	prefix_chunk_end_index = amount_to_read / sizeof(uint64);
-  }
+	prefix_chunk_end_index = read_prefixes();
+}
 
-  ~VirtualFileBuffer() {
-	if (fp) { 
-	  fclose(fp); 
-	  fp = nullptr;
-	}
-  }
 
-  uint64 operator[](size_t index) {
-	if (index >= prefix_file_buf_size) { 
-	  return total_kmers + 1;
-	} else if (index >= prefix_chunk_end_index) {
-		auto current_end_byte = prefix_chunk_end_index * sizeof(uint64);
-		// read the minimum of whatever is left or our buffersize
-		auto amount_to_read = std::min(((lut_area_size_in_bytes + 8) - current_end_byte),
-					       buffsize);
-		auto result = fread(prefix_file_buf.data(), 1,
-				    static_cast<size_t>(amount_to_read), fp);
-		if (result == 0) {
-			std::cerr << "fread returned 0, should not happen\n\n";
-			return total_kmers + 1;
-		}
-		prefix_chunk_start_index = index;
-		prefix_chunk_end_index = index + (amount_to_read / sizeof(uint64));
+inline size_t Virtual_Prefix_File::read_prefixes()
+{
+	const size_t elems_to_read = std::min(prefix_file_elem_count - prefix_chunk_end_index, buffer_elem_count);
+	const size_t bytes_to_read = elems_to_read * sizeof(uint64_t);
+	const size_t bytes_read = std::fread(prefix_file_buf.data(), 1, bytes_to_read, fp);
+	
+	if(bytes_read != bytes_to_read)
+	{
+		std::cerr << "Error reading the KMC database prefix file. Aborting.\n";
+		std::exit(EXIT_FAILURE);
 	}
-	size_t rel_index = index - prefix_chunk_start_index;
-	auto rv = prefix_file_buf[rel_index];
-	return rv;
-  }
-};
+
+	return elems_to_read;
+}
+
+
+inline uint64_t Virtual_Prefix_File::operator[](const size_t idx)
+{
+	if(idx >= prefix_file_elem_count) 
+		return total_kmers + 1;
+	
+	if(idx >= prefix_chunk_end_index)
+	{
+		prefix_chunk_start_index = idx;
+		prefix_chunk_end_index = idx + read_prefixes();
+	}
+
+	return prefix_file_buf[idx - prefix_chunk_start_index];
+}
+
+
 struct CKMCFileInfo
 {
 	uint32 kmer_length;
@@ -134,7 +166,7 @@ class CKMCFile
 	FILE *file_suf;
 
 	uint64* prefix_file_buf;
-	VirtualFileBuffer prefix_virt_buf;
+	Virtual_Prefix_File prefix_virt_buf;	// Virtual file to read over the prefix file in a buffered manner; for Cuttlefish.
 	uint64 prefix_file_buf_size;
 	uint64 prefix_index;			// The current prefix's index in an array "prefix_file_buf", readed from *.kmc_pre
 	uint32 single_LUT_size;			// The size of a single LUT (in no. of elements)
@@ -171,7 +203,7 @@ class CKMCFile
 	bool OpenASingleFile(const std::string &file_name, FILE *&file_handler, uint64 &size, char marker[]);	
 
 	// Recognize current parameters. Auxiliary function.
-	bool ReadParamsFrom_prefix_file_buf(uint64 &size, bool load_pref_file = true);	
+	bool ReadParamsFrom_prefix_file_buf(uint64 &size, bool load_pref_file = true, bool init_pref_buf = true);	
 
 	// Reload a contents of an array "sufix_file_buf" for listing mode. Auxiliary function. 
 	void Reload_sufix_file_buf();
@@ -202,7 +234,7 @@ public:
 	bool OpenForListing(const std::string& file_name);
 
 	// Open files `*kmc_pre` & `*.kmc_suf`, read `*.kmc_pre` to RAM; `*.kmc_suf` is not buffered internally.
-	bool open_for_listing_unbuffered(const std::string& file_name);
+	bool open_for_cuttlefish_listing(const std::string& file_name);
 
 	// Open files `*kmc_pre` & `*.kmc_suf`, and read KMC DB parameters to RAM.
 	bool read_parameters(const std::string& file_name);
@@ -217,19 +249,16 @@ public:
 	uint64_t curr_suffix_idx() const;
 
 	// Reads up-to `max_bytes_to_read` bytes worth of raw suffix records into the buffer `suff_buf`.
-	// Returns the number of suffixes read. `0` is returned if error(s) occurred during the read.
-	uint64_t read_raw_suffixes(uint8_t* suff_buf, 
-		std::vector<std::pair<uint64_t, uint64_t>>& prefix_vec,
-		size_t max_bytes_to_read);
+	// The prefixes corresponding to these suffixes are read into `pref_buf`, in the form
+	// <prefix, #corresponding_suffix>. Returns the number of suffixes read. `0` is returned if
+	// error(s) occurred during the read.
+	uint64_t read_raw_suffixes(uint8_t* suff_buf, std::vector<std::pair<uint64_t, uint64_t>>& pref_buf, size_t max_bytes_to_read);
 
-	// Parses a raw binary k-mer from the `buf_idx`'th byte onwards of the buffer `suff_buf`, into
-	// the Cuttlefish k-mer object `kmer`. `prefix` and `suff_idx` are respectively the potential
-	// prefix and the exact suffix record that make up the k-mer to be parsed. The values are adjusted
-	// accordingly for the next parse operation into the buffer.
-	template <uint16_t k> void parse_kmer(uint64_t& prefix, uint64_t& suff_idx, const uint8_t* suff_buf, size_t buf_idx, Kmer<k>& kmer) const;
-
-	template <uint16_t k> void parse_kmer_buf(std::vector<std::pair<uint64_t, uint64_t>>::iterator& prefix_it,
-	uint64_t& suff_idx, const uint8_t* const suff_buf, size_t buf_idx, Kmer<k>& kmer) const;
+	// Parses a raw binary k-mer from the `buf_idx`'th byte onward of the buffer `suff_buf`, into
+	// the Cuttlefish k-mer object `kmer`. `prefix_it` points to a pair of the form <prefix, abundance>
+	// where "abundance" is the count of remaining k-mers to be parsed having this "prefix". The
+	// iterator is adjusted accordingly for the next parse operation from the buffers.
+	template <uint16_t k> void parse_kmer_buf(std::vector<std::pair<uint64_t, uint64_t>>::iterator& prefix_it, const uint8_t* suff_buf, size_t buf_idx, Kmer<k>& kmer) const;
 
 	// Return next kmer in CKmerAPI &kmer. Return its counter in float &count. Return true if not EOF
 	bool ReadNextKmer(CKmerAPI &kmer, float &count);
@@ -566,16 +595,14 @@ inline bool CKMCFile::ReadNextKmer(CKmerAPI &kmer, uint64 &count)
 
 
 
-inline uint64_t CKMCFile::read_raw_suffixes(uint8_t* const suff_buf, 
-	std::vector<std::pair<uint64_t, uint64_t>>& prefix_vec, const size_t max_bytes_to_read)
+inline uint64_t CKMCFile::read_raw_suffixes(uint8_t* const suff_buf, std::vector<std::pair<uint64_t, uint64_t>>& pref_buf, const size_t max_bytes_to_read)
 {
 	if(is_opened != opened_for_listing)
 		return 0;
 
 	const size_t max_suff_count = max_bytes_to_read / suff_record_size();
 	uint64_t suff_read_count = 0;	// Count of suffixes to be read into the buffer `suff_buf`.
-	uint64_t pref_sum = 0;
-	prefix_vec.clear();
+	pref_buf.clear();
 
 	while(!end_of_file)
 	{
@@ -589,18 +616,15 @@ inline uint64_t CKMCFile::read_raw_suffixes(uint8_t* const suff_buf,
 
 		// There are this many k-mers with the prefix `prefix_index`.
 		const uint64_t suff_to_read = suff_id_next - sufix_number;
-		uint64_t prev_sufix_number = sufix_number;
 		if(suff_to_read > 0)
 		{
+			const uint64_t prev_sufix_number = sufix_number;
+			
 			if(suff_read_count + suff_to_read <= max_suff_count)
 			{
 				suff_read_count += suff_to_read;
 				sufix_number += suff_to_read;
-
-				// number of suffixes this prefix corrresponds to
-				int64_t num_suf = sufix_number - prev_sufix_number;
-				pref_sum += num_suf;
-				prefix_vec.emplace_back(prefix_index, num_suf);
+				pref_buf.emplace_back(prefix_index, sufix_number - prev_sufix_number);
 
 				if(sufix_number == total_kmers)
 					end_of_file = true;
@@ -609,11 +633,7 @@ inline uint64_t CKMCFile::read_raw_suffixes(uint8_t* const suff_buf,
 			{
 				sufix_number += (max_suff_count - suff_read_count);
 				suff_read_count = max_suff_count;
-
-				// number of suffixes this prefix corrresponds to
-				int64_t num_suf = sufix_number - prev_sufix_number;
-				pref_sum += num_suf;
-				prefix_vec.emplace_back(prefix_index, num_suf);
+				pref_buf.emplace_back(prefix_index, sufix_number - prev_sufix_number);
 
 				break;
 			}
@@ -622,11 +642,7 @@ inline uint64_t CKMCFile::read_raw_suffixes(uint8_t* const suff_buf,
 
 		prefix_index++;
 	}
-	if (pref_sum != suff_read_count) {
-		std::cerr << "pref_sum = " << pref_sum 
-			  << ", suff_read_count = "  << suff_read_count << "\n";
-	}
- 
+
 	const size_t bytes_to_read = suff_read_count * suff_record_size();
 	const size_t bytes_read = std::fread(suff_buf, 1, bytes_to_read, file_suf);
 	if(bytes_read != bytes_to_read)
@@ -657,71 +673,18 @@ inline uint64_t CKMCFile::curr_suffix_idx() const
 
 
 template <uint16_t k>
-inline void CKMCFile::parse_kmer(uint64_t& prefix, uint64_t& suff_idx, const uint8_t* const suff_buf, size_t buf_idx, Kmer<k>& kmer) const
+inline void CKMCFile::parse_kmer_buf(std::vector<std::pair<uint64_t, uint64_t>>::iterator& prefix_it, const uint8_t* const suff_buf, size_t buf_idx, Kmer<k>& kmer) const
 {
 	static constexpr uint16_t NUM_INTS = (k + 31) / 32;
 	uint64_t kmc_data[NUM_INTS]{};
 
-	// Get the prefix.
-
-	while(suff_idx == prefix_file_buf[prefix + 1])
-		prefix++;
-	
-	// TODO: make some of these constant class-fields, to avoid repeated calculations.
-	const uint64_t prefix_mask = (1 << 2 * lut_prefix_length) - 1; //for kmc2 db
-	constexpr uint8_t byte_alignment = (k % 4 != 0 ? 4 - (k % 4) : 0);
-	uint32_t off = (sizeof(prefix) * 8) - (lut_prefix_length * 2) - byte_alignment * 2;
-	const uint64_t temp_prefix = (prefix & prefix_mask) << off;	// shift prefix towards MSD. "& prefix_mask" necessary for kmc2 db format
-
-	// Store prefix in a KMC alignment (differs in endianness from Cuttlefish's).
-	kmc_data[0] = temp_prefix;
-
-
-	// Parse suffix.
-	uint32_t row_idx{0};
-	uint64_t suff{0};
-
-	off -= 8;
-	for(uint32 a = 0; a < sufix_size; a++)
-	{			
-		suff = suff_buf[buf_idx++];
-		suff = suff << off;
-		kmc_data[row_idx] = kmc_data[row_idx] | suff;
-
-		if(off == 0)				//the end of a word in kmer_data
-		{
-			off = 56;
-			row_idx++;
-		}
-		else
-			off -= 8;
-	}
-	suff_idx++;
-
-	// Skip counter.
-	// buf_idx += counter_size;
-
-	// Parse KMC raw-binary k-mer data to Cuttlefish's k-mer format.
-	kmer.from_KMC_data(kmc_data);
-}
-
-template <uint16_t k>
-inline void CKMCFile::parse_kmer_buf(
-	std::vector<std::pair<uint64_t, uint64_t>>::iterator& prefix_it,
-	uint64_t& suff_idx, const uint8_t* const suff_buf, size_t buf_idx, Kmer<k>& kmer) const
-{
-	static constexpr uint16_t NUM_INTS = (k + 31) / 32;
-	uint64_t kmc_data[NUM_INTS]{};
-
-	// check if we have exhausted the currrent prefix
-	if (prefix_it->second == 0) {
+	// Check if we have exhausted the currrent prefix.
+	if(prefix_it->second == 0)
 		++prefix_it;
-	}
-	prefix_it->second--;
-	auto prefix = prefix_it->first;
 
-	//while(suff_idx == prefix_file_buf[prefix + 1])
-	//	prefix++;
+	const uint64_t prefix = prefix_it->first;
+	prefix_it->second--;
+
 	
 	// TODO: make some of these constant class-fields, to avoid repeated calculations.
 	const uint64_t prefix_mask = (1 << 2 * lut_prefix_length) - 1; //for kmc2 db
@@ -752,7 +715,6 @@ inline void CKMCFile::parse_kmer_buf(
 		else
 			off -= 8;
 	}
-	suff_idx++;
 
 	// Skip counter.
 	// buf_idx += counter_size;

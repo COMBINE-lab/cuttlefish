@@ -16,14 +16,12 @@
 // Data required by the consumers to correctly parse raw binary k-mers.
 struct Consumer_Data
 {
-    uint8_t* buffer{nullptr};   // Buffer for the raw binary k-mers.
-    uint64_t prefix;            // The potential prefix to start parsing (and using) k-mers from (used as index into the in-memory KMC prefix-buffer).
-    uint64_t suff_idx;          // Index of the suffix (into the in-disk KMC suffix collection) to start parsing (and using) k-mers from.
-    uint64_t kmers_available;   // Number of raw suffixes present in the current buffer.
-    uint64_t kmers_parsed;      // Number of k-mers parsed from the current buffer.
-    std::vector<std::pair<uint64_t, uint64_t>> prefix_vec;
-    std::vector<std::pair<uint64_t, uint64_t>>::iterator prefix_iterator;
-    uint64_t pad_[3];           // Padding to avoid false-sharing.
+    uint8_t* suff_buf{nullptr}; // Buffer for the raw binary suffixes of the k-mers.
+    uint64_t kmers_available;   // Number of k-mers present in the current buffer.
+    uint64_t kmers_parsed;      // Number of k-mers parsed from the current buffers.
+    std::vector<std::pair<uint64_t, uint64_t>> pref_buf;    // Buffer for the raw binary prefixes of the k-mers, in the form: <prefix, #corresponding_suffix>
+    std::vector<std::pair<uint64_t, uint64_t>>::iterator pref_it;   // Pointer to the prefix to start parsing k-mers from.
+    uint64_t pad_[1];           // Padding to avoid false-sharing.
                                 // TODO: use better soln: https://en.cppreference.com/w/cpp/thread/hardware_destructive_interference_size
 };
 
@@ -168,9 +166,8 @@ inline Kmer_SPMC_Iterator<k>::~Kmer_SPMC_Iterator()
     {
         delete[] task_status;
 
-        for(size_t id = 0; id < consumer_count; ++id) {
-           delete[] consumer[id].buffer;
-        }
+        for(size_t id = 0; id < consumer_count; ++id)
+           delete[] consumer[id].suff_buf;
 
         std::cerr << "\nCompleted a pass over the k-mer database.\n";
     }
@@ -180,7 +177,7 @@ inline Kmer_SPMC_Iterator<k>::~Kmer_SPMC_Iterator()
 template <uint16_t k>
 inline void Kmer_SPMC_Iterator<k>::open_kmer_database(const std::string& db_path)
 {
-    if(!kmer_database.open_for_listing_unbuffered(db_path))
+    if(!kmer_database.open_for_cuttlefish_listing(db_path))
     {
         std::cerr << "Error opening k-mer database with prefix " << db_path << ". Aborting.\n";
         std::exit(EXIT_FAILURE);
@@ -213,13 +210,11 @@ inline void Kmer_SPMC_Iterator<k>::launch_production()
     for(size_t id = 0; id < consumer_count; ++id)
     {
         auto& consumer_state = consumer[id];
-        consumer_state.buffer = new uint8_t[BUF_SZ_PER_CONSUMER];
-        consumer_state.prefix = 0;
-        consumer_state.suff_idx = 0;
+        consumer_state.suff_buf = new uint8_t[BUF_SZ_PER_CONSUMER];
         consumer_state.kmers_available = 0;
         consumer_state.kmers_parsed = 0;
-        consumer_state.prefix_vec.clear();
-        consumer_state.prefix_iterator = consumer_state.prefix_vec.begin();
+        consumer_state.pref_buf.clear();
+        consumer_state.pref_it = consumer_state.pref_buf.begin();
         task_status[id] = Task_Status::pending;
     }
 
@@ -250,15 +245,11 @@ inline void Kmer_SPMC_Iterator<k>::read_raw_kmers()
     while(!kmer_database.Eof())
     {
         const size_t consumer_id = get_idle_consumer();
-        auto& consumer_state = consumer[consumer_id];
+        Consumer_Data& consumer_state = consumer[consumer_id];
 
-        consumer_state.prefix = kmer_database.curr_prefix();
-        consumer_state.suff_idx = kmer_database.curr_suffix_idx();
+        consumer_state.kmers_available = kmer_database.read_raw_suffixes(consumer_state.suff_buf, consumer_state.pref_buf, BUF_SZ_PER_CONSUMER);
+        consumer_state.pref_it = consumer_state.pref_buf.begin();
 
-        consumer_state.kmers_available = kmer_database.read_raw_suffixes(
-            consumer_state.buffer, consumer_state.prefix_vec, BUF_SZ_PER_CONSUMER);
-        consumer_state.prefix_iterator = consumer_state.prefix_vec.begin();
-        
         if(!consumer_state.kmers_available)
         {
             std::cerr << "Error reading the suffix file. Aborting.\n";
@@ -326,18 +317,11 @@ inline bool Kmer_SPMC_Iterator<k>::value_at(const size_t consumer_id, Kmer<k>& k
     auto& ts = consumer[consumer_id];
     if(ts.kmers_parsed == ts.kmers_available)
     {
-        /*
-        auto d = std::distance(ts.prefix_iterator, ts.prefix_vec.end());
-        std::cerr << "pref. remaining = " 
-                  << d << ", "
-                  << "count of last pref = " << ((d > 0) ? (ts.prefix_iterator->second) : 0) << "\n";
-        */
         task_status[consumer_id] = Task_Status::pending;
         return false;
     }
 
-    kmer_database.parse_kmer_buf<k>(ts.prefix_iterator, ts.suff_idx, ts.buffer,
-                                ts.kmers_parsed * kmer_database.suff_record_size(), kmer);
+    kmer_database.parse_kmer_buf<k>(ts.pref_it, ts.suff_buf, ts.kmers_parsed * kmer_database.suff_record_size(), kmer);
     ts.kmers_parsed++;
 
     return true;

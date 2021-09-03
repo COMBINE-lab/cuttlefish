@@ -53,32 +53,33 @@ set(THREADS_PREFER_PTHREAD_FLAG TRUE)   # The BBHash library uses `pthread`.
 # the `kseq` library to gzipped compressed files.
 find_package(ZLIB REQUIRED)
 
+
+# Module required to download and install external projects.
+include(ExternalProject)
+set(EXT_LIB ${CMAKE_SOURCE_DIR}/external/lib/)
+set(EXT_INCLUDE ${CMAKE_SOURCE_DIR}/external/include/)
+
+
 # Search and load setting for the `jemalloc` library. It provides scalable concurrency support
 # and better avoidance of fragmentation.
-set(FAST_MALLOC_LIB "")
-find_package(jemalloc)
-if(jemalloc_FOUND)
-    message("Found the Jemalloc library")
-    set(FAST_MALLOC_LIB ${JEMALLOC_LIBRARIES})
-else()
-    message("Build system is fetching and installing jemalloc")
+message("Build system will fetch and install jemalloc")
+ExternalProject_Add(prj_jemalloc
+    DOWNLOAD_DIR ${CMAKE_SOURCE_DIR}/external
+    DOWNLOAD_COMMAND    curl -k -L https://github.com/jemalloc/jemalloc/archive/5.2.1.tar.gz -o jemalloc-5.2.1.tar.gz
+                        && tar -xzf jemalloc-5.2.1.tar.gz
+                        && rm jemalloc-5.2.1.tar.gz
 
-    include(ExternalProject)
+    SOURCE_DIR ${CMAKE_SOURCE_DIR}/external/jemalloc-5.2.1
+    BUILD_IN_SOURCE TRUE
+    INSTALL_DIR ${CMAKE_SOURCE_DIR}/external
+    CONFIGURE_COMMAND sh -c "CC=${CMAKE_C_COMPILER} ./autogen.sh --disable-debug --enable-static --prefix=<INSTALL_DIR> --silent"
+    INSTALL_COMMAND cp -r lib ${EXT_LIB} &&
+                    cp -r include ${EXT_INCLUDE}
+)
 
-    ExternalProject_Add(libjemalloc
-        DOWNLOAD_DIR ${CMAKE_SOURCE_DIR}/external
-        DOWNLOAD_COMMAND    curl -k -L https://github.com/jemalloc/jemalloc/archive/5.2.1.tar.gz -o jemalloc-5.2.1.tar.gz
-                            && tar -xzf jemalloc-5.2.1.tar.gz
-
-        SOURCE_DIR ${CMAKE_SOURCE_DIR}/external/jemalloc-5.2.1
-        BUILD_IN_SOURCE TRUE
-        INSTALL_DIR ${CMAKE_SOURCE_DIR}/external/install
-        CONFIGURE_COMMAND sh -c "CC=${CMAKE_C_COMPILER} ./autogen.sh --disable-debug --enable-static --prefix=<INSTALL_DIR> --silent"
-        INSTALL_COMMAND cp -r lib <INSTALL_DIR>/ && cp -r include <INSTALL_DIR>/
-    )
-
-    set(FAST_MALLOC_LIB ${CMAKE_SOURCE_DIR}/external/install/lib/libjemalloc.a)
-endif()
+add_library(jemalloc STATIC IMPORTED)
+set_target_properties(jemalloc PROPERTIES IMPORTED_LOCATION ${EXT_LIB}/libjemalloc.a)
+add_dependencies(jemalloc prj_jemalloc)
 
 
 # The `Debug` configuration optimizes the program for debugging and enables full debug information.

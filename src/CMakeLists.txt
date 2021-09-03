@@ -65,7 +65,7 @@ add_executable(${PROJECT_NAME} main.cpp)
 
 
 # Link the core library to the `jemalloc` library, for better `malloc` support.
-target_link_libraries(core PRIVATE ${FAST_MALLOC_LIB})
+target_link_libraries(core PRIVATE jemalloc)
 
 # Link the core library to the `dl` library, required in using dynamic shared object.
 # Needed by `jemalloc`.

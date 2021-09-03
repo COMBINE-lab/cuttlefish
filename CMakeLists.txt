@@ -60,21 +60,21 @@ set(EXT_LIB ${CMAKE_SOURCE_DIR}/external/lib/)
 set(EXT_INCLUDE ${CMAKE_SOURCE_DIR}/external/include/)
 
 
-# Search and load setting for the `jemalloc` library. It provides scalable concurrency support
-# and better avoidance of fragmentation.
+# Prepare the `jemalloc` library. It provides scalable concurrency support and better avoidance
+# of fragmentation.
 message("Build system will fetch and install jemalloc")
 ExternalProject_Add(prj_jemalloc
-    DOWNLOAD_DIR ${CMAKE_SOURCE_DIR}/external
+    DOWNLOAD_DIR        ${CMAKE_SOURCE_DIR}/external
     DOWNLOAD_COMMAND    curl -k -L https://github.com/jemalloc/jemalloc/archive/5.2.1.tar.gz -o jemalloc-5.2.1.tar.gz &&
                         tar -xzf jemalloc-5.2.1.tar.gz &&
                         rm jemalloc-5.2.1.tar.gz
 
-    SOURCE_DIR ${CMAKE_SOURCE_DIR}/external/jemalloc-5.2.1
-    BUILD_IN_SOURCE TRUE
-    INSTALL_DIR ${CMAKE_SOURCE_DIR}/external
-    CONFIGURE_COMMAND sh -c "CC=${CMAKE_C_COMPILER} ./autogen.sh --disable-debug --enable-static --prefix=<INSTALL_DIR> --silent"
-    INSTALL_COMMAND cp -r lib ${EXT_LIB} &&
-                    cp -r include ${EXT_INCLUDE}
+    SOURCE_DIR          ${CMAKE_SOURCE_DIR}/external/jemalloc-5.2.1
+    BUILD_IN_SOURCE     TRUE
+    INSTALL_DIR         ${CMAKE_SOURCE_DIR}/external
+    CONFIGURE_COMMAND   sh -c "CC=${CMAKE_C_COMPILER} ./autogen.sh --disable-debug --enable-static --prefix=<INSTALL_DIR> --silent"
+    INSTALL_COMMAND     cp -r lib ${EXT_LIB} &&
+                        cp -r include ${EXT_INCLUDE}
 )
 
 add_library(jemalloc STATIC IMPORTED)

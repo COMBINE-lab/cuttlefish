@@ -345,7 +345,7 @@ public:
     return self;
   }
 
-  Derived& operator=(std::nullptr_t p) {
+  Derived& operator=(std::nullptr_t) {
     Derived& self = *static_cast<Derived*>(this);
     self.ptr      = nullptr;
     self.offset   = 0;
@@ -364,11 +364,11 @@ public:
     return !(*this == rhs);
   }
 
-  bool operator==(std::nullptr_t p) {
+  bool operator==(std::nullptr_t) {
     const Derived& self = *static_cast<const Derived*>(this);
     return self.m_ptr == nullptr && self.m_offset == 0;
   }
-  bool operator!=(std::nullptr_t p) {
+  bool operator!=(std::nullptr_t) {
     return !(*this == nullptr);
   }
 
@@ -579,7 +579,7 @@ bool lexicographical_compare_n(Iterator first1, const size_t len1,
 }
 
 template<typename D, typename I, unsigned B, typename W, unsigned U>
-bool operator==(std::nullptr_t lfs, const common<D, I, B, W, U>& rhs) {
+bool operator==(std::nullptr_t, const common<D, I, B, W, U>& rhs) {
   return rhs == nullptr;
 }
 
@@ -811,7 +811,7 @@ public:
 
   constexpr unsigned bits() const { return BITS; }
 protected:
-  void bits(unsigned b) { } // NOOP
+  void bits(unsigned) { } // NOOP
 };
 
 template<typename IDX, unsigned BITS, typename W, unsigned UB>
@@ -850,7 +850,7 @@ public:
 
   constexpr unsigned bits() const { return BITS; }
 protected:
-  void bits(unsigned b) { } // NOOP
+  void bits(unsigned) { } // NOOP
 };
 
 template<typename I, unsigned BITS, typename W, bool TS, unsigned UB>

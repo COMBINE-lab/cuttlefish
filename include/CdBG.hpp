@@ -407,11 +407,6 @@ private:
     // names have a suffix `file_id` if a non-zero value is provided.
     void remove_temp_files(uint64_t file_id = 0) const;
 
-    // Prints the distribution of the state-classes for the canonical k-mers present
-    // at the database named `kmc_file_name`.
-    // For debugging purposes.
-    void print_state_class_dist() const;
-
 
 public:
 

@@ -49,19 +49,19 @@ public:
 
     // Returns an iterator pointing to the beginning of the underlying k-mer
     // database.
-    buf_iterator buf_begin() const;
+    // buf_iterator buf_begin() const;
 
     // Returns an iterator pointing to the ending (exclusive) of the underlying
     // k-mer database.
-    buf_iterator buf_end() const;
+    // buf_iterator buf_end() const;
 
     // Returns an iterator pointing to the beginning of the underlying k-mer
     // database.
-    iterator begin() const;
+    // iterator begin() const;
 
     // Returns an iterator pointing to the ending (exclusive) of the underlying
     // k-mer database.
-    iterator end() const;
+    // iterator end() const;
 
     // Returns an SPMC iterator pointing to the beginning of the underlying k-mer
     // database, that can support `consumer_count` consumers.
@@ -70,9 +70,6 @@ public:
     // Returns an SPMC iterator pointing to the ending (exclusive) of the underlying
     // k-mer database, that can support `consumer_count` consumers.
     spmc_iterator spmc_end(size_t consumer_count) const;
-
-    // Loads the full k-mer set from the KMC database into the collection `kmers`.
-    void load_kmers(std::vector<Kmer<k>>& kmers) const;
 };
 
 

@@ -1,8 +1,6 @@
 
 #include "Directed_Kmer.hpp"
 #include "Kmer_Container.hpp"
-#include "Kmer_Iterator.hpp"
-#include "Kmer_Buffered_Iterator.hpp"
 #include "Kmer_SPMC_Iterator.hpp"
 #include "BBHash/BooPHF.h"
 #include "Kmer_Hasher.hpp"
@@ -635,7 +633,7 @@ int main(int argc, char** argv)
 
     // test_buffered_iterator_performance<k>(argv[1]);
     // test_SPMC_iterator_performance<k>(argv[1], consumer_count);
-    test_iterator_correctness<k>(argv[1], consumer_count);
+    // test_iterator_correctness<k>(argv[1], consumer_count);
     // write_kmers<32>(argv[1], std::atoi(argv[2]), argv[3]);
     return 0;
 }

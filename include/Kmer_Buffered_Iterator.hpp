@@ -7,7 +7,6 @@
 #include "globals.hpp"
 #include "Kmer_Container.hpp"
 #include "kmc_api/kmc_file.h"
-#include "readerwriterqueue/readerwriterqueue.h"
 
 #include <thread>
 

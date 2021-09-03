@@ -65,9 +65,9 @@ set(EXT_INCLUDE ${CMAKE_SOURCE_DIR}/external/include/)
 message("Build system will fetch and install jemalloc")
 ExternalProject_Add(prj_jemalloc
     DOWNLOAD_DIR ${CMAKE_SOURCE_DIR}/external
-    DOWNLOAD_COMMAND    curl -k -L https://github.com/jemalloc/jemalloc/archive/5.2.1.tar.gz -o jemalloc-5.2.1.tar.gz
-                        && tar -xzf jemalloc-5.2.1.tar.gz
-                        && rm jemalloc-5.2.1.tar.gz
+    DOWNLOAD_COMMAND    curl -k -L https://github.com/jemalloc/jemalloc/archive/5.2.1.tar.gz -o jemalloc-5.2.1.tar.gz &&
+                        tar -xzf jemalloc-5.2.1.tar.gz &&
+                        rm jemalloc-5.2.1.tar.gz
 
     SOURCE_DIR ${CMAKE_SOURCE_DIR}/external/jemalloc-5.2.1
     BUILD_IN_SOURCE TRUE

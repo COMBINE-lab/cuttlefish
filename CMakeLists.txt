@@ -100,8 +100,7 @@ ExternalProject_Add(prj_kmc
     #                     unzip -qq KMC-master.zip &&
     #                     rm KMC-master.zip
     DOWNLOAD_COMMAND    git clone https://github.com/refresh-bio/kmc &&
-                        cd kmc &&
-                        git checkout f36cf7ca452c08e5fbb694bde3ee7d430f7bdb7a
+                        cd kmc
 
     # SOURCE_DIR          ${CMAKE_SOURCE_DIR}/external/KMC-master
     SOURCE_DIR          ${CMAKE_SOURCE_DIR}/external/kmc

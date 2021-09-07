@@ -50,8 +50,18 @@ find_package(Threads REQUIRED)  # The threads package is required for the BBHash
 set(THREADS_PREFER_PTHREAD_FLAG TRUE)   # The BBHash library uses `pthread`.
 
 # Search and load setting for the `zlib` library. The library is required to seamlessly adapt
-# the `kseq` library to gzipped compressed files.
-find_package(ZLIB REQUIRED)
+# the `kseq` and the `kmc` libraries to gzip-compressed files.
+include(FindZLIB)
+if(NOT ZLIB_FOUND)
+    message(FATAL_ERROR "zlib (https://zlib.net/) is required. Aborting.")
+endif()
+
+# Search and load setting for the `bzip2` library. It is required to seamlessly adapt the
+# `kmc` library to bzip-compressed files.
+include(FindBZip2)
+if(NOT BZIP2_FOUND)
+    message(FATAL_ERROR "bzip2 (https://sourceware.org/bzip2/) is required. Aborting.")
+endif()
 
 
 # Module required to download and install external projects.
@@ -80,6 +90,32 @@ ExternalProject_Add(prj_jemalloc
 add_library(jemalloc STATIC IMPORTED)
 set_target_properties(jemalloc PROPERTIES IMPORTED_LOCATION ${EXT_LIB}/libjemalloc.a)
 add_dependencies(jemalloc prj_jemalloc)
+
+
+# Prepare the `kmc` library — required by the Cuttlefish algorithm implementation.
+message("Build system will fetch and install KMC3")
+ExternalProject_Add(prj_kmc
+    DOWNLOAD_DIR        ${CMAKE_SOURCE_DIR}/external
+    # DOWNLOAD_COMMAND    curl -k -L https://github.com/refresh-bio/KMC/archive/refs/heads/master.zip -o KMC-master.zip &&
+    #                     unzip -qq KMC-master.zip &&
+    #                     rm KMC-master.zip
+    DOWNLOAD_COMMAND    git clone https://github.com/refresh-bio/kmc &&
+                        cd kmc &&
+                        git checkout f36cf7ca452c08e5fbb694bde3ee7d430f7bdb7a
+
+    # SOURCE_DIR          ${CMAKE_SOURCE_DIR}/external/KMC-master
+    SOURCE_DIR          ${CMAKE_SOURCE_DIR}/external/kmc
+    BUILD_IN_SOURCE     TRUE
+    INSTALL_DIR         ${CMAKE_SOURCE_DIR}/external/
+    CONFIGURE_COMMAND   ""
+    BUILD_COMMAND       make -j16
+    INSTALL_COMMAND     cp bin/libkmc_core.a ${EXT_LIB} &&
+                        cp include/kmc_runner.h ${EXT_INCLUDE}
+)
+
+add_library(kmc STATIC IMPORTED)
+set_target_properties(kmc PROPERTIES IMPORTED_LOCATION ${EXT_LIB}/libkmc_core.a)
+add_dependencies(kmc prj_kmc)
 
 
 # The `Debug` configuration optimizes the program for debugging and enables full debug information.

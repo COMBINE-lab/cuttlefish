@@ -50,8 +50,8 @@ add_library(core STATIC ${PROJECT_SRC})
 # This controls the `-I` (include paths) switch of the compiler invocation.
 # Since `include` is declared `PUBLIC` for the library, it is propagated to all the
 # consumers of the library.
-set(INCLUDE_DIR include)
-target_include_directories(core PUBLIC ${CMAKE_SOURCE_DIR}/${INCLUDE_DIR})
+set(INCLUDE_DIR ${CMAKE_SOURCE_DIR}/include)
+target_include_directories(core PUBLIC ${INCLUDE_DIR} ${EXT_INCLUDE})
 
 
 # Specify the warnings and the extra optimization flags to the compiler for the target library.
@@ -71,11 +71,17 @@ target_link_libraries(core PRIVATE jemalloc)
 # Needed by `jemalloc`.
 target_link_libraries(core PRIVATE ${CMAKE_DL_LIBS})
 
-# Link the core library to the threads package in the platform.
-target_link_libraries(core PRIVATE ${CMAKE_THREAD_LIBS_INIT})
+# Link the core library to the `kmc` library.
+target_link_libraries(core PRIVATE kmc)
 
 # Link the core library to the `zlib` library.
 target_link_libraries(core PRIVATE ZLIB::ZLIB)
+
+# Link the core library ti the `bzip2` library.
+target_link_libraries(core PRIVATE BZip2::BZip2)
+
+# Link the core library to the threads package in the platform.
+target_link_libraries(core PRIVATE ${CMAKE_THREAD_LIBS_INIT})
 
 
 # Link the executable to the required libraries.

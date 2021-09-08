@@ -9,6 +9,7 @@ set(PROJECT_SRC
         xxHash/xxhsum.c
         Build_Params.cpp
         Application.cpp
+        Seq_Input.cpp
         Ref_Parser.cpp
         Async_Logger_Wrapper.cpp
         Thread_Pool.cpp

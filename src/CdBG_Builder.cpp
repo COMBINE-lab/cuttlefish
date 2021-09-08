@@ -1,7 +1,7 @@
 
 #include "CdBG.hpp"
 #include "Kmer_Iterator.hpp"
-#include "Parser.hpp"
+#include "Ref_Parser.hpp"
 
 #include <iomanip>
 #include <thread>
@@ -30,7 +30,7 @@ void CdBG<k>::classify_vertices()
     else    // No buckets file name provided, or does not exist. Build and save (if specified) one now.
     {
         // Open a parser for the FASTA / FASTQ file containing the reference.
-        Parser parser(params.reference_input());
+        Ref_Parser parser(params.sequence_input());
 
 
         // Construct a thread pool.

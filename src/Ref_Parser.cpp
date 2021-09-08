@@ -1,5 +1,5 @@
 
-#include "Parser.hpp"
+#include "Ref_Parser.hpp"
 #include "kseq/kseq.h"
 #include "ghc/filesystem.hpp"
 
@@ -12,10 +12,19 @@
 KSEQ_INIT(gzFile, gzread);
 
 
-Parser::Parser(const Reference_Input& ref_input)
+Ref_Parser::Ref_Parser(const std::string& file_path)
+{
+    ref_paths.push(file_path);
+
+    // Open the first reference for subsequent parsing.
+    open_next_reference();
+}
+
+
+Ref_Parser::Ref_Parser(const Sequence_Input& ref_input)
 {
     // Collect references from the raw reference paths provided.
-    for(const std::string& ref_path: ref_input.ref_paths())
+    for(const std::string& ref_path: ref_input.seq_paths())
         ref_paths.push(ref_path);
 
 
@@ -48,7 +57,7 @@ Parser::Parser(const Reference_Input& ref_input)
 }
 
 
-void Parser::open_reference(const std::string& reference_path)
+void Ref_Parser::open_reference(const std::string& reference_path)
 {
     file_ptr = gzopen(reference_path.c_str(), "r");  // Open the file handler.
     if(file_ptr == nullptr)
@@ -67,7 +76,7 @@ void Parser::open_reference(const std::string& reference_path)
 }
 
 
-bool Parser::open_next_reference()
+bool Ref_Parser::open_next_reference()
 {
     if(ref_paths.empty())
         return false;
@@ -80,13 +89,13 @@ bool Parser::open_next_reference()
 }
 
 
-const std::string& Parser::curr_ref() const
+const std::string& Ref_Parser::curr_ref() const
 {
     return curr_ref_path;
 }
 
 
-bool Parser::read_next_seq()
+bool Ref_Parser::read_next_seq()
 {
     // Sequences still remain at the current reference being parsed.
     if(parser != nullptr && kseq_read(parser) >= 0)
@@ -106,43 +115,43 @@ bool Parser::read_next_seq()
 }
 
 
-const char* Parser::seq() const
+const char* Ref_Parser::seq() const
 {
     return parser->seq.s;
 }
 
 
-size_t Parser::seq_len() const
+size_t Ref_Parser::seq_len() const
 {
     return parser->seq.l;
 }
 
 
-size_t Parser::buff_sz() const
+size_t Ref_Parser::buff_sz() const
 {
     return parser->seq.m;
 }
 
 
-uint64_t Parser::ref_id() const
+uint64_t Ref_Parser::ref_id() const
 {
     return ref_count;
 }
 
 
-uint64_t Parser::seq_id() const
+uint64_t Ref_Parser::seq_id() const
 {
     return seq_id_;
 }
 
 
-const char* Parser::seq_name() const
+const char* Ref_Parser::seq_name() const
 {
     return parser->name.s;
 }
 
 
-void Parser::close()
+void Ref_Parser::close()
 {
     if(file_ptr != nullptr)
     {

@@ -1,6 +1,6 @@
 
 #include "CdBG.hpp"
-#include "Parser.hpp"
+#include "Ref_Parser.hpp"
 #include "Output_Format.hpp"
 #include "utility.hpp"
 #include "spdlog/spdlog.h"
@@ -36,11 +36,11 @@ void CdBG<k>::output_maximal_unitigs_plain()
     std::chrono::high_resolution_clock::time_point t_start = std::chrono::high_resolution_clock::now();
 
     
-    const Reference_Input& reference_input = params.reference_input();
+    const Sequence_Input& reference_input = params.sequence_input();
     const uint16_t thread_count = params.thread_count();
 
     // Open a parser for the FASTA / FASTQ file containing the reference.
-    Parser parser(reference_input);
+    Ref_Parser parser(reference_input);
 
 
     // Clear the output file and initialize the output loggers.
@@ -149,7 +149,7 @@ void CdBG<k>::output_maximal_unitigs_gfa()
     std::chrono::high_resolution_clock::time_point t_start = std::chrono::high_resolution_clock::now();
 
 
-    const Reference_Input& reference_input = params.reference_input();
+    const Sequence_Input& reference_input = params.sequence_input();
     const uint16_t thread_count = params.thread_count();
     const std::string& working_dir_path = params.working_dir_path();
 
@@ -181,7 +181,7 @@ void CdBG<k>::output_maximal_unitigs_gfa()
 
 
     // Open a parser for the FASTA / FASTQ file containing the reference.
-    Parser parser(reference_input);
+    Ref_Parser parser(reference_input);
 
     // Track the maximum sequence buffer size used and the total length of the references.
     size_t max_buf_sz = 0;
@@ -313,7 +313,7 @@ void CdBG<k>::output_maximal_unitigs_gfa_reduced()
     std::chrono::high_resolution_clock::time_point t_start = std::chrono::high_resolution_clock::now();
 
 
-    const Reference_Input& reference_input = params.reference_input();
+    const Sequence_Input& reference_input = params.sequence_input();
     const uint16_t thread_count = params.thread_count();
     const std::string& working_dir_path = params.working_dir_path();
 
@@ -356,7 +356,7 @@ void CdBG<k>::output_maximal_unitigs_gfa_reduced()
 
 
     // Open a parser for the FASTA / FASTQ file containing the reference.
-    Parser parser(reference_input);
+    Ref_Parser parser(reference_input);
 
     // Track the maximum sequence buffer size used and the total length of the references.
     size_t max_buf_sz = 0;

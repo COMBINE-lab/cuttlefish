@@ -13,7 +13,7 @@ bool Build_Params::is_valid() const
     // Check if read and reference de Bruijn graph parameters are being mixed with.
     if(is_read_graph_)  // Is a read de Bruijn graph.
     {
-        if(!reference_input_.empty())
+        if(!seq_input_.empty())
         {
             std::cout << "No reference is to be provided for a compacted read de Bruijn graph construction.\n";
             valid = false;
@@ -33,11 +33,11 @@ bool Build_Params::is_valid() const
             valid = false;
         }
 
-        if(dcc_opt_ || extract_cycles_)
-        {
-            std::cout << "Existence of detached chordless cycles are impossible for reference de Bruijn graphs by definition.\n";
-            valid = false;
-        }
+        // if(dcc_opt_ || extract_cycles_)
+        // {
+        //     std::cout << "Existence of detached chordless cycles are impossible for reference de Bruijn graphs by definition.\n";
+        //     valid = false;
+        // }
     }
 
 

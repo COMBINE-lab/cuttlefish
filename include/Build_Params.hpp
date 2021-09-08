@@ -5,7 +5,7 @@
 
 
 #include "globals.hpp"
-#include "Reference_Input.hpp"
+#include "Sequence_Input.hpp"
 #include "Output_Format.hpp"
 #include "File_Extensions.hpp"
 
@@ -19,8 +19,8 @@ class Build_Params
 {
 private:
 
-    const bool is_read_graph_;  // Whether to build a read- or a reference-compacted de Bruijn graph.
-    const Reference_Input reference_input_; // Collection of the input references.
+    const bool is_read_graph_;  // Whether to build a compacted read or reference de Bruijn graph.
+    const Sequence_Input seq_input_;    // Collection of the input sequences.
     const uint16_t k_;   // The k parameter for the edge-centric de Bruijn graph to be compacted.
     const std::string vertex_db_path_;  // Path to the KMC database containing the vertices (canonical k-mers).
     const std::string edge_db_path_;    // Path to the KMC database containing the edges (canonical (k + 1)-mers).
@@ -40,7 +40,7 @@ public:
 
     // Constructs a parameters wrapper object with the self-explanatory parameters.
     Build_Params(   const bool is_read_graph,
-                    const std::vector<std::string>& ref_paths,
+                    const std::vector<std::string>& seq_paths,
                     const std::vector<std::string>& list_paths,
                     const std::vector<std::string>& dir_paths,
                     const uint16_t k,
@@ -57,7 +57,7 @@ public:
                     const bool dcc_opt,
                     const bool extract_cycles):
         is_read_graph_(is_read_graph),
-        reference_input_(ref_paths, list_paths, dir_paths),
+        seq_input_(seq_paths, list_paths, dir_paths),
         k_(k),
         vertex_db_path_(vertex_db_path),
         edge_db_path_(edge_db_path),
@@ -74,17 +74,17 @@ public:
     {}
 
 
-    // Returns the boolean flag to whether to build a read- or a reference-compacted de Bruijn graph.
+    // Returns the boolean flag to whether to build a compacted read or reference de Bruijn graph.
     bool is_read_graph() const
     {
         return is_read_graph_;
     }
 
 
-    // Returns the reference input collections.
-    const Reference_Input& reference_input() const
+    // Returns the sequence input collection.
+    const Sequence_Input& sequence_input() const
     {
-        return reference_input_;
+        return seq_input_;
     }
 
 

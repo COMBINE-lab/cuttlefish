@@ -9,7 +9,7 @@
 
 
 // A class to pack the input sequences.
-class Sequence_Input
+class Seq_Input
 {
 private:
 
@@ -21,9 +21,9 @@ private:
 public:
 
     // Constructs a collection of input sequences.
-    Sequence_Input( const std::vector<std::string>& seqs,
-                    const std::vector<std::string>& lists,
-                    const std::vector<std::string>& dirs):
+    Seq_Input(  const std::vector<std::string>& seqs,
+                const std::vector<std::string>& lists,
+                const std::vector<std::string>& dirs):
         seq_paths_(seqs),
         list_paths_(lists),
         dir_paths_(dirs)

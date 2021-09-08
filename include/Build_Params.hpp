@@ -5,7 +5,7 @@
 
 
 #include "globals.hpp"
-#include "Sequence_Input.hpp"
+#include "Seq_Input.hpp"
 #include "Output_Format.hpp"
 #include "File_Extensions.hpp"
 
@@ -20,7 +20,7 @@ class Build_Params
 private:
 
     const bool is_read_graph_;  // Whether to build a compacted read or reference de Bruijn graph.
-    const Sequence_Input seq_input_;    // Collection of the input sequences.
+    const Seq_Input seq_input_; // Collection of the input sequences.
     const uint16_t k_;   // The k parameter for the edge-centric de Bruijn graph to be compacted.
     const std::string vertex_db_path_;  // Path to the KMC database containing the vertices (canonical k-mers).
     const std::string edge_db_path_;    // Path to the KMC database containing the edges (canonical (k + 1)-mers).
@@ -82,7 +82,7 @@ public:
 
 
     // Returns the sequence input collection.
-    const Sequence_Input& sequence_input() const
+    const Seq_Input& sequence_input() const
     {
         return seq_input_;
     }

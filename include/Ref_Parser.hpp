@@ -4,7 +4,7 @@
 
 
 
-#include "Sequence_Input.hpp"
+#include "Seq_Input.hpp"
 
 #include <string>
 #include <queue>
@@ -43,7 +43,7 @@ public:
     Ref_Parser(const std::string& file_path);
 
     // Constructs a parser for the reference input collection present at `ref_input`.
-    Ref_Parser(const Sequence_Input& ref_input);
+    Ref_Parser(const Seq_Input& ref_input);
 
     // Returns the path to the reference currently being parsed.
     const std::string& curr_ref() const;

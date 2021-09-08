@@ -21,7 +21,7 @@ Ref_Parser::Ref_Parser(const std::string& file_path)
 }
 
 
-Ref_Parser::Ref_Parser(const Sequence_Input& ref_input)
+Ref_Parser::Ref_Parser(const Seq_Input& ref_input)
 {
     // Collect references from the raw reference paths provided.
     for(const std::string& ref_path: ref_input.seq_paths())

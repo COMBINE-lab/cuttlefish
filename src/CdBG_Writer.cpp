@@ -36,7 +36,7 @@ void CdBG<k>::output_maximal_unitigs_plain()
     std::chrono::high_resolution_clock::time_point t_start = std::chrono::high_resolution_clock::now();
 
     
-    const Sequence_Input& reference_input = params.sequence_input();
+    const Seq_Input& reference_input = params.sequence_input();
     const uint16_t thread_count = params.thread_count();
 
     // Open a parser for the FASTA / FASTQ file containing the reference.
@@ -149,7 +149,7 @@ void CdBG<k>::output_maximal_unitigs_gfa()
     std::chrono::high_resolution_clock::time_point t_start = std::chrono::high_resolution_clock::now();
 
 
-    const Sequence_Input& reference_input = params.sequence_input();
+    const Seq_Input& reference_input = params.sequence_input();
     const uint16_t thread_count = params.thread_count();
     const std::string& working_dir_path = params.working_dir_path();
 
@@ -313,7 +313,7 @@ void CdBG<k>::output_maximal_unitigs_gfa_reduced()
     std::chrono::high_resolution_clock::time_point t_start = std::chrono::high_resolution_clock::now();
 
 
-    const Sequence_Input& reference_input = params.sequence_input();
+    const Seq_Input& reference_input = params.sequence_input();
     const uint16_t thread_count = params.thread_count();
     const std::string& working_dir_path = params.working_dir_path();
 

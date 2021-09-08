@@ -4,7 +4,7 @@
 
 
 
-#include "Sequence_Input.hpp"
+#include "Seq_Input.hpp"
 
 #include <string>
 #include <thread>
@@ -14,7 +14,7 @@ class Validation_Params
 {
 private:
 
-    const Sequence_Input reference_input_; // Collection of the input references.
+    const Seq_Input reference_input_;   // Collection of the input references.
     const uint16_t k_;  // The k-parameter of the compacted edge-centric de Bruijn graph.
     const std::string kmc_db_path_;  // Prefix of the KMC database of the k-mer set of the reference.
     const std::string cdbg_file_path_;   // Path to the file containing the maximal unitigs.
@@ -46,7 +46,7 @@ public:
 
 
     // Returns the reference input collections.
-    const Sequence_Input& reference_input() const
+    const Seq_Input& reference_input() const
     {
         return reference_input_;
     }

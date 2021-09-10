@@ -38,7 +38,7 @@ class Kmer_SPMC_Iterator
 private:
 
     const Kmer_Container<k>* const kmer_container;  // The associated k-mer container over which to iterate.
-    CKMCFile kmer_database; // The k-mer database object.
+    CKMC_DB kmer_database; // The k-mer database object.
 
     const uint64_t kmer_count;  // Number of k-mers present in the underlying database.
     const size_t consumer_count;  // Total number of consumer threads of the iterator.

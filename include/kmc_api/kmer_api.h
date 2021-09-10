@@ -17,7 +17,7 @@ Date   : 2019-05-19
 #include <iostream>
 #include <vector>
 #include "mmer.h"
-class CKMCFile;
+class CKMC_DB;
 
 class CKmerAPI
 {
@@ -32,7 +32,7 @@ protected:
 
 	uint32 no_of_rows;				// A number of 64-bits words allocated for kmer_data 	
 
-	friend class CKMCFile;
+	friend class CKMC_DB;
 	
 	//----------------------------------------------------------------------------------
 	inline void clear()

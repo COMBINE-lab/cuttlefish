@@ -9,6 +9,8 @@
 #include "Kmer_Hash_Table.hpp"
 #include "dBG_Info.hpp"
 
+#include <memory>
+
 
 // Read de Bruijn graph class to support the compaction algorithm.
 template <uint16_t k>
@@ -17,7 +19,7 @@ class Read_CdBG
 private:
 
     const Build_Params params;  // Required parameters (wrapped inside).
-    Kmer_Hash_Table<k, cuttlefish::BITS_PER_READ_KMER> hash_table;  // Hash table for the vertices (canonical k-mers) of the graph.
+    std::unique_ptr<Kmer_Hash_Table<k, cuttlefish::BITS_PER_READ_KMER>> hash_table; // Hash table for the vertices (canonical k-mers) of the graph.
 
     dBG_Info<k> dbg_info;   // Wrapper object for structural information of the graph.
 

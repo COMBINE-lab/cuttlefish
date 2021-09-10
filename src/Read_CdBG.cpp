@@ -9,7 +9,6 @@
 template <uint16_t k>
 Read_CdBG<k>::Read_CdBG(const Build_Params& params):
     params(params),
-    hash_table(params.vertex_db_path()),
     dbg_info(params.json_file_path())
 {}
 
@@ -28,22 +27,23 @@ void Read_CdBG<k>::construct()
 
 
     std::cout << "\nConstructing the minimal perfect hash function (MPHF) over the vertex set.\n";
-    hash_table.construct(params.thread_count(), params.working_dir_path(), params.mph_file_path());
+    hash_table = std::make_unique<Kmer_Hash_Table<k, cuttlefish::BITS_PER_READ_KMER>>(params.vertex_db_path());
+    hash_table->construct(params.thread_count(), params.working_dir_path(), params.mph_file_path());
 
     std::cout << "\nComputing the DFA states.\n";
     compute_DFA_states();
 
     if(!params.extract_cycles() && !params.dcc_opt())
-        hash_table.save(params);
+        hash_table->save(params);
 
     std::cout << "\nExtracting the maximal unitigs.\n";
     extract_maximal_unitigs();
 
     if(!dbg_info.has_dcc() || dbg_info.dcc_extracted())
-        hash_table.remove(params);
+        hash_table->remove(params);
 
 
-    hash_table.clear();
+    hash_table->clear();
     dbg_info.dump_info();
 }
 
@@ -51,7 +51,7 @@ void Read_CdBG<k>::construct()
 template <uint16_t k>
 void Read_CdBG<k>::compute_DFA_states()
 {
-    Read_CdBG_Constructor<k> cdBg_constructor(params, hash_table);
+    Read_CdBG_Constructor<k> cdBg_constructor(params, *hash_table);
     cdBg_constructor.compute_DFA_states();
 
     dbg_info.add_basic_info(cdBg_constructor);
@@ -61,7 +61,7 @@ void Read_CdBG<k>::compute_DFA_states()
 template <uint16_t k>
 void Read_CdBG<k>::extract_maximal_unitigs()
 {
-    Read_CdBG_Extractor<k> cdBg_extractor(params, hash_table);
+    Read_CdBG_Extractor<k> cdBg_extractor(params, *hash_table);
     if(!is_constructed(params))
     {
         cdBg_extractor.extract_maximal_unitigs();
@@ -77,7 +77,7 @@ void Read_CdBG<k>::extract_maximal_unitigs()
                 dbg_info.add_DCC_info(cdBg_extractor);
             }
             else if(params.dcc_opt())
-                hash_table.save(params);
+                hash_table->save(params);
         }
     }
     else if(params.extract_cycles())

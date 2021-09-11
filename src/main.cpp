@@ -22,19 +22,24 @@ void build(int argc, char** argv)
 {
     cxxopts::Options options("cuttlefish build", "Efficiently construct the compacted de Bruijn graph from references or reads");
     options.add_options()
+        // TODO: replace CLI underscores with hyphens
+        // TODO: better indent the following wall of text
         ("read", "construct a compacted read de Bruijn graph")
         ("r,refs", "reference files", cxxopts::value<std::vector<std::string>>()->default_value(cuttlefish::_default::EMPTY))
         ("l,lists", "reference file lists", cxxopts::value<std::vector<std::string>>()->default_value(cuttlefish::_default::EMPTY))
         ("d,dirs", "reference file directories", cxxopts::value<std::vector<std::string>>()->default_value(cuttlefish::_default::EMPTY))
         ("k,kmer_len", "k-mer length", cxxopts::value<uint16_t>()->default_value(std::to_string(cuttlefish::_default::K)))
+        ("c,cutoff", "frequency cutoff for (k + 1)-mers (inapplicable for references)", cxxopts::value<uint32_t>()->default_value(std::to_string(cuttlefish::_default::CUTOFF_FREQ)))
         ("s,kmc_db", "set of vertices, i.e. k-mers (KMC database) prefix", cxxopts::value<std::string>())
         ("e,edge_db", "set of edges, i.e. (k + 1)-mers (KMC database) prefix", cxxopts::value<std::string>()->default_value(cuttlefish::_default::EMPTY))
         ("t,threads", "number of threads to use", cxxopts::value<uint16_t>()->default_value(std::to_string(cuttlefish::_default::THREAD_COUNT)))
+        ("m,max-memory", "soft maximum memory limit (in GB)", cxxopts::value<std::size_t>()->default_value(std::to_string(cuttlefish::_default::MAX_MEMORY)))
+        ("unrestrict-memory", "do not impose memory usage restriction")
         ("o,output", "output file", cxxopts::value<std::string>()->default_value(cuttlefish::_default::EMPTY))
         ("f,format", "output format (0: txt, 1: GFA 1.0, 2: GFA 2.0, 3: GFA-reduced)", cxxopts::value<uint16_t>()->default_value(std::to_string(cuttlefish::_default::OP_FORMAT)))
         ("w,work_dir", "working directory", cxxopts::value<std::string>()->default_value(cuttlefish::_default::WORK_DIR))
         ("rm", "remove the KMC database")
-        // TODO: remove the following three options
+        // TODO: repurpose the following two options
         ("mph", "minimal perfect hash (BBHash) file (optional)", cxxopts::value<std::string>()->default_value(cuttlefish::_default::EMPTY))
         ("buckets", "hash table buckets (cuttlefish) file (optional)", cxxopts::value<std::string>()->default_value(cuttlefish::_default::EMPTY))
         ("json", "meta-info (JSON) file", cxxopts::value<std::string>()->default_value(cuttlefish::_default::EMPTY))
@@ -56,9 +61,12 @@ void build(int argc, char** argv)
         const auto lists = result["lists"].as<std::vector<std::string>>();
         const auto dirs = result["dirs"].as<std::vector<std::string>>();
         const auto k = result["kmer_len"].as<uint16_t>();
+        const auto cutoff = result["cutoff"].as<uint32_t>();
         const auto kmer_database = result["kmc_db"].as<std::string>();
         const auto edge_database = result["edge_db"].as<std::string>();
         const auto thread_count = result["threads"].as<uint16_t>();
+        const auto max_memory = result["max-memory"].as<std::size_t>();
+        const auto strict_memory = !result["unrestrict-memory"].as<bool>();
         const auto output_file = result["output"].as<std::string>();
         const auto format = result["format"].as<uint16_t>();
         const auto remove_kmc_db = result["rm"].as<bool>();
@@ -69,7 +77,9 @@ void build(int argc, char** argv)
         const auto dcc_opt = !result["no-dcc"].as<bool>();
         const auto extract_cycles = result["cycles"].as<bool>();
 
-        const Build_Params params(  is_read_graph, refs, lists, dirs, k, kmer_database, edge_database, thread_count,
+        const Build_Params params(  is_read_graph,
+                                    refs, lists, dirs,
+                                    k, cutoff, kmer_database, edge_database, thread_count, max_memory, strict_memory,
                                     output_file, format, working_dir, remove_kmc_db, mph_file, buckets_file, json_file,
                                     dcc_opt, extract_cycles);
         if(!params.is_valid())

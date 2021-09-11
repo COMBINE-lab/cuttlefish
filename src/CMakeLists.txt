@@ -25,6 +25,7 @@ set(PROJECT_SRC
         CdBG_Plain_Writer.cpp
         CdBG_GFA_Writer.cpp
         CdBG_GFA_Reduced_Writer.cpp
+        kmer_Enumerator.cpp
         State_Read_Space.cpp
         Read_CdBG.cpp
         Read_CdBG_Constructor.cpp

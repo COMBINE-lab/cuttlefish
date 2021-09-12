@@ -21,40 +21,16 @@ Ref_Parser::Ref_Parser(const std::string& file_path)
 }
 
 
-Ref_Parser::Ref_Parser(const Seq_Input& ref_input)
+Ref_Parser::Ref_Parser(const Seq_Input& ref_input): Ref_Parser(ref_input.seqs())
 {
-    // Collect references from the raw reference paths provided.
-    for(const std::string& ref_path: ref_input.seq_paths())
-        ref_paths.push(ref_path);
-
-
-    // Collect references from the provided reference lists.
-    for(const std::string& list_path: ref_input.list_paths())
-    {
-        std::ifstream input(list_path.c_str(), std::ifstream::in);
-        if(input.fail())
-        {
-            std::cerr << "Error opening reference list file " << list_path << ". Aborting.\n";
-            std::exit(EXIT_FAILURE);
-        }
-
-        std::string ref_path;
-        while(input >> ref_path)
-            ref_paths.push(ref_path);
-
-        input.close();
-    }
-
-
-    // Collect references from the provided reference directories.
-    for(const std::string& dir_path: ref_input.dir_paths())
-        for(const auto& entry: ghc::filesystem::directory_iterator(dir_path))
-            ref_paths.push(entry.path());
-
-
     // Open the first reference for subsequent parsing.
     open_next_reference();
 }
+
+
+Ref_Parser::Ref_Parser(const std::vector<std::string>& refs):
+    ref_paths(std::deque<std::string>(refs.begin(), refs.end()))
+{}
 
 
 void Ref_Parser::open_reference(const std::string& reference_path)

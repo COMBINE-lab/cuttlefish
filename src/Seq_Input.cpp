@@ -1,5 +1,9 @@
 
 #include "Seq_Input.hpp"
+#include "ghc/filesystem.hpp"
+
+#include <fstream>
+#include <iostream>
 
 
 Seq_Input::Seq_Input(   const std::vector<std::string>& seqs,
@@ -26,6 +30,42 @@ const std::vector<std::string>& Seq_Input::list_paths() const
 const std::vector<std::string>& Seq_Input::dir_paths() const
 {
     return dir_paths_;
+}
+
+
+const std::vector<std::string> Seq_Input::seqs() const
+{
+    std::vector<std::string> seqs;
+
+    // Collect sequences from the raw sequence paths provided.
+    seqs.insert(seqs.end(), seq_paths_.begin(), seq_paths_.end());
+
+
+    // Collect sequences from the provided sequence lists.
+    for(const std::string& list_path: list_paths_)
+    {
+        std::ifstream input(list_path.c_str(), std::ifstream::in);
+        if(input.fail())
+        {
+            std::cerr << "Error opening list file " << list_path << ". Aborting.\n";
+            std::exit(EXIT_FAILURE);
+        }
+
+        std::string seq_path;
+        while(input >> seq_path)
+            seqs.emplace_back(seq_path);
+
+        input.close();
+    }
+
+
+    // Collect sequences from the provided sequence directories.
+    for(const std::string& dir_path: dir_paths_)
+        for(const auto& entry: ghc::filesystem::directory_iterator(dir_path))
+            seqs.emplace_back(entry.path());
+
+
+    return seqs;
 }
 
 

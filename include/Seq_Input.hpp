@@ -32,6 +32,9 @@ public:
     // Returns the collection of paths to directories containing sequence files.
     const std::vector<std::string>& dir_paths() const;
 
+    // Returns the collection of all the input sequences.
+    const std::vector<std::string> seqs() const;
+
     // Returns whether the sequence collection is empty or not.
     bool empty() const;
 };

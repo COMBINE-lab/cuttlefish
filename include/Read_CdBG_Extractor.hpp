@@ -76,8 +76,9 @@ private:
     // Marks all the vertices which have their hashes present in `path_hashes` as outputted.
     void mark_path(const std::vector<uint64_t>& path_hashes);
 
-    // Marks all the vertices that are present in the maximal unitigs of the graph.
-    void mark_maximal_unitig_vertices();
+    // Marks all the vertices that are present in the maximal unitigs of the graph with its vertex
+    // set being present at the path prefix `vertex_db_path`.
+    void mark_maximal_unitig_vertices(const std::string& vertex_db_path);
 
     // Scans the vertices provided to the thread with id `thread_id` from the parser `vertex_parser`
     // for potential unipath-flanking vertices. If a vertex `v` is found to be a flanking one, then
@@ -94,8 +95,9 @@ private:
     // number of vertices marked in this execution.
     std::size_t mark_maximal_unitig(const Kmer<k>& v_hat, cuttlefish::side_t s_v_hat);
 
-    // Extracts all the detached chordless cycles present in the graph.
-    void extract_detached_chordless_cycles();
+    // Extracts all the detached chordless cycles present in the graph with its vertex set being
+    // present at the path prefix `vertex_db_path`.
+    void extract_detached_chordless_cycles(const std::string& vertex_db_path);
 
     // Scans the vertices provided to the thread with id `thread_id` from the parser `vertex_parser`
     // for potential detached chordless cycles. If a vertex `v` is found to be not marked as present
@@ -176,9 +178,10 @@ public:
     void extract_maximal_unitigs(const std::string& vertex_db_path);
 
     // Extracts the chordless cycles from the de Bruijn graph that are completely disconnected from the
-    // rest of the graph. `dbg_info` is used to determine whether the compacted graph had been constructed
-    // earlier — in which case some data structures are re-used from the earlier construction.
-    void extract_detached_cycles(const dBG_Info<k>& dbg_info);
+    // rest of the graph. The graph is to contain its vertex set at the path prefix `vertex_db_path`.
+    // `dbg_info` is used to determine whether the compacted graph had been constructed earlier — in
+    // which case some data structures are re-used from the earlier construction.
+    void extract_detached_cycles(const std::string& vertex_db_path, const dBG_Info<k>& dbg_info);
 
     // Returns the parameters collection for the compacted graph construction.
     const Build_Params& get_params() const;

@@ -94,7 +94,7 @@ void Read_CdBG<k>::extract_maximal_unitigs(const std::string& vertex_db_path)
         {
             if(params.extract_cycles())
             {
-                cdBg_extractor.extract_detached_cycles(dbg_info);
+                cdBg_extractor.extract_detached_cycles(vertex_db_path, dbg_info);
 
                 dbg_info.add_DCC_info(cdBg_extractor);
             }
@@ -108,7 +108,7 @@ void Read_CdBG<k>::extract_maximal_unitigs(const std::string& vertex_db_path)
         {
             if(!dbg_info.dcc_extracted())
             {
-                cdBg_extractor.extract_detached_cycles(dbg_info);
+                cdBg_extractor.extract_detached_cycles(vertex_db_path, dbg_info);
 
                 dbg_info.add_DCC_info(cdBg_extractor);
             }

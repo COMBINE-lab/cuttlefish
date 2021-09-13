@@ -172,8 +172,8 @@ public:
     // parameters wrapped inside `params`, and uses the Cuttlefish hash table `hash_table`.
     Read_CdBG_Extractor(const Build_Params& params, Kmer_Hash_Table<k, cuttlefish::BITS_PER_READ_KMER>& hash_table);
 
-    // Extracts the maximal unitigs of the de Bruijn graph.
-    void extract_maximal_unitigs();
+    // Extracts the maximal unitigs of the de Bruijn graph with the vertex set at path prefix `vertex_db_path`.
+    void extract_maximal_unitigs(const std::string& vertex_db_path);
 
     // Extracts the chordless cycles from the de Bruijn graph that are completely disconnected from the
     // rest of the graph. `dbg_info` is used to determine whether the compacted graph had been constructed

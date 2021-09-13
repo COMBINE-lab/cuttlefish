@@ -24,11 +24,13 @@ private:
     dBG_Info<k> dbg_info;   // Wrapper object for structural information of the graph.
 
 
-    // Computes the states of the automata, i.e. the vertices in the graph.
-    void compute_DFA_states();
+    // Computes the states of the automata, i.e. the vertices of the graph having it edge
+    // set present at the path prefix `edge_db_path`.
+    void compute_DFA_states(const std::string& edge_db_path);
 
-    // Extracts the maximal unitigs from the graph.
-    void extract_maximal_unitigs();
+    // Extracts the maximal unitigs from the graph gaving its vertex set present at the
+    // path prefix `vertex_db_path`.
+    void extract_maximal_unitigs(const std::string& vertex_db_path);
 
 
 public:

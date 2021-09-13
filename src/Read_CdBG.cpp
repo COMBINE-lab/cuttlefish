@@ -31,26 +31,17 @@ void Read_CdBG<k>::construct()
 
     std::cout << "\nEnumerating the edges of the de Bruijn graph.\n";
     const std::string edge_db_path = params.output_prefix() + cuttlefish::file_ext::edges_ext;
-    kmer_Enumerator<k + 1> edge_enumerator;
-    kmer_Enumeration_Stats edge_stats = edge_enumerator.enumerate(
-        KMC::InputFileType::FASTQ, params.sequence_input().seqs(), params.cutoff(),
-        params.thread_count(), params.max_memory(), params.strict_memory(), true,
-        params.working_dir_path(), edge_db_path);
+    kmer_Enumeration_Stats edge_stats = enumerate_edges(edge_db_path);
 
     std::cout << "\nEnumerating the vertices of the de Bruijn graph.\n";
-    kmer_Enumerator<k> vertex_enumerator;
     const std::string vertex_db_path = params.output_prefix() + cuttlefish::file_ext::vertices_ext;
-    kmer_Enumeration_Stats vertex_stats = vertex_enumerator.enumerate(
-        KMC::InputFileType::KMC, std::vector<std::string>(1, edge_db_path), 1,
-        params.thread_count(), edge_stats.max_memory(), params.strict_memory(), false,
-        params.working_dir_path(), vertex_db_path);
+    kmer_Enumeration_Stats vertex_stats = enumerate_vertices(edge_db_path, vertex_db_path, edge_stats.max_memory());
 
     std::cout << "Number of edges:    " << edge_stats.kmer_count() << ".\n";
     std::cout << "Number of vertices: " << vertex_stats.kmer_count() << ".\n";
 
     std::cout << "\nConstructing the minimal perfect hash function (MPHF) over the vertex set.\n";
-    hash_table = std::make_unique<Kmer_Hash_Table<k, cuttlefish::BITS_PER_READ_KMER>>(vertex_db_path, vertex_stats.kmer_count());
-    hash_table->construct(params.thread_count(), params.working_dir_path(), params.mph_file_path());
+    construct_hash_table(vertex_db_path, vertex_stats.kmer_count());
 
     std::cout << "\nComputing the DFA states.\n";
     compute_DFA_states(edge_db_path);
@@ -67,6 +58,34 @@ void Read_CdBG<k>::construct()
 
     hash_table->clear();
     dbg_info.dump_info();
+}
+
+
+template <uint16_t k>
+kmer_Enumeration_Stats Read_CdBG<k>::enumerate_edges(const std::string& edge_db_path)
+{
+    return kmer_Enumerator<k + 1>().enumerate(
+        KMC::InputFileType::FASTQ, params.sequence_input().seqs(), params.cutoff(),
+        params.thread_count(), params.max_memory(), params.strict_memory(), true,
+        params.working_dir_path(), edge_db_path);
+}
+
+
+template <uint16_t k>
+kmer_Enumeration_Stats Read_CdBG<k>::enumerate_vertices(const std::string& edge_db_path, const std::string& vertex_db_path, const std::size_t max_memory)
+{
+    return kmer_Enumerator<k>().enumerate(
+        KMC::InputFileType::KMC, std::vector<std::string>(1, edge_db_path), 1,
+        params.thread_count(), max_memory, params.strict_memory(), false,
+        params.working_dir_path(), vertex_db_path);
+}
+
+
+template <uint16_t k>
+void Read_CdBG<k>::construct_hash_table(const std::string& vertex_db_path, const uint64_t vertex_count)
+{
+    hash_table = std::make_unique<Kmer_Hash_Table<k, cuttlefish::BITS_PER_READ_KMER>>(vertex_db_path, vertex_count);
+    hash_table->construct(params.thread_count(), params.working_dir_path(), params.mph_file_path());
 }
 
 

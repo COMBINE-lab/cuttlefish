@@ -12,6 +12,9 @@
 #include <memory>
 
 
+class kmer_Enumeration_Stats;
+
+
 // Read de Bruijn graph class to support the compaction algorithm.
 template <uint16_t k>
 class Read_CdBG
@@ -23,6 +26,19 @@ private:
 
     dBG_Info<k> dbg_info;   // Wrapper object for structural information of the graph.
 
+
+    // Enumerates the edges of the de Bruijn graph in a database at path `edge_db_path`,
+    // and returns summary statistics of the enumearation.
+    kmer_Enumeration_Stats enumerate_edges(const std::string& edge_db_path);
+
+    // Enumerates the vertices of the de Bruijn graph in a database at path `vertex_db_path`,
+    // from the edge database present at `edge_db_path`, using at most `max_memory` amount of
+    // memory. Returns summary statistics of the enumeration.
+    kmer_Enumeration_Stats enumerate_vertices(const std::string& edge_db_path, const std::string& vertex_db_path, std::size_t max_memory);
+
+    // Constructs the Cuttlefish hash table for the `vertex_count` vertices in the database
+    // at path `vertex_db_path`.
+    void construct_hash_table(const std::string& vertex_db_path, uint64_t vertex_count);
 
     // Computes the states of the automata, i.e. the vertices of the graph having it edge
     // set present at the path prefix `edge_db_path`.

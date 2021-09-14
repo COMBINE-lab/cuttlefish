@@ -96,8 +96,8 @@ private:
     std::size_t mark_maximal_unitig(const Kmer<k>& v_hat, cuttlefish::side_t s_v_hat);
 
     // Extracts all the detached chordless cycles present in the graph with its vertex set being
-    // present at the path prefix `vertex_db_path`.
-    void extract_detached_chordless_cycles(const std::string& vertex_db_path);
+    // present at the path prefix `vertex_db_path`, into the output file at `output_file_path`.
+    void extract_detached_chordless_cycles(const std::string& vertex_db_path, const std::string& output_file_path);
 
     // Scans the vertices provided to the thread with id `thread_id` from the parser `vertex_parser`
     // for potential detached chordless cycles. If a vertex `v` is found to be not marked as present
@@ -174,14 +174,16 @@ public:
     // parameters wrapped inside `params`, and uses the Cuttlefish hash table `hash_table`.
     Read_CdBG_Extractor(const Build_Params& params, Kmer_Hash_Table<k, cuttlefish::BITS_PER_READ_KMER>& hash_table);
 
-    // Extracts the maximal unitigs of the de Bruijn graph with the vertex set at path prefix `vertex_db_path`.
-    void extract_maximal_unitigs(const std::string& vertex_db_path);
+    // Extracts the maximal unitigs of the de Bruijn graph with the vertex set at path prefix `vertex_db_path`,
+    // into the output file at `output_file_path`.
+    void extract_maximal_unitigs(const std::string& vertex_db_path, const std::string& output_file_path);
 
     // Extracts the chordless cycles from the de Bruijn graph that are completely disconnected from the
-    // rest of the graph. The graph is to contain its vertex set at the path prefix `vertex_db_path`.
-    // `dbg_info` is used to determine whether the compacted graph had been constructed earlier — in
-    // which case some data structures are re-used from the earlier construction.
-    void extract_detached_cycles(const std::string& vertex_db_path, const dBG_Info<k>& dbg_info);
+    // rest of the graph. The graph is to contain its vertex set at the path prefix `vertex_db_path`,
+    // and the cycles are appeneded to the output file at `output_file_path`. `dbg_info` is used to
+    // determine whether the compacted graph had been constructed earlier—in which case some data
+    // structures are re-used from the earlier construction.
+    void extract_detached_cycles(const std::string& vertex_db_path, const std::string& output_file_path, const dBG_Info<k>& dbg_info);
 
     // Returns the parameters collection for the compacted graph construction.
     const Build_Params& get_params() const;

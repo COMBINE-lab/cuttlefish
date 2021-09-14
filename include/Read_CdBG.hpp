@@ -44,9 +44,9 @@ private:
     // set present at the path prefix `edge_db_path`.
     void compute_DFA_states(const std::string& edge_db_path);
 
-    // Extracts the maximal unitigs from the graph gaving its vertex set present at the
-    // path prefix `vertex_db_path`.
-    void extract_maximal_unitigs(const std::string& vertex_db_path);
+    // Extracts the maximal unitigs from the graph having its vertex set present at the
+    // path prefix `vertex_db_path`, into the output file at `output_file_path`.
+    void extract_maximal_unitigs(const std::string& vertex_db_path, const std::string& output_file_path);
 
 
 public:

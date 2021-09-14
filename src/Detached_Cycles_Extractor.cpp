@@ -9,7 +9,7 @@
 
 
 template <uint16_t k>
-void Read_CdBG_Extractor<k>::extract_detached_cycles(const std::string& vertex_db_path, const dBG_Info<k>& dbg_info)
+void Read_CdBG_Extractor<k>::extract_detached_cycles(const std::string& vertex_db_path, const std::string& output_file_path, const dBG_Info<k>& dbg_info)
 {
     std::chrono::high_resolution_clock::time_point t_start = std::chrono::high_resolution_clock::now();
 
@@ -22,7 +22,7 @@ void Read_CdBG_Extractor<k>::extract_detached_cycles(const std::string& vertex_d
     }
 
     std::cout << "Extracting the cycles.\n";
-    extract_detached_chordless_cycles(vertex_db_path);
+    extract_detached_chordless_cycles(vertex_db_path, output_file_path);
 
     std::cout <<    "\nNumber of detached chordless cycles: " << unipaths_meta_info_.dcc_count() << ".\n"
                     "Number of vertices in the cycles: " << unipaths_meta_info_.dcc_kmer_count() << ".\n";
@@ -142,7 +142,7 @@ std::size_t Read_CdBG_Extractor<k>::mark_maximal_unitig(const Kmer<k>& v_hat, co
 
 
 template <uint16_t k>
-void Read_CdBG_Extractor<k>::extract_detached_chordless_cycles(const std::string& vertex_db_path)
+void Read_CdBG_Extractor<k>::extract_detached_chordless_cycles(const std::string& vertex_db_path, const std::string& output_file_path)
 {
      // Construct a thread pool.
     const uint16_t thread_count = params.thread_count();
@@ -156,7 +156,7 @@ void Read_CdBG_Extractor<k>::extract_detached_chordless_cycles(const std::string
     vertex_parser.launch_production();
 
     // Initialize the output sink.
-    init_output_sink(params.output_file_path());
+    init_output_sink(output_file_path);
 
     // Launch (multi-threaded) marking of the vertices present in the maximal unitigs.
     const uint64_t thread_load_percentile = static_cast<uint64_t>(std::round((vertex_count() / 100.0) / params.thread_count()));

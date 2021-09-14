@@ -16,7 +16,7 @@ Read_CdBG_Extractor<k>::Read_CdBG_Extractor(const Build_Params& params, Kmer_Has
 
 
 template <uint16_t k>
-void Read_CdBG_Extractor<k>::extract_maximal_unitigs(const std::string& vertex_db_path)
+void Read_CdBG_Extractor<k>::extract_maximal_unitigs(const std::string& vertex_db_path, const std::string& output_file_path)
 {
     // std::chrono::high_resolution_clock::time_point t_start = std::chrono::high_resolution_clock::now();
 
@@ -33,8 +33,8 @@ void Read_CdBG_Extractor<k>::extract_maximal_unitigs(const std::string& vertex_d
     vertex_parser.launch_production();
 
     // Clear the output file and initialize the output sink.
-    clear_file(params.output_file_path());
-    init_output_sink(params.output_file_path());
+    clear_file(output_file_path);
+    init_output_sink(output_file_path);
 
     // Launch (multi-threaded) extraction of the maximal unitigs.
     const uint64_t thread_load_percentile = static_cast<uint64_t>(std::round((vertex_count() / 100.0) / params.thread_count()));

@@ -67,7 +67,7 @@ void Read_CdBG<k>::construct()
 
 
     std::cout << "\nExtracting the maximal unitigs.\n";
-    extract_maximal_unitigs(vertex_db_path);
+    extract_maximal_unitigs(vertex_db_path, params.output_file_path());
 
     if(!dbg_info.has_dcc() || dbg_info.dcc_extracted())
         hash_table->remove(params);
@@ -120,12 +120,12 @@ void Read_CdBG<k>::compute_DFA_states(const std::string& edge_db_path)
 
 
 template <uint16_t k>
-void Read_CdBG<k>::extract_maximal_unitigs(const std::string& vertex_db_path)
+void Read_CdBG<k>::extract_maximal_unitigs(const std::string& vertex_db_path, const std::string& output_file_path)
 {
     Read_CdBG_Extractor<k> cdBg_extractor(params, *hash_table);
     if(!is_constructed(params))
     {
-        cdBg_extractor.extract_maximal_unitigs(vertex_db_path);
+        cdBg_extractor.extract_maximal_unitigs(vertex_db_path, output_file_path);
         
         dbg_info.add_unipaths_info(cdBg_extractor);
 
@@ -133,7 +133,7 @@ void Read_CdBG<k>::extract_maximal_unitigs(const std::string& vertex_db_path)
         {
             if(params.extract_cycles())
             {
-                cdBg_extractor.extract_detached_cycles(vertex_db_path, dbg_info);
+                cdBg_extractor.extract_detached_cycles(vertex_db_path, output_file_path, dbg_info);
 
                 dbg_info.add_DCC_info(cdBg_extractor);
             }
@@ -147,7 +147,7 @@ void Read_CdBG<k>::extract_maximal_unitigs(const std::string& vertex_db_path)
         {
             if(!dbg_info.dcc_extracted())
             {
-                cdBg_extractor.extract_detached_cycles(vertex_db_path, dbg_info);
+                cdBg_extractor.extract_detached_cycles(vertex_db_path, output_file_path, dbg_info);
 
                 dbg_info.add_DCC_info(cdBg_extractor);
             }

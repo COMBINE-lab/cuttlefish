@@ -156,7 +156,7 @@ void Read_CdBG_Extractor<k>::extract_detached_chordless_cycles(const std::string
     vertex_parser.launch_production();
 
     // Initialize the output sink.
-    init_output_sink();
+    init_output_sink(params.output_file_path());
 
     // Launch (multi-threaded) marking of the vertices present in the maximal unitigs.
     const uint64_t thread_load_percentile = static_cast<uint64_t>(std::round((vertex_count() / 100.0) / params.thread_count()));

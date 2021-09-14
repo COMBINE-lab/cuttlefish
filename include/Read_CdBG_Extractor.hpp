@@ -125,8 +125,8 @@ private:
     // successful.
     bool mark_flanking_vertices(const Directed_Vertex<k>& sign_vertex, const Directed_Vertex<k>& cosign_vertex);
 
-    // Initializes the output sink.
-    void init_output_sink();
+    // Initializes the output sink, corresponding to the file `output_file_path`.
+    void init_output_sink(const std::string& output_file_path);
 
     // Closes the output sink.
     void close_output_sink();

@@ -34,7 +34,7 @@ void Read_CdBG_Extractor<k>::extract_maximal_unitigs(const std::string& vertex_d
 
     // Clear the output file and initialize the output sink.
     clear_file(params.output_file_path());
-    init_output_sink();
+    init_output_sink(params.output_file_path());
 
     // Launch (multi-threaded) extraction of the maximal unitigs.
     const uint64_t thread_load_percentile = static_cast<uint64_t>(std::round((vertex_count() / 100.0) / params.thread_count()));
@@ -200,9 +200,9 @@ bool Read_CdBG_Extractor<k>::extract_maximal_unitig(const Kmer<k>& v_hat, const 
 
 
 template <uint16_t k>
-void Read_CdBG_Extractor<k>::init_output_sink()
+void Read_CdBG_Extractor<k>::init_output_sink(const std::string& output_file_path)
 {
-    output_sink.init_sink(params.output_file_path());
+    output_sink.init_sink(output_file_path);
 }
 
 

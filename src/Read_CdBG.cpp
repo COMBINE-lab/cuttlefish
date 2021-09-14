@@ -25,35 +25,55 @@ void Read_CdBG<k>::construct()
         return;
     }
 
-
     dbg_info.add_build_params(params);
+
+    std::chrono::high_resolution_clock::time_point t_start = std::chrono::high_resolution_clock::now();
 
 
     std::cout << "\nEnumerating the edges of the de Bruijn graph.\n";
     const std::string edge_db_path = params.output_prefix() + cuttlefish::file_ext::edges_ext;
     kmer_Enumeration_Stats edge_stats = enumerate_edges(edge_db_path);
 
+    std::chrono::high_resolution_clock::time_point t_edges = std::chrono::high_resolution_clock::now();
+    std::cout << "Enumerated the edge set of the graph. Time taken = " << std::chrono::duration_cast<std::chrono::duration<double>>(t_edges - t_start).count() << " seconds.\n";
+
+
     std::cout << "\nEnumerating the vertices of the de Bruijn graph.\n";
     const std::string vertex_db_path = params.output_prefix() + cuttlefish::file_ext::vertices_ext;
     kmer_Enumeration_Stats vertex_stats = enumerate_vertices(edge_db_path, vertex_db_path, edge_stats.max_memory());
 
+    std::chrono::high_resolution_clock::time_point t_vertices = std::chrono::high_resolution_clock::now();
+    std::cout << "Enumerated the vertex set of the graph. Time taken = " << std::chrono::duration_cast<std::chrono::duration<double>>(t_vertices - t_edges).count() << " seconds.\n";
+
     std::cout << "Number of edges:    " << edge_stats.kmer_count() << ".\n";
     std::cout << "Number of vertices: " << vertex_stats.kmer_count() << ".\n";
 
+
     std::cout << "\nConstructing the minimal perfect hash function (MPHF) over the vertex set.\n";
     construct_hash_table(vertex_db_path, vertex_stats.kmer_count());
+
+    std::chrono::high_resolution_clock::time_point t_mphf = std::chrono::high_resolution_clock::now();
+    std::cout << "Constructed the minimal perfect hash function for the vertices. Time taken = " << std::chrono::duration_cast<std::chrono::duration<double>>(t_mphf - t_vertices).count() << " seconds.\n";
+
 
     std::cout << "\nComputing the DFA states.\n";
     compute_DFA_states(edge_db_path);
 
     if(!params.extract_cycles() && !params.dcc_opt())
         hash_table->save(params);
+    
+    std::chrono::high_resolution_clock::time_point t_dfa = std::chrono::high_resolution_clock::now();
+    std::cout << "Computed the states of the automata. Time taken = " << std::chrono::duration_cast<std::chrono::duration<double>>(t_dfa - t_mphf).count() << " seconds.\n";
+
 
     std::cout << "\nExtracting the maximal unitigs.\n";
     extract_maximal_unitigs(vertex_db_path);
 
     if(!dbg_info.has_dcc() || dbg_info.dcc_extracted())
         hash_table->remove(params);
+
+    std::chrono::high_resolution_clock::time_point t_extract = std::chrono::high_resolution_clock::now();
+    std::cout << "Extracted the maximal unitigs. Time taken = " << std::chrono::duration_cast<std::chrono::duration<double>>(t_extract - t_dfa).count() << " seconds.\n";
 
 
     hash_table->clear();

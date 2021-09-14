@@ -283,20 +283,6 @@ bool Read_CdBG_Extractor<k>::extract_cycle(const Kmer<k>& v_hat, uint64_t& id, s
 }
 
 
-template <uint16_t k>
-void Read_CdBG_Extractor<k>::init_output_sink()
-{
-    output_sink.init_sink(params.output_file_path());
-}
-
-
-template <uint16_t k>
-void Read_CdBG_Extractor<k>::close_output_sink()
-{
-    output_sink.close_sink();
-}
-
-
 
 // Template instantiations for the required instances.
 ENUMERATE(INSTANCE_COUNT, INSTANTIATE, Read_CdBG_Extractor)

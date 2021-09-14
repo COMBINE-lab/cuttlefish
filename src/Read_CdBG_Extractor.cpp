@@ -200,6 +200,20 @@ bool Read_CdBG_Extractor<k>::extract_maximal_unitig(const Kmer<k>& v_hat, const 
 
 
 template <uint16_t k>
+void Read_CdBG_Extractor<k>::init_output_sink()
+{
+    output_sink.init_sink(params.output_file_path());
+}
+
+
+template <uint16_t k>
+void Read_CdBG_Extractor<k>::close_output_sink()
+{
+    output_sink.close_sink();
+}
+
+
+template <uint16_t k>
 const Build_Params& Read_CdBG_Extractor<k>::get_params() const
 {
     return params;

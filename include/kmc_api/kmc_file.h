@@ -38,7 +38,7 @@ struct CKMCFileInfo
 // Forward declare Cuttlefish's k-mer class; required to parse KMC raw binary k-mers to Cuttlefish format.
 template <uint16_t k> class Kmer;
 
-class CKMCFile
+class CKMC_DB
 {
 	enum open_mode {closed, opened_for_RA, opened_for_listing};
 	open_mode is_opened;
@@ -108,8 +108,8 @@ class CKMCFile
 	bool GetCountersForRead_kmc2(const std::string& read, std::vector<uint32>& counters);
 public:
 		
-	CKMCFile();
-	~CKMCFile();
+	CKMC_DB();
+	~CKMC_DB();
 
 	// Open files *.kmc_pre & *.kmc_suf, read them to RAM, close files. *.kmc_suf is opened for random access
 	bool OpenForRA(const std::string &file_name);
@@ -215,7 +215,7 @@ public:
 // OUT: count - kmer's counter
 // RET: true - if not EOF
 //-----------------------------------------------------------------------------------------------
-inline bool CKMCFile::ReadNextKmer(CKmerAPI &kmer)
+inline bool CKMC_DB::ReadNextKmer(CKmerAPI &kmer)
 {
 	uint64 prefix_mask = (1 << 2 * lut_prefix_length) - 1; //for kmc2 db
 
@@ -304,7 +304,7 @@ inline bool CKMCFile::ReadNextKmer(CKmerAPI &kmer)
 // OUT: count - kmer's counter
 // RET: true - if not EOF
 //-----------------------------------------------------------------------------------------------
-bool CKMCFile::ReadNextKmer(CKmerAPI &kmer, uint32 &count)
+bool CKMC_DB::ReadNextKmer(CKmerAPI &kmer, uint32 &count)
 {
 	uint64 prefix_mask = (1 << 2 * lut_prefix_length) - 1; //for kmc2 db
 
@@ -399,7 +399,7 @@ bool CKMCFile::ReadNextKmer(CKmerAPI &kmer, uint32 &count)
 // OUT: count - kmer's counter
 // RET: true - if not EOF
 //-----------------------------------------------------------------------------------------------
-inline bool CKMCFile::ReadNextKmer(CKmerAPI &kmer, uint64 &count)
+inline bool CKMC_DB::ReadNextKmer(CKmerAPI &kmer, uint64 &count)
 {
 	uint64 prefix_mask = (1 << 2 * lut_prefix_length) - 1; //for kmc2 db
 
@@ -479,7 +479,7 @@ inline bool CKMCFile::ReadNextKmer(CKmerAPI &kmer, uint64 &count)
 
 
 
-inline uint64_t CKMCFile::read_raw_suffixes(uint8_t* const suff_buf, std::vector<std::pair<uint64_t, uint64_t>>& pref_buf, const size_t max_bytes_to_read)
+inline uint64_t CKMC_DB::read_raw_suffixes(uint8_t* const suff_buf, std::vector<std::pair<uint64_t, uint64_t>>& pref_buf, const size_t max_bytes_to_read)
 {
 	if(is_opened != opened_for_listing)
 		return 0;
@@ -538,26 +538,26 @@ inline uint64_t CKMCFile::read_raw_suffixes(uint8_t* const suff_buf, std::vector
 }
 
 
-inline uint32_t CKMCFile::suff_record_size() const
+inline uint32_t CKMC_DB::suff_record_size() const
 {
 	return sufix_rec_size;
 }
 
 
-inline uint64_t CKMCFile::curr_prefix() const
+inline uint64_t CKMC_DB::curr_prefix() const
 {
 	return prefix_index;
 }
 
 
-inline uint64_t CKMCFile::curr_suffix_idx() const
+inline uint64_t CKMC_DB::curr_suffix_idx() const
 {
 	return sufix_number;
 }
 
 
 template <uint16_t k>
-inline void CKMCFile::parse_kmer_buf(std::vector<std::pair<uint64_t, uint64_t>>::iterator& prefix_it, const uint8_t* const suff_buf, size_t buf_idx, Kmer<k>& kmer) const
+inline void CKMC_DB::parse_kmer_buf(std::vector<std::pair<uint64_t, uint64_t>>::iterator& prefix_it, const uint8_t* const suff_buf, size_t buf_idx, Kmer<k>& kmer) const
 {
 	static constexpr uint16_t NUM_INTS = (k + 31) / 32;
 	uint64_t kmc_data[NUM_INTS]{};

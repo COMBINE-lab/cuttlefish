@@ -15,12 +15,12 @@ Read_CdBG_Constructor<k>::Read_CdBG_Constructor(const Build_Params& params, Kmer
 
 
 template <uint16_t k>
-void Read_CdBG_Constructor<k>::compute_DFA_states()
+void Read_CdBG_Constructor<k>::compute_DFA_states(const std::string& edge_db_path)
 {
-    std::chrono::high_resolution_clock::time_point t_start = std::chrono::high_resolution_clock::now();
+    // std::chrono::high_resolution_clock::time_point t_start = std::chrono::high_resolution_clock::now();
 
 
-    const Kmer_Container<k + 1> edge_container(params.edge_db_path());  // Wrapper container for the edge-database.
+    const Kmer_Container<k + 1> edge_container(edge_db_path);  // Wrapper container for the edge-database.
     Kmer_SPMC_Iterator<k + 1> edge_parser(&edge_container, params.thread_count());  // Parser for the edges from the edge-database.
     edge_count_ = edge_container.size();
     std::cout << "Total number of distinct edges: " << edge_count_ << ".\n";
@@ -58,9 +58,9 @@ void Read_CdBG_Constructor<k>::compute_DFA_states()
     }
 
 
-    std::chrono::high_resolution_clock::time_point t_end = std::chrono::high_resolution_clock::now();
-    double elapsed_seconds = std::chrono::duration_cast<std::chrono::duration<double>>(t_end - t_start).count();
-    std::cout << "Done computing the DFA states. Time taken = " << elapsed_seconds << " seconds.\n";
+    // std::chrono::high_resolution_clock::time_point t_end = std::chrono::high_resolution_clock::now();
+    // double elapsed_seconds = std::chrono::duration_cast<std::chrono::duration<double>>(t_end - t_start).count();
+    // std::cout << "Done computing the DFA states. Time taken = " << elapsed_seconds << " seconds.\n";
 }
 
 

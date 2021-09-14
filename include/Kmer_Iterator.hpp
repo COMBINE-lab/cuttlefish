@@ -34,7 +34,7 @@ public:
 private:
 
     const Kmer_Container<k>* kmer_container; // The associated k-mer container on which to iterate on.
-    CKMCFile kmer_database_input;   // The input reader object (from KMC databases).
+    CKMC_DB kmer_database_input;   // The input reader object (from KMC databases).
     CKmerAPI kmer_object;   // Current KMC k-mer object that this iterator is holding.
     Kmer<k> kmer;   // K-mer present inside the `kmer_object` api.
     bool at_begin;  // Whether this iterator points to the beginning of the KMC database or not.

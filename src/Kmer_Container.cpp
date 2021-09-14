@@ -6,7 +6,7 @@ template <uint16_t k>
 Kmer_Container<k>::Kmer_Container(const std::string& kmc_file_path):
     kmc_file_path(kmc_file_path)
 {
-    CKMCFile kmer_database;
+    CKMC_DB kmer_database;
     if(!kmer_database.read_parameters(kmc_file_path))
     {
         std::cout << "Error opening KMC database files with prefix " << kmc_file_path << ". Aborting.\n";

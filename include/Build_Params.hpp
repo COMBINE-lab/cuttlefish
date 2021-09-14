@@ -22,9 +22,12 @@ private:
     const bool is_read_graph_;  // Whether to build a compacted read or reference de Bruijn graph.
     const Seq_Input seq_input_; // Collection of the input sequences.
     const uint16_t k_;   // The k parameter for the edge-centric de Bruijn graph to be compacted.
+    const uint32_t cutoff_; // Frequency cutoff for the (k + 1)-mers (for short-read set input).
     const std::string vertex_db_path_;  // Path to the KMC database containing the vertices (canonical k-mers).
     const std::string edge_db_path_;    // Path to the KMC database containing the edges (canonical (k + 1)-mers).
     const uint16_t thread_count_;    // Number of threads to work with.
+    const std::size_t max_memory_;  // Soft maximum memory limit.
+    const bool strict_memory_;  // Whether strict memory limit restriction is specifiied.
     const std::string& output_file_path_;   // Path to the output file.
     const cuttlefish::Output_Format output_format_;   // Output format (0: txt, 1: GFAv1, 2: GFAv2).
     const std::string& working_dir_path_;    // Path to the working directory (for temporary files).
@@ -44,9 +47,12 @@ public:
                     const std::vector<std::string>& list_paths,
                     const std::vector<std::string>& dir_paths,
                     const uint16_t k,
+                    const uint32_t cutoff,
                     const std::string& vertex_db_path,
                     const std::string& edge_db_path,
                     const uint16_t thread_count,
+                    const std::size_t max_memory,
+                    const bool strict_memory,
                     const std::string& output_file_path,
                     const uint8_t output_format,
                     const std::string& working_dir_path,
@@ -59,9 +65,12 @@ public:
         is_read_graph_(is_read_graph),
         seq_input_(seq_paths, list_paths, dir_paths),
         k_(k),
+        cutoff_(cutoff),
         vertex_db_path_(vertex_db_path),
         edge_db_path_(edge_db_path),
         thread_count_(thread_count),
+        max_memory_(max_memory),
+        strict_memory_(strict_memory),
         output_file_path_(output_file_path),
         output_format_(cuttlefish::Output_Format(output_format)),
         working_dir_path_(working_dir_path),
@@ -95,6 +104,13 @@ public:
     }
 
 
+    // Returns the frequency cutoff for the (k + 1)-mers (for short-reads set input).
+    uint32_t cutoff() const
+    {
+        return cutoff_;
+    }
+
+
     // Returns the path to the vertex database.
     const std::string& vertex_db_path() const
     {
@@ -113,6 +129,20 @@ public:
     uint16_t thread_count() const
     {
         return thread_count_;
+    }
+
+
+    // Returns the soft maximum memory limit.
+    std::size_t max_memory() const
+    {
+        return max_memory_;
+    }
+
+
+    // Returns whether strict memory limit restriction is specifiied.
+    bool strict_memory() const
+    {
+        return strict_memory_;
     }
 
 

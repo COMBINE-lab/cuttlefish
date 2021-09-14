@@ -9,7 +9,7 @@
 
 
 template <uint16_t k>
-void Read_CdBG_Extractor<k>::extract_detached_cycles(const dBG_Info<k>& dbg_info)
+void Read_CdBG_Extractor<k>::extract_detached_cycles(const std::string& vertex_db_path, const dBG_Info<k>& dbg_info)
 {
     std::chrono::high_resolution_clock::time_point t_start = std::chrono::high_resolution_clock::now();
 
@@ -17,12 +17,12 @@ void Read_CdBG_Extractor<k>::extract_detached_cycles(const dBG_Info<k>& dbg_info
     if(Read_CdBG<k>::is_constructed(params) && !dbg_info.dcc_opt_performed())
     {
         std::cout << "Marking the vertices present in the extracted maximal unitigs.\n";
-        mark_maximal_unitig_vertices();
+        mark_maximal_unitig_vertices(vertex_db_path);
         std::cout << "Done marking the vertices.\n";
     }
 
     std::cout << "Extracting the cycles.\n";
-    extract_detached_chordless_cycles();
+    extract_detached_chordless_cycles(vertex_db_path);
 
     std::cout <<    "\nNumber of detached chordless cycles: " << unipaths_meta_info_.dcc_count() << ".\n"
                     "Number of vertices in the cycles: " << unipaths_meta_info_.dcc_kmer_count() << ".\n";
@@ -35,14 +35,14 @@ void Read_CdBG_Extractor<k>::extract_detached_cycles(const dBG_Info<k>& dbg_info
 
 
 template <uint16_t k>
-void Read_CdBG_Extractor<k>::mark_maximal_unitig_vertices()
+void Read_CdBG_Extractor<k>::mark_maximal_unitig_vertices(const std::string& vertex_db_path)
 {
     // Construct a thread pool.
     const uint16_t thread_count = params.thread_count();
     Thread_Pool<k> thread_pool(thread_count, this, Thread_Pool<k>::Task_Type::mark_unipath_vertices);
 
     // Launch the reading (and parsing per demand) of the vertices from disk.
-    const Kmer_Container<k> vertex_container(params.vertex_db_path());  // Wrapper container for the vertex-database.
+    const Kmer_Container<k> vertex_container(vertex_db_path);   // Wrapper container for the vertex-database.
     Kmer_SPMC_Iterator<k> vertex_parser(&vertex_container, params.thread_count());  // Parser for the vertices from the vertex-database.
     std::cout << "Number of distinct vertices: " << vertex_container.size() << ".\n";
 
@@ -142,14 +142,14 @@ std::size_t Read_CdBG_Extractor<k>::mark_maximal_unitig(const Kmer<k>& v_hat, co
 
 
 template <uint16_t k>
-void Read_CdBG_Extractor<k>::extract_detached_chordless_cycles()
+void Read_CdBG_Extractor<k>::extract_detached_chordless_cycles(const std::string& vertex_db_path)
 {
      // Construct a thread pool.
     const uint16_t thread_count = params.thread_count();
     Thread_Pool<k> thread_pool(thread_count, this, Thread_Pool<k>::Task_Type::extract_cycles);
 
     // Launch the reading (and parsing per demand) of the vertices from disk.
-    const Kmer_Container<k> vertex_container(params.vertex_db_path());  // Wrapper container for the vertex-database.
+    const Kmer_Container<k> vertex_container(vertex_db_path);   // Wrapper container for the vertex-database.
     Kmer_SPMC_Iterator<k> vertex_parser(&vertex_container, params.thread_count());  // Parser for the vertices from the vertex-database.
     std::cout << "Number of distinct vertices: " << vertex_container.size() << ".\n";
 

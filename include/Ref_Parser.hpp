@@ -30,6 +30,9 @@ private:
     uint64_t seq_id_; // Number of the current sequence (in the current reference).
 
 
+    // Constructs a parser for the reference input collection `refs`.
+    Ref_Parser(const std::vector<std::string>& refs);
+
     // Opens the reference at path `reference_path`.
     void open_reference(const std::string& reference_path);
 

@@ -16,9 +16,9 @@ Read_CdBG_Extractor<k>::Read_CdBG_Extractor(const Build_Params& params, Kmer_Has
 
 
 template <uint16_t k>
-void Read_CdBG_Extractor<k>::extract_maximal_unitigs()
+void Read_CdBG_Extractor<k>::extract_maximal_unitigs(const std::string& vertex_db_path)
 {
-    std::chrono::high_resolution_clock::time_point t_start = std::chrono::high_resolution_clock::now();
+    // std::chrono::high_resolution_clock::time_point t_start = std::chrono::high_resolution_clock::now();
 
 
     // Construct a thread pool.
@@ -26,7 +26,7 @@ void Read_CdBG_Extractor<k>::extract_maximal_unitigs()
     Thread_Pool<k> thread_pool(thread_count, this, Thread_Pool<k>::Task_Type::extract_unipaths_read_space);
 
     // Launch the reading (and parsing per demand) of the vertices from disk.
-    const Kmer_Container<k> vertex_container(params.vertex_db_path());  // Wrapper container for the vertex-database.
+    const Kmer_Container<k> vertex_container(vertex_db_path);  // Wrapper container for the vertex-database.
     Kmer_SPMC_Iterator<k> vertex_parser(&vertex_container, params.thread_count());  // Parser for the vertices from the vertex-database.
     std::cout << "Number of distinct vertices: " << vertex_container.size() << ".\n";
 
@@ -59,9 +59,9 @@ void Read_CdBG_Extractor<k>::extract_maximal_unitigs()
                         " I.e. the cycles are graph components exclusively on their own.\n\n";
 
 
-    std::chrono::high_resolution_clock::time_point t_end = std::chrono::high_resolution_clock::now();
-    double elapsed_seconds = std::chrono::duration_cast<std::chrono::duration<double>>(t_end - t_start).count();
-    std::cout << "Done extracting the maximal unitigs. Time taken = " << elapsed_seconds << " seconds.\n";
+    // std::chrono::high_resolution_clock::time_point t_end = std::chrono::high_resolution_clock::now();
+    // double elapsed_seconds = std::chrono::duration_cast<std::chrono::duration<double>>(t_end - t_start).count();
+    // std::cout << "Done extracting the maximal unitigs. Time taken = " << elapsed_seconds << " seconds.\n";
 }
 
 

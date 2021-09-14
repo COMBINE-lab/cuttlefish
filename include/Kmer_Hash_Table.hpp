@@ -66,9 +66,13 @@ private:
 
 public:
 
-    // Constructs a `Kmer_Hash_Table` object, where the hash table is to be built
-    // over the KMC database with path prefix `kmc_db_path`.
-    Kmer_Hash_Table(const std::string& kmc_db_path);
+    // Constructs a k-mer hash table where the table is to be built over the k-mer
+    // database with path prefix `kmer_db_path`.
+    Kmer_Hash_Table(const std::string& kmer_db_path);
+
+    // Constructs a k-mer hash table where the table is to be built over the k-mer
+    // database having path prefix `kmer_db_path` and `kmer_count` distinct k-mers.
+    Kmer_Hash_Table(const std::string& kmc_db_path, uint64_t kmer_count);
 
     // Constructs a minimal perfect hash function (specifically, the BBHash) for
     // the collection of k-mers present at the KMC database at path `kmc_db_path`,

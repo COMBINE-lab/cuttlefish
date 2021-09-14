@@ -92,8 +92,8 @@ public:
     // the Cuttlefish hash table `hash_table`.
     Read_CdBG_Constructor(const Build_Params& params, Kmer_Hash_Table<k, cuttlefish::BITS_PER_READ_KMER>& hash_table);
 
-    // Computes the states of the DFA in the de Bruijn graph.
-    void compute_DFA_states();
+    // Computes the states of the DFA in the de Bruijn graph with the edge set at path prefix `edge_db_path`.
+    void compute_DFA_states(const std::string& edge_db_path);
 
     // Returns the number of distinct vertices in the underlying graph.
     uint64_t vertex_count() const;

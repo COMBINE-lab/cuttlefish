@@ -19,6 +19,14 @@ Kmer_Hash_Table<k, BITS_PER_KEY>::Kmer_Hash_Table(const std::string& kmc_db_path
 
 
 template <uint16_t k, uint8_t BITS_PER_KEY>
+Kmer_Hash_Table<k, BITS_PER_KEY>::Kmer_Hash_Table(const std::string& kmc_db_path, const uint64_t kmer_count):
+    kmc_db_path(kmc_db_path),
+    kmer_count(kmer_count),
+    sparse_lock(kmer_count, lock_count)
+{}
+
+
+template <uint16_t k, uint8_t BITS_PER_KEY>
 void Kmer_Hash_Table<k, BITS_PER_KEY>::build_mph_function(const uint16_t thread_count, const std::string& working_dir_path, const std::string& mph_file_path)
 {
     // The serialized BBHash file (saved from some earlier execution) exists.

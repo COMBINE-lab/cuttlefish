@@ -10,18 +10,19 @@ bool Build_Params::is_valid() const
     bool valid = true;
 
 
+    if(seq_input_.empty())
+    {
+        std::cout << "No sequence input provided for compacted de Bruijn graph construction.\n";
+        valid = false;
+    }
+
+
     // Check if read and reference de Bruijn graph parameters are being mixed with.
     if(is_read_graph_)  // Is a read de Bruijn graph.
     {
-        if(!seq_input_.empty())
+        if(output_format_ != cuttlefish::Output_Format::txt)
         {
-            std::cout << "No reference is to be provided for a compacted read de Bruijn graph construction.\n";
-            valid = false;
-        }
-
-        if(edge_db_path_.empty())
-        {
-            std::cout << "The path prefix to the KMC-database for edges (i.e. (k + 1)-mers) is required.\n";
+            std::cout << "(Currently) Unsupported output file format requested for the compacted read de Bruijn graph.\n";
             valid = false;
         }
     }

@@ -5,6 +5,8 @@
 
 #include <string>
 
+// TODO: wrap everything here in some namespaces.
+
 
 // Returns a random string of length `len`, using characters from `alphabet`.
 std::string get_random_string(size_t len, const char* alphabet =    "0123456789"
@@ -30,6 +32,12 @@ void remove_kmer_set(const std::string& kmc_file_pref);
 
 // Clears the content of the file at path `file_path`.
 void clear_file(const std::string& file_path);
+
+// Returns the name of the file present at the path `file_path`.
+const std::string filename(const std::string& file_path);
+
+// Moves the file present at path `from_path` to the path `to_path`.
+void move_file(const std::string& from_path, const std::string& to_path);
 
 
 

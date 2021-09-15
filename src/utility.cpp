@@ -90,3 +90,16 @@ void clear_file(const std::string& file_path)
 
     file.close();
 }
+
+
+const std::string filename(const std::string& file_path)
+{
+    return ghc::filesystem::path(file_path).filename().string();
+}
+
+
+void move_file(const std::string& from_path, const std::string& to_path)
+{
+    ghc::filesystem::copy(from_path, to_path);
+    ghc::filesystem::remove(from_path);
+}

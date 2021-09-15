@@ -28,13 +28,13 @@ private:
     const uint16_t thread_count_;    // Number of threads to work with.
     const std::size_t max_memory_;  // Soft maximum memory limit.
     const bool strict_memory_;  // Whether strict memory limit restriction is specifiied.
-    const std::string& output_file_path_;   // Path to the output file.
+    const std::string output_file_path_;    // Path to the output file.
     const cuttlefish::Output_Format output_format_;   // Output format (0: txt, 1: GFAv1, 2: GFAv2).
-    const std::string& working_dir_path_;    // Path to the working directory (for temporary files).
+    const std::string working_dir_path_;    // Path to the working directory (for temporary files).
     const bool remove_kmc_db_;  // Option to remove the KMC database, once no longer required.
-    const std::string& mph_file_path_;   // Optional path to file storing an MPH over the k-mer set.
-    const std::string& buckets_file_path_;  // Optional path to file storing the hash table buckets for the k-mer set.
-    const std::string& json_file_path_;     // Optional path to file storing meta-information about the graph and cuttlefish executions.
+    const std::string mph_file_path_;   // Optional path to file storing an MPH over the k-mer set.
+    const std::string buckets_file_path_;   // Optional path to file storing the hash table buckets for the k-mer set.
+    const std::string json_file_path_;  // Optional path to file storing meta-information about the graph and cuttlefish executions.
     const bool dcc_opt_;    // Option to optimize post-cdBG-construction extraction of DCCs (Detached Chordless Cycles).
     const bool extract_cycles_; // Option to extract detached chordless cycles from the de Bruijn graph after compaction.
 

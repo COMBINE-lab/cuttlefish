@@ -126,6 +126,10 @@ public:
     // paths determined from the parameters collection `params`.
     void save(const Build_Params& params) const;
 
+    // Loads the hash table from disk files, determined from the parameters
+    // collection `params`.
+    void load(const Build_Params& params);
+
     // Removes the hash table files (if exists) from disk, with the file paths
     // being determined from the parameters collection `params`.
     void remove(const Build_Params& params) const;

@@ -138,6 +138,14 @@ void Kmer_Hash_Table<k, BITS_PER_KEY>::save(const Build_Params& params) const
 
 
 template <uint16_t k, uint8_t BITS_PER_KEY>
+void Kmer_Hash_Table<k, BITS_PER_KEY>::load(const Build_Params& params)
+{
+    load_mph_function(params.mph_file_path());
+    load_hash_buckets(params.buckets_file_path());
+}
+
+
+template <uint16_t k, uint8_t BITS_PER_KEY>
 void Kmer_Hash_Table<k, BITS_PER_KEY>::remove(const Build_Params& params) const
 {
     const std::string mph_file_path = params.mph_file_path();

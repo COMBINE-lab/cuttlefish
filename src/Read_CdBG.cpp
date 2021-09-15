@@ -19,9 +19,12 @@ Read_CdBG<k>::Read_CdBG(const Build_Params& params):
 template <uint16_t k>
 void Read_CdBG<k>::construct()
 {
-    if(is_constructed(params) && (!dbg_info.has_dcc() || dbg_info.dcc_extracted()))
+    if(is_constructed(params) && (!dbg_info.has_dcc() || dbg_info.dcc_extracted() || !params.extract_cycles()))
     {
-        std::cout << "\nThe compacted de Bruijn graph has already been completely constructed earlier.\n";
+        std::cout << "\nThe compacted de Bruijn graph has already been constructed earlier.\n";
+        if(dbg_info.has_dcc() && !dbg_info.dcc_extracted())
+            std::cout << "There are Detached Chordless Cycles (DCC) present in the graph; run Cuttlefish with the `cycles` argument to extract those.\n";
+
         return;
     }
 

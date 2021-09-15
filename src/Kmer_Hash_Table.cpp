@@ -155,7 +155,7 @@ void Kmer_Hash_Table<k, BITS_PER_KEY>::remove(const Build_Params& params) const
 template <uint16_t k, uint8_t BITS_PER_KEY>
 void Kmer_Hash_Table<k, BITS_PER_KEY>::construct(const uint16_t thread_count, const std::string& working_dir_path, const std::string& mph_file_path)
 {
-    std::chrono::high_resolution_clock::time_point t_start = std::chrono::high_resolution_clock::now();
+    // std::chrono::high_resolution_clock::time_point t_start = std::chrono::high_resolution_clock::now();
 
 
     std::cout << "Total number of k-mers in the set (KMC database): " << kmer_count << ".\n";
@@ -179,9 +179,9 @@ void Kmer_Hash_Table<k, BITS_PER_KEY>::construct(const uint16_t thread_count, co
                     " Bits per k-mer: " << (total_mem * 8.0) / kmer_count << ".\n";
 
 
-    std::chrono::high_resolution_clock::time_point t_end = std::chrono::high_resolution_clock::now();
-    const double elapsed_seconds = std::chrono::duration_cast<std::chrono::duration<double>>(t_end - t_start).count();
-    std::cout << "Done allocating the hash table. Time taken = " << elapsed_seconds << " seconds.\n";
+    // std::chrono::high_resolution_clock::time_point t_end = std::chrono::high_resolution_clock::now();
+    // const double elapsed_seconds = std::chrono::duration_cast<std::chrono::duration<double>>(t_end - t_start).count();
+    // std::cout << "Done allocating the hash table. Time taken = " << elapsed_seconds << " seconds.\n";
 }
 
 

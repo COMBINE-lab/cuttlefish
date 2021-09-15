@@ -73,7 +73,7 @@ public:
         strict_memory_(strict_memory),
         output_file_path_(output_file_path),
         output_format_(cuttlefish::Output_Format(output_format)),
-        working_dir_path_(working_dir_path),
+        working_dir_path_(working_dir_path.back() == '/' ? working_dir_path : working_dir_path + "/"),
         remove_kmc_db_(remove_kmc_db),
         mph_file_path_(mph_file_path),
         buckets_file_path_(buckets_file_path),

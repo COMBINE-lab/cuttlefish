@@ -9,8 +9,8 @@ namespace cuttlefish
     // File extensions for the data structures and files output by the algorithm.
     namespace file_ext
     {
-        constexpr char edges_ext[] = ".cf_edges";
-        constexpr char vertices_ext[] = ".cf_vertices";
+        constexpr char edges_ext[] = ".cf_E";
+        constexpr char vertices_ext[] = ".cf_V";
         constexpr char hash_ext[] = ".cf_hf";
         constexpr char buckets_ext[] = ".cf_hb";
         constexpr char unipaths_ext[] = ".fa";

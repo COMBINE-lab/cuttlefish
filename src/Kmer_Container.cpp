@@ -61,6 +61,16 @@ uint64_t Kmer_Container<k>::size(const std::string& kmc_db_path)
 
 
 template <uint16_t k>
+bool Kmer_Container<k>::exists(const std::string& kmc_db_path)
+{
+    const std::string kmc_pref_file(kmc_db_path + ".kmc_pre");
+    const std::string kmc_suff_file(kmc_db_path + ".kmc_suf");
+
+    return file_exists(kmc_pref_file) && file_exists(kmc_suff_file);
+}
+
+
+template <uint16_t k>
 void Kmer_Container<k>::remove(const std::string& kmc_db_path)
 {
     const std::string kmc_pref_file(kmc_db_path + ".kmc_pre");

@@ -14,7 +14,7 @@ void Read_CdBG_Extractor<k>::extract_detached_cycles(const std::string& vertex_d
     std::chrono::high_resolution_clock::time_point t_start = std::chrono::high_resolution_clock::now();
 
 
-    if(Read_CdBG<k>::is_constructed(params) && !dbg_info.dcc_opt_performed())
+    if(!dbg_info.dcc_opt_performed())
     {
         std::cout << "Marking the vertices present in the extracted maximal unitigs.\n";
         mark_maximal_unitig_vertices(vertex_db_path);

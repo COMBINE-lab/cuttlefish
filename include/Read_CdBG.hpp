@@ -29,12 +29,12 @@ private:
 
     // Enumerates the edges of the de Bruijn graph in a database at path `edge_db_path`,
     // and returns summary statistics of the enumearation.
-    kmer_Enumeration_Stats enumerate_edges(const std::string& edge_db_path);
+    kmer_Enumeration_Stats enumerate_edges(const std::string& edge_db_path) const;
 
     // Enumerates the vertices of the de Bruijn graph in a database at path `vertex_db_path`,
     // from the edge database present at `edge_db_path`, using at most `max_memory` amount of
     // memory. Returns summary statistics of the enumeration.
-    kmer_Enumeration_Stats enumerate_vertices(const std::string& edge_db_path, const std::string& vertex_db_path, std::size_t max_memory);
+    kmer_Enumeration_Stats enumerate_vertices(const std::string& edge_db_path, const std::string& vertex_db_path, std::size_t max_memory) const;
 
     // Constructs the Cuttlefish hash table for the `vertex_count` vertices in the database
     // at path `vertex_db_path`.

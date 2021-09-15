@@ -86,7 +86,7 @@ void Read_CdBG<k>::construct()
 
 
 template <uint16_t k>
-kmer_Enumeration_Stats Read_CdBG<k>::enumerate_edges(const std::string& edge_db_path)
+kmer_Enumeration_Stats Read_CdBG<k>::enumerate_edges(const std::string& edge_db_path) const
 {
     return kmer_Enumerator<k + 1>().enumerate(
         KMC::InputFileType::FASTQ, params.sequence_input().seqs(), params.cutoff(),
@@ -96,7 +96,7 @@ kmer_Enumeration_Stats Read_CdBG<k>::enumerate_edges(const std::string& edge_db_
 
 
 template <uint16_t k>
-kmer_Enumeration_Stats Read_CdBG<k>::enumerate_vertices(const std::string& edge_db_path, const std::string& vertex_db_path, const std::size_t max_memory)
+kmer_Enumeration_Stats Read_CdBG<k>::enumerate_vertices(const std::string& edge_db_path, const std::string& vertex_db_path, const std::size_t max_memory) const
 {
     return kmer_Enumerator<k>().enumerate(
         KMC::InputFileType::KMC, std::vector<std::string>(1, edge_db_path), 1,

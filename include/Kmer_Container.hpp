@@ -46,6 +46,8 @@ public:
     // Returns the number of k-mers present in the k-mer database with path prefix `kmc_db_path`.
     static uint64_t size(const std::string& kmc_db_path);
 
+    // Removes the KMC database at path `kmc_db_prefix` from disk.
+    static void remove(const std::string& kmc_db_prefix);
 
     // Returns an iterator pointing to the beginning of the underlying k-mer
     // database.

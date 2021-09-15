@@ -66,16 +66,9 @@ std::string remove_whitespaces(const char* s)
 }
 
 
-void remove_kmer_set(const std::string& kmc_file_pref)
+bool remove_file(const std::string& file_path)
 {
-    const std::string kmc_file1_path(kmc_file_pref + ".kmc_pre");
-    const std::string kmc_file2_path(kmc_file_pref + ".kmc_suf");
-
-    if(std::remove(kmc_file1_path.c_str()) || std::remove(kmc_file2_path.c_str()))
-    {
-        std::cerr << "Error removing the KMC database file from path prefix " << kmc_file_pref << ". Aborting.\n";
-        std::exit(EXIT_FAILURE);
-    }
+    return ghc::filesystem::remove(file_path);
 }
 
 

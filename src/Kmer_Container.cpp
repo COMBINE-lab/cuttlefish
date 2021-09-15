@@ -60,6 +60,20 @@ uint64_t Kmer_Container<k>::size(const std::string& kmc_db_path)
 }
 
 
+template <uint16_t k>
+void Kmer_Container<k>::remove(const std::string& kmc_db_path)
+{
+    const std::string kmc_pref_file(kmc_db_path + ".kmc_pre");
+    const std::string kmc_suff_file(kmc_db_path + ".kmc_suf");
+
+    if(!remove_file(kmc_pref_file) || !remove_file(kmc_suff_file))
+    {
+        std::cerr << "Error removing the KMC database file from path prefix " << kmc_db_path << ". Aborting.\n";
+        std::exit(EXIT_FAILURE);
+    }
+}
+
+
 // template <uint16_t k>
 // typename Kmer_Container<k>::iterator Kmer_Container<k>::end() const
 // {

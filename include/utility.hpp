@@ -27,8 +27,9 @@ bool file_prefix_exists(const std::string& path, const std::string& prefix);
 // Returns a string that is a copy of `s` but has all the whitespaces removed.
 std::string remove_whitespaces(const char* s);
 
-// Removes the k-mer set (KMC database) with the path prefix `kmc_file_pref`.
-void remove_kmer_set(const std::string& kmc_file_pref);
+// Removes the file at path `file_path` from disk. Returns `true` iff the
+// removal is successful.
+bool remove_file(const std::string& file_path);
 
 // Clears the content of the file at path `file_path`.
 void clear_file(const std::string& file_path);

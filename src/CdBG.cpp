@@ -20,7 +20,7 @@ void CdBG<k>::construct()
 
     if(params.remove_kmc_db())
     {
-        remove_kmer_set(params.vertex_db_path());
+        Kmer_Container<k>::remove(params.vertex_db_path());
         std::cout << "\nRemoved the KMC database from disk.\n";
     }
 

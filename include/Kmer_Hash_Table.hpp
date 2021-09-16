@@ -29,7 +29,7 @@ private:
     constexpr static double GAMMA_FACTOR = 2.0;
 
     // Path to the underlying k-mer database, over which the hash table is constructed.
-    const std::string& kmc_db_path;
+    const std::string kmc_db_path;
 
     // Number of keys (`Kmer<k>`s) in the hash table.
     const uint64_t kmer_count;

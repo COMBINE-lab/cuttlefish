@@ -19,6 +19,16 @@ Read_CdBG<k>::Read_CdBG(const Build_Params& params):
 
 
 template <uint16_t k>
+Read_CdBG<k>::~Read_CdBG()
+{
+    if(hash_table != nullptr)
+        hash_table->clear();
+
+    dbg_info.dump_info();
+}
+
+
+template <uint16_t k>
 void Read_CdBG<k>::construct()
 {
     if(is_constructed())
@@ -80,10 +90,6 @@ void Read_CdBG<k>::construct()
 
     std::chrono::high_resolution_clock::time_point t_extract = std::chrono::high_resolution_clock::now();
     std::cout << "Extracted the maximal unitigs. Time taken = " << std::chrono::duration_cast<std::chrono::duration<double>>(t_extract - t_dfa).count() << " seconds.\n";
-
-
-    hash_table->clear();
-    dbg_info.dump_info();
 }
 
 

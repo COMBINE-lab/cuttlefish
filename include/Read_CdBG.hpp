@@ -78,6 +78,10 @@ public:
     // the compacted representation of the underlying read de Bruijn graph wrapped in `params`.
     Read_CdBG(const Build_Params& params);
 
+    // Destructs the compacted graph builder object, freeing its hash table and dumping the
+    // graph information to disk.
+    ~Read_CdBG();
+
     // Constructs the compacted read de Bruijn graph, employing the parameters received
     // with the object-constructor.
     void construct();

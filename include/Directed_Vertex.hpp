@@ -108,7 +108,7 @@ template <uint16_t k>
 inline Directed_Vertex<k>::Directed_Vertex(const Directed_Vertex<k>& rhs):
     kmer_(rhs.kmer_),
     kmer_bar_(rhs.kmer_bar_),
-    kmer_hat_ptr(Kmer<k>::canonical(kmer_, kmer_bar_)), // TODO: replace with pointer-check based assignment (check `operator=`).
+    kmer_hat_ptr(rhs.kmer_hat_ptr == &rhs.kmer_ ? &kmer_ : &kmer_bar_),
     h(rhs.h)
 {}
 

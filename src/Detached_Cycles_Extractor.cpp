@@ -185,8 +185,7 @@ void Read_CdBG_Extractor<k>::extract_detached_chordless_cycles(Kmer_SPMC_Iterato
     std::size_t pivot;  // Index of the lexicographically lowest (canonical) k-mer in the cycle.
 
     uint64_t vertex_count = 0;  // Number of vertices scanned by this thread.
-    uint64_t cycles_extracted = 0;  // Number of detached chordless cycles extracted by this thread.
-    uint64_t cycle_vertices = 0;    // Number of vertices found to be in detached chordless cycles by this thread.
+    Unipaths_Meta_info<k> extracted_dcc_info;   // Meta-information over the DCCs extracted by this thread.
     uint64_t progress = 0;  // Number of vertices scanned by the thread; is reset at reaching 1% of its approximate workload.
 
     Character_Buffer<BUFF_SZ, sink_t> output_buffer(output_sink.sink());  // The output buffer for the cycles.
@@ -200,13 +199,13 @@ void Read_CdBG_Extractor<k>::extract_detached_chordless_cycles(Kmer_SPMC_Iterato
             if(!state.is_outputted())
                 if(extract_cycle(v, id, cycle, pivot))
                 {
-                    cycles_extracted++;
-                    cycle_vertices += cycle.size() - (k - 1);
-                    unipaths_meta_info_.add_DCC(cycle);
+                    extracted_dcc_info.add_DCC(cycle);
 
                     // cycle.emplace_back('\n');
                     // output_buffer += FASTA_Record<std::vector<char>>(id, cycle);
                     output_buffer.rotate_append(FASTA_Record<std::vector<char>>(id, cycle), pivot);
+
+                    // TODO: mark the path vertices, or not?
                 }
 
             vertex_count++;
@@ -220,6 +219,7 @@ void Read_CdBG_Extractor<k>::extract_detached_chordless_cycles(Kmer_SPMC_Iterato
     lock.lock();
     
     vertices_scanned += vertex_count;
+    unipaths_meta_info_.aggregate(extracted_dcc_info);
 
     lock.unlock();
 }

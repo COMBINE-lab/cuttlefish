@@ -30,6 +30,10 @@ void Unipaths_Meta_info<k>::aggregate(const Unipaths_Meta_info& other)
     max_len_ = std::max(max_len_, other.max_len_);
     min_len_ = std::min(min_len_, other.min_len_);
     sum_len_ += other.sum_len_;
+
+    dcc_count_ += other.dcc_count_;
+    dcc_kmer_count_ += other.dcc_kmer_count_;
+    dcc_sum_len_ += other.dcc_sum_len_;
 }
 
 

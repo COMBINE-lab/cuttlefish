@@ -65,7 +65,7 @@ public:
 
     void close_sink()
     {
-        spdlog::drop_all();
+        output_.close_logger();
     }
 };
 

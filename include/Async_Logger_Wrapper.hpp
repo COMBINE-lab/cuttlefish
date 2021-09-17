@@ -41,6 +41,9 @@ public:
 
     // Log the passed null-terminated message `str`.
     void write(const char* str) const;
+
+    // Posts flush request for the logger, and closes it. 
+    void close_logger();
 };
 
 

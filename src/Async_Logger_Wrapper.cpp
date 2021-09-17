@@ -19,3 +19,15 @@ void Async_Logger_Wrapper::init_logger(const std::string& output_file_path)
     // Set the log message pattern.
     logger->set_pattern("%v");
 }
+
+
+void Async_Logger_Wrapper::close_logger()
+{
+    // Note: For `spdlog`, `logger->flush()` posts a message to the queue requesting the flush operation,
+    // so the function returns immediately. Hence a forceful eviction is necessary by dropping the `spdlog`
+    // thread pools for the output to force-flush the pending logs. `spdlog::shutdown()` force-flushes
+    // messages from the global pool only.
+
+    logger->flush();
+    tp.reset();
+}

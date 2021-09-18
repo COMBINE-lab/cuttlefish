@@ -267,6 +267,8 @@ bool Read_CdBG_Extractor<k>::extract_cycle(const Kmer<k>& v_hat, uint64_t& id, s
         cycle.emplace_back(Kmer<k>::map_char(b_ext));
     }
 
+    // if(!anchor.is_same_vertex(sign_vertex))
+    //     return false;
     
     if(!mark_vertex(sign_vertex))
         return false;

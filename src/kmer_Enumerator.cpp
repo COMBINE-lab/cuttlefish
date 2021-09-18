@@ -36,7 +36,7 @@ kmer_Enumeration_Stats kmer_Enumerator<k>::enumerate(
         .SetNThreads(thread_count)
         .SetMaxRamGB(memory)
         .SetStrictMemoryMode(strict_memory)
-        .SetCounterMax(counter_max)
+        // .SetCounterMax(counter_max)
         .SetOutputFileName(output_db_path)
     ;
 

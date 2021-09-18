@@ -203,7 +203,7 @@ void Read_CdBG_Extractor<k>::extract_detached_chordless_cycles(Kmer_SPMC_Iterato
 
                     // cycle.emplace_back('\n');
                     // output_buffer += FASTA_Record<std::vector<char>>(id, cycle);
-                    output_buffer.rotate_append(FASTA_Record<std::vector<char>>(id, cycle), pivot);
+                    output_buffer.rotate_append_cycle<k>(FASTA_Record<std::vector<char>>(id, cycle), pivot);
 
                     // TODO: mark the path vertices, or not?
                 }
@@ -267,6 +267,8 @@ bool Read_CdBG_Extractor<k>::extract_cycle(const Kmer<k>& v_hat, uint64_t& id, s
         cycle.emplace_back(Kmer<k>::map_char(b_ext));
     }
 
+    // if(!anchor.is_same_vertex(sign_vertex))
+    //     return false;
     
     if(!mark_vertex(sign_vertex))
         return false;
@@ -274,7 +276,7 @@ bool Read_CdBG_Extractor<k>::extract_cycle(const Kmer<k>& v_hat, uint64_t& id, s
     if(!sign_vertex.in_canonical_form())
     {
         reverse_complement(cycle);
-        pivot = (cycle.size() - 1) - pivot - (k - 1);
+        pivot = (cycle.size() - 1) - (pivot + k - 1);
     }
 
     id = sign_vertex.hash();

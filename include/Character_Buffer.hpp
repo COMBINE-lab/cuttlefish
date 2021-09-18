@@ -49,13 +49,14 @@ public:
     template <typename T_container_>
     void operator+=(const FASTA_Record<T_container_>& fasta_rec);
 
-    // Appends the content of the FASTA record `fasta_rec` to the buffer. The FASTA
-    // added sequence is rotated around its index `pivot` — the entire sequence is
+    // Appends the content of the FASTA record `fasta_cycle` to the buffer, that is
+    // supposed to be a cycle in a de Bruijn graph `G(·, k)`. The cyclic FASTA
+    // sequence is rotated around its index `pivot` — the entire sequence is
     // right-rotated so that the `pivot`-index character is at index 0 finally. A
     // line-break is added at the end of the sequence, since the user might not be
     // able to provide it with the "to be rotated" sequence.
-    template <typename T_container_>
-    void rotate_append(const FASTA_Record<T_container_>& fasta_rec, std::size_t pivot);
+    template <uint16_t k, typename T_container_>
+    void rotate_append_cycle(const FASTA_Record<T_container_>& fasta_cycle, std::size_t pivot);
 
     // Destructs the buffer object, flushing it if content are present.
     ~Character_Buffer();
@@ -141,14 +142,14 @@ inline void Character_Buffer<CAPACITY, T_sink_>::operator+=(const FASTA_Record<T
 
 
 template <std::size_t CAPACITY, typename T_sink_>
-template <typename T_container_>
-inline void Character_Buffer<CAPACITY, T_sink_>::rotate_append(const FASTA_Record<T_container_>& fasta_rec, const std::size_t pivot)
+template <uint16_t k, typename T_container_>
+inline void Character_Buffer<CAPACITY, T_sink_>::rotate_append_cycle(const FASTA_Record<T_container_>& fasta_rec, const std::size_t pivot)
 {
     ensure_space(fasta_rec.header_size() + 1 + fasta_rec.seq_size() + 1);   // 2 extra bytes for two line-breaks.
 
     fasta_rec.append_header(buffer);    // Append the header.
     buffer.emplace_back('\n');  // Break line.
-    fasta_rec.append_rotated_seq(buffer, pivot);  // Append the sequence right-rotated around index `pivot`.
+    fasta_rec.template append_rotated_cycle<k>(buffer, pivot);  // Append the sequence right-rotated around index `pivot`.
     buffer.emplace_back('\n');  // End the sequence.
 }
 

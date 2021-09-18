@@ -34,6 +34,7 @@ private:
     const bool remove_kmc_db_;  // Option to remove the KMC database, once no longer required.
     const std::string mph_file_path_;   // Optional path to file storing an MPH over the k-mer set.
     const std::string buckets_file_path_;   // Optional path to file storing the hash table buckets for the k-mer set.
+    const bool save_vertices_;  // Option to save the vertex set of the de Bruijn graph (in KMC database format).
     const std::string json_file_path_;  // Optional path to file storing meta-information about the graph and cuttlefish executions.
     const bool dcc_opt_;    // Option to optimize post-cdBG-construction extraction of DCCs (Detached Chordless Cycles).
     const bool extract_cycles_; // Option to extract detached chordless cycles from the de Bruijn graph after compaction.
@@ -59,6 +60,7 @@ public:
                     const bool remove_kmc_db,
                     const std::string& mph_file_path,
                     const std::string& buckets_file_path,
+                    const bool save_vertices,
                     const std::string& json_file_path,
                     const bool dcc_opt,
                     const bool extract_cycles):
@@ -77,6 +79,7 @@ public:
         remove_kmc_db_(remove_kmc_db),
         mph_file_path_(mph_file_path),
         buckets_file_path_(buckets_file_path),
+        save_vertices_(save_vertices),
         json_file_path_(json_file_path),
         dcc_opt_(dcc_opt),
         extract_cycles_(extract_cycles)
@@ -192,6 +195,13 @@ public:
     const std::string buckets_file_path() const
     {
         return is_read_graph() ? (output_file_path_ + cuttlefish::file_ext::buckets_ext) : buckets_file_path_;
+    }
+
+
+    // Returns whether the option to save the vertex set of the de Bruijn graph (in KMC database format) is specified or not.
+    bool save_vertices() const
+    {
+        return save_vertices_;
     }
 
 

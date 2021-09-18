@@ -84,7 +84,9 @@ void Read_CdBG<k>::construct()
 
     if(!dbg_info.has_dcc() || dbg_info.dcc_extracted()) // Either there are no DCCs, or the DCCs have already been extracted in this run.
     {
-        // Kmer_Container<k>::remove(vertex_db_path());
+        if(!params.save_vertices())
+            Kmer_Container<k>::remove(vertex_db_path());
+
         hash_table->remove(params);
     }
 

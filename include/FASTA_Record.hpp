@@ -6,6 +6,7 @@
 
 #include "fmt/format.h"
 
+
 // =============================================================================
 // A class wrapping a basic FASTA record: the sequence of type `T_seq_` and its
 // header/identifier of type `T_id`. The class is specifically designed for
@@ -39,9 +40,11 @@ public:
     void append_seq(std::vector<char>& buffer) const;
 
     // Appends the FASTA sequence to the vector `buffer` in a rotated form — the
-    // added sequence is right rotated so that the character at index `pivot` is
-    // at index 0 finally.
-    void append_rotated_seq(std::vector<char>& buffer, std::size_t pivot) const;
+    // added sequence is supposed to be a cycle in a de Bruijn graph `G(·, k)`,
+    // and it is right rotated so that the character at index `pivot` is at
+    // index 0 finally.
+    template <uint16_t k>
+    void append_rotated_cycle(std::vector<char>& buffer, std::size_t pivot) const;
 };
 
 
@@ -84,10 +87,11 @@ inline void FASTA_Record<T_seq_, T_id_>::append_seq(std::vector<char>& buffer) c
 
 
 template <typename T_seq_, typename T_id_>
-inline void FASTA_Record<T_seq_, T_id_>::append_rotated_seq(std::vector<char>& buffer, const std::size_t pivot) const
+template <uint16_t k>
+inline void FASTA_Record<T_seq_, T_id_>::append_rotated_cycle(std::vector<char>& buffer, const std::size_t pivot) const
 {
     buffer.insert(buffer.end(), seq_.begin() + pivot, seq_.end());
-    buffer.insert(buffer.end(), seq_.begin(), seq_.begin() + pivot);
+    buffer.insert(buffer.end(), seq_.begin() + k - 1, seq_.begin() + k - 1 + pivot);
 }
 
 

@@ -5,6 +5,7 @@
 
 
 #include "DNA_Utility.hpp"
+#include "Kmer_Utility.hpp"
 #include "utility.hpp"
 #include "kmc_api/kmc_file.h"
 #include "xxHash/xxh3.h"
@@ -452,7 +453,7 @@ inline void Kmer<k>::as_reverse_complement(const Kmer<k>& other)
     constexpr uint16_t packed_byte_count = k / 4;
 
     for(uint16_t byte_idx = 0; byte_idx < packed_byte_count; ++byte_idx)
-        rev_compl[packed_byte_count - 1 - byte_idx] = DNA_Utility::reverse_complement(data[byte_idx]);
+        rev_compl[packed_byte_count - 1 - byte_idx] = Kmer_Utility::reverse_complement(data[byte_idx]);
 
 
     // Get the reverse complement for the only byte that might be partially packed (possible for the highest-indexed byte only).

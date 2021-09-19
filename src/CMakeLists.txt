@@ -14,6 +14,7 @@ set(PROJECT_SRC
         Async_Logger_Wrapper.cpp
         Thread_Pool.cpp
         DNA_Utility.cpp
+        Kmer_Utility.cpp
         Kmer_u64.cpp
         Vertex.cpp
         State.cpp

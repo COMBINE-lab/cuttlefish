@@ -52,7 +52,7 @@ inline void Progress_Tracker::track_work(uint64_t& work_chunk_size)
         if(percent_work_done < new_percent)
         {
             percent_work_done = new_percent;
-            std::cerr << "\r[" << log_message << "]\t" << percent_work_done << "\%";
+            std::cerr << "\r[" << log_message << "]\t" << percent_work_done << "%";
         }
 
         lock.unlock();

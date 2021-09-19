@@ -27,7 +27,7 @@
 
 
 // STEP 1: declare the type of file handler and the read() function
-KSEQ_INIT(int, read);
+KSEQ_INIT(int, read)
 
 
 void test_kseq(const char* fileName)

@@ -14,7 +14,7 @@ project(${PROJECT_NAME}
 
 # Fix language standards, and set hard requirements for such.
 # All targets defined from this point onward will pick up these requirements.
-set(CMAKE_CXX_STANDARD 14)
+set(CMAKE_CXX_STANDARD 14)  # Bump to 17
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 set(CMAKE_C_STANDARD 11)
@@ -28,7 +28,7 @@ set(CMAKE_C_EXTENSIONS OFF)
 # Bundle the warning flags that we want to pass on to the compiler.
 # Disable unknown pragmas, b/c bbhash uses them extensively.
 # Reference: https://gcc.gnu.org/onlinedocs/gcc/Warning-Options.html
-set(WARNING_FLAGS -Wall -Wextra)
+set(WARNING_FLAGS -Wall -Wextra -pedantic)
 set(SUPPRESS_WARNING_FLAGS -Wno-unknown-pragmas)
 
 # Bundle the extra optimization flags (not associated with the `-O` levels)

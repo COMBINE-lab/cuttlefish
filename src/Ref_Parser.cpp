@@ -9,7 +9,7 @@
 
 // Declare the type of file handler and the read() function.
 // Required for FASTA/FASTQ file reading using the kseq library.
-KSEQ_INIT(gzFile, gzread);
+KSEQ_INIT(gzFile, gzread)
 
 
 Ref_Parser::Ref_Parser(const std::string& file_path)

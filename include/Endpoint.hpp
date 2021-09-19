@@ -6,6 +6,7 @@
 
 
 #include "Kmer.hpp"
+#include "Directed_Vertex.hpp"
 #include "globals.hpp"
 #include "Kmer_Hash_Table.hpp"
 
@@ -18,14 +19,9 @@ class Endpoint
 {
 private:
 
-    // TODO: Refactor the class with inclusion of a `Directed_Vertex` instance, replacing four fields.
-
-    Kmer<k> kmer_;  // The endpoint k-mer spelled by the edge instance.
-    Kmer<k> kmer_bar_;  // Reverse complement of the k-mer spelled by the edge instance.
-    const Kmer<k>* kmer_hat_ptr;    // Pointer to the canonical form of the endpoint k-mer.
-    cuttlefish::side_t s;   // The side of the endpoint vertex to which the edge instance is incident to.
+    Directed_Vertex<k> v;   // The endpoint vertex.
+    cuttlefish::side_t s;   // The side of `v` to which the edge instance is incident to.
     cuttlefish::edge_encoding_t e;  // The `DNA::Extended_Base` encoding of the edge instance incident to this endpoint.
-    uint64_t h; // Hash value of the vertex, i.e. canonical k-mer.
 
 
     // Constructs an `Endpoint` object that appears in the form `kmer` in an edge instance, and
@@ -89,56 +85,42 @@ public:
 
 template <uint16_t k>
 inline Endpoint<k>::Endpoint(const Kmer<k>& kmer, const bool is_source, const Kmer_Hash_Table<k, cuttlefish::BITS_PER_READ_KMER>& hash):
-    kmer_(kmer)
-{
-    kmer_bar_.as_reverse_complement(kmer_);
-    kmer_hat_ptr = Kmer<k>::canonical(kmer_, kmer_bar_);
-
-    s = (is_source ? exit_side() : entrance_side());
-
-    h = hash(*kmer_hat_ptr);
-}
+    v(kmer, hash),
+    s(is_source ? exit_side() : entrance_side())
+{}
 
 
 template <uint16_t k>
 inline void Endpoint<k>::from_prefix(const Kmer<k + 1>& e, const Kmer_Hash_Table<k, cuttlefish::BITS_PER_READ_KMER>& hash)
 {
-    kmer_.from_prefix(e);
-    kmer_bar_.as_reverse_complement(kmer_);
-    kmer_hat_ptr = Kmer<k>::canonical(kmer_, kmer_bar_);
+    v.from_prefix(e, hash);
     
     s = exit_side();
     this->e = exit_edge(e);
-
-    h = hash(*kmer_hat_ptr);
 }
 
 
 template <uint16_t k>
 inline void Endpoint<k>::from_suffix(const Kmer<k + 1>& e, const Kmer_Hash_Table<k, cuttlefish::BITS_PER_READ_KMER>& hash)
 {
-    kmer_.from_suffix(e);
-    kmer_bar_.as_reverse_complement(kmer_);
-    kmer_hat_ptr = Kmer<k>::canonical(kmer_, kmer_bar_);
+    v.from_suffix(e, hash);
 
     s = entrance_side();
     this->e = entrance_edge(e);
-
-    h = hash(*kmer_hat_ptr);
 }
 
 
 template <uint16_t k>
 inline cuttlefish::side_t Endpoint<k>::exit_side() const
 {
-    return &kmer_ == kmer_hat_ptr ? cuttlefish::side_t::back : cuttlefish::side_t::front;
+    return v.exit_side();
 }
 
 
 template <uint16_t k>
 inline cuttlefish::side_t Endpoint<k>::entrance_side() const
 {
-    return &kmer_ == kmer_hat_ptr ? cuttlefish::side_t::front : cuttlefish::side_t::back;
+    return v.entrance_side();
 }
 
 
@@ -161,7 +143,7 @@ inline cuttlefish::edge_encoding_t Endpoint<k>::entrance_edge(const Kmer<k + 1>&
 template <uint16_t k>
 inline Endpoint<k> Endpoint<k>::neighbor_endpoint(const cuttlefish::edge_encoding_t e, const Kmer_Hash_Table<k, cuttlefish::BITS_PER_READ_KMER>& hash) const
 {
-    Kmer<k> kmer(*kmer_hat_ptr);
+    Kmer<k> kmer(canonical());
 
     if(s == cuttlefish::side_t::back)
     {
@@ -177,7 +159,7 @@ inline Endpoint<k> Endpoint<k>::neighbor_endpoint(const cuttlefish::edge_encodin
 template <uint16_t k>
 inline const Kmer<k>& Endpoint<k>::canonical() const
 {
-    return *kmer_hat_ptr;
+    return v.canonical();
 }
 
 
@@ -198,7 +180,7 @@ inline cuttlefish::edge_encoding_t Endpoint<k>::edge() const
 template <uint16_t k>
 inline uint64_t Endpoint<k>::hash() const
 {
-    return h;
+    return v.hash();
 }
 
 

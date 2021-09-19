@@ -80,6 +80,11 @@ public:
     // of that edge.
     cuttlefish::side_t exit_side() const;
 
+    // Returns the side of the vertex which is to be the incidence side of some bidirected
+    // edge instance if this vertex instance were to be the sink vertex (i.e. suffix k-mer)
+    // of that edge.
+    cuttlefish::side_t entrance_side() const;
+
     // Returns `true` iff this vertex and the vertex `v` are the same vertex, without the
     // directionality.
     bool is_same_vertex(const Directed_Vertex<k>& v) const;
@@ -190,6 +195,13 @@ template <uint16_t k>
 inline cuttlefish::side_t Directed_Vertex<k>::exit_side() const
 {
     return &kmer_ == kmer_hat_ptr ? cuttlefish::side_t::back : cuttlefish::side_t::front;
+}
+
+
+template <uint16_t k>
+inline cuttlefish::side_t Directed_Vertex<k>::entrance_side() const
+{
+    return &kmer_ == kmer_hat_ptr ? cuttlefish::side_t::front : cuttlefish::side_t::back;
 }
 
 

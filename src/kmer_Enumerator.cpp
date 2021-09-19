@@ -1,6 +1,5 @@
 
 #include "kmer_Enumerator.hpp"
-#include "globals.hpp"
 
 
 template <uint16_t k>
@@ -17,13 +16,17 @@ kmer_Enumeration_Stats kmer_Enumerator<k>::enumerate(
         .SetInputFiles(seqs)
         .SetKmerLen(k)
         .SetNThreads(thread_count)
-        .SetMaxRamGB(memory)
-        .SetSignatureLen(signature_len)
-        .SetNBins(bin_count)
         .SetTmpPath(working_dir_path)
         .SetEstimateHistogramCfg(estimate_mem_usage ? KMC::EstimateHistogramCfg::ESTIMATE_AND_COUNT_KMERS : KMC::EstimateHistogramCfg::DONT_ESTIMATE)
         .SetPercentProgressObserver(&progress)
     ;
+
+    if(strict_memory)
+        stage1_params
+            .SetMaxRamGB(memory)
+            .SetSignatureLen(signature_len)
+            .SetNBins(bin_count)
+        ;
 
     stage1_results = kmc.RunStage1(stage1_params);
 
@@ -34,13 +37,15 @@ kmer_Enumeration_Stats kmer_Enumerator<k>::enumerate(
     stage2_params
         .SetCutoffMin(cutoff)
         .SetNThreads(thread_count)
-        .SetMaxRamGB(memory)
         .SetStrictMemoryMode(strict_memory)
 #ifndef VALIDATION_MODE
         .SetCounterMax(counter_max)
 #endif
         .SetOutputFileName(output_db_path)
     ;
+
+    if(strict_memory)
+        stage2_params.SetMaxRamGB(memory);
 
     stage2_results = kmc.RunStage2(stage2_params);
 

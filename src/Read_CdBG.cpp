@@ -100,7 +100,7 @@ kmer_Enumeration_Stats Read_CdBG<k>::enumerate_edges() const
 {
     return kmer_Enumerator<k + 1>().enumerate(
         KMC::InputFileType::FASTQ, params.sequence_input().seqs(), params.cutoff(),
-        params.thread_count(), params.max_memory(), params.strict_memory(), true,
+        params.thread_count(), params.max_memory(), params.strict_memory(), params.strict_memory(),
         params.working_dir_path(), edge_db_path());
 }
 

@@ -78,7 +78,7 @@ void dBG_Info<k>::add_DCC_info(const Read_CdBG_Extractor<k>& cdbg_extractor)
 template <uint16_t k>
 void dBG_Info<k>::add_build_params(const Build_Params& params)
 {
-    // TODO: add input files information — after major generalization of the class `Reference_Input` and KMC library integration.
+    dBg_info[params_field]["input"] = concat_strings(params.sequence_input().seqs());
     dBg_info[params_field]["k"] = params.k();
     dBg_info[params_field]["output prefix"] = params.output_prefix();
 }

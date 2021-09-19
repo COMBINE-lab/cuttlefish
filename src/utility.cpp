@@ -66,6 +66,17 @@ std::string remove_whitespaces(const char* s)
 }
 
 
+const std::string concat_strings(const std::vector<std::string>& s, const std::string& delimiter)
+{
+    std::ostringstream concat_stream;
+    std::copy(s.begin(), s.end(), std::ostream_iterator<std::string>(concat_stream, delimiter.c_str()));
+
+    std::string concat_str(concat_stream.str());
+    concat_str.erase(concat_str.size() - delimiter.size(), delimiter.size());
+    return concat_str;
+}
+
+
 bool remove_file(const std::string& file_path)
 {
     return ghc::filesystem::remove(file_path);

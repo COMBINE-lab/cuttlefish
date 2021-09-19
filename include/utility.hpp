@@ -27,6 +27,10 @@ bool file_prefix_exists(const std::string& path, const std::string& prefix);
 // Returns a string that is a copy of `s` but has all the whitespaces removed.
 std::string remove_whitespaces(const char* s);
 
+// Given the collection of strings `s`, returns the concatenated string
+// `s0 : s1 : ... : s_m`, where successive strings are separated by `delimiter`.
+const std::string concat_strings(const std::vector<std::string>& s, const std::string& delimiter = ", ");
+
 // Removes the file at path `file_path` from disk. Returns `true` iff the
 // removal is successful.
 bool remove_file(const std::string& file_path);

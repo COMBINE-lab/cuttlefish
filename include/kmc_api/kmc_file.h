@@ -79,6 +79,10 @@ class CKMC_DB
 	uint32 original_min_count;
 	uint64 original_max_count;
 
+	// Auxiliary fields to aid in k-mer parsing by Cuttlefish.
+	uint64_t prefix_mask_;	//for kmc2 db
+	uint8_t byte_alignment_;
+
 	static uint64 part_size; // the size of a block readed to sufix_file_buf, in listing mode 
 	
 	bool BinarySearch(int64 index_start, int64 index_stop, const CKmerAPI& kmer, uint64& counter, uint32 pattern_offset);
@@ -569,12 +573,8 @@ inline void CKMC_DB::parse_kmer_buf(std::vector<std::pair<uint64_t, uint64_t>>::
 	const uint64_t prefix = prefix_it->first;
 	prefix_it->second--;
 
-	
-	// TODO: make some of these constant class-fields, to avoid repeated calculations.
-	const uint64_t prefix_mask = (1 << 2 * lut_prefix_length) - 1; //for kmc2 db
-	constexpr uint8_t byte_alignment = (k % 4 != 0 ? 4 - (k % 4) : 0);
-	uint32_t off = (sizeof(prefix) * 8) - (lut_prefix_length * 2) - byte_alignment * 2;
-	const uint64_t temp_prefix = (prefix & prefix_mask) << off;	// shift prefix towards MSD. "& prefix_mask" necessary for kmc2 db format
+	uint32_t off = (sizeof(prefix) * 8) - (lut_prefix_length * 2) - byte_alignment_ * 2;
+	const uint64_t temp_prefix = (prefix & prefix_mask_) << off;	// shift prefix towards MSD. "& prefix_mask" necessary for kmc2 db format
 
 	// Store prefix in a KMC alignment (differs in endianness from Cuttlefish's).
 	kmc_data[0] = temp_prefix;

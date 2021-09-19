@@ -301,6 +301,10 @@ bool CKMC_DB::ReadParamsFrom_prefix_file_buf(uint64 &size, const bool load_pref_
 		single_LUT_size = 1 << (2 * lut_prefix_length);
 		uint64 last_data_index = lut_area_size_in_bytes / sizeof(uint64);
 
+		// Set auxiliary fields aiding in k-mer parsing by Cuttlefish.
+		prefix_mask_ = (1 << 2 * lut_prefix_length) - 1;
+		byte_alignment_ = (kmer_length % 4 != 0 ? 4 - (kmer_length % 4) : 0);
+
 		if(load_pref_file)
 		{
 			std::rewind(file_pre);

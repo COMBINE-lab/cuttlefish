@@ -38,14 +38,15 @@ set(OPTIMIZE_FLAGS -funroll-loops)
 
 
 # Add the required preprocessor definitions (`#define`s) to pass on.
-# TODO: replace `add_definitions` with `add_compile_definitions`.
-add_definitions(-D__STDC_FORMAT_MACROS -DSPDLOG_FMT_EXTERNAL_HO -DFMT_HEADER_ONLY -DXXH_INLINE_ALL)
+# TODO: find out what are `__STDC_FORMAT_MACROS` and `SPDLOG_FMT_EXTERNAL_HO` for.
+add_compile_definitions(__STDC_FORMAT_MACROS SPDLOG_FMT_EXTERNAL_HO FMT_HEADER_ONLY XXH_INLINE_ALL)
+
 if(INSTANCE_COUNT)
-    add_definitions(-DINSTANCE_COUNT=${INSTANCE_COUNT})
+    add_compile_definitions(INSTANCE_COUNT=${INSTANCE_COUNT})
 endif()
 
 if(VALIDATION_MODE)
-    add_definitions(-DVALIDATION_MODE)
+    add_compile_definitions(VALIDATION_MODE)
 endif()
 
 

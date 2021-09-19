@@ -62,9 +62,9 @@ class kmer_Enumeration_Stats
 {
 private:
 
-    uint64_t kmer_count_;
-    std::size_t max_memory_;
-    std::size_t temp_disk_usage_;
+    const uint64_t kmer_count_;
+    const std::size_t max_memory_;
+    const std::size_t temp_disk_usage_;
 
 
 public:

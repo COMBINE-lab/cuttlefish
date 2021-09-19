@@ -18,7 +18,7 @@ kmer_Enumeration_Stats kmer_Enumerator<k>::enumerate(
         .SetNThreads(thread_count)
         .SetTmpPath(working_dir_path)
         .SetEstimateHistogramCfg(estimate_mem_usage ? KMC::EstimateHistogramCfg::ESTIMATE_AND_COUNT_KMERS : KMC::EstimateHistogramCfg::DONT_ESTIMATE)
-        .SetPercentProgressObserver(&progress)
+        // .SetPercentProgressObserver(&progress)
     ;
 
     if(strict_memory)

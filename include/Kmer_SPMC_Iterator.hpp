@@ -59,7 +59,6 @@ private:
         no_more,    // no k-mers will be provided anymore.
     };
 
-    // TODO: replace the raw pointer with a vector maybe?
     volatile Task_Status* task_status{nullptr}; // Collection of the task statuses of the consumers.
 
 

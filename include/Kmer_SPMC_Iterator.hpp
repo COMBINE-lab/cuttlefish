@@ -14,10 +14,7 @@
 
 
 // Data required by the consumers to correctly parse raw binary k-mers.
-struct
-#ifdef L1_CACHE_LINE_SIZE
-        alignas(L1_CACHE_LINE_SIZE)
-#endif
+struct alignas(L1_CACHE_LINE_SIZE)
     Consumer_Data
 {
     uint8_t* suff_buf{nullptr}; // Buffer for the raw binary suffixes of the k-mers.

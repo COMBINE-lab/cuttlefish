@@ -28,7 +28,7 @@ set(CMAKE_C_EXTENSIONS OFF)
 # Bundle the warning flags that we want to pass on to the compiler.
 # Disable unknown pragmas, b/c bbhash uses them extensively.
 # Reference: https://gcc.gnu.org/onlinedocs/gcc/Warning-Options.html
-set(WARNING_FLAGS -Wall -Wextra -pedantic)
+set(WARNING_FLAGS -Wall -Wextra)
 set(SUPPRESS_WARNING_FLAGS -Wno-unknown-pragmas)
 
 # Bundle the extra optimization flags (not associated with the `-O` levels)

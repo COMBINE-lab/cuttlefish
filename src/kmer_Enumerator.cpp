@@ -8,7 +8,7 @@ kmer_Enumeration_Stats kmer_Enumerator<k>::enumerate(
     const uint16_t thread_count, const std::size_t max_memory, const bool strict_memory, const bool estimate_mem_usage,
     const std::string& working_dir_path, const std::string& output_db_path)
 {
-    FunnyProgress progress;
+    // FunnyProgress progress;
 
     std::size_t memory = std::max(max_memory, min_memory);
     stage1_params

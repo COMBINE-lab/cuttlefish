@@ -70,6 +70,10 @@ public:
     // `label[kmer_idx,...,kmer_idx + k - 1]`.
     Kmer(const char* label, size_t kmer_idx);
 
+    // Constructs a k-mer from the provided characters at
+    // `label[0, ..., k - 1]`.
+    Kmer(const char* label);
+
     // Constructs a k-mer from the provided string `label`.
     Kmer(const std::string& label);
 
@@ -272,7 +276,7 @@ inline void Kmer<k>::left_shift(char(*)[B == 0])
 
 
 template <uint16_t k>
-inline uint64_t Kmer<k>::to_u64(uint64_t seed) const
+inline uint64_t Kmer<k>::to_u64(const uint64_t seed) const
 {
     constexpr const uint16_t NUM_BYTES = (k + 3) / 4;
     return XXH3_64bits_withSeed(kmer_data, NUM_BYTES, seed);
@@ -289,6 +293,7 @@ template <uint16_t k>
 inline Kmer<k>::Kmer(const char* const label, const size_t kmer_idx):
     Kmer()
 {
+    // TODO: avoid the chaining left-shift at each turn. Insert the 2-bit base directly at it's target position.
     for(size_t idx = kmer_idx; idx < kmer_idx + k; ++idx)
     {
         const DNA::Base base = map_base(label[idx]);
@@ -300,14 +305,17 @@ inline Kmer<k>::Kmer(const char* const label, const size_t kmer_idx):
 
 
 template <uint16_t k>
-inline Kmer<k>::Kmer(const std::string& label):
-    Kmer(label.c_str(), 0)
+inline Kmer<k>::Kmer(const char* const label): Kmer(label, 0)
 {}
 
 
 template <uint16_t k>
-inline Kmer<k>::Kmer(const std::string& label, const size_t kmer_idx):
-    Kmer(label.c_str(), kmer_idx)
+inline Kmer<k>::Kmer(const std::string& label): Kmer(label.c_str())
+{}
+
+
+template <uint16_t k>
+inline Kmer<k>::Kmer(const std::string& label, const size_t kmer_idx): Kmer(label.c_str(), kmer_idx)
 {}
 
 

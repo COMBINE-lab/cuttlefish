@@ -18,7 +18,7 @@ Read_CdBG_Extractor<k>::Read_CdBG_Extractor(const Build_Params& params, Kmer_Has
 template <uint16_t k>
 void Read_CdBG_Extractor<k>::extract_maximal_unitigs(const std::string& vertex_db_path, const std::string& output_file_path)
 {
-    // std::chrono::high_resolution_clock::time_point t_start = std::chrono::high_resolution_clock::now();
+    std::chrono::high_resolution_clock::time_point t_start = std::chrono::high_resolution_clock::now();
 
 
     // Construct a thread pool.
@@ -59,9 +59,9 @@ void Read_CdBG_Extractor<k>::extract_maximal_unitigs(const std::string& vertex_d
                         " I.e. the cycles are graph components exclusively on their own.\n\n";
 
 
-    // std::chrono::high_resolution_clock::time_point t_end = std::chrono::high_resolution_clock::now();
-    // double elapsed_seconds = std::chrono::duration_cast<std::chrono::duration<double>>(t_end - t_start).count();
-    // std::cout << "Done extracting the maximal unitigs. Time taken = " << elapsed_seconds << " seconds.\n";
+    std::chrono::high_resolution_clock::time_point t_end = std::chrono::high_resolution_clock::now();
+    double elapsed_seconds = std::chrono::duration_cast<std::chrono::duration<double>>(t_end - t_start).count();
+    std::cout << "Extracted the maximal unitigs. Time taken = " << elapsed_seconds << " seconds.\n";
 }
 
 

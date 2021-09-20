@@ -30,7 +30,7 @@ void Read_CdBG_Extractor<k>::extract_detached_cycles(const std::string& vertex_d
 
     std::chrono::high_resolution_clock::time_point t_end = std::chrono::high_resolution_clock::now();
     double elapsed_seconds = std::chrono::duration_cast<std::chrono::duration<double>>(t_end - t_start).count();
-    std::cout << "Done extracting the cycles. Time taken = " << elapsed_seconds << " seconds.\n";
+    std::cout << "Extracted the detached chordless cycles. Time taken = " << elapsed_seconds << " seconds.\n";
 }
 
 

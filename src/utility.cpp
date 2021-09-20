@@ -7,6 +7,8 @@
 #include <cstdlib>
 #include <ctime>
 #include <iostream>
+#include <sstream>
+#include <iterator>
 
 
 std::string get_random_string(const size_t len, const char* const alphabet)

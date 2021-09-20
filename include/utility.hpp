@@ -4,6 +4,7 @@
 
 
 #include <string>
+#include <vector>
 
 // TODO: wrap everything here in some namespaces.
 

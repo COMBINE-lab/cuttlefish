@@ -14,15 +14,18 @@
 
 
 // Data required by the consumers to correctly parse raw binary k-mers.
-struct Consumer_Data
+struct
+#ifdef L1_CACHE_LINE_SIZE
+        alignas(L1_CACHE_LINE_SIZE)
+#endif
+    Consumer_Data
 {
     uint8_t* suff_buf{nullptr}; // Buffer for the raw binary suffixes of the k-mers.
     uint64_t kmers_available;   // Number of k-mers present in the current buffer.
     uint64_t kmers_parsed;      // Number of k-mers parsed from the current buffers.
     std::vector<std::pair<uint64_t, uint64_t>> pref_buf;    // Buffer for the raw binary prefixes of the k-mers, in the form: <prefix, #corresponding_suffix>
     std::vector<std::pair<uint64_t, uint64_t>>::iterator pref_it;   // Pointer to the prefix to start parsing k-mers from.
-    uint64_t pad_[1];           // Padding to avoid false-sharing.
-                                // TODO: use better soln: https://en.cppreference.com/w/cpp/thread/hardware_destructive_interference_size
+    // uint64_t pad_[1];           // Padding to avoid false-sharing.
 };
 
 // An "iterator" class to iterate over a k-mer database on disk, where a single producer thread

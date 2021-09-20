@@ -49,6 +49,13 @@ if(VALIDATION_MODE)
     add_compile_definitions(VALIDATION_MODE)
 endif()
 
+execute_process(
+    COMMAND getconf LEVEL1_DCACHE_LINESIZE
+    COMMAND tr -d '\n'
+    OUTPUT_VARIABLE L1_CACHE_LINE_SIZE
+)
+add_compile_definitions(L1_CACHE_LINE_SIZE=${L1_CACHE_LINE_SIZE})
+
 
 # Search the file system for the appropriate threads package for this platform, and then set
 # the `CMAKE_THREAD_LIBS_INIT` variable (and some other variables as well).

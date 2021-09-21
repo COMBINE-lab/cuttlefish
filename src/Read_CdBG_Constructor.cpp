@@ -78,7 +78,7 @@ void Read_CdBG_Constructor<k>::distribute_states_computation(Kmer_SPMC_Iterator<
 
 
 template <uint16_t k>
-void Read_CdBG_Constructor<k>::process_edges(Kmer_SPMC_Iterator<k + 1>* const edge_parser, const uint16_t thread_id)
+void Read_CdBG_Constructor<k>::process_cdbg_edges(Kmer_SPMC_Iterator<k + 1>* const edge_parser, const uint16_t thread_id)
 {
     // Data locations to be reused per each edge processed.
     Edge<k> e;  // For the edges to be processed one-by-one.

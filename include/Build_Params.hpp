@@ -31,6 +31,7 @@ private:
     const std::string output_file_path_;    // Path to the output file.
     const cuttlefish::Output_Format output_format_;   // Output format (0: txt, 1: GFAv1, 2: GFAv2).
     const std::string working_dir_path_;    // Path to the working directory (for temporary files).
+    const bool spss_;   // Whether to extract a set of simplitigs, i.e. an SPSS (Spectrum-Preserving String Set).
     const bool remove_kmc_db_;  // Option to remove the KMC database, once no longer required.
     const std::string mph_file_path_;   // Optional path to file storing an MPH over the k-mer set.
     const std::string buckets_file_path_;   // Optional path to file storing the hash table buckets for the k-mer set.
@@ -57,6 +58,7 @@ public:
                     const std::string& output_file_path,
                     const uint8_t output_format,
                     const std::string& working_dir_path,
+                    const bool spss,
                     const bool remove_kmc_db,
                     const std::string& mph_file_path,
                     const std::string& buckets_file_path,
@@ -76,6 +78,7 @@ public:
         output_file_path_(output_file_path),
         output_format_(cuttlefish::Output_Format(output_format)),
         working_dir_path_(working_dir_path.back() == '/' ? working_dir_path : working_dir_path + "/"),
+        spss_(spss),
         remove_kmc_db_(remove_kmc_db),
         mph_file_path_(mph_file_path),
         buckets_file_path_(buckets_file_path),
@@ -174,6 +177,13 @@ public:
     const std::string& working_dir_path() const
     {
         return working_dir_path_;
+    }
+
+
+    // Returns whether to extract a set of simplitigs, i.e. an SPSS (Spectrum-Preserving String Set).
+    bool spss() const
+    {
+        return spss_;
     }
 
 

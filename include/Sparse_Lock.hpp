@@ -35,6 +35,14 @@ public:
 
     // Releases lock for the entry with index `idx`.
     void unlock(size_t idx);
+
+    // Acquires lock for the entry with index `curr_idx` iff the corresponding lock for the index `prev_idx`
+    // is a different lock.
+    void lock_if_different(std::size_t prev_idx, std::size_t curr_idx);
+
+    // Releases lock for the entry with index `curr_idx` iff the corresponding lock for the index `prev_idx`
+    // is a different lock.
+    void unlock_if_different(std::size_t prev_idx, std::size_t curr_idx);
 };
 
 
@@ -59,6 +67,22 @@ template <typename T_Lock>
 inline void Sparse_Lock<T_Lock>::unlock(const size_t idx)
 {
     lock_[idx >> lg_per_lock_range].unlock();
+}
+
+
+template <typename T_Lock>
+inline void Sparse_Lock<T_Lock>::lock_if_different(const std::size_t prev_idx, const std::size_t curr_idx)
+{
+    if((curr_idx >> lg_per_lock_range) != (prev_idx >> lg_per_lock_range))
+        lock_[curr_idx >> lg_per_lock_range].lock();
+}
+
+
+template <typename T_Lock>
+inline void Sparse_Lock<T_Lock>::unlock_if_different(const std::size_t prev_idx, const std::size_t curr_idx)
+{
+    if((curr_idx >> lg_per_lock_range) != (prev_idx >> lg_per_lock_range))
+        lock_[curr_idx >> lg_per_lock_range].unlock();
 }
 
 

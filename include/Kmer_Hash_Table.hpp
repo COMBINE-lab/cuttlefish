@@ -110,6 +110,13 @@ public:
     // `bucket_id` with the state-value `state`.
     void update(uint64_t bucket_id, const State_Read_Space& state);
 
+    // Attempts to update the hash table entries for the API objects `api_1` and
+    // `api_2` concurrently, i.e. both the updates need to happen in a tied manner
+    // — both successful or failing. Returns `true` iff the updates succeed. If
+    // either of the table positions contains a different state than the one
+    // expected by the API objects, then the concurrent update fails.
+    bool update_concurrent(Kmer_Hash_Entry_API<BITS_PER_KEY>& api_1, Kmer_Hash_Entry_API<BITS_PER_KEY>& api_2);
+
     // Returns the number of keys in the hash table.
     uint64_t size() const;
 
@@ -215,6 +222,39 @@ inline void Kmer_Hash_Table<k, BITS_PER_KEY>::update(const uint64_t bucket_id, c
     sparse_lock.lock(bucket_id);
     hash_table[bucket_id] = state.get_state();
     sparse_lock.unlock(bucket_id);
+}
+
+
+template <uint16_t k, uint8_t BITS_PER_KEY>
+inline bool Kmer_Hash_Table<k, BITS_PER_KEY>::update_concurrent(Kmer_Hash_Entry_API<BITS_PER_KEY>& api_1, Kmer_Hash_Entry_API<BITS_PER_KEY>& api_2)
+{
+    Kmer_Hash_Entry_API<BITS_PER_KEY>* api_l = &api_1;
+    Kmer_Hash_Entry_API<BITS_PER_KEY>* api_r = &api_2;
+    uint64_t bucket_l = std::distance(hash_table.begin(), &(api_1.bv_entry));
+    uint64_t bucket_r = std::distance(hash_table.begin(), &(api_2.bv_entry));
+
+    // Resolution for potential deadlocks.
+    if(bucket_l > bucket_r)
+        std::swap(api_l, api_r),
+        std::swap(bucket_l, bucket_r);
+
+
+    sparse_lock.lock(bucket_l);
+    bool success = (api_l->bv_entry == api_l->get_read_state());
+    if(success)
+    {
+        sparse_lock.lock_if_different(bucket_l, bucket_r);
+
+        success = (api_r->bv_entry == api_r->get_read_state());
+        if(success)
+            api_l->bv_entry = api_l->get_current_state(),
+            api_r->bv_entry = api_r->get_current_state();
+        
+        sparse_lock.unlock_if_different(bucket_l, bucket_r);
+    }
+    sparse_lock.unlock(bucket_l);
+
+    return success;
 }
 
 

@@ -78,6 +78,16 @@ void Read_CdBG_Constructor<k>::distribute_states_computation(Kmer_SPMC_Iterator<
 
 
 template <uint16_t k>
+void Read_CdBG_Constructor<k>::process_edges(Kmer_SPMC_Iterator<k + 1>* const edge_parser, const uint16_t thread_id)
+{
+    if(params.spss())
+        process_spss_edges(edge_parser, thread_id);
+    else
+        process_cdbg_edges(edge_parser, thread_id);
+}
+
+
+template <uint16_t k>
 void Read_CdBG_Constructor<k>::process_cdbg_edges(Kmer_SPMC_Iterator<k + 1>* const edge_parser, const uint16_t thread_id)
 {
     // Data locations to be reused per each edge processed.
@@ -131,6 +141,11 @@ void Read_CdBG_Constructor<k>::process_cdbg_edges(Kmer_SPMC_Iterator<k + 1>* con
     edges_processed += edge_count;
     lock.unlock();
 }
+
+
+template <uint16_t k>
+void Read_CdBG_Constructor<k>::process_spss_edges(Kmer_SPMC_Iterator<k + 1>* const edge_parser, const uint16_t thread_id)
+{}
 
 
 template <uint16_t k>

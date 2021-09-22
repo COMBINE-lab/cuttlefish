@@ -96,7 +96,7 @@ void Thread_Pool<k>::task(const uint16_t thread_id)
                 {
                     const Read_dBG_Compaction_Params& params = read_dBG_compaction_params[thread_id];
                     static_cast<Read_CdBG_Constructor<k>*>(dBG)->
-                        process_cdbg_edges(static_cast<Kmer_SPMC_Iterator<k + 1>*>(params.parser), params.thread_id);
+                        process_edges(static_cast<Kmer_SPMC_Iterator<k + 1>*>(params.parser), params.thread_id);
                 }
                 break;
 

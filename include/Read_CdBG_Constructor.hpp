@@ -41,9 +41,18 @@ private:
     void distribute_states_computation(Kmer_SPMC_Iterator<k + 1>* edge_parser, Thread_Pool<k>& thread_pool);
 
     // Processes the edges provided to the thread with id `thread_id` from the parser `edge_parser`,
+    // based on the end-purpose of extracting either the maximal unitigs or the simplitigs.
+    void process_edges(Kmer_SPMC_Iterator<k + 1>* edge_parser, uint16_t thread_id);
+
+    // Processes the edges provided to the thread with id `thread_id` from the parser `edge_parser`,
     // i.e. makes state-transitions for the DFA of the vertices `u` and `v` for each bidirected edge
     // `(u, v)` provided to that thread, in order to construct a CdBG.
     void process_cdbg_edges(Kmer_SPMC_Iterator<k + 1>* edge_parser, uint16_t thread_id);
+
+    // Processes the edges provided to the thread with id `thread_id` from the parser `edge_parser`,
+    // i.e. makes state-transitions for the DFA of the vertices `u` and `v` for each bidirected edge
+    // `(u, v)` provided to that thread, in order to construct an SPSS.
+    void process_spss_edges(Kmer_SPMC_Iterator<k + 1>* edge_parser, uint16_t thread_id);
 
     // Adds the information of an incident edge `e` to the side `s` of some vertex `v`, all wrapped
     // inside the edge-endpoint object `endpoint` — making the appropriate state transitions for the

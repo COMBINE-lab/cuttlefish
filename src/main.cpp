@@ -91,7 +91,7 @@ void build(int argc, char** argv)
             std::exit(EXIT_FAILURE);
         }
 
-        std::cout.precision(3);
+        // std::cout.precision(3);
 
 
         const std::string dBg_type(params.is_read_graph() ? "read" : "reference");

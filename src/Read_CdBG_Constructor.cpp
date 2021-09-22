@@ -80,7 +80,7 @@ void Read_CdBG_Constructor<k>::distribute_states_computation(Kmer_SPMC_Iterator<
 template <uint16_t k>
 void Read_CdBG_Constructor<k>::process_edges(Kmer_SPMC_Iterator<k + 1>* const edge_parser, const uint16_t thread_id)
 {
-    if(params.spss())
+    if(params.simplitigs())
         process_spss_edges(edge_parser, thread_id);
     else
         process_cdbg_edges(edge_parser, thread_id);

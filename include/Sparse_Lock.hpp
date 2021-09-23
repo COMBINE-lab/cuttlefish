@@ -25,6 +25,10 @@ private:
     std::vector<T_Lock> lock_;          // The collection of locks.
 
 
+    // Returns the ID of the lock that the index `idx` corresponds to.
+    std::size_t lock_id(std::size_t idx) const;
+
+
 public:
 
     // Constructs a sparse-lock collection consisting of `lock_count` locks, for `range_size` number of entries.
@@ -57,32 +61,39 @@ inline Sparse_Lock<T_Lock>::Sparse_Lock(const size_t range_size, const size_t lo
 
 
 template <typename T_Lock>
+inline std::size_t Sparse_Lock<T_Lock>::lock_id(const std::size_t idx) const
+{
+    return idx >> lg_per_lock_range;
+}
+
+
+template <typename T_Lock>
 inline void Sparse_Lock<T_Lock>::lock(const size_t idx)
 {
-    lock_[idx >> lg_per_lock_range].lock();
+    lock_[lock_id(idx)].lock();
 }
 
 
 template <typename T_Lock>
 inline void Sparse_Lock<T_Lock>::unlock(const size_t idx)
 {
-    lock_[idx >> lg_per_lock_range].unlock();
+    lock_[lock_id(idx)].unlock();
 }
 
 
 template <typename T_Lock>
 inline void Sparse_Lock<T_Lock>::lock_if_different(const std::size_t prev_idx, const std::size_t curr_idx)
 {
-    if((curr_idx >> lg_per_lock_range) != (prev_idx >> lg_per_lock_range))
-        lock_[curr_idx >> lg_per_lock_range].lock();
+    if(lock_id(curr_idx) != lock_id(prev_idx))
+        lock_[lock_id(curr_idx)].lock();
 }
 
 
 template <typename T_Lock>
 inline void Sparse_Lock<T_Lock>::unlock_if_different(const std::size_t prev_idx, const std::size_t curr_idx)
 {
-    if((curr_idx >> lg_per_lock_range) != (prev_idx >> lg_per_lock_range))
-        lock_[curr_idx >> lg_per_lock_range].unlock();
+    if(lock_id(curr_idx) != lock_id(prev_idx))
+        lock_[lock_id(curr_idx)].unlock();
 }
 
 

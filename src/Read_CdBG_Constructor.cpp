@@ -81,7 +81,7 @@ template <uint16_t k>
 void Read_CdBG_Constructor<k>::process_edges(Kmer_SPMC_Iterator<k + 1>* const edge_parser, const uint16_t thread_id)
 {
     if(params.simplitigs())
-        process_spss_edges(edge_parser, thread_id);
+        process_simplitig_edges(edge_parser, thread_id);
     else
         process_cdbg_edges(edge_parser, thread_id);
 }
@@ -91,13 +91,14 @@ template <uint16_t k>
 void Read_CdBG_Constructor<k>::process_cdbg_edges(Kmer_SPMC_Iterator<k + 1>* const edge_parser, const uint16_t thread_id)
 {
     // Data locations to be reused per each edge processed.
-    Edge<k> e;  // For the edges to be processed one-by-one.
+    Edge<k> e;  // For the edges to be processed one-by-one; say this is between the vertices `u` and `v`.
     cuttlefish::edge_encoding_t e_front, e_back;    // Edges incident to the front and to the back of a vertex with a crossing loop.
     cuttlefish::edge_encoding_t e_u_old, e_u_new;   // Edges incident to some particular side of a vertex `u`, before and after the addition of a new edge.
     cuttlefish::edge_encoding_t e_v_old, e_v_new;   // Edges incident to some particular side of a vertex `v`, before and after the addition of a new edge.
 
     uint64_t edge_count = 0;    // Number of edges processed by this thread.
     uint64_t progress = 0;  // Number of edges processed by the thread; is reset at reaching 1% of its approximate workload.
+
 
     while(edge_parser->tasks_expected(thread_id))
         if(edge_parser->value_at(thread_id, e.e()))
@@ -131,8 +132,6 @@ void Read_CdBG_Constructor<k>::process_cdbg_edges(Kmer_SPMC_Iterator<k + 1>* con
             }
 
             edge_count++;
-
-
             progress_tracker.track_work(++progress);
         }
 
@@ -144,8 +143,33 @@ void Read_CdBG_Constructor<k>::process_cdbg_edges(Kmer_SPMC_Iterator<k + 1>* con
 
 
 template <uint16_t k>
-void Read_CdBG_Constructor<k>::process_spss_edges(Kmer_SPMC_Iterator<k + 1>* const edge_parser, const uint16_t thread_id)
-{}
+void Read_CdBG_Constructor<k>::process_simplitig_edges(Kmer_SPMC_Iterator<k + 1>* const edge_parser, const uint16_t thread_id)
+{
+    Edge<k> e;  // For the edges to be processed one-by-one; say this is between the vertices `u` and `v`.
+
+    uint64_t edge_count = 0;    // Number of edges processed by this thread.
+    uint64_t progress = 0;  // Number of edges processed by the thread; is reset at reaching 1% of its approximate workload.
+
+
+    while(edge_parser->tasks_expected(thread_id))
+        if(edge_parser->value_at(thread_id, e.e()))
+        {
+            e.configure(hash_table);    // A new edge (k + 1)-mer has been parsed; set information for its two endpoints.
+            
+            edge_count++;
+            progress_tracker.track_work(++progress);
+
+            if(e.is_loop())
+                continue;
+            else    // It connects two endpoints `u` and `v` of two distinct vertex.
+                add_simplitig_edge(e);
+        }
+
+    
+    lock.lock();
+    edges_processed += edge_count;
+    lock.unlock();
+}
 
 
 template <uint16_t k>

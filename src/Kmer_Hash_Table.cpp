@@ -47,7 +47,7 @@ void Kmer_Hash_Table<k, BITS_PER_KEY>::build_mph_function(const uint16_t thread_
 
         // auto data_iterator = boomphf::range(kmer_container.buf_begin(), kmer_container.buf_end());
         const auto data_iterator = boomphf::range(kmer_container.spmc_begin(thread_count), kmer_container.spmc_end(thread_count));
-        mph = new mphf_t(kmer_count, data_iterator, working_dir_path, thread_count, GAMMA_FACTOR);
+        mph = new mphf_t(kmer_count, data_iterator, working_dir_path, thread_count, gamma);
 
         std::cout << "Built the MPHF in memory.\n";
 

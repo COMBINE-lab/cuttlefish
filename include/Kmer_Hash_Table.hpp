@@ -26,7 +26,7 @@ class Kmer_Hash_Table
 private:
 
     // Lowest bits/elem is achieved with gamma = 1, higher values lead to larger mphf but faster construction/query.
-    constexpr static double GAMMA_FACTOR = 2.0;
+    double gamma = 2.0;
 
     // Path to the underlying k-mer database, over which the hash table is constructed.
     const std::string kmc_db_path;

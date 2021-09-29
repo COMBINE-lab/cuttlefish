@@ -11,10 +11,7 @@
 
 
 template <uint16_t k, uint8_t BITS_PER_KEY>
-Kmer_Hash_Table<k, BITS_PER_KEY>::Kmer_Hash_Table(const std::string& kmc_db_path):
-    kmc_db_path(kmc_db_path),
-    kmer_count{Kmer_Container<k>::size(kmc_db_path)},
-    sparse_lock(kmer_count, lock_count)
+Kmer_Hash_Table<k, BITS_PER_KEY>::Kmer_Hash_Table(const std::string& kmc_db_path): Kmer_Hash_Table(kmc_db_path, Kmer_Container<k>::size(kmc_db_path))
 {}
 
 

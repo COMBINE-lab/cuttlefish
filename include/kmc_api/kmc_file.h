@@ -149,7 +149,7 @@ public:
 	template <uint16_t k> void parse_kmer_buf(std::vector<std::pair<uint64_t, uint64_t>>::iterator& prefix_it, const uint8_t* suff_buf, size_t buf_idx, Kmer<k>& kmer) const;
 	
 	// Returns the memory (in bytes) used by the prefix file buffer.
-	constexpr std::size_t pref_buf_memory() const;
+	static constexpr std::size_t pref_buf_memory();
 
 	// Return next kmer in CKmerAPI &kmer. Return its counter in float &count. Return true if not EOF
 	bool ReadNextKmer(CKmerAPI &kmer, float &count);
@@ -611,9 +611,9 @@ inline void CKMC_DB::parse_kmer_buf(std::vector<std::pair<uint64_t, uint64_t>>::
 }
 
 
-inline constexpr std::size_t CKMC_DB::pref_buf_memory() const
+inline constexpr std::size_t CKMC_DB::pref_buf_memory()
 {
-	return prefix_virt_buf.memory();
+	return Virtual_Prefix_File::memory();
 }
 
 

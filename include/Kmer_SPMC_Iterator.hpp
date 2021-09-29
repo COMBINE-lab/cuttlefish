@@ -131,6 +131,9 @@ public:
     // Returns the memory (in bytes) used by the iterator.
     std::size_t memory() const;
 
+    // Returns the memory (in bytes) to be used by an iterator supporting `consumer_count` consumers.
+    static std::size_t memory(std::size_t consumer_count);
+
     // Dummy methods.
     const iterator& operator++() { return *this; }
     Kmer<k> operator*() { return Kmer<k>(); }
@@ -361,7 +364,14 @@ inline bool Kmer_SPMC_Iterator<k>::task_available(const size_t consumer_id) cons
 template <uint16_t k>
 inline std::size_t Kmer_SPMC_Iterator<k>::memory() const
 {
-    return kmer_database.pref_buf_memory() + (consumer_count * BUF_SZ_PER_CONSUMER);
+    return CKMC_DB::pref_buf_memory() + (consumer_count * BUF_SZ_PER_CONSUMER);
+}
+
+
+template <uint16_t k>
+inline std::size_t Kmer_SPMC_Iterator<k>::memory(const std::size_t consumer_count)
+{
+    return CKMC_DB::pref_buf_memory() + (consumer_count * BUF_SZ_PER_CONSUMER);
 }
 
 

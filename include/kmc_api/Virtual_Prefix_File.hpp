@@ -57,7 +57,7 @@ public:
 	uint64_t operator[](std::size_t idx);
 
 	// Returns the size of the buffer in bytes.
-	constexpr std::size_t memory() const;
+	static constexpr std::size_t memory();
 };
 
 
@@ -92,7 +92,7 @@ inline uint64_t Virtual_Prefix_File::operator[](const std::size_t idx)
 }
 
 
-inline constexpr std::size_t Virtual_Prefix_File::memory() const
+inline constexpr std::size_t Virtual_Prefix_File::memory()
 {
 	return buffer_elem_count * sizeof(uint64_t);
 }

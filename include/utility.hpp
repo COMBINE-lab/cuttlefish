@@ -45,6 +45,10 @@ const std::string filename(const std::string& file_path);
 // Moves the file present at path `from_path` to the path `to_path`.
 void move_file(const std::string& from_path, const std::string& to_path);
 
+// Returns the maximum memory ("high-water-mark") used by the running
+// process in bytes. Returns `0` in case of errors encountered.
+std::size_t process_peak_memory();
+
 
 
 #endif

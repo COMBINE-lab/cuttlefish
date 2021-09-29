@@ -8,6 +8,7 @@
 #include <ctime>
 #include <iostream>
 #include <sstream>
+#include <cstdio>
 #include <iterator>
 
 
@@ -108,4 +109,38 @@ void move_file(const std::string& from_path, const std::string& to_path)
 {
     ghc::filesystem::copy(from_path, to_path);
     ghc::filesystem::remove(from_path);
+}
+
+
+std::size_t process_peak_memory()
+{
+    constexpr const char* process_file = "/proc/self/status";
+    constexpr const char* peak_mem_field = "VmHWM:";
+    constexpr std::size_t field_len = std::strlen(peak_mem_field);
+
+    std::FILE* fp = std::fopen(process_file, "r");
+    if(fp == NULL)
+    {
+        std::cerr << "Error opening the process information file.\n";
+        return 0;
+    }
+
+    char line[1024];
+    std::size_t peak_mem = 0;
+    while(std::fgets(line, sizeof(line) - 1, fp))
+        if(std::strncmp(line, peak_mem_field, field_len) == 0)
+        {
+            peak_mem = std::strtoul(line + field_len, NULL, 0);
+            break;
+        }
+
+    
+    if(std::ferror(fp))
+    {
+        std::cerr << "Error reading the process information file.\n";
+        return 0;
+    }
+
+
+    return peak_mem * 1024;
 }

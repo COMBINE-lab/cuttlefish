@@ -17,10 +17,31 @@ Kmer_Hash_Table<k, BITS_PER_KEY>::Kmer_Hash_Table(const std::string& kmc_db_path
 
 template <uint16_t k, uint8_t BITS_PER_KEY>
 Kmer_Hash_Table<k, BITS_PER_KEY>::Kmer_Hash_Table(const std::string& kmc_db_path, const uint64_t kmer_count):
+    gamma(static_cast<double>(gamma_min)),
     kmc_db_path(kmc_db_path),
     kmer_count(kmer_count),
     sparse_lock(kmer_count, lock_count)
 {}
+
+
+template <uint16_t k, uint8_t BITS_PER_KEY>
+Kmer_Hash_Table<k, BITS_PER_KEY>::Kmer_Hash_Table(const std::string& kmc_db_path, const uint64_t kmer_count, const std::size_t max_memory): Kmer_Hash_Table(kmc_db_path, kmer_count)
+{
+    const std::size_t max_memory_bits = max_memory * 8U;
+    const std::size_t min_memory_bits = static_cast<std::size_t>(kmer_count * bits_per_gamma[gamma_min]);
+    if(max_memory_bits > min_memory_bits)
+    {
+        const double max_bits_per_hash_key = (static_cast<double>(max_memory_bits) / kmer_count) - BITS_PER_KEY;
+        constexpr double eps = 0.01;
+        
+        std::size_t gamma_idx = sizeof(bits_per_gamma) / sizeof(*bits_per_gamma) - 1;
+        for(; gamma_idx > gamma_min; --gamma_idx)
+            if(bits_per_gamma[gamma_idx] - eps < max_bits_per_hash_key)
+                break;
+
+        gamma = gamma_idx;
+    }
+}
 
 
 template <uint16_t k, uint8_t BITS_PER_KEY>

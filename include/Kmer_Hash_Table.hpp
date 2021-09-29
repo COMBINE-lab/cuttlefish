@@ -25,8 +25,14 @@ class Kmer_Hash_Table
 
 private:
 
+    // The minimum gamma-value that we require for BBHash.
+    static constexpr uint8_t gamma_min = 2;
+
+    // Empiricial bits-per-key requirement for each gamma in the range (0, 10].
+    static constexpr double bits_per_gamma[] = {0, 3.07, 3.71, 4.71, 5.78, 6.87, 7.97, 9.08, 10.20, 11.30, 12.4};
+
     // Lowest bits/elem is achieved with gamma = 1, higher values lead to larger mphf but faster construction/query.
-    double gamma = 2.0;
+    double gamma;
 
     // Path to the underlying k-mer database, over which the hash table is constructed.
     const std::string kmc_db_path;
@@ -73,6 +79,11 @@ public:
     // Constructs a k-mer hash table where the table is to be built over the k-mer
     // database having path prefix `kmer_db_path` and `kmer_count` distinct k-mers.
     Kmer_Hash_Table(const std::string& kmc_db_path, uint64_t kmer_count);
+
+    // Constructs a k-mer hash table where the table is to be built over the k-mer
+    // database having path prefix `kmer_db_path` and `kmer_count` distinct k-mers.
+    // The hash table may use at most `max_memory` bytes of memory.
+    Kmer_Hash_Table(const std::string& kmc_db_path, uint64_t kmer_count, std::size_t max_memory);
 
     // Constructs a minimal perfect hash function (specifically, the BBHash) for
     // the collection of k-mers present at the KMC database at path `kmc_db_path`,

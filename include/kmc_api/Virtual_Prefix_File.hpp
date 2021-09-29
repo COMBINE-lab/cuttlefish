@@ -55,6 +55,9 @@ public:
 
 	// Returns the data at index `idx` of the prefix-file.
 	uint64_t operator[](std::size_t idx);
+
+	// Returns the size of the buffer in bytes.
+	constexpr std::size_t memory() const;
 };
 
 
@@ -86,6 +89,12 @@ inline uint64_t Virtual_Prefix_File::operator[](const std::size_t idx)
 	}
 
 	return prefix_file_buf[idx - prefix_chunk_start_index];
+}
+
+
+inline constexpr std::size_t Virtual_Prefix_File::memory() const
+{
+	return buffer_elem_count * sizeof(uint64_t);
 }
 
 

@@ -128,6 +128,9 @@ public:
     // Returns `true` iff a task is available for the consumer with id `consumer_id`.
     bool task_available(size_t consumer_id) const;
 
+    // Returns the memory (in bytes) used by the iterator.
+    std::size_t memory() const;
+
     // Dummy methods.
     const iterator& operator++() { return *this; }
     Kmer<k> operator*() { return Kmer<k>(); }
@@ -352,6 +355,13 @@ template <uint16_t k>
 inline bool Kmer_SPMC_Iterator<k>::task_available(const size_t consumer_id) const
 {
     return task_status[consumer_id] == Task_Status::available;
+}
+
+
+template <uint16_t k>
+inline std::size_t Kmer_SPMC_Iterator<k>::memory() const
+{
+    return kmer_database.pref_buf_memory() + (consumer_count * BUF_SZ_PER_CONSUMER);
 }
 
 

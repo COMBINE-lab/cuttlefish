@@ -147,6 +147,9 @@ public:
 	// where "abundance" is the count of remaining k-mers to be parsed having this "prefix". The
 	// iterator is adjusted accordingly for the next parse operation from the buffers.
 	template <uint16_t k> void parse_kmer_buf(std::vector<std::pair<uint64_t, uint64_t>>::iterator& prefix_it, const uint8_t* suff_buf, size_t buf_idx, Kmer<k>& kmer) const;
+	
+	// Returns the memory (in bytes) used by the prefix file buffer.
+	constexpr std::size_t pref_buf_memory() const;
 
 	// Return next kmer in CKmerAPI &kmer. Return its counter in float &count. Return true if not EOF
 	bool ReadNextKmer(CKmerAPI &kmer, float &count);
@@ -606,6 +609,14 @@ inline void CKMC_DB::parse_kmer_buf(std::vector<std::pair<uint64_t, uint64_t>>::
 	// Parse KMC raw-binary k-mer data to Cuttlefish's k-mer format.
 	kmer.from_KMC_data(kmc_data);
 }
+
+
+inline constexpr std::size_t CKMC_DB::pref_buf_memory() const
+{
+	return prefix_virt_buf.memory();
+}
+
+
 
 #endif
 

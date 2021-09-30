@@ -121,9 +121,20 @@ kmer_Enumeration_Stats Read_CdBG<k>::enumerate_vertices(const std::size_t max_me
 template <uint16_t k>
 void Read_CdBG<k>::construct_hash_table(const uint64_t vertex_count, const bool load)
 {
-    hash_table = std::make_unique<Kmer_Hash_Table<k, cuttlefish::BITS_PER_READ_KMER>>(vertex_db_path(), vertex_count);
-    load ?  hash_table->load(params) :
-            hash_table->construct(params.thread_count(), params.working_dir_path(), params.mph_file_path());
+    if(load)
+    {
+        hash_table = std::make_unique<Kmer_Hash_Table<k, cuttlefish::BITS_PER_READ_KMER>>(vertex_db_path(), vertex_count);
+        hash_table->load(params);    
+    }
+    else
+    {
+        std::size_t max_memory = std::max(process_peak_memory(), params.max_memory() * 1024U * 1024U * 1024U);
+        const std::size_t parser_memory = Kmer_SPMC_Iterator<k>::memory(params.thread_count());
+        max_memory = (max_memory > parser_memory ? max_memory - parser_memory : 0);
+        
+        hash_table = std::make_unique<Kmer_Hash_Table<k, cuttlefish::BITS_PER_READ_KMER>>(vertex_db_path(), vertex_count, max_memory);
+        hash_table->construct(params.thread_count(), params.working_dir_path(), params.mph_file_path());
+    }
 }
 
 

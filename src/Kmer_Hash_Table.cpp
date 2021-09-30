@@ -27,6 +27,13 @@ Kmer_Hash_Table<k, BITS_PER_KEY>::Kmer_Hash_Table(const std::string& kmc_db_path
 template <uint16_t k, uint8_t BITS_PER_KEY>
 Kmer_Hash_Table<k, BITS_PER_KEY>::Kmer_Hash_Table(const std::string& kmc_db_path, const uint64_t kmer_count, const std::size_t max_memory): Kmer_Hash_Table(kmc_db_path, kmer_count)
 {
+    set_gamma(max_memory);
+}
+
+
+template <uint16_t k, uint8_t BITS_PER_KEY>
+void Kmer_Hash_Table<k, BITS_PER_KEY>::set_gamma(const std::size_t max_memory)
+{
     const std::size_t max_memory_bits = max_memory * 8U;
     const std::size_t min_memory_bits = static_cast<std::size_t>(kmer_count * bits_per_gamma[gamma_min]);
     if(max_memory_bits > min_memory_bits)

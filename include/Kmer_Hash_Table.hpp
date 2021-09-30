@@ -55,6 +55,10 @@ private:
     // The locks to maintain mutually exclusive access for threads to the same indices into the bitvector `hash_table`.
     mutable Sparse_Lock<Spin_Lock> sparse_lock;
 
+    
+    // Sets the `gamma` parameter of the hash function to the maximum amount so that the
+    // hash table does not incur more than `max_memory` bytes of space.
+    void set_gamma(std::size_t max_memory);
 
     // Builds the minimal perfect hash function `mph` over the set of
     // k-mers present at the KMC database container `kmer_container`,

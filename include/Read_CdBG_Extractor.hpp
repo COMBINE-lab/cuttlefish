@@ -41,7 +41,7 @@ private:
 
     // TODO: give these limits more thoughts, especially their exact impact on the memory usage.
     static constexpr std::size_t BUFF_SZ = 100 * 1024ULL;   // 100 KB (soft limit) worth of maximal unitigs can be retained in memory, at most, before flushing.
-    static constexpr std::size_t SEQ_SZ = 5 * 1024ULL * 1024ULL;    // 5 MB (soft limit) sized maximal unitig, at most, is constructed at a time.
+    static constexpr std::size_t SEQ_SZ = 1 * 1024ULL * 1024ULL;    // 1 MB (soft limit) sized maximal unitig, at most, is constructed at a time.
 
     mutable uint64_t vertices_scanned = 0;    // Total number of vertices scanned from the database.
     mutable Spin_Lock lock; // Mutual exclusion lock to access various unique resources by threads spawned off this class' methods.

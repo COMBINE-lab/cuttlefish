@@ -26,11 +26,28 @@ class Kmer_Hash_Table
 private:
 
     // The minimum gamma-value that we require for BBHash.
-    static constexpr uint8_t gamma_min = 2;
+    static constexpr double gamma_min = 2.0;
+
+    // The minimum bits per hash key we require for BBHash.
+    static constexpr double min_bits_per_key = 3.71;
 
     // Empiricial bits-per-key requirement for each gamma in the range (0, 10].
-    static constexpr double bits_per_gamma[] = {0, 3.07, 3.71, 4.71, 5.78, 6.87, 7.97, 9.08, 10.20, 11.30, 12.4};
+    static constexpr double bits_per_gamma[] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                                                3.06, 3.07, 3.11, 3.16, 3.22, 3.29, 3.36, 3.44, 3.53, 3.62,
+                                                3.71, 3.80, 3.90, 4.00, 4.10, 4.20, 4.30, 4.40, 4.50, 4.61,
+                                                4.71, 4.82, 4.92, 5.03, 5.13, 5.24, 5.35, 5.45, 5.56, 5.67,
+                                                5.78, 5.89, 6.00, 6.10, 6.21, 6.32, 6.43, 6.54, 6.65, 6.76,
+                                                6.87, 6.98, 7.09, 7.20, 7.31, 7.42, 7.53, 7.64, 7.75, 7.86,
+                                                7.97, 8.08, 8.20, 8.31, 8.42, 8.53, 8.64, 8.75, 8.86, 8.97,
+                                                9.08, 9.20, 9.31, 9.42, 9.53, 9.64, 9.75, 9.86, 9.98, 10.09,
+                                                10.20, 10.31, 10.42, 10.53, 10.64, 10.76, 10.87, 10.98, 11.09, 11.20,
+                                                11.31, 11.43, 11.54, 11.65, 11.76, 11.87, 11.99, 12.10, 12.21, 12.32,
+                                                12.43};
 
+    // The resolution of gamma that we support.
+    static constexpr double gamma_resolution = 0.1;
+
+    // The gamma parameter of the BBHash function.
     // Lowest bits/elem is achieved with gamma = 1, higher values lead to larger mphf but faster construction/query.
     double gamma;
 

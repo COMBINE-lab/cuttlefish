@@ -17,7 +17,7 @@ class kmer_Enumerator
 {
 private:
 
-    static constexpr std::size_t min_memory = 2;    // In GB; set as per the KMC3 library requirement.
+    static constexpr std::size_t min_memory = 3;    // In GB; set as per the KMC3 library requirement.
     static constexpr uint16_t bin_count = 2000;
     static constexpr uint16_t signature_len = 11;
     static constexpr double bits_per_kmer = 9.71;

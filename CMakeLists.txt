@@ -7,7 +7,7 @@ cmake_minimum_required(VERSION 3.14)
 # Name the project, its version, and languages used in it.
 set(PROJECT_NAME cuttlefish)
 project(${PROJECT_NAME}
-        VERSION 0.1.0
+        VERSION 1.0.0
         LANGUAGES CXX C
         )
 
@@ -136,6 +136,11 @@ add_dependencies(kmc prj_kmc)
 if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release)
 endif()
+
+set(CMAKE_CXX_FLAGS_DEBUG "-g")
+set(CMAKE_CXX_FLAGS_RELEASE "-O3")
+set(CMAKE_C_FLAGS_DEBUG "-g")
+set(CMAKE_C_FLAGS_RELEASE "-O3")
 
 
 # Add subdirectory `src` to the build; CMake will open `src/CMakeLists.txt` for such.

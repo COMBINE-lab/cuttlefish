@@ -95,21 +95,11 @@ target_link_libraries(${PROJECT_NAME} PRIVATE core)
 target_compile_options(${PROJECT_NAME} PRIVATE ${WARNING_FLAGS} ${SUPPRESS_WARNING_FLAGS} ${OPTIMIZE_FLAGS})
 
 
-# Set the parent directory for the target binaries inside the "installation directory". The
-# installation directory is set to `/usr/local` by default. If it's set there, i.e. the user
-# have not passed any other value for such, then the parent installation directory is set to
-# a default (`bin`) directory at the top level of the source tree. To specify a different parent
-# installation directory, pass its path as the value of the `-DCMAKE_INSTALL_PREFIX` with the
-# `cmake` command.
-
-set(DEFAULT_INSTALL_DIR ${CMAKE_SOURCE_DIR}/bin)        # Set our default installation directory as a `bin` directory inside the top level of the source tree.
-set(INSTALL_DIR .)      # Set the installation directory to what CMake has recieved, i.e. either the system default or the user-provided one.
-if(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT) # If it's set to the system default, then set it to our defined default directory.
-        set(INSTALL_DIR ${DEFAULT_INSTALL_DIR})
-endif()
-
+# Set the installation directory. The parent directory is `/usr/local/` by default, and the
+# user may set it to a different path by passing a value for `CMAKE_INSTALL_PREFIX`. The target
+# executable is installed inside a sub-directory named `bin` within the parent directory.
 install(TARGETS ${PROJECT_NAME}
-        DESTINATION ${INSTALL_DIR}
+        DESTINATION bin
         )
 
 

@@ -45,8 +45,8 @@ if(INSTANCE_COUNT)
     add_compile_definitions(INSTANCE_COUNT=${INSTANCE_COUNT})
 endif()
 
-if(VALIDATION_MODE)
-    add_compile_definitions(VALIDATION_MODE)
+if(CF_VALIDATION_MODE)
+    add_compile_definitions(CF_VALIDATION_MODE)
 endif()
 
 execute_process(

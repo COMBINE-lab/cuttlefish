@@ -49,6 +49,10 @@ if(CF_VALIDATION_MODE)
     add_compile_definitions(CF_VALIDATION_MODE)
 endif()
 
+if(CF_DEVELOP_MODE)
+    add_compile_definitions(CF_DEVELOP_MODE)
+endif()
+
 execute_process(
     COMMAND getconf LEVEL1_DCACHE_LINESIZE
     COMMAND tr -d '\n'

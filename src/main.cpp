@@ -172,6 +172,10 @@ void validate(int argc, char** argv)
 
 int main(int argc, char** argv)
 {
+#ifdef CF_DEVELOP_MODE
+    std::cout << "Warning: Executing in Develop Mode.\n";
+#endif
+
     if(argc < 2)
     {
         std::cout << "Usage:\ncuttlefish <command> [OPTIONS]" << std::endl;

@@ -46,6 +46,9 @@ void build(int argc, char** argv)
         // TODO: remove the following arg
         ("no-dcc", "turn off optimization for post-construction extraction of DCCs (Detached Chordless Cycles)")
         ("cycles", "extract the detached chordless cycles of the graph")
+#ifdef CF_DEVELOP_MODE
+        ("gamma", "gamma for the BBHash MPHF", cxxopts::value<double>()->default_value(std::to_string(cuttlefish::_default::GAMMA)))
+#endif
         ("h,help", "print usage");
 
     try
@@ -78,13 +81,20 @@ void build(int argc, char** argv)
         const auto json_file = result["json"].as<std::string>();
         const auto dcc_opt = !result["no-dcc"].as<bool>();
         const auto extract_cycles = result["cycles"].as<bool>();
+#ifdef CF_DEVELOP_MODE
+        const double gamma = result["gamma"].as<double>();
+#endif
 
         const Build_Params params(  is_read_graph,
                                     refs, lists, dirs,
                                     k, cutoff, kmer_database, edge_database, thread_count, max_memory, strict_memory,
                                     output_file, format, working_dir,
                                     remove_kmc_db, mph_file, buckets_file, save_vertices, json_file,
-                                    dcc_opt, extract_cycles);
+                                    dcc_opt, extract_cycles
+#ifdef CF_DEVELOP_MODE
+                                    , gamma
+#endif
+                                );
         if(!params.is_valid())
         {
             std::cerr << "Invalid input configuration. Aborting.\n";

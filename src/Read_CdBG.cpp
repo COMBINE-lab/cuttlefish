@@ -132,7 +132,12 @@ void Read_CdBG<k>::construct_hash_table(const uint64_t vertex_count, const bool 
         const std::size_t parser_memory = Kmer_SPMC_Iterator<k>::memory(params.thread_count());
         max_memory = (max_memory > parser_memory ? max_memory - parser_memory : 0);
         
-        hash_table = std::make_unique<Kmer_Hash_Table<k, cuttlefish::BITS_PER_READ_KMER>>(vertex_db_path(), vertex_count, max_memory);
+        hash_table =
+#ifdef CF_DEVELOP_MODE
+                        std::make_unique<Kmer_Hash_Table<k, cuttlefish::BITS_PER_READ_KMER>>(vertex_db_path(), vertex_count, max_memory, params.gamma());
+#else
+                        std::make_unique<Kmer_Hash_Table<k, cuttlefish::BITS_PER_READ_KMER>>(vertex_db_path(), vertex_count, max_memory);
+#endif
         hash_table->construct(params.thread_count(), params.working_dir_path(), params.mph_file_path());
     }
 }

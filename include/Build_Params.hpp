@@ -38,6 +38,9 @@ private:
     const std::string json_file_path_;  // Optional path to file storing meta-information about the graph and cuttlefish executions.
     const bool dcc_opt_;    // Option to optimize post-cdBG-construction extraction of DCCs (Detached Chordless Cycles).
     const bool extract_cycles_; // Option to extract detached chordless cycles from the de Bruijn graph after compaction.
+#ifdef CF_DEVELOP_MODE
+    const double gamma_;    // The gamma parameter for the BBHash MPHF.
+#endif
 
 
 public:
@@ -63,7 +66,11 @@ public:
                     const bool save_vertices,
                     const std::string& json_file_path,
                     const bool dcc_opt,
-                    const bool extract_cycles):
+                    const bool extract_cycles
+#ifdef CF_DEVELOP_MODE
+                    , const double gamma
+#endif
+                    ):
         is_read_graph_(is_read_graph),
         seq_input_(seq_paths, list_paths, dir_paths),
         k_(k),
@@ -83,6 +90,9 @@ public:
         json_file_path_(json_file_path),
         dcc_opt_(dcc_opt),
         extract_cycles_(extract_cycles)
+#ifdef CF_DEVELOP_MODE
+        , gamma_(gamma)
+#endif
     {}
 
 
@@ -224,6 +234,15 @@ public:
     {
         return extract_cycles_;
     }
+
+
+#ifdef CF_DEVELOP_MODE
+    // Returns the gamma parameter for the BBHash MPHF.
+    double gamma() const
+    {
+        return gamma_;
+    }
+#endif
 
 
     // Returns `true` iff the parameters selections are valid.

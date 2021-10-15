@@ -17,6 +17,9 @@ namespace cuttlefish
         constexpr uint32_t CUTOFF_FREQ = 2; // Typical practice
         constexpr uint16_t THREAD_COUNT = 1;
         constexpr std::size_t MAX_MEMORY = 2;  // Set as per KMC3 library requirement.
+#ifdef CF_DEVELOP_MODE
+        constexpr double GAMMA = 0;
+#endif
         constexpr uint16_t OP_FORMAT = Output_Format::txt;
         constexpr char WORK_DIR[] = ".";
     }

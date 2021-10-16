@@ -29,7 +29,7 @@ private:
     static constexpr double gamma_min = 2.0;
 
     // The minimum bits per hash key we require for BBHash.
-    static constexpr double min_bits_per_key = 3.71;
+    static constexpr double min_bits_per_hash_key = 3.71;
 
     // Empiricial bits-per-key requirement for each gamma in the range (0, 10].
     static constexpr double bits_per_gamma[] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0,

@@ -13,7 +13,7 @@
 
 
 template <uint16_t k, uint8_t BITS_PER_KEY> constexpr double Kmer_Hash_Table<k, BITS_PER_KEY>::gamma_min;
-template <uint16_t k, uint8_t BITS_PER_KEY> constexpr double Kmer_Hash_Table<k, BITS_PER_KEY>::min_bits_per_key;
+template <uint16_t k, uint8_t BITS_PER_KEY> constexpr double Kmer_Hash_Table<k, BITS_PER_KEY>::min_bits_per_hash_key;
 template <uint16_t k, uint8_t BITS_PER_KEY> constexpr double Kmer_Hash_Table<k, BITS_PER_KEY>::bits_per_gamma[];
 template <uint16_t k, uint8_t BITS_PER_KEY> constexpr double Kmer_Hash_Table<k, BITS_PER_KEY>::gamma_resolution;
 
@@ -55,7 +55,7 @@ template <uint16_t k, uint8_t BITS_PER_KEY>
 void Kmer_Hash_Table<k, BITS_PER_KEY>::set_gamma(const std::size_t max_memory)
 {
     const std::size_t max_memory_bits = max_memory * 8U;
-    const std::size_t min_memory_bits = static_cast<std::size_t>(kmer_count * min_bits_per_key);
+    const std::size_t min_memory_bits = static_cast<std::size_t>(kmer_count * (min_bits_per_hash_key + BITS_PER_KEY));
     if(max_memory_bits > min_memory_bits)
     {
         const double max_bits_per_hash_key = (static_cast<double>(max_memory_bits) / kmer_count) - BITS_PER_KEY;

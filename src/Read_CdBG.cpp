@@ -43,6 +43,33 @@ void Read_CdBG<k>::construct()
 
     std::chrono::high_resolution_clock::time_point t_start = std::chrono::high_resolution_clock::now();
 
+#ifdef CF_DEVELOP_MODE
+
+    uint64_t edge_count;
+    uint64_t vertex_count;
+
+    if(params.edge_db_path().empty())
+    {
+        kmer_Enumeration_Stats edge_stats = enumerate_edges();
+        kmer_Enumeration_Stats vertex_stats = enumerate_vertices(edge_stats.max_memory());
+        
+        edge_count = edge_stats.kmer_count();
+        vertex_count = vertex_stats.kmer_count();
+    }
+    else if(!params.vertex_db_path().empty())
+    {
+        edge_count = Kmer_Container<k + 1>::size(params.edge_db_path());
+        vertex_count = Kmer_Container<k>::size(params.vertex_db_path());
+    }
+    else
+    {
+        std::cerr << "Vertex database must also be provided if edge database is passed. Aborting.\n";
+        std::exit(EXIT_FAILURE);
+    }
+
+    std::chrono::high_resolution_clock::time_point t_vertices = std::chrono::high_resolution_clock::now();
+    std::cout << "Enumerated the edge and the vertex set of the graph. Time taken = " << std::chrono::duration_cast<std::chrono::duration<double>>(t_vertices - t_start).count() << " seconds.\n";
+#else
 
     std::cout << "\nEnumerating the edges of the de Bruijn graph.\n";
     kmer_Enumeration_Stats edge_stats = enumerate_edges();
@@ -57,12 +84,15 @@ void Read_CdBG<k>::construct()
     std::chrono::high_resolution_clock::time_point t_vertices = std::chrono::high_resolution_clock::now();
     std::cout << "Enumerated the vertex set of the graph. Time taken = " << std::chrono::duration_cast<std::chrono::duration<double>>(t_vertices - t_edges).count() << " seconds.\n";
 
-    std::cout << "Number of edges:    " << edge_stats.kmer_count() << ".\n";
-    std::cout << "Number of vertices: " << vertex_stats.kmer_count() << ".\n";
+    const uint64_t edge_count = edge_stats.kmer_count();
+    const uint64_t vertex_count = vertex_stats.kmer_count();
+#endif
+    std::cout << "Number of edges:    " << edge_count << ".\n";
+    std::cout << "Number of vertices: " << vertex_count << ".\n";
 
 
     std::cout << "\nConstructing the minimal perfect hash function (MPHF) over the vertex set.\n";
-    construct_hash_table(vertex_stats.kmer_count());
+    construct_hash_table(vertex_count);
 
     std::chrono::high_resolution_clock::time_point t_mphf = std::chrono::high_resolution_clock::now();
     std::cout << "Constructed the minimal perfect hash function for the vertices. Time taken = " << std::chrono::duration_cast<std::chrono::duration<double>>(t_mphf - t_vertices).count() << " seconds.\n";
@@ -71,6 +101,9 @@ void Read_CdBG<k>::construct()
     std::cout << "\nComputing the DFA states.\n";
     compute_DFA_states();
 
+#ifdef CF_DEVELOP_MODE
+    if(params.edge_db_path().empty())
+#endif
     Kmer_Container<k + 1>::remove(edge_db_path());
     if(!params.extract_cycles() && !params.dcc_opt())
         hash_table->save(params);
@@ -84,6 +117,9 @@ void Read_CdBG<k>::construct()
 
     if(!dbg_info.has_dcc() || dbg_info.dcc_extracted()) // Either there are no DCCs, or the DCCs have already been extracted in this run.
     {
+#ifdef CF_DEVELOP_MODE
+        if(params.vertex_db_path().empty())
+#endif
         if(!params.save_vertices())
             Kmer_Container<k>::remove(vertex_db_path());
 
@@ -93,8 +129,10 @@ void Read_CdBG<k>::construct()
     std::chrono::high_resolution_clock::time_point t_extract = std::chrono::high_resolution_clock::now();
     std::cout << "Extracted the maximal unitigs and DCCs. Time taken = " << std::chrono::duration_cast<std::chrono::duration<double>>(t_extract - t_dfa).count() << " seconds.\n";
 
+#ifndef CF_DEVELOP_MODE
     const double max_disk_usage = std::max(edge_stats.temp_disk_usage(), vertex_stats.temp_disk_usage()) / (1024.0 * 1024.0 * 1024.0);
     std::cout << "\nMaximum temporary disk-usage: " << max_disk_usage << "GB.\n";
+#endif
 }
 
 
@@ -246,6 +284,10 @@ bool Read_CdBG<k>::is_constructed() const
 template <uint16_t k>
 const std::string Read_CdBG<k>::edge_db_path() const
 {
+#ifdef CF_DEVELOP_MODE
+    return params.edge_db_path().empty()? (params.output_prefix() + cuttlefish::file_ext::edges_ext) : params.edge_db_path();
+#endif
+
     return params.output_prefix() + cuttlefish::file_ext::edges_ext;
 }
 
@@ -253,6 +295,10 @@ const std::string Read_CdBG<k>::edge_db_path() const
 template <uint16_t k>
 const std::string Read_CdBG<k>::vertex_db_path() const
 {
+#ifdef CF_DEVELOP_MODE
+    return params.vertex_db_path().empty() ? (params.output_prefix() + cuttlefish::file_ext::vertices_ext) : params.vertex_db_path();
+#endif
+
     return params.output_prefix() + cuttlefish::file_ext::vertices_ext;
 }
 

@@ -5,6 +5,7 @@
 
 
 #include "Build_Params.hpp"
+#include "kmer_Enumeration_Stats.hpp"
 #include "kmc_runner.h"
 
 
@@ -56,92 +57,6 @@ public:
         const std::string& working_dir_path, const std::string& output_db_path);
 };
 
-
-// A class to wrap summary statistics of k-mer enumeration by `kmer_Enumerator`.
-template <uint16_t k>
-class kmer_Enumeration_Stats
-{
-private:
-
-    const KMC::Stage1Results stage1_results;    // Results stats of KMC stage 1 execution.
-    const KMC::Stage2Results stage2_results;    // Results stats of KMC stage 2 execution.
-    const std::size_t max_memory_;  // Maximum memory usage allowed for the KMC executions.
-
-
-public:
-
-    kmer_Enumeration_Stats(const KMC::Stage1Results& stage1_results, const KMC::Stage2Results& stage2_results, const std::size_t max_memory):
-        stage1_results(stage1_results),
-        stage2_results(stage2_results),
-        max_memory_(max_memory)
-    {}
-
-
-    uint64_t seq_count() const
-    {
-        return stage1_results.nSeqences;
-    }
-
-
-    uint64_t seq_len() const
-    {
-        return total_kmer_count() + (seq_count() * (k - 1));
-    }
-
-
-    uint64_t total_kmer_count() const
-    {
-        return stage2_results.nTotalKmers;
-    }
-
-
-    uint64_t unique_kmer_count() const
-    {
-        return stage2_results.nUniqueKmers;
-    }
-
-    
-    uint64_t below_min_cutoff_kmer_count() const
-    {
-        return stage2_results.nBelowCutoffMin;
-    }
-
-
-    uint64_t above_max_cutoff_kmer_count() const
-    {
-        return stage2_results.nAboveCutoffMax;
-    }
-
-
-    uint64_t counted_kmer_count() const
-    {
-        return unique_kmer_count() - (below_min_cutoff_kmer_count() + above_max_cutoff_kmer_count());
-    }
-
-
-    std::size_t max_memory() const
-    {
-        return max_memory_;
-    }
-
-
-    std::size_t temp_disk_usage() const
-    {
-        return stage2_results.maxDiskUsage;
-    }
-
-
-    void log_stats() const
-    {
-        std::cout << k << "-mer enumeration statistics:\n";
-
-        std::cout << "\tNumber of sequences:\t" << seq_count() << ".\n";
-        std::cout << "\tTotal sequence length:\t" << seq_len() << ".\n";
-        std::cout << "\tTotal number of " << k << "-mers:\t" << total_kmer_count() << ".\n";
-        std::cout << "\tNumber of unique " << k << "-mers:\t" << unique_kmer_count() << ".\n";
-        std::cout << "\tNumber of counted " << k << "-mers:\t" << counted_kmer_count() << ".\n";
-    }
-};
 
 
 // A class to display progress of the k-mer enumeration execution.

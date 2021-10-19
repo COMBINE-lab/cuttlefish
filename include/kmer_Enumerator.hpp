@@ -63,23 +63,59 @@ class kmer_Enumeration_Stats
 {
 private:
 
-    const uint64_t kmer_count_;
-    const std::size_t max_memory_;
-    const std::size_t temp_disk_usage_;
+    const KMC::Stage1Results stage1_results;    // Results stats of KMC stage 1 execution.
+    const KMC::Stage2Results stage2_results;    // Results stats of KMC stage 2 execution.
+    const std::size_t max_memory_;  // Maximum memory usage allowed for the KMC executions.
 
 
 public:
 
-    kmer_Enumeration_Stats(const uint64_t kmer_count, const std::size_t max_memory, const std::size_t temp_disk_usage):
-        kmer_count_(kmer_count),
-        max_memory_(max_memory),
-        temp_disk_usage_(temp_disk_usage)
+    kmer_Enumeration_Stats(const KMC::Stage1Results& stage1_results, const KMC::Stage2Results& stage2_results, const std::size_t max_memory):
+        stage1_results(stage1_results),
+        stage2_results(stage2_results),
+        max_memory_(max_memory)
     {}
 
 
-    uint64_t kmer_count() const
+    uint64_t seq_count() const
     {
-        return kmer_count_;
+        return stage1_results.nSeqences;
+    }
+
+
+    uint64_t seq_len() const
+    {
+        return total_kmer_count() + (seq_count() * (k - 1));
+    }
+
+
+    uint64_t total_kmer_count() const
+    {
+        return stage2_results.nTotalKmers;
+    }
+
+
+    uint64_t unique_kmer_count() const
+    {
+        return stage2_results.nUniqueKmers;
+    }
+
+    
+    uint64_t below_min_cutoff_kmer_count() const
+    {
+        return stage2_results.nBelowCutoffMin;
+    }
+
+
+    uint64_t above_max_cutoff_kmer_count() const
+    {
+        return stage2_results.nAboveCutoffMax;
+    }
+
+
+    uint64_t counted_kmer_count() const
+    {
+        return unique_kmer_count() - (below_min_cutoff_kmer_count() + above_max_cutoff_kmer_count());
     }
 
 
@@ -91,7 +127,19 @@ public:
 
     std::size_t temp_disk_usage() const
     {
-        return temp_disk_usage_;
+        return stage2_results.maxDiskUsage;
+    }
+
+
+    void log_stats() const
+    {
+        std::cout << k << "-mer enumeration statistics:\n";
+
+        std::cout << "\tNumber of sequences:\t" << seq_count() << ".\n";
+        std::cout << "\tTotal sequence length:\t" << seq_len() << ".\n";
+        std::cout << "\tTotal number of " << k << "-mers:\t" << total_kmer_count() << ".\n";
+        std::cout << "\tNumber of unique " << k << "-mers:\t" << unique_kmer_count() << ".\n";
+        std::cout << "\tNumber of counted " << k << "-mers:\t" << counted_kmer_count() << ".\n";
     }
 };
 

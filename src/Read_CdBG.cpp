@@ -73,6 +73,7 @@ void Read_CdBG<k>::construct()
 
     std::cout << "\nEnumerating the edges of the de Bruijn graph.\n";
     kmer_Enumeration_Stats<k + 1> edge_stats = enumerate_edges();
+    edge_stats.log_stats();
 
     std::chrono::high_resolution_clock::time_point t_edges = std::chrono::high_resolution_clock::now();
     std::cout << "Enumerated the edge set of the graph. Time taken = " << std::chrono::duration_cast<std::chrono::duration<double>>(t_edges - t_start).count() << " seconds.\n";
@@ -84,8 +85,8 @@ void Read_CdBG<k>::construct()
     std::chrono::high_resolution_clock::time_point t_vertices = std::chrono::high_resolution_clock::now();
     std::cout << "Enumerated the vertex set of the graph. Time taken = " << std::chrono::duration_cast<std::chrono::duration<double>>(t_vertices - t_edges).count() << " seconds.\n";
 
-    const uint64_t edge_count = edge_stats.kmer_count();
-    const uint64_t vertex_count = vertex_stats.kmer_count();
+    const uint64_t edge_count = edge_stats.counted_kmer_count();
+    const uint64_t vertex_count = vertex_stats.counted_kmer_count();
 #endif
     std::cout << "Number of edges:    " << edge_count << ".\n";
     std::cout << "Number of vertices: " << vertex_count << ".\n";

@@ -50,8 +50,7 @@ kmer_Enumeration_Stats<k> kmer_Enumerator<k>::enumerate(
     stage2_results = kmc.RunStage2(stage2_params);
 
 
-    const uint64_t kmer_count = stage2_results.nUniqueKmers - stage2_results.nBelowCutoffMin - stage2_results.nAboveCutoffMax;
-    return kmer_Enumeration_Stats<k>(kmer_count, memory, stage2_results.maxDiskUsage);
+    return kmer_Enumeration_Stats<k>(stage1_results, stage2_results, memory);
 }
 
 

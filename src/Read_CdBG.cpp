@@ -72,14 +72,14 @@ void Read_CdBG<k>::construct()
 #else
 
     std::cout << "\nEnumerating the edges of the de Bruijn graph.\n";
-    kmer_Enumeration_Stats edge_stats = enumerate_edges();
+    kmer_Enumeration_Stats<k + 1> edge_stats = enumerate_edges();
 
     std::chrono::high_resolution_clock::time_point t_edges = std::chrono::high_resolution_clock::now();
     std::cout << "Enumerated the edge set of the graph. Time taken = " << std::chrono::duration_cast<std::chrono::duration<double>>(t_edges - t_start).count() << " seconds.\n";
 
 
     std::cout << "\nEnumerating the vertices of the de Bruijn graph.\n";
-    kmer_Enumeration_Stats vertex_stats = enumerate_vertices(edge_stats.max_memory());
+    kmer_Enumeration_Stats<k> vertex_stats = enumerate_vertices(edge_stats.max_memory());
 
     std::chrono::high_resolution_clock::time_point t_vertices = std::chrono::high_resolution_clock::now();
     std::cout << "Enumerated the vertex set of the graph. Time taken = " << std::chrono::duration_cast<std::chrono::duration<double>>(t_vertices - t_edges).count() << " seconds.\n";
@@ -137,7 +137,7 @@ void Read_CdBG<k>::construct()
 
 
 template <uint16_t k>
-kmer_Enumeration_Stats Read_CdBG<k>::enumerate_edges() const
+kmer_Enumeration_Stats<k + 1> Read_CdBG<k>::enumerate_edges() const
 {
     return kmer_Enumerator<k + 1>().enumerate(
         KMC::InputFileType::FASTQ, params.sequence_input().seqs(), params.cutoff(),
@@ -147,7 +147,7 @@ kmer_Enumeration_Stats Read_CdBG<k>::enumerate_edges() const
 
 
 template <uint16_t k>
-kmer_Enumeration_Stats Read_CdBG<k>::enumerate_vertices(const std::size_t max_memory) const
+kmer_Enumeration_Stats<k> Read_CdBG<k>::enumerate_vertices(const std::size_t max_memory) const
 {
     return kmer_Enumerator<k>().enumerate(
         KMC::InputFileType::KMC, std::vector<std::string>(1, edge_db_path()), 1,

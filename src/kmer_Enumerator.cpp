@@ -3,7 +3,7 @@
 
 
 template <uint16_t k>
-kmer_Enumeration_Stats kmer_Enumerator<k>::enumerate(
+kmer_Enumeration_Stats<k> kmer_Enumerator<k>::enumerate(
     const KMC::InputFileType input_file_type, const std::vector<std::string>& seqs, const uint32_t cutoff,
     const uint16_t thread_count, const std::size_t max_memory, const bool strict_memory, const bool estimate_mem_usage,
     const std::string& working_dir_path, const std::string& output_db_path)
@@ -51,7 +51,7 @@ kmer_Enumeration_Stats kmer_Enumerator<k>::enumerate(
 
 
     const uint64_t kmer_count = stage2_results.nUniqueKmers - stage2_results.nBelowCutoffMin - stage2_results.nAboveCutoffMax;
-    return kmer_Enumeration_Stats(kmer_count, memory, stage2_results.maxDiskUsage);
+    return kmer_Enumeration_Stats<k>(kmer_count, memory, stage2_results.maxDiskUsage);
 }
 
 

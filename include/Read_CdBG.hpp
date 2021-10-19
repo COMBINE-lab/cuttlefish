@@ -12,7 +12,7 @@
 #include <memory>
 
 
-class kmer_Enumeration_Stats;
+template <uint16_t k> class kmer_Enumeration_Stats;
 
 
 // Read de Bruijn graph class to support the compaction algorithm.
@@ -29,11 +29,11 @@ private:
 
     // Enumerates the edges of the de Bruijn graph and returns summary statistics of the
     // enumearation.
-    kmer_Enumeration_Stats enumerate_edges() const;
+    kmer_Enumeration_Stats<k + 1> enumerate_edges() const;
 
     // Enumerates the vertices of the de Bruijn graph using at most `max_memory` amount of
     // memory, and returns summary statistics of the enumeration.
-    kmer_Enumeration_Stats enumerate_vertices(std::size_t max_memory) const;
+    kmer_Enumeration_Stats<k> enumerate_vertices(std::size_t max_memory) const;
 
     // Constructs the Cuttlefish hash table for the `vertex_count` vertices of the graph.
     // If `load` is specified, then it is loaded from disk.

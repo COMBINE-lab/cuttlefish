@@ -8,7 +8,7 @@
 #include "kmc_runner.h"
 
 
-class kmer_Enumeration_Stats;
+template <uint16_t k> class kmer_Enumeration_Stats;
 
 
 // Class to enumerate all the k-mers for some provided input collection.
@@ -50,7 +50,7 @@ public:
     // `estimate_mem_usage` is `true`, otherwise `max_memory` is the limit. Temporary files are
     // written to `working_dir_path`. The output database is stored at path prefix `output_db_path`.
     // Returns summary statistics of the enumeration.
-    kmer_Enumeration_Stats enumerate(
+    kmer_Enumeration_Stats<k> enumerate(
         KMC::InputFileType input_file_type, const std::vector<std::string>& seqs, uint32_t cutoff,
         uint16_t thread_count, std::size_t max_memory, bool strict_memory, bool estimate_mem_usage,
         const std::string& working_dir_path, const std::string& output_db_path);
@@ -58,6 +58,7 @@ public:
 
 
 // A class to wrap summary statistics of k-mer enumeration by `kmer_Enumerator`.
+template <uint16_t k>
 class kmer_Enumeration_Stats
 {
 private:

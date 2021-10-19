@@ -35,7 +35,7 @@ private:
     // estimated through KMC3's approximation step.
     uint64_t solid_kmer_count_approx(uint16_t cutoff) const;
 
-    // Returns the strict memory limit for the actual KMC3 execution, based on the number of
+    // Returns the strict memory limit (in GB) for the actual KMC3 execution, based on the number of
     // unique k-mers `unique_kmer_count` (typically approximated earlier).
     std::size_t memory_limit(uint64_t unique_kmer_count) const;
 
@@ -44,9 +44,9 @@ public:
 
     // Enumerates the k-mers from the sequences (of type `input_file_type`) present is `seqs`, that
     // are present at least `cutoff` times. Employs `thread_count` number of processor threads and
-    // uses a soft memory-cap of `max_memory`. If `strict_memory` is `true`, then the memory usage
-    // is attempted to be kept within a limit—the max of `max_memory` and the estimated memory to
-    // be used by the downstream stages of Cuttlefish. This memory estimation is made only if
+    // uses a soft memory-cap of `max_memory` (in GB). If `strict_memory` is `true`, then the memory
+    // usage is attempted to be kept within a limit—the max of `max_memory` and the estimated memory
+    // to be used by the downstream stages of Cuttlefish. This memory estimation is made only if
     // `estimate_mem_usage` is `true`, otherwise `max_memory` is the limit. Temporary files are
     // written to `working_dir_path`. The output database is stored at path prefix `output_db_path`.
     // Returns summary statistics of the enumeration.

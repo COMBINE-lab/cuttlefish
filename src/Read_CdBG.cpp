@@ -196,16 +196,13 @@ template <uint16_t k>
 void Read_CdBG<k>::extract_maximal_unitigs()
 {
     Read_CdBG_Extractor<k> cdBg_extractor(params, *hash_table);
-    const std::string temp_output_path = params.working_dir_path() + filename(params.output_prefix()) + cuttlefish::file_ext::temp;
     const std::string output_file_path = params.output_file_path();
 
-    cdBg_extractor.extract_maximal_unitigs(vertex_db_path(), temp_output_path);
+    cdBg_extractor.extract_maximal_unitigs(vertex_db_path(), output_file_path);
     dbg_info.add_unipaths_info(cdBg_extractor);
 
-    if(!extract_DCCs(temp_output_path) && params.dcc_opt())
+    if(!extract_DCCs(output_file_path) && params.dcc_opt())
         hash_table->save(params);
-
-    move_file(temp_output_path, output_file_path);
 }
 
 
@@ -297,10 +294,10 @@ template <uint16_t k>
 const std::string Read_CdBG<k>::vertex_db_path() const
 {
 #ifdef CF_DEVELOP_MODE
-    return params.vertex_db_path().empty() ? (params.output_prefix() + cuttlefish::file_ext::vertices_ext) : params.vertex_db_path();
+    return params.vertex_db_path().empty() ? (params.working_dir_path() + filename(params.output_prefix()) + cuttlefish::file_ext::vertices_ext) : params.vertex_db_path();
 #endif
 
-    return params.output_prefix() + cuttlefish::file_ext::vertices_ext;
+    return params.working_dir_path() + filename(params.output_prefix()) + cuttlefish::file_ext::vertices_ext;
 }
 
 

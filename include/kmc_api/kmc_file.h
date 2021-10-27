@@ -509,13 +509,11 @@ inline uint64_t CKMC_DB::read_raw_suffixes(uint8_t* const suff_buf, std::vector<
 		const uint64_t suff_to_read = suff_id_next - sufix_number;
 		if(suff_to_read > 0)
 		{
-			const uint64_t prev_sufix_number = sufix_number;
-			
 			if(suff_read_count + suff_to_read <= max_suff_count)
 			{
-				suff_read_count += suff_to_read;
 				sufix_number += suff_to_read;
-				pref_buf.emplace_back(prefix_index, sufix_number - prev_sufix_number);
+				pref_buf.emplace_back(prefix_index, suff_to_read);
+				suff_read_count += suff_to_read;
 
 				if(sufix_number == total_kmers)
 					end_of_file = true;
@@ -523,8 +521,8 @@ inline uint64_t CKMC_DB::read_raw_suffixes(uint8_t* const suff_buf, std::vector<
 			else
 			{
 				sufix_number += (max_suff_count - suff_read_count);
+				pref_buf.emplace_back(prefix_index, max_suff_count - suff_read_count);
 				suff_read_count = max_suff_count;
-				pref_buf.emplace_back(prefix_index, sufix_number - prev_sufix_number);
 
 				break;
 			}

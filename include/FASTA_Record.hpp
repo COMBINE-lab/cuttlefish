@@ -17,7 +17,7 @@ class FASTA_Record
 private:
 
     const T_id_ id_; // Identifier for the FASTA sequence.
-    const T_seq_& seq_; // The FASTA sequence.
+    const T_seq_* const seq_;   // Pointer to the FASTA sequence.
 
 
 public:
@@ -51,7 +51,7 @@ public:
 template <typename T_seq_, typename T_id_>
 inline FASTA_Record<T_seq_, T_id_>::FASTA_Record(const uint64_t id, const T_seq_& seq):
     id_(id),
-    seq_(seq)
+    seq_(&seq)
 {}
 
 
@@ -65,7 +65,7 @@ inline std::size_t FASTA_Record<T_seq_, T_id_>::header_size() const
 template <typename T_seq_, typename T_id_>
 inline std::size_t FASTA_Record<T_seq_, T_id_>::seq_size() const
 {
-    return seq_.size();
+    return seq_->size();
 }
 
 
@@ -82,7 +82,7 @@ template <typename T_seq_, typename T_id_>
 inline void FASTA_Record<T_seq_, T_id_>::append_seq(std::vector<char>& buffer) const
 {
     // `std::memcpy` at the end of `buffer` does not update the size of the vector `buffer`.
-    buffer.insert(buffer.end(), seq_.begin(), seq_.end());
+    buffer.insert(buffer.end(), seq_->begin(), seq_->end());
 }
 
 
@@ -90,8 +90,8 @@ template <typename T_seq_, typename T_id_>
 template <uint16_t k>
 inline void FASTA_Record<T_seq_, T_id_>::append_rotated_cycle(std::vector<char>& buffer, const std::size_t pivot) const
 {
-    buffer.insert(buffer.end(), seq_.begin() + pivot, seq_.end());
-    buffer.insert(buffer.end(), seq_.begin() + k - 1, seq_.begin() + k - 1 + pivot);
+    buffer.insert(buffer.end(), seq_->begin() + pivot, seq_->end());
+    buffer.insert(buffer.end(), seq_->begin() + k - 1, seq_->begin() + k - 1 + pivot);
 }
 
 

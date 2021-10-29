@@ -18,6 +18,7 @@ private:
 
     const T_id_ id_; // Identifier for the FASTA sequence.
     const T_seq_* const seq_;   // Pointer to the FASTA sequence.
+    const T_seq_* const seq_add_;   // Additional FASTA sequence (in case the original sequence `*seq` is broken into two parts).
 
 
 public:
@@ -26,6 +27,12 @@ public:
     // Only a constant reference to the sequence is captured, so the record's
     // correctness holds as long as the referred sequence itself remains unaltered.
     FASTA_Record(uint64_t id, const T_seq_& str);
+
+    // Constructs a FASTA header with identifier `id`, along with the sequences
+    // `seq` and `seq_add`. Only constant references to the sequences are captured,
+    // so the record's correctness holds as long as the referred sequences themselves
+    // remains unaltered.
+    FASTA_Record(uint64_t id, const T_seq_* seq, const T_seq_* seq_add = nullptr);
 
     // Returns the length of the header line of the record.
     std::size_t header_size() const;
@@ -51,7 +58,16 @@ public:
 template <typename T_seq_, typename T_id_>
 inline FASTA_Record<T_seq_, T_id_>::FASTA_Record(const uint64_t id, const T_seq_& seq):
     id_(id),
-    seq_(&seq)
+    seq_(&seq),
+    seq_add_(nullptr)
+{}
+
+
+template <typename T_seq_, typename T_id_>
+inline FASTA_Record<T_seq_, T_id_>::FASTA_Record(const uint64_t id, const T_seq_* const seq, const T_seq_* const seq_add):
+    id_(id),
+    seq_(seq),
+    seq_add_(seq_add)
 {}
 
 
@@ -65,7 +81,7 @@ inline std::size_t FASTA_Record<T_seq_, T_id_>::header_size() const
 template <typename T_seq_, typename T_id_>
 inline std::size_t FASTA_Record<T_seq_, T_id_>::seq_size() const
 {
-    return seq_->size();
+    return seq_->size() + (seq_add_ != nullptr ? seq_add_->size() : 0);
 }
 
 
@@ -83,6 +99,8 @@ inline void FASTA_Record<T_seq_, T_id_>::append_seq(std::vector<char>& buffer) c
 {
     // `std::memcpy` at the end of `buffer` does not update the size of the vector `buffer`.
     buffer.insert(buffer.end(), seq_->begin(), seq_->end());
+    if(seq_add_ != nullptr)
+        buffer.insert(buffer.end(), seq_add_->begin(), seq_add_->end());
 }
 
 

@@ -274,7 +274,7 @@ inline void Read_CdBG_Extractor<k>::reverse_complement(T_container_& seq)
 
 
 template <uint16_t k>
-void Read_CdBG_Extractor<k>::mark_path(const std::vector<uint64_t>& path_hashes)
+inline void Read_CdBG_Extractor<k>::mark_path(const std::vector<uint64_t>& path_hashes)
 {
     for(const uint64_t hash: path_hashes)
         hash_table.update(hash, State_Read_Space::get_outputted_state());

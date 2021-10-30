@@ -34,6 +34,7 @@ set(PROJECT_SRC
         Read_CdBG_Extractor.cpp
         Unipaths_Meta_info.cpp
         Detached_Cycles_Extractor.cpp
+        dBG_Utilities.cpp
         Character_Buffer_Flusher.cpp
         Progress_Tracker.cpp
         dBG_Info.cpp

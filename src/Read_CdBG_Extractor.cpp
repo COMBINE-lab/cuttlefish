@@ -191,7 +191,7 @@ bool Read_CdBG_Extractor<k>::extract_maximal_unitig(const Kmer<k>& v_hat, const 
         return false;
 
     if(!in_canonical)
-        reverse_complement(unipath);
+        cuttlefish::reverse_complement(unipath);
 
     id = sign_vertex.hash();
 

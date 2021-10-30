@@ -2,6 +2,7 @@
 #include "Read_CdBG_Extractor.hpp"
 #include "Read_CdBG.hpp"
 #include "Kmer_SPMC_Iterator.hpp"
+#include "dBG_Utilities.hpp"
 #include "FASTA_Record.hpp"
 #include "Character_Buffer.hpp"
 #include "Thread_Pool.hpp"
@@ -275,7 +276,7 @@ bool Read_CdBG_Extractor<k>::extract_cycle(const Kmer<k>& v_hat, uint64_t& id, s
 
     if(!sign_vertex.in_canonical_form())
     {
-        reverse_complement(cycle);
+        cuttlefish::reverse_complement(cycle);
         pivot = (cycle.size() - 1) - (pivot + k - 1);
     }
 

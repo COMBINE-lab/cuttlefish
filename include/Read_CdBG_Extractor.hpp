@@ -131,10 +131,6 @@ private:
     // Closes the output sink.
     void close_output_sink();
 
-    // Replaces the character sequence `seq` in-place with its reverse complement.
-    template <typename T_container_>
-    static void reverse_complement(T_container_& seq);
-
     // Note: The following methods are only applicable when the heuristic of information-discarding
     // from branching vertices to their neighbors has been implemented in the DFA states computation
     // phase. In the general case, these functions with their specified input parameters and their
@@ -248,28 +244,6 @@ inline bool Read_CdBG_Extractor<k>::is_flanking_side(const State_Read_Space stat
     const cuttlefish::edge_encoding_t edge = state.edge_at(side);
 
     return edge == cuttlefish::edge_encoding_t::N || edge == cuttlefish::edge_encoding_t::E;
-}
-
-
-template <uint16_t k>
-template <typename T_container_>
-inline void Read_CdBG_Extractor<k>::reverse_complement(T_container_& seq)
-{
-    assert(!seq.empty());
-
-    auto fwd = seq.begin();
-    auto bwd = seq.end() - 1;
-
-    for(; fwd < bwd; ++fwd, --bwd)
-    {
-        std::swap(*fwd, *bwd);
-        
-        *fwd = DNA_Utility::complement(*fwd),
-        *bwd = DNA_Utility::complement(*bwd);
-    }
-
-    if(fwd == bwd)
-        *fwd = DNA_Utility::complement(*fwd);
 }
 
 

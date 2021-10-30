@@ -50,11 +50,11 @@ void Read_CdBG<k>::construct()
 
     if(params.edge_db_path().empty())
     {
-        kmer_Enumeration_Stats edge_stats = enumerate_edges();
-        kmer_Enumeration_Stats vertex_stats = enumerate_vertices(edge_stats.max_memory());
+        kmer_Enumeration_Stats<k + 1> edge_stats = enumerate_edges();
+        kmer_Enumeration_Stats<k> vertex_stats = enumerate_vertices(edge_stats.max_memory());
         
-        edge_count = edge_stats.kmer_count();
-        vertex_count = vertex_stats.kmer_count();
+        edge_count = edge_stats.counted_kmer_count();
+        vertex_count = vertex_stats.counted_kmer_count();
     }
     else if(!params.vertex_db_path().empty())
     {

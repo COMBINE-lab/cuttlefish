@@ -6,6 +6,8 @@
 
 #include "fmt/format.h"
 
+#include <cstdint>
+
 
 // =============================================================================
 // A class wrapping a basic FASTA record: the sequence of type `T_seq_` and its
@@ -19,27 +21,32 @@ private:
     const T_id_ id_; // Identifier for the FASTA sequence.
     const T_seq_* const seq_;   // Pointer to the FASTA sequence.
     const T_seq_* const seq_add_;   // Additional FASTA sequence (in case the original sequence `*seq` is broken into two parts).
+    const std::size_t offset_;  // Offset position into the sequence `seq_`—data before this index will be skipped in the record.
+    const std::size_t offset_add_;  // Offset position into the additional sequence `seq_add`—data before this index will be skipped in the record.
 
 
     // Constructs a FASTA header with identifier `id`, along with the sequences
-    // `seq` and `seq_add`. Only constant references to the sequences are captured,
+    // `seq` and `seq_add` (onward their indices `offset` and `offset_add`,
+    // respectively). Only constant references to the sequences are captured,
     // so the record's correctness holds as long as the referred sequences themselves
     // remains unaltered.
-    FASTA_Record(uint64_t id, const T_seq_* seq, const T_seq_* seq_add = nullptr);
+    FASTA_Record(uint64_t id, const T_seq_* seq, const T_seq_* seq_add, std::size_t offset = 0, std::size_t offset_add = 0);
 
 
 public:
 
-    // Constructs a FASTA header with identifier `id` and the sequence `seq`.
-    // Only a constant reference to the sequence is captured, so the record's
-    // correctness holds as long as the referred sequence itself remains unaltered.
-    FASTA_Record(uint64_t id, const T_seq_& str);
+    // Constructs a FASTA header with identifier `id` and the sequence `seq`
+    // (onward its index `offset`). Only a constant reference to the sequence
+    // is captured, so the record's correctness holds as long as the referred
+    // sequence itself remains unaltered.
+    FASTA_Record(uint64_t id, const T_seq_& str, std::size_t offset = 0);
 
     // Constructs a FASTA header with identifier `id`, along with the sequences
-    // `seq` and `seq_add`. Only constant references to the sequences are captured,
+    // `seq` and `seq_add` (onward their indices `offset` and `offset_add`,
+    // respectively). Only constant references to the sequences are captured,
     // so the record's correctness holds as long as the referred sequences themselves
     // remains unaltered.
-    FASTA_Record(uint64_t id, const T_seq_& seq, const T_seq_& seq_add);
+    FASTA_Record(uint64_t id, const T_seq_& seq, const T_seq_& seq_add, std::size_t offset = 0, std::size_t offset_add = 0);
 
     // Returns the length of the header line of the record.
     std::size_t header_size() const;
@@ -63,20 +70,24 @@ public:
 
 
 template <typename T_seq_, typename T_id_>
-inline FASTA_Record<T_seq_, T_id_>::FASTA_Record(const uint64_t id, const T_seq_& seq): FASTA_Record(id, &seq)
+inline FASTA_Record<T_seq_, T_id_>::FASTA_Record(const uint64_t id, const T_seq_& seq, const std::size_t offset):
+    FASTA_Record(id, &seq, nullptr, offset)
 {}
 
 
 template <typename T_seq_, typename T_id_>
-inline FASTA_Record<T_seq_, T_id_>::FASTA_Record(const uint64_t id, const T_seq_& seq, const T_seq_& seq_add): FASTA_Record(id, &seq, &seq_add)
+inline FASTA_Record<T_seq_, T_id_>::FASTA_Record(const uint64_t id, const T_seq_& seq, const T_seq_& seq_add, const std::size_t offset, const std::size_t offset_add):
+    FASTA_Record(id, &seq, &seq_add, offset, offset_add)
 {}
 
 
 template <typename T_seq_, typename T_id_>
-inline FASTA_Record<T_seq_, T_id_>::FASTA_Record(const uint64_t id, const T_seq_* const seq, const T_seq_* const seq_add):
+inline FASTA_Record<T_seq_, T_id_>::FASTA_Record(const uint64_t id, const T_seq_* const seq, const T_seq_* const seq_add, const std::size_t offset, const std::size_t offset_add):
     id_(id),
     seq_(seq),
-    seq_add_(seq_add)
+    seq_add_(seq_add),
+    offset_(offset),
+    offset_add_(offset_add)
 {}
 
 
@@ -90,7 +101,7 @@ inline std::size_t FASTA_Record<T_seq_, T_id_>::header_size() const
 template <typename T_seq_, typename T_id_>
 inline std::size_t FASTA_Record<T_seq_, T_id_>::seq_size() const
 {
-    return seq_->size() + (seq_add_ != nullptr ? seq_add_->size() : 0);
+    return (seq_->size() - offset_) + (seq_add_ != nullptr ? (seq_add_->size() - offset_add_) : 0);
 }
 
 
@@ -107,9 +118,9 @@ template <typename T_seq_, typename T_id_>
 inline void FASTA_Record<T_seq_, T_id_>::append_seq(std::vector<char>& buffer) const
 {
     // `std::memcpy` at the end of `buffer` does not update the size of the vector `buffer`.
-    buffer.insert(buffer.end(), seq_->begin(), seq_->end());
+    buffer.insert(buffer.end(), seq_->begin() + offset_, seq_->end());
     if(seq_add_ != nullptr)
-        buffer.insert(buffer.end(), seq_add_->begin(), seq_add_->end());
+        buffer.insert(buffer.end(), seq_add_->begin() + offset_add_, seq_add_->end());
 }
 
 

@@ -111,7 +111,7 @@ void Read_CdBG_Extractor<k>::scan_vertices(Kmer_SPMC_Iterator<k>* const vertex_p
                 {
                     extracted_unipaths_info.add_maximal_unitig(unipath);
 
-                    unipath.emplace_back('\n');
+                    // unipath.emplace_back('\n');
                     // output_buffer += unipath;
                     output_buffer += FASTA_Record<std::vector<char>>(id, unipath);
                     // unipath.clear();

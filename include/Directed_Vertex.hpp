@@ -49,6 +49,10 @@ public:
     // Returns `true` iff the k-mer observed for the vertex is in its canonical form.
     bool in_canonical_form() const;
 
+    // Configures the vertex with the k-mer `v`, and uses the hash table `hash` to get the
+    // hash value of the vertex.
+    void from_kmer(const Kmer<k>& v, const Kmer_Hash_Table<k, cuttlefish::BITS_PER_READ_KMER>& hash);
+
     // Configures the vertex with the source (i.e. prefix) k-mer of the edge (k + 1)-mer `e`;
     // and uses the hash table `hash` to get the hash value of the vertex.
     void from_prefix(const Kmer<k + 1>& e, const Kmer_Hash_Table<k, cuttlefish::BITS_PER_READ_KMER>& hash);
@@ -134,6 +138,14 @@ template <uint16_t k>
 inline bool Directed_Vertex<k>::in_canonical_form() const
 {
     return &kmer_ == kmer_hat_ptr;
+}
+
+
+template <uint16_t k>
+inline void Directed_Vertex<k>::from_kmer(const Kmer<k>& v, const Kmer_Hash_Table<k, cuttlefish::BITS_PER_READ_KMER>& hash)
+{
+    kmer_ = v;
+    init(hash);
 }
 
 

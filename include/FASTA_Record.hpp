@@ -21,6 +21,13 @@ private:
     const T_seq_* const seq_add_;   // Additional FASTA sequence (in case the original sequence `*seq` is broken into two parts).
 
 
+    // Constructs a FASTA header with identifier `id`, along with the sequences
+    // `seq` and `seq_add`. Only constant references to the sequences are captured,
+    // so the record's correctness holds as long as the referred sequences themselves
+    // remains unaltered.
+    FASTA_Record(uint64_t id, const T_seq_* seq, const T_seq_* seq_add = nullptr);
+
+
 public:
 
     // Constructs a FASTA header with identifier `id` and the sequence `seq`.
@@ -32,7 +39,7 @@ public:
     // `seq` and `seq_add`. Only constant references to the sequences are captured,
     // so the record's correctness holds as long as the referred sequences themselves
     // remains unaltered.
-    FASTA_Record(uint64_t id, const T_seq_* seq, const T_seq_* seq_add = nullptr);
+    FASTA_Record(uint64_t id, const T_seq_& seq, const T_seq_& seq_add);
 
     // Returns the length of the header line of the record.
     std::size_t header_size() const;
@@ -56,10 +63,12 @@ public:
 
 
 template <typename T_seq_, typename T_id_>
-inline FASTA_Record<T_seq_, T_id_>::FASTA_Record(const uint64_t id, const T_seq_& seq):
-    id_(id),
-    seq_(&seq),
-    seq_add_(nullptr)
+inline FASTA_Record<T_seq_, T_id_>::FASTA_Record(const uint64_t id, const T_seq_& seq): FASTA_Record(id, &seq)
+{}
+
+
+template <typename T_seq_, typename T_id_>
+inline FASTA_Record<T_seq_, T_id_>::FASTA_Record(const uint64_t id, const T_seq_& seq, const T_seq_& seq_add): FASTA_Record(id, &seq, &seq_add)
 {}
 
 

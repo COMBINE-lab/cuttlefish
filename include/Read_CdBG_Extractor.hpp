@@ -298,16 +298,20 @@ inline bool Read_CdBG_Extractor<k>::extract_maximal_unitig(const Kmer<k>& v_hat,
         return false;
 
 
-    if( !walk_unitig(v_hat, state, back, maximal_unitig.unitig(back)) ||
-        !walk_unitig(v_hat, state, front, maximal_unitig.unitig(front)))
+    if(!walk_unitig(v_hat, state, back, maximal_unitig.unitig(back)))
         return false;
+
+    if(maximal_unitig.unitig(back).is_cycle())
+        return false;   // Temporary omission. TODO: include DCCs well.
+
+    if(!walk_unitig(v_hat, state, front, maximal_unitig.unitig(front)))
+        return false;
+
 
     if(!mark_vertex(maximal_unitig.sign_vertex()))
         return false;
 
-
     maximal_unitig.finalize();
-
     return true;
 }
 
@@ -322,7 +326,6 @@ inline bool Read_CdBG_Extractor<k>::walk_unitig(const Kmer<k>& v_hat, const Stat
     State_Read_Space state = st_v;  // State of the vertex `v`.
     cuttlefish::edge_encoding_t e_v;    // The potential next edge from `v` to include into the unitig.
     cuttlefish::base_t b_ext;   // The nucleobase corresponding to the edge `e_v` and the exiting side `s_v` from `v` to potentially add to the literal form of the unitig.
-    const Directed_Vertex<k> anchor(v); // The anchor vertex where the unitig traversal starts from.
     
     unitig.init(v); // Initialize the unitig with the current vertex.
 
@@ -339,16 +342,15 @@ inline bool Read_CdBG_Extractor<k>::walk_unitig(const Kmer<k>& v_hat, const Stat
         b_ext = (s_v == cuttlefish::side_t::back ? DNA_Utility::map_base(e_v) : DNA_Utility::complement(DNA_Utility::map_base(e_v)));
         v.roll_forward(b_ext, hash_table);
 
-        if(v.is_same_vertex(anchor))    // The unitig is a DCC (Detached Chordless Cycle).
-            return false;   // Temporary omission. TODO: include DCCs well.
-
         state = hash_table[v.hash()].state();
         s_v = v.entrance_side();
         if(state.is_branching_side(s_v))    // Crossed an endpoint and reached a different unitig.
             break;
 
         // Still within the unitig.
-        unitig.extend(v, Kmer<k>::map_char(b_ext));
+        if(!unitig.extend(v, Kmer<k>::map_char(b_ext)))
+            break;  // The unitig is a DCC (Detached Chordless Cycle).
+
         s_v = cuttlefish::opposite_side(s_v);
     }
 

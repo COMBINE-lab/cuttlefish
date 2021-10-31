@@ -3,10 +3,12 @@
 #define READ_CDBG_EXTRACTOR_HPP
 
 
-
+// TODO: reduce header-inclusions throughout the entire headers-collection using forward decl.
 #include "globals.hpp"
 #include "Kmer_Hash_Table.hpp"
 #include "Directed_Vertex.hpp"
+#include "Maximal_Unitig_Scratch.hpp"
+#include "dBG_Utilities.hpp"
 #include "Build_Params.hpp"
 #include "Spin_Lock.hpp"
 #include "Async_Logger_Wrapper.hpp"
@@ -40,7 +42,7 @@ private:
     Output_Sink<sink_t> output_sink;    // Sink for the output maximal unitigs.
 
     // TODO: give these limits more thoughts, especially their exact impact on the memory usage.
-    static constexpr std::size_t BUFF_SZ = 100 * 1024ULL;   // 100 KB (soft limit) worth of maximal unitigs can be retained in memory, at most, before flushing.
+    static constexpr std::size_t BUFF_SZ = 100 * 1024ULL;   // 100 KB (soft limit) worth of maximal unitig records (FASTA) can be retained in memory, at most, before flushing.
     static constexpr std::size_t SEQ_SZ = 1 * 1024ULL * 1024ULL;    // 1 MB (soft limit) sized maximal unitig, at most, is constructed at a time.
 
     mutable uint64_t vertices_scanned = 0;    // Total number of vertices scanned from the database.
@@ -64,6 +66,11 @@ private:
     // the corresponding unipath.
     void scan_vertices(Kmer_SPMC_Iterator<k>* vertex_parser, uint16_t thread_id);
 
+    // Prcesses the vertices provided to the thread with id `thread_id` from the parser
+    // `vertex_parser`, i.e. for each vertex `v` provided to that thread, attempts to
+    // piece-wise construct its containing maximal unitig.
+    void process_vertices(Kmer_SPMC_Iterator<k>* vertex_parser, uint16_t thread_id);
+
     // Extracts the maximal unitig `p` that is flanked by the vertex `v_hat` and connects to `v_hat`
     // through its side `s_v_hat`. Returns `true` iff the extraction is successful, which happens when
     // the maximal unitig is encountered and attempted for output-marking _first_, by some thread. If
@@ -73,8 +80,24 @@ private:
     // `unipath` and `path_hashes` may contain partial form of the path, and `id` is unaltered.
     bool extract_maximal_unitig(const Kmer<k>& v_hat, cuttlefish::side_t s_v_hat, uint64_t& id, std::vector<char>& unipath, std::vector<uint64_t>& path_hashes);
 
+    // Extracts the maximal unitig `p` that contains the vertex `v_hat`, and `maximal_unitig` is
+    // used as the working scratch for the extraction, i.e. to build and store the two unitigs
+    // connecting to the two sides of `v_hat`. Returns `true` iff the extraction is successful,
+    // which happens when `p` is attempted for output-marking first by this thread.
+    bool extract_maximal_unitig(const Kmer<k>& v_hat, Maximal_Unitig_Scratch<k>& maximal_unitig);
+
+    // Traverses a unitig starting from the vertex `v_hat`, exiting it through the side `s_v_hat`.
+    // The DFA of `v_hat` is supposed to have the state `st_v`. `unitig` is used as the working
+    // scratch to build the unitig. Returns `true` iff the unitig could have been traversed
+    // maximally up-to its endpoint in the direction of the walk from `v_hat`, which is possible
+    // iff no other thread output-marks it in the meantime.
+    bool walk_unitig(const Kmer<k>& v_hat, State_Read_Space st_v, cuttlefish::side_t s_v_hat, Unitig_Scratch<k>& unitig);
+
     // Marks all the vertices which have their hashes present in `path_hashes` as outputted.
     void mark_path(const std::vector<uint64_t>& path_hashes);
+
+    // Marks all the vertices in the constituent unitigs of `maximal_unitig` as outputted.
+    void mark_maximal_unitig(const Maximal_Unitig_Scratch<k>& maximal_unitig);
 
     // Marks all the vertices that are present in the maximal unitigs of the graph with its vertex
     // set being present at the path prefix `vertex_db_path`.
@@ -252,6 +275,85 @@ inline void Read_CdBG_Extractor<k>::mark_path(const std::vector<uint64_t>& path_
 {
     for(const uint64_t hash: path_hashes)
         hash_table.update(hash, State_Read_Space::get_outputted_state());
+}
+
+
+template <uint16_t k>
+inline void Read_CdBG_Extractor<k>::mark_maximal_unitig(const Maximal_Unitig_Scratch<k>& maximal_unitig)
+{
+    mark_path(maximal_unitig.unitig_hash(cuttlefish::side_t::back));
+    mark_path(maximal_unitig.unitig_hash(cuttlefish::side_t::front));
+}
+
+
+template <uint16_t k>
+inline bool Read_CdBG_Extractor<k>::extract_maximal_unitig(const Kmer<k>& v_hat, Maximal_Unitig_Scratch<k>& maximal_unitig)
+{
+    static constexpr cuttlefish::side_t back = cuttlefish::side_t::back;
+    static constexpr cuttlefish::side_t front = cuttlefish::side_t::front;
+
+
+    State_Read_Space state = hash_table[v_hat].state(); // State of the vertex `v_hat`.
+    if(state.is_outputted())    // The containing maximal unitig has already been outputted.
+        return false;
+
+
+    if( !walk_unitig(v_hat, state, back, maximal_unitig.unitig(back)) ||
+        !walk_unitig(v_hat, state, front, maximal_unitig.unitig(front)))
+        return false;
+
+    if(!mark_vertex(maximal_unitig.sign_vertex()))
+        return false;
+
+
+    maximal_unitig.finalize();
+
+    return true;
+}
+
+
+template <uint16_t k>
+inline bool Read_CdBG_Extractor<k>::walk_unitig(const Kmer<k>& v_hat, const State_Read_Space st_v, const cuttlefish::side_t s_v_hat, Unitig_Scratch<k>& unitig)
+{
+    // Data structures to be reused per each vertex extension of the unitig.
+
+    cuttlefish::side_t s_v = s_v_hat;   // The side of the current vertex `v_hat` through which to extend the unitig, i.e. exit `v_hat`.
+    Directed_Vertex<k> v(s_v == cuttlefish::side_t::back ? v_hat : v_hat.reverse_complement(), hash_table); // Current vertex being added to the unitig.
+    State_Read_Space state = st_v;  // State of the vertex `v`.
+    cuttlefish::edge_encoding_t e_v;    // The potential next edge from `v` to include into the unitig.
+    cuttlefish::base_t b_ext;   // The nucleobase corresponding to the edge `e_v` and the exiting side `s_v` from `v` to potentially add to the literal form of the unitig.
+    const Directed_Vertex<k> anchor(v); // The anchor vertex where the unitig traversal starts from.
+    
+    unitig.init(v); // Initialize the unitig with the current vertex.
+
+
+    while(true)
+    {
+        if(state.is_outputted())    // The unitig has already been outputted earlier / in the meantime.
+            return false;
+
+        e_v = state.edge_at(s_v);
+        if(cuttlefish::is_fuzzy_edge(e_v))  // Reached an endpoint.
+            break;
+
+        b_ext = (s_v == cuttlefish::side_t::back ? DNA_Utility::map_base(e_v) : DNA_Utility::complement(DNA_Utility::map_base(e_v)));
+        v.roll_forward(b_ext, hash_table);
+
+        if(v.is_same_vertex(anchor))    // The unitig is a DCC (Detached Chordless Cycle).
+            return false;   // Temporary omission. TODO: include DCCs well.
+
+        state = hash_table[v.hash()].state();
+        s_v = v.entrance_side();
+        if(state.is_branching_side(s_v))    // Crossed an endpoint and reached a different unitig.
+            break;
+
+        // Still within the unitig.
+        unitig.extend(v, Kmer<k>::map_char(b_ext));
+        s_v = cuttlefish::opposite_side(s_v);
+    }
+
+
+    return true;
 }
 
 

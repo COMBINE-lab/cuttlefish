@@ -139,6 +139,46 @@ void Read_CdBG_Extractor<k>::scan_vertices(Kmer_SPMC_Iterator<k>* const vertex_p
 
 
 template <uint16_t k>
+void Read_CdBG_Extractor<k>::process_vertices(Kmer_SPMC_Iterator<k>* const vertex_parser, const uint16_t thread_id)
+{
+    // Data structures to be reused per each vertex scanned.
+    Kmer<k> v_hat;  // The vertex copy to be scanned one-by-one.
+    Maximal_Unitig_Scratch<k> maximal_unitig;  // The scratch space to be used to construct the containing maximal unitig of `v_hat`.
+
+    uint64_t vertex_count = 0;  // Number of vertices scanned by this thread.
+    Unipaths_Meta_info<k> extracted_unipaths_info;  // Meta-information over the maximal unitigs extracted by this thread.
+    uint64_t progress = 0;  // Number of vertices scanned by the thread; is reset at reaching 1% of its approximate workload.
+
+    Character_Buffer<BUFF_SZ, sink_t> output_buffer(output_sink.sink());  // The output buffer for maximal unitigs.
+
+
+    while(vertex_parser->tasks_expected(thread_id))
+        if(vertex_parser->value_at(thread_id, v_hat))
+        {
+            if(extract_maximal_unitig(v_hat, maximal_unitig))
+            {
+                mark_maximal_unitig(maximal_unitig);
+
+                extracted_unipaths_info.add_maximal_unitig(maximal_unitig);
+                output_buffer += maximal_unitig.fasta_rec();
+            }
+
+            vertex_count++;
+            progress_tracker.track_work(++progress);
+        }
+
+
+    // Aggregate the meta-information over the extracted maximal unitigs and the thread-executions.
+    lock.lock();
+
+    vertices_scanned += vertex_count;
+    unipaths_meta_info_.aggregate(extracted_unipaths_info);
+
+    lock.unlock();
+}
+
+
+template <uint16_t k>
 bool Read_CdBG_Extractor<k>::extract_maximal_unitig(const Kmer<k>& v_hat, const cuttlefish::side_t s_v_hat, uint64_t& id, std::vector<char>& unipath, std::vector<uint64_t>& path_hashes)
 {
     // Data structures to be reused per each vertex extension of the maximal unitig.

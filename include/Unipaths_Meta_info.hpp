@@ -4,6 +4,7 @@
 
 
 
+#include "Maximal_Unitig_Scratch.hpp"
 #include "globals.hpp"
 
 #include <cstdint>
@@ -35,6 +36,10 @@ public:
     // Adds information of the maximal unitig `unipath` to the tracker.
     template <typename T_container_>
     void add_maximal_unitig(const T_container_& unipath);
+
+    // Adds information of the maximal unitig at the scratch space `unipath_scratch`
+    // to the tracker.
+    void add_maximal_unitig(const Maximal_Unitig_Scratch<k>& unipath_scratch);
 
     // Adds information of the DCC (Detached Chordless Cycle) `cycle` to the tracker.
     template <typename T_container_>
@@ -90,6 +95,25 @@ inline void Unipaths_Meta_info<k>::add_maximal_unitig(const T_container_& unipat
         min_len_ = unipath.size();
 
     sum_len_ += unipath.size();
+}
+
+
+template <uint16_t k>
+inline void Unipaths_Meta_info<k>::add_maximal_unitig(const Maximal_Unitig_Scratch<k>& maximal_unitig)
+{
+    unipath_count_++;
+
+    const std::size_t vertex_count = maximal_unitig.size();
+    const std::size_t unipath_size = vertex_count + (k - 1);
+    kmer_count_ += vertex_count;
+
+    if(max_len_ < unipath_size)
+        max_len_ = unipath_size;
+
+    if(min_len_ > unipath_size)
+        min_len_ = unipath_size;
+
+    sum_len_ += unipath_size;
 }
 
 

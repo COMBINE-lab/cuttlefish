@@ -32,6 +32,8 @@ set(PROJECT_SRC
         Read_CdBG.cpp
         Read_CdBG_Constructor.cpp
         Read_CdBG_Extractor.cpp
+        Unitig_Scratch.cpp
+        Maximal_Unitig_Scratch.cpp
         Unipaths_Meta_info.cpp
         Detached_Cycles_Extractor.cpp
         dBG_Utilities.cpp

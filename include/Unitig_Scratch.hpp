@@ -25,6 +25,10 @@ private:
     Directed_Vertex<k> endpoint_;   // The current end of the unitig through which farther extensions can be done.
                                     // (The side for the extension is to be handled by the client code, although can
                                     // also be inferred from the "directed" vertex.)
+    Directed_Vertex<k> min_vertex_; // The lexicographically minimum vertex in the unitig.
+    std::size_t vertex_idx;         // Index of the vertex in the path being traversed.
+    std::size_t min_v_idx;          // Index of the lexicographically minimum vertex in the path.
+    
     std::vector<char> label_;       // Literal label of the unitig.
     std::vector<uint64_t> hash_;    // Hashes of the constituent vertices of the unitig.
     bool is_cycle_;                 // Whether the unitig is cyclical or not.
@@ -46,8 +50,8 @@ public:
     // not render itself a cycle.
     bool extend(const Directed_Vertex<k>& v, char b);
 
-    // Reverse complements the label sequence (literal form) of the unitig.
-    void rev_compl_label();
+    // Reverse complements the unitig.
+    void reverse_complement();
 
     // Returns the literal label of the unitig.
     const std::vector<char>& label() const;
@@ -63,6 +67,12 @@ public:
 
     // Returns `true` iff unitig is a cycle.
     bool is_cycle() const;
+
+    // Returns the lexicographically minimum vertex in the unitig.
+    const Directed_Vertex<k>& min_vertex() const;
+
+    // Returns the index of the lexicographically minimum vertex in the unitig.
+    std::size_t min_vertex_idx() const;
 };
 
 
@@ -79,7 +89,9 @@ inline void Unitig_Scratch<k>::init(const Directed_Vertex<k>& v)
 {
     clear();
 
-    endpoint_ = anchor = v;
+    min_vertex_ = endpoint_ = anchor = v;
+    min_v_idx = vertex_idx = 0;
+
     endpoint_.kmer().get_label(label_);
     hash_.emplace_back(endpoint_.hash());
     is_cycle_ = false;
@@ -97,6 +109,11 @@ inline bool Unitig_Scratch<k>::extend(const Directed_Vertex<k>& v, const char b)
 
 
     endpoint_ = v;
+    vertex_idx++;
+    
+    if(min_vertex_.canonical() > endpoint_.canonical())
+        min_vertex_ = endpoint_,
+        min_v_idx = vertex_idx;
 
     label_.emplace_back(b);
     hash_.emplace_back(endpoint_.hash());
@@ -106,9 +123,10 @@ inline bool Unitig_Scratch<k>::extend(const Directed_Vertex<k>& v, const char b)
 
 
 template <uint16_t k>
-inline void Unitig_Scratch<k>::rev_compl_label()
+inline void Unitig_Scratch<k>::reverse_complement()
 {
     cuttlefish::reverse_complement(label_);
+    min_v_idx = (hash_.size() - 1 - min_v_idx);
 }
 
 
@@ -144,6 +162,20 @@ template <uint16_t k>
 inline bool Unitig_Scratch<k>::is_cycle() const
 {
     return is_cycle_;
+}
+
+
+template <uint16_t k>
+inline const Directed_Vertex<k>& Unitig_Scratch<k>::min_vertex() const
+{
+    return min_vertex_;
+}
+
+
+template <uint16_t k>
+inline std::size_t Unitig_Scratch<k>::min_vertex_idx() const
+{
+    return min_v_idx;
 }
 
 

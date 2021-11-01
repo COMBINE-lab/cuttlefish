@@ -281,8 +281,13 @@ inline void Read_CdBG_Extractor<k>::mark_path(const std::vector<uint64_t>& path_
 template <uint16_t k>
 inline void Read_CdBG_Extractor<k>::mark_maximal_unitig(const Maximal_Unitig_Scratch<k>& maximal_unitig)
 {
-    mark_path(maximal_unitig.unitig_hash(cuttlefish::side_t::back));
-    mark_path(maximal_unitig.unitig_hash(cuttlefish::side_t::front));
+    if(maximal_unitig.is_linear())
+    {
+        mark_path(maximal_unitig.unitig_hash(cuttlefish::side_t::back));
+        mark_path(maximal_unitig.unitig_hash(cuttlefish::side_t::front));
+    }
+    else
+        mark_path(maximal_unitig.cycle_hash());
 }
 
 
@@ -298,14 +303,16 @@ inline bool Read_CdBG_Extractor<k>::extract_maximal_unitig(const Kmer<k>& v_hat,
         return false;
 
 
+    maximal_unitig.mark_linear();
+    
     if(!walk_unitig(v_hat, state, back, maximal_unitig.unitig(back)))
         return false;
 
     if(maximal_unitig.unitig(back).is_cycle())
-        return false;   // Temporary omission. TODO: include DCCs well.
-
-    if(!walk_unitig(v_hat, state, front, maximal_unitig.unitig(front)))
-        return false;
+        maximal_unitig.mark_cycle(back);
+    else
+        if(!walk_unitig(v_hat, state, front, maximal_unitig.unitig(front)))
+            return false;
 
 
     if(!mark_vertex(maximal_unitig.sign_vertex()))

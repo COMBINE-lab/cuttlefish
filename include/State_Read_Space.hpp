@@ -44,11 +44,9 @@ private:
     State_Read_Space(cuttlefish::state_code_t code);
 
     // Sets the back-encoding of the state to the `Extended_Base`-encoding `edge`.
-    // Requirement: except while for setting `Extended_Base::N`, the bits must be zero beforehand.
     void set_back_encoding(cuttlefish::edge_encoding_t edge);
 
     // Sets the front-encoding of the state to the `Extended_Base`-encoding `edge`.
-    // Requirement: except while for setting `Extended_Base::N`, the bits must be zero beforehand.
     void set_front_encoding(cuttlefish::edge_encoding_t edge);
 
 
@@ -72,8 +70,7 @@ public:
     bool is_branching_side(cuttlefish::side_t side) const;
 
     // Updates the `Extended_Base` encoding of the side `side` of this state, with
-    // `edge`. For optimization purposes, only certain edge-updates have defined
-    // behavior: empty-to-rest and unique-to-multi.
+    // `edge`.
     void update_edge_at(cuttlefish::side_t side, cuttlefish::edge_encoding_t edge);
 
     // Marks the state as already been outputted.
@@ -99,13 +96,13 @@ inline State_Read_Space::State_Read_Space(const cuttlefish::state_code_t code):
 
 inline void State_Read_Space::set_back_encoding(cuttlefish::edge_encoding_t edge)
 {
-    code |= (static_cast<cuttlefish::state_code_t>(edge) << BACK_IDX);
+    code = (code & FRONT_MASK) | (static_cast<cuttlefish::state_code_t>(edge) << BACK_IDX);
 }
 
 
 inline void State_Read_Space::set_front_encoding(cuttlefish::edge_encoding_t edge)
 {
-    code |= (static_cast<cuttlefish::state_code_t>(edge) << FRONT_IDX);
+    code = (code & BACK_MASK) | (static_cast<cuttlefish::state_code_t>(edge) << FRONT_IDX);
 }
 
 

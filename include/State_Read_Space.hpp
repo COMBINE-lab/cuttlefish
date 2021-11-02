@@ -32,13 +32,6 @@ private:
     // Bitmask used to extract the 'Extended_Base`-encoding of the edge(s) incident to the back side of a vertex.
     static constexpr cuttlefish::state_code_t BACK_MASK = SIDE_MASK << BACK_IDX;
 
-    // State code for vertices that have been outputted.
-    // TODO: Use a well-thought-out value as the marker.
-    static constexpr cuttlefish::state_code_t OUTPUTTED = static_cast<cuttlefish::state_code_t>((0b101 << FRONT_IDX) | 0b101 << BACK_IDX);
-
-    // State for the vertices that have been outputted.
-    static const State_Read_Space outputted_state;
-
 
     // Constructs a state that wraps the provided numeric value `code`.
     State_Read_Space(cuttlefish::state_code_t code);
@@ -81,6 +74,11 @@ public:
 
     // Returns the state for the vertices that have been marked as outputted.
     static const State_Read_Space& get_outputted_state();
+
+    // For the given code `code` of some state `s`, returns the code of the
+    // state `s_op` which is the corresponding state where the vertices having
+    // the DFA state `s` in the underlying graph transition to when outputted. 
+    static cuttlefish::state_code_t mark_outputted(cuttlefish::state_code_t code);
 };
 
 
@@ -112,12 +110,6 @@ inline cuttlefish::state_code_t State_Read_Space::get_state() const
 }
 
 
-inline bool State_Read_Space::is_outputted() const
-{
-    return code == OUTPUTTED;
-}
-
-
 inline cuttlefish::edge_encoding_t State_Read_Space::edge_at(const cuttlefish::side_t side) const
 {
     return static_cast<cuttlefish::edge_encoding_t>(side == cuttlefish::side_t::front ? (code & FRONT_MASK) >> FRONT_IDX : (code & BACK_MASK) >> BACK_IDX);
@@ -138,7 +130,26 @@ inline void State_Read_Space::update_edge_at(const cuttlefish::side_t side, cons
 
 inline void State_Read_Space::mark_outputted()
 {
-    code = OUTPUTTED;
+    static constexpr cuttlefish::edge_encoding_t OP_non_branch = cuttlefish::edge_encoding_t::OP_non_branch;
+    static constexpr cuttlefish::edge_encoding_t OP_branching = cuttlefish::edge_encoding_t::OP_branching;
+    
+    if(!is_outputted())
+    {
+        set_back_encoding(is_branching_side(cuttlefish::side_t::back) ? OP_branching : OP_non_branch);
+        set_front_encoding(is_branching_side(cuttlefish::side_t::front) ? OP_branching : OP_non_branch);
+    }
+}
+
+
+inline bool State_Read_Space::is_outputted() const
+{
+    static constexpr uint8_t OP_non_branch = static_cast<uint8_t>(cuttlefish::edge_encoding_t::OP_non_branch);
+    static constexpr uint8_t OP_branching = static_cast<uint8_t>(cuttlefish::edge_encoding_t::OP_branching);
+
+    return  code == ((OP_non_branch << FRONT_IDX)   |   (OP_non_branch << BACK_IDX))    ||
+            code == ((OP_non_branch << FRONT_IDX)   |   (OP_branching << BACK_IDX))     ||
+            code == ((OP_branching << FRONT_IDX)    |   (OP_non_branch << BACK_IDX))    ||
+            code == ((OP_branching << FRONT_IDX)    |   (OP_branching << BACK_IDX)); 
 }
 
 
@@ -148,9 +159,12 @@ inline bool State_Read_Space::operator==(const State_Read_Space& rhs) const
 }
 
 
-inline const State_Read_Space& State_Read_Space::get_outputted_state()
+inline cuttlefish::state_code_t State_Read_Space::mark_outputted(const cuttlefish::state_code_t code)
 {
-    return outputted_state;
+    State_Read_Space state(code);
+    state.mark_outputted();
+
+    return state.get_state();
 }
 
 

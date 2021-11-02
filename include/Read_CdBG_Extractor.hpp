@@ -274,7 +274,7 @@ template <uint16_t k>
 inline void Read_CdBG_Extractor<k>::mark_path(const std::vector<uint64_t>& path_hashes)
 {
     for(const uint64_t hash: path_hashes)
-        hash_table.update(hash, State_Read_Space::get_outputted_state());
+        hash_table.update(hash, State_Read_Space::mark_outputted);
 }
 
 

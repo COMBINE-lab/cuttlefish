@@ -59,8 +59,12 @@ public:
     cuttlefish::edge_encoding_t edge_at(cuttlefish::side_t side) const;
 
     // Returns `true` iff some vertex having this state is branching (i.e. has
-    // multiple incident edges) at its side `side`.
+    // multiple incident edges) at its side `side`, and hasn't been outputted yet.
     bool is_branching_side(cuttlefish::side_t side) const;
+
+    // Returns `true` iff some vertex having this state is branching (i.e. has
+    // multiple incident edges) at its side `side`, and has already been outputted.
+    bool was_branching_side(cuttlefish::side_t side) const;
 
     // Updates the `Extended_Base` encoding of the side `side` of this state, with
     // `edge`.
@@ -119,6 +123,12 @@ inline cuttlefish::edge_encoding_t State_Read_Space::edge_at(const cuttlefish::s
 inline bool State_Read_Space::is_branching_side(const cuttlefish::side_t side) const
 {
     return edge_at(side) == cuttlefish::edge_encoding_t::N;
+}
+
+
+inline bool State_Read_Space::was_branching_side(const cuttlefish::side_t side) const
+{
+    return edge_at(side) == cuttlefish::edge_encoding_t::OP_branching;
 }
 
 

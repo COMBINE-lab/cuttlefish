@@ -274,7 +274,7 @@ template <uint16_t k>
 inline void Read_CdBG_Extractor<k>::mark_path(const std::vector<uint64_t>& path_hashes)
 {
     for(const uint64_t hash: path_hashes)
-        hash_table.update(hash, State_Read_Space::get_outputted_state());
+        hash_table.update(hash, State_Read_Space::mark_outputted);
 }
 
 
@@ -339,18 +339,21 @@ inline bool Read_CdBG_Extractor<k>::walk_unitig(const Kmer<k>& v_hat, const Stat
 
     while(true)
     {
-        if(state.is_outputted())    // The unitig has already been outputted earlier / in the meantime.
-            return false;
-
         e_v = state.edge_at(s_v);
         if(cuttlefish::is_fuzzy_edge(e_v))  // Reached an endpoint.
             break;
 
         b_ext = (s_v == cuttlefish::side_t::back ? DNA_Utility::map_base(e_v) : DNA_Utility::complement(DNA_Utility::map_base(e_v)));
-        v.roll_forward(b_ext, hash_table);
+        v.roll_forward(b_ext, hash_table);  // Walk to the next vertex.
 
         state = hash_table[v.hash()].state();
         s_v = v.entrance_side();
+
+        if(state.is_outputted())
+            return state.was_branching_side(s_v);   // If `s_v` was a branching side, then the walk just crossed to a different unitig;
+                                                    // so this unitig is depleted. Otherwise, `s_v` must belong to this unitig. In that
+                                                    // case, the unitig has already been outputted earlier.
+
         if(state.is_branching_side(s_v))    // Crossed an endpoint and reached a different unitig.
             break;
 

@@ -82,9 +82,11 @@ void Read_CdBG_Constructor<k>::process_edges(Kmer_SPMC_Iterator<k + 1>* const ed
 {
     // Data locations to be reused per each edge processed.
     Edge<k> e;  // For the edges to be processed one-by-one.
+/*
     cuttlefish::edge_encoding_t e_front, e_back;    // Edges incident to the front and to the back of a vertex with a crossing loop.
     cuttlefish::edge_encoding_t e_u_old, e_u_new;   // Edges incident to some particular side of a vertex `u`, before and after the addition of a new edge.
     cuttlefish::edge_encoding_t e_v_old, e_v_new;   // Edges incident to some particular side of a vertex `v`, before and after the addition of a new edge.
+*/
 
     uint64_t edge_count = 0;    // Number of edges processed by this thread.
     uint64_t progress = 0;  // Number of edges processed by the thread; is reset at reaching 1% of its approximate workload.
@@ -97,19 +99,28 @@ void Read_CdBG_Constructor<k>::process_edges(Kmer_SPMC_Iterator<k + 1>* const ed
             if(e.is_loop())
                 if(e.u().side() != e.v().side())    // It is a crossing loop.
                 {
+                    while(!add_crossing_loop(e.u()));
+/*
                     while(!add_crossing_loop(e.u(), e_front, e_back));
                     
                     propagate_discard(e.u(), e.u().side() == cuttlefish::side_t::front ? e_front : e_back);
                     propagate_discard(e.v(), e.v().side() == cuttlefish::side_t::front ? e_front : e_back);
+*/
                 }
                 else    // A one-sided loop.
                 {
+                    while(!add_one_sided_loop(e.u()));
+/*
                     while(!add_one_sided_loop(e.u(), e_u_old));
 
                     propagate_discard(e.u(), e_u_old);
+*/
                 }
             else    // It connects two endpoints `u` and `v` of two distinct vertex.
             {
+                while(!add_incident_edge(e.u()));
+                while(!add_incident_edge(e.v()));
+/*
                 while(!add_incident_edge(e.u(), e_u_old, e_u_new));
                 while(!add_incident_edge(e.v(), e_v_old, e_v_new));
 
@@ -118,6 +129,7 @@ void Read_CdBG_Constructor<k>::process_edges(Kmer_SPMC_Iterator<k + 1>* const ed
 
                 if(e_v_new == cuttlefish::edge_encoding_t::N)
                     propagate_discard(e.v(), e.u(), e_v_old);
+*/
             }
 
             edge_count++;

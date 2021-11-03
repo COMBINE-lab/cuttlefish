@@ -32,23 +32,14 @@ private:
     // Bitmask used to extract the 'Extended_Base`-encoding of the edge(s) incident to the back side of a vertex.
     static constexpr cuttlefish::state_code_t BACK_MASK = SIDE_MASK << BACK_IDX;
 
-    // State code for vertices that have been outputted.
-    // TODO: Use a well-thought-out value as the marker.
-    static constexpr cuttlefish::state_code_t OUTPUTTED = static_cast<cuttlefish::state_code_t>((0b101 << FRONT_IDX) | 0b101 << BACK_IDX);
-
-    // State for the vertices that have been outputted.
-    static const State_Read_Space outputted_state;
-
 
     // Constructs a state that wraps the provided numeric value `code`.
     State_Read_Space(cuttlefish::state_code_t code);
 
     // Sets the back-encoding of the state to the `Extended_Base`-encoding `edge`.
-    // Requirement: except while for setting `Extended_Base::N`, the bits must be zero beforehand.
     void set_back_encoding(cuttlefish::edge_encoding_t edge);
 
     // Sets the front-encoding of the state to the `Extended_Base`-encoding `edge`.
-    // Requirement: except while for setting `Extended_Base::N`, the bits must be zero beforehand.
     void set_front_encoding(cuttlefish::edge_encoding_t edge);
 
 
@@ -68,12 +59,15 @@ public:
     cuttlefish::edge_encoding_t edge_at(cuttlefish::side_t side) const;
 
     // Returns `true` iff some vertex having this state is branching (i.e. has
-    // multiple incident edges) at its side `side`.
+    // multiple incident edges) at its side `side`, and hasn't been outputted yet.
     bool is_branching_side(cuttlefish::side_t side) const;
 
+    // Returns `true` iff some vertex having this state is branching (i.e. has
+    // multiple incident edges) at its side `side`, and has already been outputted.
+    bool was_branching_side(cuttlefish::side_t side) const;
+
     // Updates the `Extended_Base` encoding of the side `side` of this state, with
-    // `edge`. For optimization purposes, only certain edge-updates have defined
-    // behavior: empty-to-rest and unique-to-multi.
+    // `edge`.
     void update_edge_at(cuttlefish::side_t side, cuttlefish::edge_encoding_t edge);
 
     // Marks the state as already been outputted.
@@ -84,6 +78,11 @@ public:
 
     // Returns the state for the vertices that have been marked as outputted.
     static const State_Read_Space& get_outputted_state();
+
+    // For the given code `code` of some state `s`, returns the code of the
+    // state `s_op` which is the corresponding state where the vertices having
+    // the DFA state `s` in the underlying graph transition to when outputted. 
+    static cuttlefish::state_code_t mark_outputted(cuttlefish::state_code_t code);
 };
 
 
@@ -99,25 +98,19 @@ inline State_Read_Space::State_Read_Space(const cuttlefish::state_code_t code):
 
 inline void State_Read_Space::set_back_encoding(cuttlefish::edge_encoding_t edge)
 {
-    code |= (static_cast<cuttlefish::state_code_t>(edge) << BACK_IDX);
+    code = (code & FRONT_MASK) | (static_cast<cuttlefish::state_code_t>(edge) << BACK_IDX);
 }
 
 
 inline void State_Read_Space::set_front_encoding(cuttlefish::edge_encoding_t edge)
 {
-    code |= (static_cast<cuttlefish::state_code_t>(edge) << FRONT_IDX);
+    code = (code & BACK_MASK) | (static_cast<cuttlefish::state_code_t>(edge) << FRONT_IDX);
 }
 
 
 inline cuttlefish::state_code_t State_Read_Space::get_state() const
 {
     return code;
-}
-
-
-inline bool State_Read_Space::is_outputted() const
-{
-    return code == OUTPUTTED;
 }
 
 
@@ -133,6 +126,12 @@ inline bool State_Read_Space::is_branching_side(const cuttlefish::side_t side) c
 }
 
 
+inline bool State_Read_Space::was_branching_side(const cuttlefish::side_t side) const
+{
+    return edge_at(side) == cuttlefish::edge_encoding_t::OP_branching;
+}
+
+
 inline void State_Read_Space::update_edge_at(const cuttlefish::side_t side, const cuttlefish::edge_encoding_t edge)
 {
     side == cuttlefish::side_t::front ? set_front_encoding(edge) : set_back_encoding(edge);
@@ -141,7 +140,26 @@ inline void State_Read_Space::update_edge_at(const cuttlefish::side_t side, cons
 
 inline void State_Read_Space::mark_outputted()
 {
-    code = OUTPUTTED;
+    static constexpr cuttlefish::edge_encoding_t OP_non_branch = cuttlefish::edge_encoding_t::OP_non_branch;
+    static constexpr cuttlefish::edge_encoding_t OP_branching = cuttlefish::edge_encoding_t::OP_branching;
+    
+    if(!is_outputted())
+    {
+        set_back_encoding(is_branching_side(cuttlefish::side_t::back) ? OP_branching : OP_non_branch);
+        set_front_encoding(is_branching_side(cuttlefish::side_t::front) ? OP_branching : OP_non_branch);
+    }
+}
+
+
+inline bool State_Read_Space::is_outputted() const
+{
+    static constexpr uint8_t OP_non_branch = static_cast<uint8_t>(cuttlefish::edge_encoding_t::OP_non_branch);
+    static constexpr uint8_t OP_branching = static_cast<uint8_t>(cuttlefish::edge_encoding_t::OP_branching);
+
+    return  code == ((OP_non_branch << FRONT_IDX)   |   (OP_non_branch << BACK_IDX))    ||
+            code == ((OP_non_branch << FRONT_IDX)   |   (OP_branching << BACK_IDX))     ||
+            code == ((OP_branching << FRONT_IDX)    |   (OP_non_branch << BACK_IDX))    ||
+            code == ((OP_branching << FRONT_IDX)    |   (OP_branching << BACK_IDX)); 
 }
 
 
@@ -151,9 +169,12 @@ inline bool State_Read_Space::operator==(const State_Read_Space& rhs) const
 }
 
 
-inline const State_Read_Space& State_Read_Space::get_outputted_state()
+inline cuttlefish::state_code_t State_Read_Space::mark_outputted(const cuttlefish::state_code_t code)
 {
-    return outputted_state;
+    State_Read_Space state(code);
+    state.mark_outputted();
+
+    return state.get_state();
 }
 
 

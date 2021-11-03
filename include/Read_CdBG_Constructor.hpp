@@ -52,12 +52,22 @@ private:
     // attempted state transition failed.
     bool add_incident_edge(const Endpoint<k>& endpoint, cuttlefish::edge_encoding_t& e_old, cuttlefish::edge_encoding_t& e_new);
 
+    // Adds the information of an incident edge `e` to the side `s` of some vertex `v`, all wrapped
+    // inside the edge-endpoint object `endpoint` — making the appropriate state transitions for the
+    // DFA of `v`. Returns `false` iff an attempted state transition failed.
+    bool add_incident_edge(const Endpoint<k>& endpoint);
+
     // Adds the information of an incident loop that connects the two different endpoints of some
     // vertex `v`, wrapped inside the edge-endpoint object `endpoint` — making the appropriate state
     // transition for the DFA of `v`. Also stores the edge encodings of the incidence information of
     // the front and the back sides before this addition, in `e_front` and `e_back` respectively.
     // Returns `false` iff an attempted state transition failed.
     bool add_crossing_loop(const Endpoint<k>& endpoint, cuttlefish::edge_encoding_t& e_front, cuttlefish::edge_encoding_t& e_back);
+    
+    // Adds the information of an incident loop that connects the two different endpoints of some
+    // vertex `v`, wrapped inside the edge-endpoint object `endpoint` — making the appropriate state
+    // transition for the DFA of `v`. Returns `false` iff an attempted state transition failed.
+    bool add_crossing_loop(const Endpoint<k>& endpoint);
 
     // Adds the information of an incident loop for some vertex `v` that connects its side `s` to
     // the side itself, all wrapped inside the edge-endpoint object `endpoint` — making the
@@ -65,6 +75,12 @@ private:
     // information of the side `s` before this addition, in `e_old`. Returns `false` iff an attempted
     // state transition failed.
     bool add_one_sided_loop(const Endpoint<k>& endpoint, cuttlefish::edge_encoding_t& e_old);
+
+    // Adds the information of an incident loop for some vertex `v` that connects its side `s` to
+    // the side itself, all wrapped inside the edge-endpoint object `endpoint` — making the
+    // appropriate state transition for the DFA of `v`. Returns `false` iff an attempted state
+    // transition failed.
+    bool add_one_sided_loop(const Endpoint<k>& endpoint);
 
     // If the endpoint object `v_end` connects to some neighboring endpoint `w_end` through a unique
     // edge encoded with `e`, then discards the incidence information of `w_end` — making the
@@ -136,6 +152,38 @@ inline bool Read_CdBG_Constructor<k>::add_incident_edge(const Endpoint<k>& endpo
 
 
 template <uint16_t k>
+inline bool Read_CdBG_Constructor<k>::add_incident_edge(const Endpoint<k>& endpoint)
+{
+    // Fetch the hash table entry for the vertex associated to the endpoint.
+
+    Kmer_Hash_Entry_API<cuttlefish::BITS_PER_READ_KMER> bucket = hash_table[endpoint.hash()];
+    State_Read_Space& state = bucket.get_state();
+    const cuttlefish::edge_encoding_t e_curr = state.edge_at(endpoint.side());
+
+    // If we've already discarded the incidence information for this side, then a self-transition happens.
+    if(e_curr == cuttlefish::edge_encoding_t::N)
+        return true;    // The side has already been determined to be branching—nothing to update here anymore.
+
+    cuttlefish::edge_encoding_t e_new = endpoint.edge();
+    if(e_curr != cuttlefish::edge_encoding_t::E)    // The side is not empty.
+    {
+        // We can get away without updating the same value again, because — (1) even if this DFA's state changes
+        // in the hash table by the time this method completes, making no updates at this point is theoretically
+        // equivalent to returning instantaneously as soon as the hash table value had been read; and also (2) the
+        // ordering of the edges processed does not matter in the algorithm.
+        if(e_new == e_curr)
+            return true;
+
+        // This side has been visited earlier, but with a different edge—discard the incidence information.
+        e_new = cuttlefish::edge_encoding_t::N;
+    }
+
+    state.update_edge_at(endpoint.side(), e_new);
+    return hash_table.update(bucket);
+}
+
+
+template <uint16_t k>
 inline bool Read_CdBG_Constructor<k>::add_crossing_loop(const Endpoint<k>& endpoint, cuttlefish::edge_encoding_t& e_front, cuttlefish::edge_encoding_t& e_back)
 {
     // Fetch the hash table entry for the DFA of vertex associated to the endpoint.
@@ -159,6 +207,27 @@ inline bool Read_CdBG_Constructor<k>::add_crossing_loop(const Endpoint<k>& endpo
 
 
 template <uint16_t k>
+inline bool Read_CdBG_Constructor<k>::add_crossing_loop(const Endpoint<k>& endpoint)
+{
+    // Fetch the hash table entry for the DFA of vertex associated to the endpoint.
+    
+    Kmer_Hash_Entry_API<cuttlefish::BITS_PER_READ_KMER> bucket = hash_table[endpoint.hash()];
+    State_Read_Space& state = bucket.get_state();
+
+    const State_Read_Space state_curr = state;
+
+    if(state.edge_at(cuttlefish::side_t::front) != cuttlefish::edge_encoding_t::N)   // Discard the front-incidence information, if not done already.
+        state.update_edge_at(cuttlefish::side_t::front, cuttlefish::edge_encoding_t::N);
+    
+    if(state.edge_at(cuttlefish::side_t::back) != cuttlefish::edge_encoding_t::N)    // Discard the back-incidence information, if not done already.
+        state.update_edge_at(cuttlefish::side_t::back, cuttlefish::edge_encoding_t::N);
+
+    // We can get away without updating the same value again: see detailed comment in `add_incident_edge`.
+    return state == state_curr ? true : hash_table.update(bucket);
+}
+
+
+template <uint16_t k>
 inline bool Read_CdBG_Constructor<k>::add_one_sided_loop(const Endpoint<k>& endpoint, cuttlefish::edge_encoding_t& e_old)
 {
     // Fetch the hash table entry for the vertex associated to the endpoint.
@@ -169,6 +238,24 @@ inline bool Read_CdBG_Constructor<k>::add_one_sided_loop(const Endpoint<k>& endp
 
     // We can get away without updating the same value again: see detailed comment in `add_incident_edge`.
     if(e_old == cuttlefish::edge_encoding_t::N) // The incidence information has already been discarded.
+        return true;
+
+    // Discard the incidence information.
+    state.update_edge_at(endpoint.side(), cuttlefish::edge_encoding_t::N);
+    return hash_table.update(bucket);
+}
+
+
+template <uint16_t k>
+inline bool Read_CdBG_Constructor<k>::add_one_sided_loop(const Endpoint<k>& endpoint)
+{
+    // Fetch the hash table entry for the vertex associated to the endpoint.
+
+    Kmer_Hash_Entry_API<cuttlefish::BITS_PER_READ_KMER> bucket = hash_table[endpoint.hash()];
+    State_Read_Space& state = bucket.get_state();
+
+    // We can get away without updating the same value again: see detailed comment in `add_incident_edge`.
+    if(state.edge_at(endpoint.side()) == cuttlefish::edge_encoding_t::N) // The incidence information has already been discarded.
         return true;
 
     // Discard the incidence information.

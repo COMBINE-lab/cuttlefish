@@ -21,9 +21,7 @@ Build_Params::Build_Params( const bool is_read_graph,
                             const std::string& mph_file_path,
                             const std::string& buckets_file_path,
                             const bool save_vertices,
-                            const std::string& json_file_path,
-                            const bool dcc_opt,
-                            const bool extract_cycles
+                            const std::string& json_file_path
 #ifdef CF_DEVELOP_MODE
                     , const double gamma
 #endif
@@ -44,9 +42,7 @@ Build_Params::Build_Params( const bool is_read_graph,
         mph_file_path_(mph_file_path),
         buckets_file_path_(buckets_file_path),
         save_vertices_(save_vertices),
-        json_file_path_(json_file_path),
-        dcc_opt_(dcc_opt),
-        extract_cycles_(extract_cycles)
+        json_file_path_(json_file_path)
 #ifdef CF_DEVELOP_MODE
         , gamma_(gamma)
 #endif

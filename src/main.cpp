@@ -42,10 +42,8 @@ void build(int argc, char** argv)
         ("mph", "minimal perfect hash (BBHash) file (optional)", cxxopts::value<std::string>()->default_value(cuttlefish::_default::EMPTY))
         ("buckets", "hash table buckets (cuttlefish) file (optional)", cxxopts::value<std::string>()->default_value(cuttlefish::_default::EMPTY))
         ("save-vertices", "save the vertex set of the graph")
-        ("json", "meta-info (JSON) file", cxxopts::value<std::string>()->default_value(cuttlefish::_default::EMPTY))
         // TODO: remove the following arg
-        ("no-dcc", "turn off optimization for post-construction extraction of DCCs (Detached Chordless Cycles)")
-        ("cycles", "extract the detached chordless cycles of the graph")
+        ("json", "meta-info (JSON) file", cxxopts::value<std::string>()->default_value(cuttlefish::_default::EMPTY))
 #ifdef CF_DEVELOP_MODE
         ("gamma", "gamma for the BBHash MPHF", cxxopts::value<double>()->default_value(std::to_string(cuttlefish::_default::GAMMA)))
 #endif
@@ -79,8 +77,6 @@ void build(int argc, char** argv)
         const auto buckets_file = result["buckets"].as<std::string>();
         const auto save_vertices = result["save-vertices"].as<bool>();
         const auto json_file = result["json"].as<std::string>();
-        const auto dcc_opt = !result["no-dcc"].as<bool>();
-        const auto extract_cycles = result["cycles"].as<bool>();
 #ifdef CF_DEVELOP_MODE
         const double gamma = result["gamma"].as<double>();
 #endif
@@ -89,8 +85,7 @@ void build(int argc, char** argv)
                                     refs, lists, dirs,
                                     k, cutoff, kmer_database, edge_database, thread_count, max_memory, strict_memory,
                                     output_file, format, working_dir,
-                                    remove_kmc_db, mph_file, buckets_file, save_vertices, json_file,
-                                    dcc_opt, extract_cycles
+                                    remove_kmc_db, mph_file, buckets_file, save_vertices, json_file
 #ifdef CF_DEVELOP_MODE
                                     , gamma
 #endif

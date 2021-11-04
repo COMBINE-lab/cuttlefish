@@ -36,8 +36,6 @@ private:
     const std::string buckets_file_path_;   // Optional path to file storing the hash table buckets for the k-mer set.
     const bool save_vertices_;  // Option to save the vertex set of the de Bruijn graph (in KMC database format).
     const std::string json_file_path_;  // Optional path to file storing meta-information about the graph and cuttlefish executions.
-    const bool dcc_opt_;    // Option to optimize post-cdBG-construction extraction of DCCs (Detached Chordless Cycles).
-    const bool extract_cycles_; // Option to extract detached chordless cycles from the de Bruijn graph after compaction.
 #ifdef CF_DEVELOP_MODE
     const double gamma_;    // The gamma parameter for the BBHash MPHF.
 #endif
@@ -64,9 +62,7 @@ public:
                     const std::string& mph_file_path,
                     const std::string& buckets_file_path,
                     const bool save_vertices,
-                    const std::string& json_file_path,
-                    const bool dcc_opt,
-                    const bool extract_cycles
+                    const std::string& json_file_path
 #ifdef CF_DEVELOP_MODE
                     , const double gamma
 #endif
@@ -196,20 +192,6 @@ public:
     const std::string json_file_path() const
     {
         return is_read_graph() ? (output_file_path_ + cuttlefish::file_ext::json_ext) : json_file_path_;
-    }
-
-
-    // Returns whether the option of optimizing post-cdBG-construction extraction of DCCs is specified.
-    bool dcc_opt() const
-    {
-        return dcc_opt_;
-    }
-
-
-    // Returns whether the option of extracting detached chordless cycles is specified.
-    bool extract_cycles() const
-    {
-        return extract_cycles_;
     }
 
 

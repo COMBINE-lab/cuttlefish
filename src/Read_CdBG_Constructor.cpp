@@ -133,9 +133,8 @@ void Read_CdBG_Constructor<k>::process_edges(Kmer_SPMC_Iterator<k + 1>* const ed
             }
 
             edge_count++;
-
-
-            progress_tracker.track_work(++progress);
+            if(progress_tracker.track_work(++progress))
+                progress = 0;
         }
 
     lock.lock();

@@ -32,15 +32,14 @@ public:
     // log message to be displayed over the course of tracking is `log_message`.
     void setup(uint64_t total_work_load, uint64_t work_chunk_threshold, const std::string& log_message);
 
-    // Tracks progress made for a work-chunk of size `work_chunk_size`. If an update it made towards progress,
-    // then the chunk-size is set to 0 to refresh it for the next cycle.
-    // Note that, the chunk-size must be at least `work_chunk_threshold` for any updates to be made towards
-    // the progress. All lesser sized chunk update requests are ignored. So, repeated invocation is suggested.
-    void track_work(uint64_t& work_chunk_size);
+    // Tracks progress made for a work-chunk of size `work_chunk_size`. If the passed chunk-size is large
+    // enough, then it is tracked and `true` is returned. All lesser sized chunk update requests are ignored
+    // and `false` is returned. So, repeated invocation is suggested.
+    bool track_work(uint64_t work_chunk_size);
 };
 
 
-inline void Progress_Tracker::track_work(uint64_t& work_chunk_size)
+inline bool Progress_Tracker::track_work(const uint64_t work_chunk_size)
 {
     if(work_chunk_size >= work_chunk_threshold)
     {
@@ -57,9 +56,10 @@ inline void Progress_Tracker::track_work(uint64_t& work_chunk_size)
 
         lock.unlock();
 
-
-        work_chunk_size = 0;
+        return true;
     }
+
+    return false;
 }
 
 

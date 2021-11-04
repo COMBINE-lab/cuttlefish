@@ -100,7 +100,8 @@ void Read_CdBG_Extractor<k>::process_vertices(Kmer_SPMC_Iterator<k>* const verte
             }
 
             vertex_count++;
-            progress_tracker.track_work(++progress);
+            if(progress_tracker.track_work(++progress))
+                progress = 0;
         }
 
 

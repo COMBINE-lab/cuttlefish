@@ -45,13 +45,6 @@ private:
     // Extracts the maximal unitigs from the graph.
     void extract_maximal_unitigs();
 
-    // Extracts the detached chordless cycles of the graph and appends the output to the
-    // output file at path `output_file_path`. Specifying `rerun` implies that the graph
-    // has been compacted earlier in a separate run of Cuttlefish; otherwise it's done
-    // in this same run. Returns `true` iff either there is no DCC in the graph, or the
-    // DCCs have already been extracted earlier.
-    bool extract_DCCs(const std::string& output_file_path, bool rerun = false);
-
     // Returns the path prefix to the edge database being used by Cuttlefish.
     const std::string edge_db_path() const;
 
@@ -62,14 +55,6 @@ private:
     // collection `params` had been constructed in an earlier execution.
     // NB: only the existence of the output meta-info file is checked for this purpose.
     bool is_constructed() const;
-
-    // Returns `true` iff the graph contains detached chordless cycles and the current
-    // execution is configured to extract those in this same run.
-    bool extract_DCCs_this_run() const;
-
-    // Returns `true` iff the data structures required for DCC-extraction is present
-    // from an earlier execution of the algorithm.
-    bool DCC_data_structs_exist() const;
 
 
 public:
@@ -85,6 +70,25 @@ public:
     // Constructs the compacted read de Bruijn graph, employing the parameters received
     // with the object-constructor.
     void construct();
+
+
+// The following stuffs are not used anymore with the current algorithm.
+private:
+
+    // Extracts the detached chordless cycles of the graph and appends the output to the
+    // output file at path `output_file_path`. Specifying `rerun` implies that the graph
+    // has been compacted earlier in a separate run of Cuttlefish; otherwise it's done
+    // in this same run. Returns `true` iff either there is no DCC in the graph, or the
+    // DCCs have already been extracted earlier.
+    bool extract_DCCs(const std::string& output_file_path, bool rerun = false);
+
+    // Returns `true` iff the graph contains detached chordless cycles and the current
+    // execution is configured to extract those in this same run.
+    bool extract_DCCs_this_run() const;
+
+    // Returns `true` iff the data structures required for DCC-extraction is present
+    // from an earlier execution of the algorithm.
+    bool DCC_data_structs_exist() const;
 };
 
 

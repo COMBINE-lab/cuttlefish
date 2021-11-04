@@ -80,6 +80,9 @@ private:
     // Marks all the vertices which have their hashes present in `path_hashes` as outputted.
     void mark_path(const std::vector<uint64_t>& path_hashes);
 
+    // Marks all the vertices in the constituent unitigs of `maximal_unitig` as outputted.
+    void mark_maximal_unitig(const Maximal_Unitig_Scratch<k>& maximal_unitig);
+
     // Marks the vertex `v` as outputted. Returns `true` iff `v` has not been marked yet and the hash
     // table update is successful.
     bool mark_vertex(const Directed_Vertex<k>& v);
@@ -130,9 +133,6 @@ private:
     // constituting the path overwrites `path_hashes` (when the user-option is specified). If not,
     // `unipath` and `path_hashes` may contain partial form of the path, and `id` is unaltered.
     bool extract_maximal_unitig(const Kmer<k>& v_hat, cuttlefish::side_t s_v_hat, uint64_t& id, std::vector<char>& unipath, std::vector<uint64_t>& path_hashes);
-
-    // Marks all the vertices in the constituent unitigs of `maximal_unitig` as outputted.
-    void mark_maximal_unitig(const Maximal_Unitig_Scratch<k>& maximal_unitig);
 
     // Marks all the vertices that are present in the maximal unitigs of the graph with its vertex
     // set being present at the path prefix `vertex_db_path`.
@@ -248,6 +248,19 @@ inline void Read_CdBG_Extractor<k>::mark_path(const std::vector<uint64_t>& path_
 {
     for(const uint64_t hash: path_hashes)
         hash_table.update(hash, State_Read_Space::mark_outputted);
+}
+
+
+template <uint16_t k>
+inline void Read_CdBG_Extractor<k>::mark_maximal_unitig(const Maximal_Unitig_Scratch<k>& maximal_unitig)
+{
+    if(maximal_unitig.is_linear())
+    {
+        mark_path(maximal_unitig.unitig_hash(cuttlefish::side_t::back));
+        mark_path(maximal_unitig.unitig_hash(cuttlefish::side_t::front));
+    }
+    else
+        mark_path(maximal_unitig.cycle_hash());
 }
 
 

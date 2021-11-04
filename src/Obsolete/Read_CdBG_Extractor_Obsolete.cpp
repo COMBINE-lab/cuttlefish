@@ -126,19 +126,6 @@ bool Read_CdBG_Extractor<k>::extract_maximal_unitig(const Kmer<k>& v_hat, const 
 
 
 template <uint16_t k>
-inline void Read_CdBG_Extractor<k>::mark_maximal_unitig(const Maximal_Unitig_Scratch<k>& maximal_unitig)
-{
-    if(maximal_unitig.is_linear())
-    {
-        mark_path(maximal_unitig.unitig_hash(cuttlefish::side_t::back));
-        mark_path(maximal_unitig.unitig_hash(cuttlefish::side_t::front));
-    }
-    else
-        mark_path(maximal_unitig.cycle_hash());
-}
-
-
-template <uint16_t k>
 bool Read_CdBG_Extractor<k>::mark_flanking_vertices(const Directed_Vertex<k>& sign_vertex, const Directed_Vertex<k>& cosign_vertex)
 {
     return mark_vertex(sign_vertex) && (sign_vertex.hash() == cosign_vertex.hash() || mark_vertex(cosign_vertex));

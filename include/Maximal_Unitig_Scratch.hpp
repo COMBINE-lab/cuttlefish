@@ -81,6 +81,9 @@ public:
     // unique ID.
     void finalize();
 
+    // Returns `true` iff the maximal unitig has been marked as a cycle.
+    bool is_cycle() const;
+
     // Returns a FASTA record of the maximal unitig (in canonical form).
     // Applicable when the maximal unitig is linear.
     const FASTA_Record<std::vector<char>> fasta_rec() const;
@@ -180,6 +183,13 @@ inline void Maximal_Unitig_Scratch<k>::finalize()
         if(!cycle->min_vertex().in_canonical_form())
             cycle->reverse_complement();
     }
+}
+
+
+template <uint16_t k>
+inline bool Maximal_Unitig_Scratch<k>::is_cycle() const
+{
+    return !is_linear();
 }
 
 

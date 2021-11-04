@@ -33,17 +33,9 @@ public:
     // Constructs a meta-information tracker for maximal unitigs.
     Unipaths_Meta_info();
 
-    // Adds information of the maximal unitig `unipath` to the tracker.
-    template <typename T_container_>
-    void add_maximal_unitig(const T_container_& unipath);
-
-    // Adds information of the maximal unitig at the scratch space `unipath_scratch`
+    // Adds information of the maximal unitig at the scratch space `maximal_unitig`
     // to the tracker.
-    void add_maximal_unitig(const Maximal_Unitig_Scratch<k>& unipath_scratch);
-
-    // Adds information of the DCC (Detached Chordless Cycle) `cycle` to the tracker.
-    template <typename T_container_>
-    void add_DCC(const T_container_& cycle);
+    void add_maximal_unitig(const Maximal_Unitig_Scratch<k>& maximal_unitig);
 
     // Aggregates the information of the tracker `other` to this tracker.
     void aggregate(const Unipaths_Meta_info<k>& other);
@@ -81,24 +73,6 @@ public:
 
 
 template <uint16_t k>
-template <typename T_container_>
-inline void Unipaths_Meta_info<k>::add_maximal_unitig(const T_container_& unipath)
-{
-    unipath_count_++;
-    
-    kmer_count_ += unipath.size() - (k - 1);
-
-    if(max_len_ < unipath.size())
-        max_len_ = unipath.size();
-
-    if(min_len_ > unipath.size())
-        min_len_ = unipath.size();
-
-    sum_len_ += unipath.size();
-}
-
-
-template <uint16_t k>
 inline void Unipaths_Meta_info<k>::add_maximal_unitig(const Maximal_Unitig_Scratch<k>& maximal_unitig)
 {
     unipath_count_++;
@@ -114,18 +88,14 @@ inline void Unipaths_Meta_info<k>::add_maximal_unitig(const Maximal_Unitig_Scrat
         min_len_ = unipath_size;
 
     sum_len_ += unipath_size;
-}
 
 
-template <uint16_t k>
-template <typename T_container_>
-inline void Unipaths_Meta_info<k>::add_DCC(const T_container_& cycle)
-{
-    dcc_count_++;
-
-    dcc_kmer_count_ += cycle.size() - (k - 1);
-
-    dcc_sum_len_ += cycle.size();
+    if(maximal_unitig.is_cycle())
+    {
+        dcc_count_++;
+        dcc_kmer_count_ += vertex_count;
+        dcc_sum_len_ += unipath_size;
+    }
 }
 
 

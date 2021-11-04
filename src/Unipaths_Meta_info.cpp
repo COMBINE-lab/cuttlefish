@@ -108,6 +108,15 @@ void Unipaths_Meta_info<k>::print() const
     std::cout << "Length of the longest maximal unitig (in bases):  " << max_len_ << ".\n";
     std::cout << "Length of the shortest maximal unitig (in bases): " << min_len_ << ".\n";
     std::cout << "Sum length of the maximal unitigs (in bases): " << sum_len_ << ".\n";
+
+    if(dcc_count_ > 0)
+    {
+        std::cout << "\nThere are Detached Chordless Cycles (DCC) present in the graph:\n";
+
+        std::cout << "DCC count: " << dcc_count_ << ".\n";
+        std::cout << "Number of vertices in the DCCs: " << dcc_kmer_count_ << ".\n";
+        std::cout << "Sum length of the DCCs (in bases): " << dcc_sum_len_ << ".\n";
+    }
 }
 
 

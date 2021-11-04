@@ -24,10 +24,8 @@ namespace DNA
     };
 
 
-    // E = 0, A = 1, C = 2, G = 3, T = 4, N = 7.
-    // Implementation of the state class for the read de Bruijn graph uses intricacies
-    // of this mapping (and the underlying transition function of the DFA) heavily. Do
-    // not alter the mapping without updating the state-class.
+    // E = 0, A = 1, C = 2, G = 3, T = 4, N = 7;
+    // O/P and — non-branching = 5, branching = 6.
     enum class Extended_Base: uint8_t
     {
         E = 0b000,  // 0
@@ -36,6 +34,8 @@ namespace DNA
         G = 0b011,  // 3
         T = 0b100,  // 4
         N = 0b111,  // 7
+        OP_non_branch = 0b101,  // 5
+        OP_branching = 0b110,   // 6
     };
 }
 

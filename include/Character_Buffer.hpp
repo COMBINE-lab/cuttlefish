@@ -133,11 +133,12 @@ template <std::size_t CAPACITY, typename T_sink_>
 template <typename T_container_>
 inline void Character_Buffer<CAPACITY, T_sink_>::operator+=(const FASTA_Record<T_container_>& fasta_rec)
 {
-    ensure_space(fasta_rec.header_size() + 1 + fasta_rec.seq_size());   // 1 extra byte for the line-break.
+    ensure_space(fasta_rec.header_size() + 1 + fasta_rec.seq_size() + 1);   // Two extra bytes for the line-breaks.
 
     fasta_rec.append_header(buffer);    // Append the header.
     buffer.emplace_back('\n');  // Break line.
     fasta_rec.append_seq(buffer);   // Append the sequence.
+    buffer.emplace_back('\n');  // Break line.
 }
 
 
@@ -145,7 +146,7 @@ template <std::size_t CAPACITY, typename T_sink_>
 template <uint16_t k, typename T_container_>
 inline void Character_Buffer<CAPACITY, T_sink_>::rotate_append_cycle(const FASTA_Record<T_container_>& fasta_rec, const std::size_t pivot)
 {
-    ensure_space(fasta_rec.header_size() + 1 + fasta_rec.seq_size() + 1);   // 2 extra bytes for two line-breaks.
+    ensure_space(fasta_rec.header_size() + 1 + fasta_rec.seq_size() + 1);   // Two extra bytes for two line-breaks.
 
     fasta_rec.append_header(buffer);    // Append the header.
     buffer.emplace_back('\n');  // Break line.

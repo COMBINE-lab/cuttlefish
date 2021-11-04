@@ -2,12 +2,15 @@
 #include "Read_CdBG_Extractor.hpp"
 #include "Read_CdBG.hpp"
 #include "Kmer_SPMC_Iterator.hpp"
+#include "dBG_Utilities.hpp"
 #include "FASTA_Record.hpp"
 #include "Character_Buffer.hpp"
 #include "Thread_Pool.hpp"
 #include "dBG_Info.hpp"
 
 
+// The following stuffs are not used anymore with the current algorithm.
+/*
 template <uint16_t k>
 void Read_CdBG_Extractor<k>::extract_detached_cycles(const std::string& vertex_db_path, const std::string& output_file_path, const dBG_Info<k>& dbg_info)
 {
@@ -275,7 +278,7 @@ bool Read_CdBG_Extractor<k>::extract_cycle(const Kmer<k>& v_hat, uint64_t& id, s
 
     if(!sign_vertex.in_canonical_form())
     {
-        reverse_complement(cycle);
+        cuttlefish::reverse_complement(cycle);
         pivot = (cycle.size() - 1) - (pivot + k - 1);
     }
 
@@ -288,3 +291,4 @@ bool Read_CdBG_Extractor<k>::extract_cycle(const Kmer<k>& v_hat, uint64_t& id, s
 
 // Template instantiations for the required instances.
 ENUMERATE(INSTANCE_COUNT, INSTANTIATE, Read_CdBG_Extractor)
+*/

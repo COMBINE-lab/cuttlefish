@@ -34,7 +34,6 @@ void Read_CdBG<k>::construct()
     if(is_constructed())
     {
         std::cout << "\nThe compacted de Bruijn graph has been constructed earlier.\n";
-        extract_DCCs(params.output_file_path(), true);
         return;
     }
 
@@ -50,11 +49,11 @@ void Read_CdBG<k>::construct()
 
     if(params.edge_db_path().empty())
     {
-        kmer_Enumeration_Stats edge_stats = enumerate_edges();
-        kmer_Enumeration_Stats vertex_stats = enumerate_vertices(edge_stats.max_memory());
+        kmer_Enumeration_Stats<k + 1> edge_stats = enumerate_edges();
+        kmer_Enumeration_Stats<k> vertex_stats = enumerate_vertices(edge_stats.max_memory());
         
-        edge_count = edge_stats.kmer_count();
-        vertex_count = vertex_stats.kmer_count();
+        edge_count = edge_stats.counted_kmer_count();
+        vertex_count = vertex_stats.counted_kmer_count();
     }
     else if(!params.vertex_db_path().empty())
     {
@@ -106,8 +105,6 @@ void Read_CdBG<k>::construct()
     if(params.edge_db_path().empty())
 #endif
     Kmer_Container<k + 1>::remove(edge_db_path());
-    if(!params.extract_cycles() && !params.dcc_opt())
-        hash_table->save(params);
     
     std::chrono::high_resolution_clock::time_point t_dfa = std::chrono::high_resolution_clock::now();
     std::cout << "Computed the states of the automata. Time taken = " << std::chrono::duration_cast<std::chrono::duration<double>>(t_dfa - t_mphf).count() << " seconds.\n";
@@ -116,8 +113,6 @@ void Read_CdBG<k>::construct()
     std::cout << "\nExtracting the maximal unitigs.\n";
     extract_maximal_unitigs();
 
-    if(!dbg_info.has_dcc() || dbg_info.dcc_extracted()) // Either there are no DCCs, or the DCCs have already been extracted in this run.
-    {
 #ifdef CF_DEVELOP_MODE
         if(params.vertex_db_path().empty())
 #endif
@@ -125,7 +120,6 @@ void Read_CdBG<k>::construct()
             Kmer_Container<k>::remove(vertex_db_path());
 
         hash_table->remove(params);
-    }
 
     std::chrono::high_resolution_clock::time_point t_extract = std::chrono::high_resolution_clock::now();
     std::cout << "Extracted the maximal unitigs and DCCs. Time taken = " << std::chrono::duration_cast<std::chrono::duration<double>>(t_extract - t_dfa).count() << " seconds.\n";
@@ -200,75 +194,6 @@ void Read_CdBG<k>::extract_maximal_unitigs()
 
     cdBg_extractor.extract_maximal_unitigs(vertex_db_path(), output_file_path);
     dbg_info.add_unipaths_info(cdBg_extractor);
-
-    if(!extract_DCCs(output_file_path) && params.dcc_opt())
-        hash_table->save(params);
-}
-
-
-template <uint16_t k>
-bool Read_CdBG<k>::extract_DCCs(const std::string& output_file_path, const bool rerun)
-{
-    if(!extract_DCCs_this_run())
-        return !dbg_info.has_dcc();
-
-    if(rerun)
-    {
-        if(!DCC_data_structs_exist())
-        {
-            std::cout <<    "The data structure(s) required for the cycles extraction have been removed.\n"
-                            "Please re-run Cuttlefish with the originial parameters to recover those.\n";
-            return false;
-        }
-
-        construct_hash_table(Kmer_Container<k>::size(vertex_db_path()), true);
-    }
-
-    
-    Read_CdBG_Extractor<k> cdBg_extractor(params, *hash_table);
-    cdBg_extractor.extract_detached_cycles(vertex_db_path(), output_file_path, dbg_info);
-
-    dbg_info.add_DCC_info(cdBg_extractor);
-
-    return true;
-}
-
-
-template <uint16_t k>
-bool Read_CdBG<k>::extract_DCCs_this_run() const
-{
-    if(!dbg_info.has_dcc())
-    {
-        std::cout << "The graph does not contain any detached chordless cycles.\n";
-        return false;
-    }
-
-    if(dbg_info.dcc_extracted())
-    {
-        std::cout << "The detached chordless cycles have been extracted earlier.\n";
-        return false;
-    }
-
-    if(!params.extract_cycles())
-    {
-        std::cout <<    "There are Detached Chordless Cycles (DCC) present in the graph.\n"
-                        "Run Cuttlefish with the `cycles` argument to extract those.\n";
-        return false;
-    }
-
-
-    return true;
-}
-
-
-template <uint16_t k>
-bool Read_CdBG<k>::DCC_data_structs_exist() const
-{
-    const std::string vertex_db_path = params.output_prefix() + cuttlefish::file_ext::vertices_ext;
-    const std::string mph_path = params.mph_file_path();
-    const std::string buckets_path = params.buckets_file_path();
-
-    return Kmer_Container<k>::exists(vertex_db_path) && file_exists(mph_path) && file_exists(buckets_path);
 }
 
 

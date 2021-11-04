@@ -151,6 +151,10 @@ public:
     // `bucket_id` with the state-value `state`.
     void update(uint64_t bucket_id, const State_Read_Space& state);
 
+    // Transforms the state-entry in the hash-table that's at the bucket with ID
+    // `bucket_id` through the function `transform`.
+    void update(uint64_t bucket_id, cuttlefish::state_code_t (*transform)(cuttlefish::state_code_t));
+
     // Returns the number of keys in the hash table.
     uint64_t size() const;
 
@@ -255,6 +259,15 @@ inline void Kmer_Hash_Table<k, BITS_PER_KEY>::update(const uint64_t bucket_id, c
 {
     sparse_lock.lock(bucket_id);
     hash_table[bucket_id] = state.get_state();
+    sparse_lock.unlock(bucket_id);
+}
+
+
+template <uint16_t k, uint8_t BITS_PER_KEY>
+inline void Kmer_Hash_Table<k, BITS_PER_KEY>::update(const uint64_t bucket_id, cuttlefish::state_code_t (* const transform)(cuttlefish::state_code_t))
+{
+    sparse_lock.lock(bucket_id);
+    hash_table[bucket_id] = transform(hash_table[bucket_id]);
     sparse_lock.unlock(bucket_id);
 }
 

@@ -4,6 +4,7 @@
 
 
 // The following methods are not used anymore with the current algorithm.
+/*
 template <uint16_t k>
 void Read_CdBG_Extractor<k>::scan_vertices(Kmer_SPMC_Iterator<k>* const vertex_parser, const uint16_t thread_id)
 {
@@ -177,3 +178,4 @@ uint64_t Read_CdBG_Extractor<k>::unipaths_vertex_count() const
 
 // Template instantiations for the required instances.
 ENUMERATE(INSTANCE_COUNT, INSTANTIATE, Read_CdBG_Extractor)
+*/

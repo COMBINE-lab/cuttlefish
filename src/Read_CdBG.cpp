@@ -34,7 +34,6 @@ void Read_CdBG<k>::construct()
     if(is_constructed())
     {
         std::cout << "\nThe compacted de Bruijn graph has been constructed earlier.\n";
-        extract_DCCs(params.output_file_path(), true);
         return;
     }
 
@@ -106,8 +105,6 @@ void Read_CdBG<k>::construct()
     if(params.edge_db_path().empty())
 #endif
     Kmer_Container<k + 1>::remove(edge_db_path());
-    if(!params.extract_cycles() && !params.dcc_opt())
-        hash_table->save(params);
     
     std::chrono::high_resolution_clock::time_point t_dfa = std::chrono::high_resolution_clock::now();
     std::cout << "Computed the states of the automata. Time taken = " << std::chrono::duration_cast<std::chrono::duration<double>>(t_dfa - t_mphf).count() << " seconds.\n";
@@ -116,8 +113,6 @@ void Read_CdBG<k>::construct()
     std::cout << "\nExtracting the maximal unitigs.\n";
     extract_maximal_unitigs();
 
-    if(!dbg_info.has_dcc() || dbg_info.dcc_extracted()) // Either there are no DCCs, or the DCCs have already been extracted in this run.
-    {
 #ifdef CF_DEVELOP_MODE
         if(params.vertex_db_path().empty())
 #endif
@@ -125,7 +120,6 @@ void Read_CdBG<k>::construct()
             Kmer_Container<k>::remove(vertex_db_path());
 
         hash_table->remove(params);
-    }
 
     std::chrono::high_resolution_clock::time_point t_extract = std::chrono::high_resolution_clock::now();
     std::cout << "Extracted the maximal unitigs and DCCs. Time taken = " << std::chrono::duration_cast<std::chrono::duration<double>>(t_extract - t_dfa).count() << " seconds.\n";
@@ -200,9 +194,6 @@ void Read_CdBG<k>::extract_maximal_unitigs()
 
     cdBg_extractor.extract_maximal_unitigs(vertex_db_path(), output_file_path);
     dbg_info.add_unipaths_info(cdBg_extractor);
-
-    if(!extract_DCCs(output_file_path) && params.dcc_opt())
-        hash_table->save(params);
 }
 
 

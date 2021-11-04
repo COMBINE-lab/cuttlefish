@@ -30,15 +30,11 @@ set(PROJECT_SRC
         kmer_Enumeration_Stats.cpp
         State_Read_Space.cpp
         Read_CdBG.cpp
-        Obsolete/Read_CdBG_Obsolete.cpp
         Read_CdBG_Constructor.cpp
-        Obsolete/Read_CdBG_Constructor_Obsolete.cpp
         Read_CdBG_Extractor.cpp
-        Obsolete/Read_CdBG_Extractor_Obsolete.cpp
         Unitig_Scratch.cpp
         Maximal_Unitig_Scratch.cpp
         Unipaths_Meta_info.cpp
-        Detached_Cycles_Extractor.cpp
         dBG_Utilities.cpp
         Character_Buffer_Flusher.cpp
         Progress_Tracker.cpp

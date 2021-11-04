@@ -9,6 +9,8 @@
 #include "dBG_Info.hpp"
 
 
+// The following stuffs are not used anymore with the current algorithm.
+/*
 template <uint16_t k>
 void Read_CdBG_Extractor<k>::extract_detached_cycles(const std::string& vertex_db_path, const std::string& output_file_path, const dBG_Info<k>& dbg_info)
 {
@@ -289,3 +291,4 @@ bool Read_CdBG_Extractor<k>::extract_cycle(const Kmer<k>& v_hat, uint64_t& id, s
 
 // Template instantiations for the required instances.
 ENUMERATE(INSTANCE_COUNT, INSTANTIATE, Read_CdBG_Extractor)
+*/

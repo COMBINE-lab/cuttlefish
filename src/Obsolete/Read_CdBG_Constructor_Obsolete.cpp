@@ -3,7 +3,7 @@
 
 
 // The following methods are not used anymore with the current algorithm.
-
+/*
 template <uint16_t k>
 bool Read_CdBG_Constructor<k>::add_incident_edge(const Endpoint<k>& endpoint, cuttlefish::edge_encoding_t& e_old, cuttlefish::edge_encoding_t& e_new)
 {
@@ -126,3 +126,4 @@ inline void Read_CdBG_Constructor<k>::discard_neighbor_side(const Endpoint<k>& v
 
 // Template instantiations for the required instances.
 ENUMERATE(INSTANCE_COUNT, INSTANTIATE, Read_CdBG_Constructor)
+*/

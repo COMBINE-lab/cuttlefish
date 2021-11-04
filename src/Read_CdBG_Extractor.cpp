@@ -53,11 +53,6 @@ void Read_CdBG_Extractor<k>::extract_maximal_unitigs(const std::string& vertex_d
     std::cout << "\nNumber of scanned vertices: " << vertices_scanned << ".\n";
     unipaths_meta_info_.print();
 
-    // Check for the existence of cycle(s).
-    if(has_dcc())
-        std::cout <<    "\nCycles disconnected from the rest of the graph are present."
-                        " I.e. the cycles are graph components exclusively on their own.\n\n";
-
 
     std::chrono::high_resolution_clock::time_point t_end = std::chrono::high_resolution_clock::now();
     double elapsed_seconds = std::chrono::duration_cast<std::chrono::duration<double>>(t_end - t_start).count();

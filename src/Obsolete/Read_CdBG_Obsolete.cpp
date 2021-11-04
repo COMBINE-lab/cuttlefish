@@ -4,6 +4,7 @@
 
 
 // The following methods are not used anymore with the current algorithm.
+/*
 template <uint16_t k>
 bool Read_CdBG<k>::extract_DCCs(const std::string& output_file_path, const bool rerun)
 {
@@ -73,3 +74,4 @@ bool Read_CdBG<k>::DCC_data_structs_exist() const
 
 // Template instantiations for the required instances.
 ENUMERATE(INSTANCE_COUNT, INSTANTIATE, Read_CdBG)
+*/

@@ -73,6 +73,7 @@ public:
 
 
 // The following stuffs are not used anymore with the current algorithm.
+/*
 private:
 
     // Extracts the detached chordless cycles of the graph and appends the output to the
@@ -89,6 +90,7 @@ private:
     // Returns `true` iff the data structures required for DCC-extraction is present
     // from an earlier execution of the algorithm.
     bool DCC_data_structs_exist() const;
+*/
 };
 
 

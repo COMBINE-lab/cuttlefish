@@ -115,6 +115,7 @@ public:
 
 
 // The following stuffs are not used anymore with the current algorithm.
+/*
 private:
 
     static constexpr std::size_t SEQ_SZ = 1 * 1024ULL * 1024ULL;    // 1 MB (soft limit) sized maximal unitig, at most, is constructed at a time.
@@ -226,6 +227,7 @@ public:
 
     // Returns the number of vertices present in maximal unitigs (excluding the DCCs).
     uint64_t unipaths_vertex_count() const;
+*/
 };
 
 

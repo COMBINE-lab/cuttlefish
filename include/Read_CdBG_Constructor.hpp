@@ -79,6 +79,7 @@ public:
 
 
 // The following methods are not used anymore with the current algorithm.
+/*
 private:
 
     // Adds the information of an incident edge `e` to the side `s` of some vertex `v`, all wrapped
@@ -120,6 +121,7 @@ private:
     // Discards the incidence information of some endpoint `w_end` that connects to the endpoint
     // `v_end` through the unique edge encoded with `e` — making the appropriate state transition.
     void discard_neighbor_side(const Endpoint<k>& v, cuttlefish::edge_encoding_t e);
+*/
 };
 
 

@@ -55,11 +55,6 @@ void dBG_Info<k>::add_unipaths_info(const Read_CdBG_Extractor<k>& cdbg_extractor
     dBg_info[contigs_field]["sum maximal unitig length"] = unipaths_info.sum_len();
     dBg_info[contigs_field]["avg. maximal unitig length"] = unipaths_info.avg_len();
     dBg_info[contigs_field]["_comment"] = "lengths are in bases";
-
-    const Build_Params& params = cdbg_extractor.get_params();
-    dBg_info[dcc_field]["DCCs present?"] = cdbg_extractor.has_dcc();
-    dBg_info[dcc_field]["DCCs extracted?"] = false;
-    dBg_info[dcc_field]["DCC optimization performed?"] = (params.extract_cycles() || params.dcc_opt());
 }
 
 

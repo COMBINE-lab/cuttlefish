@@ -70,30 +70,7 @@ public:
 #ifdef CF_DEVELOP_MODE
                     , const double gamma
 #endif
-                    ):
-        is_read_graph_(is_read_graph),
-        seq_input_(seq_paths, list_paths, dir_paths),
-        k_(k),
-        cutoff_(cutoff),
-        vertex_db_path_(vertex_db_path),
-        edge_db_path_(edge_db_path),
-        thread_count_(thread_count),
-        max_memory_(max_memory),
-        strict_memory_(strict_memory),
-        output_file_path_(output_file_path),
-        output_format_(cuttlefish::Output_Format(output_format)),
-        working_dir_path_(working_dir_path.back() == '/' ? working_dir_path : working_dir_path + "/"),
-        remove_kmc_db_(remove_kmc_db),
-        mph_file_path_(mph_file_path),
-        buckets_file_path_(buckets_file_path),
-        save_vertices_(save_vertices),
-        json_file_path_(json_file_path),
-        dcc_opt_(dcc_opt),
-        extract_cycles_(extract_cycles)
-#ifdef CF_DEVELOP_MODE
-        , gamma_(gamma)
-#endif
-    {}
+                    );
 
 
     // Returns the boolean flag to whether to build a compacted read or reference de Bruijn graph.

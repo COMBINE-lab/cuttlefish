@@ -3,6 +3,56 @@
 #include "utility.hpp"
 
 
+Build_Params::Build_Params( const bool is_read_graph,
+                            const std::vector<std::string>& seq_paths,
+                            const std::vector<std::string>& list_paths,
+                            const std::vector<std::string>& dir_paths,
+                            const uint16_t k,
+                            const uint32_t cutoff,
+                            const std::string& vertex_db_path,
+                            const std::string& edge_db_path,
+                            const uint16_t thread_count,
+                            const std::size_t max_memory,
+                            const bool strict_memory,
+                            const std::string& output_file_path,
+                            const uint8_t output_format,
+                            const std::string& working_dir_path,
+                            const bool remove_kmc_db,
+                            const std::string& mph_file_path,
+                            const std::string& buckets_file_path,
+                            const bool save_vertices,
+                            const std::string& json_file_path,
+                            const bool dcc_opt,
+                            const bool extract_cycles
+#ifdef CF_DEVELOP_MODE
+                    , const double gamma
+#endif
+                    ):
+        is_read_graph_(is_read_graph),
+        seq_input_(seq_paths, list_paths, dir_paths),
+        k_(k),
+        cutoff_(cutoff),
+        vertex_db_path_(vertex_db_path),
+        edge_db_path_(edge_db_path),
+        thread_count_(thread_count),
+        max_memory_(max_memory),
+        strict_memory_(strict_memory),
+        output_file_path_(output_file_path),
+        output_format_(cuttlefish::Output_Format(output_format)),
+        working_dir_path_(working_dir_path.back() == '/' ? working_dir_path : working_dir_path + "/"),
+        remove_kmc_db_(remove_kmc_db),
+        mph_file_path_(mph_file_path),
+        buckets_file_path_(buckets_file_path),
+        save_vertices_(save_vertices),
+        json_file_path_(json_file_path),
+        dcc_opt_(dcc_opt),
+        extract_cycles_(extract_cycles)
+#ifdef CF_DEVELOP_MODE
+        , gamma_(gamma)
+#endif
+    {}
+
+
 bool Build_Params::is_valid() const
 {
     // TODO: do better — is a mess.

@@ -97,11 +97,12 @@ void Read_CdBG_Extractor<k>::process_vertices(Kmer_SPMC_Iterator<k>* const verte
                 extracted_unipaths_info.add_maximal_unitig(maximal_unitig);
                 // output_buffer += maximal_unitig.fasta_rec();
                 maximal_unitig.add_fasta_rec_to_buffer(output_buffer);
+                
+                if(progress_tracker.track_work(progress += maximal_unitig.size()))
+                    progress = 0;
             }
 
             vertex_count++;
-            if(progress_tracker.track_work(++progress))
-                progress = 0;
         }
 
 

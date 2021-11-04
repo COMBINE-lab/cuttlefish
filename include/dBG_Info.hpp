@@ -54,15 +54,6 @@ public:
     // Adds information about the extracted DCCs from `cdbg_extractor`.
     void add_DCC_info(const Read_CdBG_Extractor<k>& cdbg_extractor);
 
-    // Writes the JSON object to aits corresponding disk-file.
-    void dump_info() const;
-
-    // Returns whether the graph has been recorded to contain DCCs.
-    bool has_dcc() const;
-
-    // Returns whether DCC-extraction optimization has been performed on the graph.
-    bool dcc_opt_performed() const;
-
     // Returns whether the DCCs have been extracted fron the graph.
     bool dcc_extracted() const;
 };

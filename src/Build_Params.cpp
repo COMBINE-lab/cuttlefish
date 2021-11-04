@@ -79,12 +79,6 @@ bool Build_Params::is_valid() const
             std::cout << "No edge (i.e. (k + 1)-mer) database is required for a compacted reference de Bruijn graph construction.\n";
             valid = false;
         }
-
-        // if(dcc_opt_ || extract_cycles_)
-        // {
-        //     std::cout << "Existence of detached chordless cycles are impossible for reference de Bruijn graphs by definition.\n";
-        //     valid = false;
-        // }
     }
 
 

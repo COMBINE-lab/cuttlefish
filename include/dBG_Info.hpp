@@ -51,11 +51,8 @@ public:
     // Adds information about the extracted maximal unitigs from `cdbg_extractor`.
     void add_unipaths_info(const Read_CdBG_Extractor<k>& cdbg_extractor);
 
-    // Adds information about the extracted DCCs from `cdbg_extractor`.
-    void add_DCC_info(const Read_CdBG_Extractor<k>& cdbg_extractor);
-
-    // Returns whether the DCCs have been extracted fron the graph.
-    bool dcc_extracted() const;
+    // Writes the JSON object to its corresponding disk-file.
+    void dump_info() const;
 };
 
 

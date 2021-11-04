@@ -85,7 +85,7 @@ void kmer_Enumeration_Stats<k>::log_stats() const
     std::cout << "\tTotal sequence length:\t" << seq_len() << ".\n";
     std::cout << "\tTotal number of " << k << "-mers:\t" << total_kmer_count() << ".\n";
     std::cout << "\tNumber of unique " << k << "-mers:\t" << unique_kmer_count() << ".\n";
-    std::cout << "\tNumber of counted " << k << "-mers:\t" << counted_kmer_count() << ".\n";
+    std::cout << "\tNumber of solid " << k << "-mers:\t" << counted_kmer_count() << ".\n";
 }
 
 

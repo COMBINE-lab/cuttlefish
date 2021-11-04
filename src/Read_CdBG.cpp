@@ -122,7 +122,7 @@ void Read_CdBG<k>::construct()
         hash_table->remove(params);
 
     std::chrono::high_resolution_clock::time_point t_extract = std::chrono::high_resolution_clock::now();
-    std::cout << "Extracted the maximal unitigs and DCCs. Time taken = " << std::chrono::duration_cast<std::chrono::duration<double>>(t_extract - t_dfa).count() << " seconds.\n";
+    std::cout << "Extracted the maximal unitigs. Time taken = " << std::chrono::duration_cast<std::chrono::duration<double>>(t_extract - t_dfa).count() << " seconds.\n";
 
 #ifndef CF_DEVELOP_MODE
     const double max_disk_usage = std::max(edge_stats.temp_disk_usage(), vertex_stats.temp_disk_usage()) / (1024.0 * 1024.0 * 1024.0);

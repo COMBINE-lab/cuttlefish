@@ -16,7 +16,7 @@ namespace cuttlefish
         constexpr uint16_t K = 25;  // Set as per the KMC3 default.
         constexpr uint32_t CUTOFF_FREQ = 2; // Typical practice
         constexpr uint16_t THREAD_COUNT = 1;
-        constexpr std::size_t MAX_MEMORY = 2;  // Set as per KMC3 library requirement.
+        constexpr std::size_t MAX_MEMORY = 3;   // Set as per KMC3 stage 1 performance.
 #ifdef CF_DEVELOP_MODE
         constexpr double GAMMA = 0;
 #endif

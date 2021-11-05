@@ -35,7 +35,6 @@ private:
     const std::string mph_file_path_;   // Optional path to file storing an MPH over the k-mer set.
     const std::string buckets_file_path_;   // Optional path to file storing the hash table buckets for the k-mer set.
     const bool save_vertices_;  // Option to save the vertex set of the de Bruijn graph (in KMC database format).
-    const std::string json_file_path_;  // Optional path to file storing meta-information about the graph and cuttlefish executions.
 #ifdef CF_DEVELOP_MODE
     const double gamma_;    // The gamma parameter for the BBHash MPHF.
 #endif
@@ -61,8 +60,7 @@ public:
                     const bool remove_kmc_db,
                     const std::string& mph_file_path,
                     const std::string& buckets_file_path,
-                    const bool save_vertices,
-                    const std::string& json_file_path
+                    const bool save_vertices
 #ifdef CF_DEVELOP_MODE
                     , const double gamma
 #endif
@@ -191,7 +189,7 @@ public:
     // Returns the path to the optional file storing meta-information about the graph and cuttlefish executions.
     const std::string json_file_path() const
     {
-        return is_read_graph() ? (output_file_path_ + cuttlefish::file_ext::json_ext) : json_file_path_;
+        return output_file_path_ + cuttlefish::file_ext::json_ext;
     }
 
 

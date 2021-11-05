@@ -20,8 +20,7 @@ Build_Params::Build_Params( const bool is_read_graph,
                             const bool remove_kmc_db,
                             const std::string& mph_file_path,
                             const std::string& buckets_file_path,
-                            const bool save_vertices,
-                            const std::string& json_file_path
+                            const bool save_vertices
 #ifdef CF_DEVELOP_MODE
                     , const double gamma
 #endif
@@ -41,8 +40,7 @@ Build_Params::Build_Params( const bool is_read_graph,
         remove_kmc_db_(remove_kmc_db),
         mph_file_path_(mph_file_path),
         buckets_file_path_(buckets_file_path),
-        save_vertices_(save_vertices),
-        json_file_path_(json_file_path)
+        save_vertices_(save_vertices)
 #ifdef CF_DEVELOP_MODE
         , gamma_(gamma)
 #endif

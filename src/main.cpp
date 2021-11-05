@@ -42,8 +42,6 @@ void build(int argc, char** argv)
         ("mph", "minimal perfect hash (BBHash) file (optional)", cxxopts::value<std::string>()->default_value(cuttlefish::_default::EMPTY))
         ("buckets", "hash table buckets (cuttlefish) file (optional)", cxxopts::value<std::string>()->default_value(cuttlefish::_default::EMPTY))
         ("save-vertices", "save the vertex set of the graph")
-        // TODO: remove the following arg
-        ("json", "meta-info (JSON) file", cxxopts::value<std::string>()->default_value(cuttlefish::_default::EMPTY))
 #ifdef CF_DEVELOP_MODE
         ("gamma", "gamma for the BBHash MPHF", cxxopts::value<double>()->default_value(std::to_string(cuttlefish::_default::GAMMA)))
 #endif
@@ -76,7 +74,6 @@ void build(int argc, char** argv)
         const auto mph_file = result["mph"].as<std::string>();
         const auto buckets_file = result["buckets"].as<std::string>();
         const auto save_vertices = result["save-vertices"].as<bool>();
-        const auto json_file = result["json"].as<std::string>();
 #ifdef CF_DEVELOP_MODE
         const double gamma = result["gamma"].as<double>();
 #endif
@@ -85,7 +82,7 @@ void build(int argc, char** argv)
                                     refs, lists, dirs,
                                     k, cutoff, kmer_database, edge_database, thread_count, max_memory, strict_memory,
                                     output_file, format, working_dir,
-                                    remove_kmc_db, mph_file, buckets_file, save_vertices, json_file
+                                    remove_kmc_db, mph_file, buckets_file, save_vertices
 #ifdef CF_DEVELOP_MODE
                                     , gamma
 #endif

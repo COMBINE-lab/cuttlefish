@@ -114,12 +114,10 @@ void Read_CdBG<k>::construct()
     extract_maximal_unitigs();
 
 #ifdef CF_DEVELOP_MODE
-        if(params.vertex_db_path().empty())
+    if(params.vertex_db_path().empty())
 #endif
-        if(!params.save_vertices())
-            Kmer_Container<k>::remove(vertex_db_path());
-
-        hash_table->remove(params);
+    if(!params.save_vertices())
+        Kmer_Container<k>::remove(vertex_db_path());
 
     std::chrono::high_resolution_clock::time_point t_extract = std::chrono::high_resolution_clock::now();
     std::cout << "Extracted the maximal unitigs. Time taken = " << std::chrono::duration_cast<std::chrono::duration<double>>(t_extract - t_dfa).count() << " seconds.\n";

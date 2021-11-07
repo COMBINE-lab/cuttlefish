@@ -13,6 +13,7 @@
 template <uint16_t k>
 Read_CdBG<k>::Read_CdBG(const Build_Params& params):
     params(params),
+    logistics(this->params),
     hash_table(nullptr),
     dbg_info(params.json_file_path())
 {}
@@ -104,7 +105,7 @@ void Read_CdBG<k>::construct()
 #ifdef CF_DEVELOP_MODE
     if(params.edge_db_path().empty())
 #endif
-    Kmer_Container<k + 1>::remove(edge_db_path());
+    Kmer_Container<k + 1>::remove(logistics.edge_db_path());
     
     std::chrono::high_resolution_clock::time_point t_dfa = std::chrono::high_resolution_clock::now();
     std::cout << "Computed the states of the automata. Time taken = " << std::chrono::duration_cast<std::chrono::duration<double>>(t_dfa - t_mphf).count() << " seconds.\n";
@@ -117,7 +118,7 @@ void Read_CdBG<k>::construct()
     if(params.vertex_db_path().empty())
 #endif
     if(!params.save_vertices())
-        Kmer_Container<k>::remove(vertex_db_path());
+        Kmer_Container<k>::remove(logistics.vertex_db_path());
 
     std::chrono::high_resolution_clock::time_point t_extract = std::chrono::high_resolution_clock::now();
     std::cout << "Extracted the maximal unitigs. Time taken = " << std::chrono::duration_cast<std::chrono::duration<double>>(t_extract - t_dfa).count() << " seconds.\n";
@@ -133,9 +134,9 @@ template <uint16_t k>
 kmer_Enumeration_Stats<k + 1> Read_CdBG<k>::enumerate_edges() const
 {
     return kmer_Enumerator<k + 1>().enumerate(
-        KMC::InputFileType::FASTQ, params.sequence_input().seqs(), params.cutoff(),
+        KMC::InputFileType::FASTQ, logistics.input_paths_collection(), params.cutoff(),
         params.thread_count(), params.max_memory(), params.strict_memory(), params.strict_memory(),
-        params.working_dir_path(), edge_db_path());
+        logistics.working_dir_path(), logistics.edge_db_path());
 }
 
 
@@ -143,9 +144,9 @@ template <uint16_t k>
 kmer_Enumeration_Stats<k> Read_CdBG<k>::enumerate_vertices(const std::size_t max_memory) const
 {
     return kmer_Enumerator<k>().enumerate(
-        KMC::InputFileType::KMC, std::vector<std::string>(1, edge_db_path()), 1,
+        KMC::InputFileType::KMC, std::vector<std::string>(1, logistics.edge_db_path()), 1,
         params.thread_count(), max_memory, params.strict_memory(), false,
-        params.working_dir_path(), vertex_db_path());
+        logistics.working_dir_path(), logistics.vertex_db_path());
 }
 
 
@@ -154,7 +155,7 @@ void Read_CdBG<k>::construct_hash_table(const uint64_t vertex_count, const bool 
 {
     if(load)
     {
-        hash_table = std::make_unique<Kmer_Hash_Table<k, cuttlefish::BITS_PER_READ_KMER>>(vertex_db_path(), vertex_count);
+        hash_table = std::make_unique<Kmer_Hash_Table<k, cuttlefish::BITS_PER_READ_KMER>>(logistics.vertex_db_path(), vertex_count);
         hash_table->load(params);    
     }
     else
@@ -165,11 +166,11 @@ void Read_CdBG<k>::construct_hash_table(const uint64_t vertex_count, const bool 
         
         hash_table =
 #ifdef CF_DEVELOP_MODE
-                        std::make_unique<Kmer_Hash_Table<k, cuttlefish::BITS_PER_READ_KMER>>(vertex_db_path(), vertex_count, max_memory, params.gamma());
+                        std::make_unique<Kmer_Hash_Table<k, cuttlefish::BITS_PER_READ_KMER>>(logistics.vertex_db_path(), vertex_count, max_memory, params.gamma());
 #else
-                        std::make_unique<Kmer_Hash_Table<k, cuttlefish::BITS_PER_READ_KMER>>(vertex_db_path(), vertex_count, max_memory);
+                        std::make_unique<Kmer_Hash_Table<k, cuttlefish::BITS_PER_READ_KMER>>(logistics.vertex_db_path(), vertex_count, max_memory);
 #endif
-        hash_table->construct(params.thread_count(), params.working_dir_path(), params.mph_file_path());
+        hash_table->construct(params.thread_count(), logistics.working_dir_path(), params.mph_file_path());
     }
 }
 
@@ -178,7 +179,7 @@ template <uint16_t k>
 void Read_CdBG<k>::compute_DFA_states()
 {
     Read_CdBG_Constructor<k> cdBg_constructor(params, *hash_table);
-    cdBg_constructor.compute_DFA_states(edge_db_path());
+    cdBg_constructor.compute_DFA_states(logistics.edge_db_path());
 
     dbg_info.add_basic_info(cdBg_constructor);
 }
@@ -188,9 +189,8 @@ template <uint16_t k>
 void Read_CdBG<k>::extract_maximal_unitigs()
 {
     Read_CdBG_Extractor<k> cdBg_extractor(params, *hash_table);
-    const std::string output_file_path = params.output_file_path();
 
-    cdBg_extractor.extract_maximal_unitigs(vertex_db_path(), output_file_path);
+    cdBg_extractor.extract_maximal_unitigs(logistics.vertex_db_path(), logistics.output_file_path());
     dbg_info.add_unipaths_info(cdBg_extractor);
 }
 
@@ -199,28 +199,6 @@ template <uint16_t k>
 bool Read_CdBG<k>::is_constructed() const
 {
     return file_exists(params.json_file_path());
-}
-
-
-template <uint16_t k>
-const std::string Read_CdBG<k>::edge_db_path() const
-{
-#ifdef CF_DEVELOP_MODE
-    return params.edge_db_path().empty()? (params.output_prefix() + cuttlefish::file_ext::edges_ext) : params.edge_db_path();
-#endif
-
-    return params.output_prefix() + cuttlefish::file_ext::edges_ext;
-}
-
-
-template <uint16_t k>
-const std::string Read_CdBG<k>::vertex_db_path() const
-{
-#ifdef CF_DEVELOP_MODE
-    return params.vertex_db_path().empty() ? (params.working_dir_path() + filename(params.output_prefix()) + cuttlefish::file_ext::vertices_ext) : params.vertex_db_path();
-#endif
-
-    return params.working_dir_path() + filename(params.output_prefix()) + cuttlefish::file_ext::vertices_ext;
 }
 
 

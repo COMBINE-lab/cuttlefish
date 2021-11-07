@@ -6,6 +6,7 @@
 
 #include "globals.hpp"
 #include "Build_Params.hpp"
+#include "Data_Logistics.hpp"
 #include "Kmer_Hash_Table.hpp"
 #include "dBG_Info.hpp"
 
@@ -22,6 +23,7 @@ class Read_CdBG
 private:
 
     const Build_Params params;  // Required parameters (wrapped inside).
+    const Data_Logistics logistics; // Data logistics manager for the algorithm execution.
     std::unique_ptr<Kmer_Hash_Table<k, cuttlefish::BITS_PER_READ_KMER>> hash_table; // Hash table for the vertices (canonical k-mers) of the graph.
 
     dBG_Info<k> dbg_info;   // Wrapper object for structural information of the graph.
@@ -44,12 +46,6 @@ private:
 
     // Extracts the maximal unitigs from the graph.
     void extract_maximal_unitigs();
-
-    // Returns the path prefix to the edge database being used by Cuttlefish.
-    const std::string edge_db_path() const;
-
-    // Returns the path prefix to the vertex database being used by Cuttlefish.
-    const std::string vertex_db_path() const;
 
     // Returns `true` iff the compacted de Bruijn graph to be built from the parameters
     // collection `params` had been constructed in an earlier execution.

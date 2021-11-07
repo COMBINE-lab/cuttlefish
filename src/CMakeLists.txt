@@ -35,6 +35,7 @@ set(PROJECT_SRC
         Unitig_Scratch.cpp
         Maximal_Unitig_Scratch.cpp
         Unipaths_Meta_info.cpp
+        Data_Logistics.cpp
         dBG_Utilities.cpp
         Character_Buffer_Flusher.cpp
         Progress_Tracker.cpp

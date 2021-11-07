@@ -105,6 +105,12 @@ const std::string filename(const std::string& file_path)
 }
 
 
+const std::string dirname(const std::string& file_path)
+{
+    return ghc::filesystem::path(file_path).remove_filename().string();
+}
+
+
 void move_file(const std::string& from_path, const std::string& to_path)
 {
     ghc::filesystem::copy(from_path, to_path);

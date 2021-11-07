@@ -42,6 +42,9 @@ void clear_file(const std::string& file_path);
 // Returns the name of the file present at the path `file_path`.
 const std::string filename(const std::string& file_path);
 
+// Returns the directory of the file present at the path `file_path`.
+const std::string dirname(const std::string& file_path);
+
 // Moves the file present at path `from_path` to the path `to_path`.
 void move_file(const std::string& from_path, const std::string& to_path);
 

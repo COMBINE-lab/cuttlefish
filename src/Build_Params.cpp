@@ -4,6 +4,7 @@
 
 
 Build_Params::Build_Params( const bool is_read_graph,
+                            const bool is_ref_graph,
                             const std::vector<std::string>& seq_paths,
                             const std::vector<std::string>& list_paths,
                             const std::vector<std::string>& dir_paths,
@@ -26,6 +27,7 @@ Build_Params::Build_Params( const bool is_read_graph,
 #endif
                     ):
         is_read_graph_(is_read_graph),
+        is_ref_graph_(is_ref_graph),
         seq_input_(seq_paths, list_paths, dir_paths),
         k_(k),
         cutoff_(cutoff),
@@ -62,7 +64,13 @@ bool Build_Params::is_valid() const
 
 
     // Check if read and reference de Bruijn graph parameters are being mixed with.
-    if(is_read_graph_)  // Is a read de Bruijn graph.
+    if(is_read_graph_ && is_ref_graph_)
+    {
+        std::cout << "Both read and reference de Bruijn graph specified. Please select only one, or none for Cuttlefish 1.0.\n";
+        valid = false;
+    }
+
+    if(is_read_graph_ || is_ref_graph_)  // Is Cuttlefish 2.0.
     {
         if(output_format_ != cuttlefish::Output_Format::txt)
         {
@@ -70,9 +78,9 @@ bool Build_Params::is_valid() const
             valid = false;
         }
     }
-    else    // Is a reference de Bruijn graph.
+    else    // Is Cuttlefish 1.0.
     {
-        if(!edge_db_path_.empty())
+        if(!vertex_db_path_.empty())
         {
             std::cout << "No edge (i.e. (k + 1)-mer) database is required for a compacted reference de Bruijn graph construction.\n";
             valid = false;

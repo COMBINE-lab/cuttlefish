@@ -24,6 +24,7 @@ void build(int argc, char** argv)
     options.add_options()
         // TODO: better indent the following wall of text
         ("read", "construct a compacted read de Bruijn graph")
+        ("ref", "construct a compacted reference de Bruijn graph")
         ("r,refs", "reference files", cxxopts::value<std::vector<std::string>>()->default_value(cuttlefish::_default::EMPTY))
         ("l,lists", "reference file lists", cxxopts::value<std::vector<std::string>>()->default_value(cuttlefish::_default::EMPTY))
         ("d,dirs", "reference file directories", cxxopts::value<std::vector<std::string>>()->default_value(cuttlefish::_default::EMPTY))
@@ -57,6 +58,7 @@ void build(int argc, char** argv)
         }
 
         const auto is_read_graph = result["read"].as<bool>();
+        const auto is_ref_graph = result["ref"].as<bool>();
         const auto refs = result["refs"].as<std::vector<std::string>>();
         const auto lists = result["lists"].as<std::vector<std::string>>();
         const auto dirs = result["dirs"].as<std::vector<std::string>>();
@@ -78,7 +80,7 @@ void build(int argc, char** argv)
         const double gamma = result["gamma"].as<double>();
 #endif
 
-        const Build_Params params(  is_read_graph,
+        const Build_Params params(  is_read_graph, is_ref_graph,
                                     refs, lists, dirs,
                                     k, cutoff, kmer_database, edge_database, thread_count, max_memory, strict_memory,
                                     output_file, format, working_dir,
@@ -100,7 +102,7 @@ void build(int argc, char** argv)
 
         std::cout << "\nConstructing the compacted " << dBg_type << " de Bruijn graph for k = " << k << ".\n";
 
-        params.is_read_graph() ?
+        (params.is_read_graph() || params.is_ref_graph()) ?
             Application<cuttlefish::MAX_K, Read_CdBG>(params).execute() :
             Application<cuttlefish::MAX_K, CdBG>(params).execute();
 

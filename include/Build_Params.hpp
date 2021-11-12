@@ -19,7 +19,8 @@ class Build_Params
 {
 private:
 
-    const bool is_read_graph_;  // Whether to build a compacted read or reference de Bruijn graph.
+    const bool is_read_graph_;  // Whether to build a compacted read de Bruijn graph or not.
+    const bool is_ref_graph_;   // Whether to build a compacted reference de Bruijn graph or not.
     const Seq_Input seq_input_; // Collection of the input sequences.
     const uint16_t k_;   // The k parameter for the edge-centric de Bruijn graph to be compacted.
     const uint32_t cutoff_; // Frequency cutoff for the (k + 1)-mers (for short-read set input).
@@ -44,6 +45,7 @@ public:
 
     // Constructs a parameters wrapper object with the self-explanatory parameters.
     Build_Params(   const bool is_read_graph,
+                    const bool is_ref_graph,
                     const std::vector<std::string>& seq_paths,
                     const std::vector<std::string>& list_paths,
                     const std::vector<std::string>& dir_paths,
@@ -67,10 +69,17 @@ public:
                     );
 
 
-    // Returns the boolean flag to whether to build a compacted read or reference de Bruijn graph.
+    // Returns the boolean flag to whether to build a compacted read de Bruijn graph or not.
     bool is_read_graph() const
     {
         return is_read_graph_;
+    }
+
+
+    // Returns the boolean flag to whether to build a compacted reference de Bruijn graph or not.
+    bool is_ref_graph() const
+    {
+        return is_ref_graph_;
     }
 
 

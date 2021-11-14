@@ -84,6 +84,26 @@ void Kmer_Container<k>::remove(const std::string& kmc_db_path)
 }
 
 
+template <uint16_t k>
+std::size_t Kmer_Container<k>::database_size(const std::string& kmc_db_prefix)
+{
+    const std::string kmc_pref_file(kmc_db_prefix + ".kmc_pre");
+    const std::string kmc_suff_file(kmc_db_prefix + ".kmc_suf");
+
+    const std::size_t pref_sz = file_size(kmc_pref_file);
+    const std::size_t suff_sz = file_size(kmc_suff_file);
+
+    if(!pref_sz || !suff_sz)
+    {
+        std::cerr << "Error computing size of KMC database at " << kmc_db_prefix << ". Possibly missing file(s). Aborting.\n";
+        std::exit(EXIT_FAILURE);
+    }
+
+
+    return pref_sz + suff_sz;
+}
+
+
 // template <uint16_t k>
 // typename Kmer_Container<k>::iterator Kmer_Container<k>::end() const
 // {

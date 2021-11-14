@@ -52,6 +52,9 @@ public:
     // Removes the KMC database at path `kmc_db_prefix` from disk.
     static void remove(const std::string& kmc_db_prefix);
 
+    // Returns the size in bytes of the k-mer database with path prefix `kmc_db_prefix`.
+    static std::size_t database_size(const std::string& kmc_db_prefix);    
+
     // Returns an iterator pointing to the beginning of the underlying k-mer
     // database.
     // buf_iterator buf_begin() const;

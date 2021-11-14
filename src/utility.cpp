@@ -10,6 +10,7 @@
 #include <sstream>
 #include <cstdio>
 #include <iterator>
+#include <system_error>
 
 
 std::string get_random_string(const size_t len, const char* const alphabet)
@@ -43,6 +44,14 @@ bool file_exists(const std::string& file_path)
     struct stat stat_buf;
 
     return stat(file_path.c_str(), &stat_buf) == 0;
+}
+
+
+std::size_t file_size(const std::string& file_path)
+{
+    std::error_code ec;
+    const uintmax_t size = ghc::filesystem::file_size(file_path, ec);
+    return ec ? 0 : static_cast<std::size_t>(size);
 }
 
 

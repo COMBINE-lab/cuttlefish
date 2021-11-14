@@ -6,10 +6,11 @@
 
 
 template <uint16_t k>
-kmer_Enumeration_Stats<k>::kmer_Enumeration_Stats(const KMC::Stage1Results& stage1_results, const KMC::Stage2Results& stage2_results, const std::size_t max_memory):
+kmer_Enumeration_Stats<k>::kmer_Enumeration_Stats(const KMC::Stage1Results& stage1_results, const KMC::Stage2Results& stage2_results, const std::size_t max_memory, const std::size_t db_size):
     stage1_results(stage1_results),
     stage2_results(stage2_results),
-    max_memory_(max_memory)
+    max_memory_(max_memory),
+    db_size_(db_size)
 {}
 
 
@@ -73,6 +74,13 @@ template <uint16_t k>
 std::size_t kmer_Enumeration_Stats<k>::temp_disk_usage() const
 {
     return stage2_results.maxDiskUsage;
+}
+
+
+template <uint16_t k>
+std::size_t kmer_Enumeration_Stats<k>::db_size() const
+{
+    return db_size_;
 }
 
 

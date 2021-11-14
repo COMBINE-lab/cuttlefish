@@ -1,5 +1,6 @@
 
 #include "kmer_Enumerator.hpp"
+#include "Kmer_Container.hpp"
 
 
 template <uint16_t k>
@@ -48,9 +49,9 @@ kmer_Enumeration_Stats<k> kmer_Enumerator<k>::enumerate(
         stage2_params.SetMaxRamGB(memory);
 
     stage2_results = kmc.RunStage2(stage2_params);
+    const std::size_t db_size = Kmer_Container<k>::database_size(output_db_path);
 
-
-    return kmer_Enumeration_Stats<k>(stage1_results, stage2_results, memory);
+    return kmer_Enumeration_Stats<k>(stage1_results, stage2_results, memory, db_size);
 }
 
 

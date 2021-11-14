@@ -19,14 +19,16 @@ private:
     const KMC::Stage1Results stage1_results;    // Results stats of KMC stage 1 execution.
     const KMC::Stage2Results stage2_results;    // Results stats of KMC stage 2 execution.
     const std::size_t max_memory_;  // Maximum memory usage allowed for the KMC executions.
+    const std::size_t db_size_; // Size of the output KMC database size in bytes.
 
 
 public:
 
     // Constructs a a k-mer enumeration stats wrapper object for a KMC execution with
     // first stage results in `stage1_results`, second stage results in `stage2_results`,
-    // and maximum allowed memory usage to be `max_memory` (in GB).
-    kmer_Enumeration_Stats(const KMC::Stage1Results& stage1_results, const KMC::Stage2Results& stage2_results, const std::size_t max_memory);
+    // maximum allowed memory usage to be `max_memory` (in GB), and output database size
+    // of `db_size`.
+    kmer_Enumeration_Stats(const KMC::Stage1Results& stage1_results, const KMC::Stage2Results& stage2_results, std::size_t max_memory, std::size_t db_size);
 
     // Returns the number of sequences in the execution input.
     uint64_t seq_count() const;
@@ -58,6 +60,9 @@ public:
 
     // Returns the temporary disk usage (in bytes) used by the execution.
     std::size_t temp_disk_usage() const;
+
+    // Returns the size of the output KMC database size in bytes.
+    std::size_t db_size() const;
 
     // Logs a summary statistics of the execution.
     void log_stats() const;

@@ -13,6 +13,7 @@
 
 
 template <uint16_t k, uint8_t BITS_PER_KEY> constexpr double Kmer_Hash_Table<k, BITS_PER_KEY>::gamma_min;
+template <uint16_t k, uint8_t BITS_PER_KEY> constexpr double Kmer_Hash_Table<k, BITS_PER_KEY>::gamma_max;
 template <uint16_t k, uint8_t BITS_PER_KEY> constexpr double Kmer_Hash_Table<k, BITS_PER_KEY>::min_bits_per_hash_key;
 template <uint16_t k, uint8_t BITS_PER_KEY> constexpr double Kmer_Hash_Table<k, BITS_PER_KEY>::bits_per_gamma[];
 template <uint16_t k, uint8_t BITS_PER_KEY> constexpr double Kmer_Hash_Table<k, BITS_PER_KEY>::gamma_resolution;
@@ -40,10 +41,11 @@ Kmer_Hash_Table<k, BITS_PER_KEY>::Kmer_Hash_Table(const std::string& kmc_db_path
 
 
 template <uint16_t k, uint8_t BITS_PER_KEY>
-Kmer_Hash_Table<k, BITS_PER_KEY>::Kmer_Hash_Table(const std::string& kmc_db_path, const uint64_t kmer_count, const std::size_t max_memory, const double gamma): Kmer_Hash_Table(kmc_db_path, kmer_count)
+Kmer_Hash_Table<k, BITS_PER_KEY>::Kmer_Hash_Table(const std::string& kmc_db_path, const uint64_t kmer_count, const std::size_t max_memory, const double gamma):
+    Kmer_Hash_Table(kmc_db_path, kmer_count)
 {
     if(gamma > 0)
-        this->gamma = gamma;
+        this->gamma = std::min(std::max(gamma, gamma_min), gamma_max);
     else
         set_gamma(max_memory);
 }

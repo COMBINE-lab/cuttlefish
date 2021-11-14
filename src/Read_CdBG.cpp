@@ -7,6 +7,7 @@
 #include "utility.hpp"
 #include "kmc_runner.h"
 
+#include <limits>
 #include <iomanip>
 
 
@@ -169,7 +170,9 @@ void Read_CdBG<k>::construct_hash_table(const uint64_t vertex_count, const bool 
 #ifdef CF_DEVELOP_MODE
                         std::make_unique<Kmer_Hash_Table<k, cuttlefish::BITS_PER_READ_KMER>>(logistics.vertex_db_path(), vertex_count, max_memory, params.gamma());
 #else
-                        std::make_unique<Kmer_Hash_Table<k, cuttlefish::BITS_PER_READ_KMER>>(logistics.vertex_db_path(), vertex_count, max_memory);
+                        (params.strict_memory() ?
+                            std::make_unique<Kmer_Hash_Table<k, cuttlefish::BITS_PER_READ_KMER>>(logistics.vertex_db_path(), vertex_count, max_memory) :
+                            std::make_unique<Kmer_Hash_Table<k, cuttlefish::BITS_PER_READ_KMER>>(logistics.vertex_db_path(), vertex_count, max_memory, std::numeric_limits<double>::max()));
 #endif
         hash_table->construct(params.thread_count(), logistics.working_dir_path(), params.mph_file_path());
     }

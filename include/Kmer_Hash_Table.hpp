@@ -28,6 +28,9 @@ private:
     // The minimum gamma-value that we require for BBHash.
     static constexpr double gamma_min = 2.0;
 
+    // The maximum gamma-value that we may use with BBHash.
+    static constexpr double gamma_max = 10.0;
+
     // The minimum bits per hash key we require for BBHash.
     static constexpr double min_bits_per_hash_key = 3.71;
 

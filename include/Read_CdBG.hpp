@@ -52,6 +52,11 @@ private:
     // NB: only the existence of the output meta-info file is checked for this purpose.
     bool is_constructed() const;
 
+    // Returns the maximum temporary disk-usage incurred by some execution of the algorithm,
+    // that has its edges-enumeration stats in `edge_stats` and vertices-enumeration stats
+    // in `vertex_stats`.
+    static std::size_t max_disk_usage(const kmer_Enumeration_Stats<k + 1>& edge_stats, const kmer_Enumeration_Stats<k>& vertex_stats);
+
 
 public:
 

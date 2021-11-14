@@ -124,8 +124,8 @@ void Read_CdBG<k>::construct()
     std::cout << "Extracted the maximal unitigs. Time taken = " << std::chrono::duration_cast<std::chrono::duration<double>>(t_extract - t_dfa).count() << " seconds.\n";
 
 #ifndef CF_DEVELOP_MODE
-    const double max_disk_usage = std::max(edge_stats.temp_disk_usage(), vertex_stats.temp_disk_usage()) / (1024.0 * 1024.0 * 1024.0);
-    std::cout << "\nMaximum temporary disk-usage: " << max_disk_usage << "GB.\n";
+    const double max_disk = static_cast<double>(max_disk_usage(edge_stats, vertex_stats)) / (1024.0 * 1024.0 * 1024.0);
+    std::cout << "\nMaximum temporary disk-usage: " << max_disk << "GB.\n";
 #endif
 }
 
@@ -200,6 +200,17 @@ template <uint16_t k>
 bool Read_CdBG<k>::is_constructed() const
 {
     return file_exists(params.json_file_path());
+}
+
+
+template <uint16_t k>
+std::size_t Read_CdBG<k>::max_disk_usage(const kmer_Enumeration_Stats<k + 1>& edge_stats, const kmer_Enumeration_Stats<k>& vertex_stats)
+{
+    const std::size_t at_edge_enum = std::max(edge_stats.temp_disk_usage(), edge_stats.db_size());
+    const std::size_t at_vertex_enum = edge_stats.db_size() + std::max(vertex_stats.temp_disk_usage(), vertex_stats.db_size());
+
+    const std::size_t max_disk = std::max(at_edge_enum, at_vertex_enum);
+    return max_disk;
 }
 
 

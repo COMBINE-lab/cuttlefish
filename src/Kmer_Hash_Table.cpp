@@ -39,7 +39,6 @@ Kmer_Hash_Table<k, BITS_PER_KEY>::Kmer_Hash_Table(const std::string& kmc_db_path
 }
 
 
-#ifdef CF_DEVELOP_MODE
 template <uint16_t k, uint8_t BITS_PER_KEY>
 Kmer_Hash_Table<k, BITS_PER_KEY>::Kmer_Hash_Table(const std::string& kmc_db_path, const uint64_t kmer_count, const std::size_t max_memory, const double gamma): Kmer_Hash_Table(kmc_db_path, kmer_count)
 {
@@ -48,7 +47,6 @@ Kmer_Hash_Table<k, BITS_PER_KEY>::Kmer_Hash_Table(const std::string& kmc_db_path
     else
         set_gamma(max_memory);
 }
-#endif
 
 
 template <uint16_t k, uint8_t BITS_PER_KEY>

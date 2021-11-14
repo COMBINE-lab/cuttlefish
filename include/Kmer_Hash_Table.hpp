@@ -106,14 +106,12 @@ public:
     // The hash table may use at most `max_memory` bytes of memory.
     Kmer_Hash_Table(const std::string& kmc_db_path, uint64_t kmer_count, std::size_t max_memory);
 
-#ifdef CF_DEVELOP_MODE
     // Constructs a k-mer hash table where the table is to be built over the k-mer
     // database having path prefix `kmer_db_path` and `kmer_count` distinct k-mers.
     // The gamma factor of the BBHash MPHF of the table is attempted to be set to
     // `gamma`, if it is non-zero. Otherwise, it is set such that the the hash
     // table may use at most `max_memory` bytes of memory.
     Kmer_Hash_Table(const std::string& kmc_db_path, uint64_t kmer_count, std::size_t max_memory, double gamma);
-#endif
 
     // Constructs a minimal perfect hash function (specifically, the BBHash) for
     // the collection of k-mers present at the KMC database at path `kmc_db_path`,

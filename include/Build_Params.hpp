@@ -149,7 +149,7 @@ public:
     // Returns the path to the output file.
     const std::string output_file_path() const
     {
-        return is_read_graph() ? (output_file_path_ + cuttlefish::file_ext::unipaths_ext) : output_file_path_;
+        return (is_read_graph() || is_ref_graph()) ? (output_file_path_ + cuttlefish::file_ext::unipaths_ext) : output_file_path_;
     }
 
 
@@ -177,14 +177,14 @@ public:
     // Returns the path to the optional MPH file.
     const std::string mph_file_path() const
     {
-        return is_read_graph() ? (output_file_path_ + cuttlefish::file_ext::hash_ext) : mph_file_path_;
+        return (is_read_graph() || is_ref_graph()) ? (output_file_path_ + cuttlefish::file_ext::hash_ext) : mph_file_path_;
     }
 
 
     // Returns the path to the optional file storing the hash table buckets.
     const std::string buckets_file_path() const
     {
-        return is_read_graph() ? (output_file_path_ + cuttlefish::file_ext::buckets_ext) : buckets_file_path_;
+        return (is_read_graph() || is_ref_graph()) ? (output_file_path_ + cuttlefish::file_ext::buckets_ext) : buckets_file_path_;
     }
 
 

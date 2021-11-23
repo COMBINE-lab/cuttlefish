@@ -7,6 +7,7 @@
 #include "globals.hpp"
 #include "Kmer_Hash_Table.hpp"
 #include "State_Read_Space.hpp"
+#include "Edge.hpp"
 #include "Endpoint.hpp"
 #include "Build_Params.hpp"
 #include "Thread_Pool.hpp"
@@ -41,9 +42,18 @@ private:
     void distribute_states_computation(Kmer_SPMC_Iterator<k + 1>* edge_parser, Thread_Pool<k>& thread_pool);
 
     // Processes the edges provided to the thread with id `thread_id` from the parser `edge_parser`,
-    // i.e. makes state-transitions for the DFA of the vertices `u` and `v` for each bidirected edge
-    // `(u, v)` provided to that thread.
+    // based on the end-purpose of extracting either the maximal unitigs or the simplitigs.
     void process_edges(Kmer_SPMC_Iterator<k + 1>* edge_parser, uint16_t thread_id);
+
+    // Processes the edges provided to the thread with id `thread_id` from the parser `edge_parser`,
+    // i.e. makes state-transitions for the DFA of the vertices `u` and `v` for each bidirected edge
+    // `(u, v)` provided to that thread, in order to construct a CdBG.
+    void process_cdbg_edges(Kmer_SPMC_Iterator<k + 1>* edge_parser, uint16_t thread_id);
+
+    // Processes the edges provided to the thread with id `thread_id` from the parser `edge_parser`,
+    // i.e. makes state-transitions for the DFA of the vertices `u` and `v` for each bidirected edge
+    // `(u, v)` provided to that thread, to construct a set of maximal simplitigs covering the dBG.
+    void process_simplitig_edges(Kmer_SPMC_Iterator<k + 1>* edge_parser, uint16_t thread_id);
 
     // Adds the information of an incident edge `e` to the side `s` of some vertex `v`, all wrapped
     // inside the edge-endpoint object `endpoint` — making the appropriate state transitions for the
@@ -60,6 +70,13 @@ private:
     // appropriate state transition for the DFA of `v`. Returns `false` iff an attempted state
     // transition failed.
     bool add_one_sided_loop(const Endpoint<k>& endpoint);
+
+    // Adds the information of the edge `e = {u, v}` to its endpoint vertices `u` and `v` iff this
+    // edge connects sides of `u` and `v` that do not have any edges added yet, which ensures that
+    // neither of the vertices belong to two different simplitig paths; and makes the appropriate
+    // state transitions for the DFAs of `u` and `v`. Returns `false` iff the edge could not be
+    // added as a simplitig edge.
+    bool add_simplitig_edge(const Edge<k>& e);
 
 
 public:
@@ -193,6 +210,29 @@ inline bool Read_CdBG_Constructor<k>::add_one_sided_loop(const Endpoint<k>& endp
     // Discard the incidence information.
     state.update_edge_at(endpoint.side(), cuttlefish::edge_encoding_t::N);
     return hash_table.update(bucket);
+}
+
+
+template <uint16_t k>
+bool Read_CdBG_Constructor<k>::add_simplitig_edge(const Edge<k>& e)
+{
+    // Fetch the hash table entry for the vertices associated to the endpoints.
+
+    Kmer_Hash_Entry_API<cuttlefish::BITS_PER_READ_KMER> bucket_u = hash_table[e.u().canonical()];
+    State_Read_Space& st_u = bucket_u.get_state();
+    if(st_u.edge_at(e.u().side()) != cuttlefish::edge_encoding_t::E)
+        return false;
+    
+    Kmer_Hash_Entry_API<cuttlefish::BITS_PER_READ_KMER> bucket_v = hash_table[e.v().canonical()];
+    State_Read_Space& st_v = bucket_v.get_state();
+    if(st_v.edge_at(e.v().side()) != cuttlefish::edge_encoding_t::E)
+        return false;
+
+
+    st_u.update_edge_at(e.u().side(), e.u().edge());
+    st_v.update_edge_at(e.v().side(), e.v().edge());
+
+    return hash_table.update_concurrent(bucket_u, bucket_v);
 }
 
 

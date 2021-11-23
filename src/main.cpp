@@ -38,7 +38,7 @@ void build(int argc, char** argv)
         ("o,output", "output file", cxxopts::value<std::string>()->default_value(cuttlefish::_default::EMPTY))
         ("f,format", "output format (0: txt, 1: GFA 1.0, 2: GFA 2.0, 3: GFA-reduced)", cxxopts::value<uint16_t>()->default_value(std::to_string(cuttlefish::_default::OP_FORMAT)))
         ("w,work-dir", "working directory", cxxopts::value<std::string>()->default_value(cuttlefish::_default::WORK_DIR))
-        ("simplitigs", "extract a set of maximal simplitigs, i.e. vertex-disjoint paths")
+        ("path-cover", "extract a maximal path cover of the de Bruijn graph")
         ("rm", "remove the KMC database")
         // TODO: repurpose the following two options
         ("mph", "minimal perfect hash (BBHash) file (optional)", cxxopts::value<std::string>()->default_value(cuttlefish::_default::EMPTY))
@@ -74,7 +74,7 @@ void build(int argc, char** argv)
         const auto format = result["format"].as<uint16_t>();
         const auto remove_kmc_db = result["rm"].as<bool>();
         const auto working_dir = result["work-dir"].as<std::string>();
-        const auto simplitigs = result["simplitigs"].as<bool>();
+        const auto path_cover = result["path-cover"].as<bool>();
         const auto mph_file = result["mph"].as<std::string>();
         const auto buckets_file = result["buckets"].as<std::string>();
         const auto save_vertices = result["save-vertices"].as<bool>();
@@ -86,7 +86,7 @@ void build(int argc, char** argv)
                                     refs, lists, dirs,
                                     k, cutoff, kmer_database, edge_database, thread_count, max_memory, strict_memory,
                                     output_file, format, working_dir,
-                                    simplitigs,
+                                    path_cover,
                                     remove_kmc_db, mph_file, buckets_file, save_vertices
 #ifdef CF_DEVELOP_MODE
                                     , gamma

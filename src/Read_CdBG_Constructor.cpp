@@ -80,8 +80,8 @@ void Read_CdBG_Constructor<k>::distribute_states_computation(Kmer_SPMC_Iterator<
 template <uint16_t k>
 void Read_CdBG_Constructor<k>::process_edges(Kmer_SPMC_Iterator<k + 1>* const edge_parser, const uint16_t thread_id)
 {
-    if(params.simplitigs())
-        process_simplitig_edges(edge_parser, thread_id);
+    if(params.path_cover())
+        process_path_cover_edges(edge_parser, thread_id);
     else
         process_cdbg_edges(edge_parser, thread_id);
 }
@@ -156,7 +156,7 @@ void Read_CdBG_Constructor<k>::process_cdbg_edges(Kmer_SPMC_Iterator<k + 1>* con
 
 
 template <uint16_t k>
-void Read_CdBG_Constructor<k>::process_simplitig_edges(Kmer_SPMC_Iterator<k + 1>* const edge_parser, const uint16_t thread_id)
+void Read_CdBG_Constructor<k>::process_path_cover_edges(Kmer_SPMC_Iterator<k + 1>* const edge_parser, const uint16_t thread_id)
 {
     Edge<k> e;  // For the edges to be processed one-by-one; say this is between the vertices `u` and `v`.
 
@@ -172,7 +172,7 @@ void Read_CdBG_Constructor<k>::process_simplitig_edges(Kmer_SPMC_Iterator<k + 1>
             if(e.is_loop())
                 continue;
             else    // It connects two endpoints `u` and `v` of two distinct vertex.
-                add_simplitig_edge(e);
+                add_path_cover_edge(e);
 
             edge_count++;
             if(progress_tracker.track_work(++progress))

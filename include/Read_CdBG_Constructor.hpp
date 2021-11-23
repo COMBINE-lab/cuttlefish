@@ -42,7 +42,7 @@ private:
     void distribute_states_computation(Kmer_SPMC_Iterator<k + 1>* edge_parser, Thread_Pool<k>& thread_pool);
 
     // Processes the edges provided to the thread with id `thread_id` from the parser `edge_parser`,
-    // based on the end-purpose of extracting either the maximal unitigs or the simplitigs.
+    // based on the end-purpose of extracting either the maximal unitigs or a maximal path cover.
     void process_edges(Kmer_SPMC_Iterator<k + 1>* edge_parser, uint16_t thread_id);
 
     // Processes the edges provided to the thread with id `thread_id` from the parser `edge_parser`,
@@ -52,8 +52,8 @@ private:
 
     // Processes the edges provided to the thread with id `thread_id` from the parser `edge_parser`,
     // i.e. makes state-transitions for the DFA of the vertices `u` and `v` for each bidirected edge
-    // `(u, v)` provided to that thread, to construct a set of maximal simplitigs covering the dBG.
-    void process_simplitig_edges(Kmer_SPMC_Iterator<k + 1>* edge_parser, uint16_t thread_id);
+    // `(u, v)` provided to that thread, to construct a maximal path cover of the dBG.
+    void process_path_cover_edges(Kmer_SPMC_Iterator<k + 1>* edge_parser, uint16_t thread_id);
 
     // Adds the information of an incident edge `e` to the side `s` of some vertex `v`, all wrapped
     // inside the edge-endpoint object `endpoint` — making the appropriate state transitions for the
@@ -73,10 +73,10 @@ private:
 
     // Adds the information of the edge `e = {u, v}` to its endpoint vertices `u` and `v` iff this
     // edge connects sides of `u` and `v` that do not have any edges added yet, which ensures that
-    // neither of the vertices belong to two different simplitig paths; and makes the appropriate
-    // state transitions for the DFAs of `u` and `v`. Returns `false` iff the edge could not be
-    // added as a simplitig edge.
-    bool add_simplitig_edge(const Edge<k>& e);
+    // neither of the vertices belong to two different paths in a path cover of the graph; and makes
+    // the appropriate state transitions for the DFAs of `u` and `v`. Returns `false` iff the edge
+    // could not be added as such.
+    bool add_path_cover_edge(const Edge<k>& e);
 
 
 public:
@@ -214,7 +214,7 @@ inline bool Read_CdBG_Constructor<k>::add_one_sided_loop(const Endpoint<k>& endp
 
 
 template <uint16_t k>
-bool Read_CdBG_Constructor<k>::add_simplitig_edge(const Edge<k>& e)
+bool Read_CdBG_Constructor<k>::add_path_cover_edge(const Edge<k>& e)
 {
     // Fetch the hash table entry for the vertices associated to the endpoints.
 

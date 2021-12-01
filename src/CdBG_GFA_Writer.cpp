@@ -591,7 +591,7 @@ void CdBG<k>::append_link_to_path(const uint16_t thread_id, const Oriented_Uniti
     p_buffer += (right_unitig.dir == cuttlefish::FWD ? "+" : "-");
 
     std::string& o_buffer = overlap_buffer[thread_id];
-    if (!o_buffer.empty()) o_buffer += ",";
+    if (thread_id > 0 || !o_buffer.empty()) o_buffer += ",";
     o_buffer += fmt::format_int(right_unitig.start_kmer_idx == left_unitig.end_kmer_idx + 1 ? k - 1 : 0).c_str();
     o_buffer += "M";
 

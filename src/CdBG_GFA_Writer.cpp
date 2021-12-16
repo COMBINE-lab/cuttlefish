@@ -591,7 +591,7 @@ void CdBG<k>::append_link_to_path(const uint16_t thread_id, const Oriented_Uniti
     p_buffer += (right_unitig.dir == cuttlefish::FWD ? "+" : "-");
 
     std::string& o_buffer = overlap_buffer[thread_id];
-    o_buffer += ",";
+    if (!o_buffer.empty()) o_buffer += ",";
     o_buffer += fmt::format_int(right_unitig.start_kmer_idx == left_unitig.end_kmer_idx + 1 ? k - 1 : 0).c_str();
     o_buffer += "M";
 
@@ -797,10 +797,6 @@ void CdBG<k>::write_gfa_path(const std::string& path_name)
         output << "*";  // Write an empty CIGAR string at the 'Overlaps' field.
     else
     {
-        // The first overlap of the path (not inferrable from the path output files).
-        const uint16_t overlap = (right_unitig.start_kmer_idx == left_unitig.end_kmer_idx +  1 ? k - 1 : 0);
-        output << overlap << "M";
-
         // Copy the thread-specific overlap output file contents to the GFA output file.
         for(uint16_t t_id = 0; t_id < thread_count; ++t_id)
         {

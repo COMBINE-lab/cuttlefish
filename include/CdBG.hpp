@@ -25,7 +25,7 @@ class CdBG
 private:
 
     const Build_Params params;    // Required parameters wrapped in one object.
-    Kmer_Hash_Table<k> Vertices;   // The hash table for the vertices (canonical k-mers) of the de Bruijn graph.
+    Kmer_Hash_Table<k, cuttlefish::BITS_PER_REF_KMER> Vertices; // The hash table for the vertices (canonical k-mers) of the de Bruijn graph.
 
     // Minimum size of a partition to be processed by one thread.
     static constexpr uint16_t PARTITION_SIZE_THRESHOLD = 1;
@@ -91,10 +91,6 @@ private:
     std::vector<double> path_flush_time;
     double path_concat_time = 0;
     double logger_flush_time = 0;
-
-
-    // Removes the k-mer set (KMC database) with the path prefix `kmc_file_pref`.
-    void remove_kmer_set(const std::string& kmc_file_pref) const;
 
 
     /* Build methods */
@@ -414,11 +410,12 @@ private:
 
 public:
 
-    // Constructs a `CdBG` object with the parameters wrapped at `params`.
+    // Constructs a `CdBG` object with the parameters required for the construction of the
+    // compacted representation of the underlying reference de Bruijn graph wrapped in `params`.
     CdBG(const Build_Params& params);
 
-    // Constructs the compacted de Bruijn graph using up-to `thread_count` threads, and
-    // outputs the maximal unitigs into the file named `output_file_name`.
+    // Constructs the compacted reference de Bruijn graph, employing the parameters received
+    // with the object-constructor.
     void construct();
 };
 

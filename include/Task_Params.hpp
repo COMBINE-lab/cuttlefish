@@ -45,5 +45,21 @@ struct Output_Task_Params
 };
 
 
+// Wrapper over the parameters for the DFA-states computation and the maximal unitigs extraction tasks for read-dBGs.
+struct Read_dBG_Compaction_Params
+{
+    void* parser;
+    uint16_t thread_id;
+
+
+    Read_dBG_Compaction_Params() {}
+
+    Read_dBG_Compaction_Params(void* const parser, const uint16_t thread_id):
+        parser(parser),
+        thread_id(thread_id)
+    {}
+};
+
+
 
 #endif

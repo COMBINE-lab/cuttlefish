@@ -1,5 +1,5 @@
 
-#include "Parser.hpp"
+#include "Ref_Parser.hpp"
 #include "kseq/kseq.h"
 #include "ghc/filesystem.hpp"
 
@@ -9,46 +9,31 @@
 
 // Declare the type of file handler and the read() function.
 // Required for FASTA/FASTQ file reading using the kseq library.
-KSEQ_INIT(gzFile, gzread);
+KSEQ_INIT(gzFile, gzread)
 
 
-Parser::Parser(const Reference_Input& ref_input)
+Ref_Parser::Ref_Parser(const std::string& file_path)
 {
-    // Collect references from the raw reference paths provided.
-    for(const std::string& ref_path: ref_input.ref_paths())
-        ref_paths.push(ref_path);
-
-
-    // Collect references from the provided reference lists.
-    for(const std::string& list_path: ref_input.list_paths())
-    {
-        std::ifstream input(list_path.c_str(), std::ifstream::in);
-        if(input.fail())
-        {
-            std::cerr << "Error opening reference list file " << list_path << ". Aborting.\n";
-            std::exit(EXIT_FAILURE);
-        }
-
-        std::string ref_path;
-        while(input >> ref_path)
-            ref_paths.push(ref_path);
-
-        input.close();
-    }
-
-
-    // Collect references from the provided reference directories.
-    for(const std::string& dir_path: ref_input.dir_paths())
-        for(const auto& entry: ghc::filesystem::directory_iterator(dir_path))
-            ref_paths.push(entry.path());
-
+    ref_paths.push(file_path);
 
     // Open the first reference for subsequent parsing.
     open_next_reference();
 }
 
 
-void Parser::open_reference(const std::string& reference_path)
+Ref_Parser::Ref_Parser(const Seq_Input& ref_input): Ref_Parser(ref_input.seqs())
+{
+    // Open the first reference for subsequent parsing.
+    open_next_reference();
+}
+
+
+Ref_Parser::Ref_Parser(const std::vector<std::string>& refs):
+    ref_paths(std::deque<std::string>(refs.begin(), refs.end()))
+{}
+
+
+void Ref_Parser::open_reference(const std::string& reference_path)
 {
     file_ptr = gzopen(reference_path.c_str(), "r");  // Open the file handler.
     if(file_ptr == nullptr)
@@ -67,7 +52,7 @@ void Parser::open_reference(const std::string& reference_path)
 }
 
 
-bool Parser::open_next_reference()
+bool Ref_Parser::open_next_reference()
 {
     if(ref_paths.empty())
         return false;
@@ -80,13 +65,13 @@ bool Parser::open_next_reference()
 }
 
 
-const std::string& Parser::curr_ref() const
+const std::string& Ref_Parser::curr_ref() const
 {
     return curr_ref_path;
 }
 
 
-bool Parser::read_next_seq()
+bool Ref_Parser::read_next_seq()
 {
     // Sequences still remain at the current reference being parsed.
     if(parser != nullptr && kseq_read(parser) >= 0)
@@ -106,43 +91,43 @@ bool Parser::read_next_seq()
 }
 
 
-const char* Parser::seq() const
+const char* Ref_Parser::seq() const
 {
     return parser->seq.s;
 }
 
 
-size_t Parser::seq_len() const
+size_t Ref_Parser::seq_len() const
 {
     return parser->seq.l;
 }
 
 
-size_t Parser::buff_sz() const
+size_t Ref_Parser::buff_sz() const
 {
     return parser->seq.m;
 }
 
 
-uint64_t Parser::ref_id() const
+uint64_t Ref_Parser::ref_id() const
 {
     return ref_count;
 }
 
 
-uint64_t Parser::seq_id() const
+uint64_t Ref_Parser::seq_id() const
 {
     return seq_id_;
 }
 
 
-const char* Parser::seq_name() const
+const char* Ref_Parser::seq_name() const
 {
     return parser->name.s;
 }
 
 
-void Parser::close()
+void Ref_Parser::close()
 {
     if(file_ptr != nullptr)
     {

@@ -277,7 +277,7 @@ void CdBG<k>::output_gfa_unitig(const uint16_t thread_id, const char* const seq,
     // k-mer, irrespective of which direction the unitig may be traversed at.
     const Kmer<k> min_flanking_kmer = std::min(start_kmer.canonical(), end_kmer.canonical());
     const uint64_t bucket_id = Vertices.bucket_id(min_flanking_kmer);
-    Kmer_Hash_Entry_API hash_table_entry = Vertices[bucket_id];
+    Kmer_Hash_Entry_API<cuttlefish::BITS_PER_REF_KMER> hash_table_entry = Vertices[bucket_id];
     State& state = hash_table_entry.get_state();
 
     // Name the GFA segment with the hash value of the first k-mer of the canonical form unitig.
@@ -922,5 +922,5 @@ void CdBG<k>::remove_temp_files(const uint64_t file_id) const
 
 
 
-// Template instantiations for the required specializations.
+// Template instantiations for the required instances.
 ENUMERATE(INSTANCE_COUNT, INSTANTIATE, CdBG)

@@ -14,7 +14,7 @@ project(${PROJECT_NAME}
 
 # Fix language standards, and set hard requirements for such.
 # All targets defined from this point onward will pick up these requirements.
-set(CMAKE_CXX_STANDARD 14)
+set(CMAKE_CXX_STANDARD 14)  # Bump to 17
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 set(CMAKE_C_STANDARD 11)
@@ -38,10 +38,27 @@ set(OPTIMIZE_FLAGS -funroll-loops)
 
 
 # Add the required preprocessor definitions (`#define`s) to pass on.
-add_definitions(-D__STDC_FORMAT_MACROS -DSPDLOG_FMT_EXTERNAL_HO -DFMT_HEADER_ONLY -DXXH_INLINE_ALL)
+# TODO: find out what are `__STDC_FORMAT_MACROS` and `SPDLOG_FMT_EXTERNAL_HO` for.
+add_compile_definitions(__STDC_FORMAT_MACROS SPDLOG_FMT_EXTERNAL_HO FMT_HEADER_ONLY XXH_INLINE_ALL)
+
 if(INSTANCE_COUNT)
-    add_definitions(-DINSTANCE_COUNT=${INSTANCE_COUNT})
+    add_compile_definitions(INSTANCE_COUNT=${INSTANCE_COUNT})
 endif()
+
+if(CF_VALIDATION_MODE)
+    add_compile_definitions(CF_VALIDATION_MODE)
+endif()
+
+if(CF_DEVELOP_MODE)
+    add_compile_definitions(CF_DEVELOP_MODE)
+endif()
+
+execute_process(
+    COMMAND getconf LEVEL1_DCACHE_LINESIZE
+    COMMAND tr -d '\n'
+    OUTPUT_VARIABLE L1_CACHE_LINE_SIZE
+)
+add_compile_definitions(L1_CACHE_LINE_SIZE=${L1_CACHE_LINE_SIZE})
 
 
 # Search the file system for the appropriate threads package for this platform, and then set
@@ -50,8 +67,71 @@ find_package(Threads REQUIRED)  # The threads package is required for the BBHash
 set(THREADS_PREFER_PTHREAD_FLAG TRUE)   # The BBHash library uses `pthread`.
 
 # Search and load setting for the `zlib` library. The library is required to seamlessly adapt
-# the `kseq` library to gzipped compressed files.
-find_package(ZLIB REQUIRED)
+# the `kseq` and the `kmc` libraries to gzip-compressed files.
+include(FindZLIB)
+if(NOT ZLIB_FOUND)
+    message(FATAL_ERROR "zlib (https://zlib.net/) is required. Aborting.")
+endif()
+
+# Search and load setting for the `bzip2` library. It is required to seamlessly adapt the
+# `kmc` library to bzip-compressed files.
+include(FindBZip2)
+if(NOT BZIP2_FOUND)
+    message(FATAL_ERROR "bzip2 (https://sourceware.org/bzip2/) is required. Aborting.")
+endif()
+
+
+# Module required to download and install external projects.
+include(ExternalProject)
+set(EXT_LIB ${CMAKE_SOURCE_DIR}/external/lib/)
+set(EXT_INCLUDE ${CMAKE_SOURCE_DIR}/external/include/)
+
+
+# Prepare the `jemalloc` library. It provides scalable concurrency support and better avoidance
+# of fragmentation.
+message("Build system will fetch and install jemalloc")
+ExternalProject_Add(prj_jemalloc
+    DOWNLOAD_DIR        ${CMAKE_SOURCE_DIR}/external
+    DOWNLOAD_COMMAND    curl -k -L https://github.com/jemalloc/jemalloc/archive/5.2.1.tar.gz -o jemalloc-5.2.1.tar.gz &&
+                        tar -xzf jemalloc-5.2.1.tar.gz &&
+                        rm jemalloc-5.2.1.tar.gz
+
+    SOURCE_DIR          ${CMAKE_SOURCE_DIR}/external/jemalloc-5.2.1
+    BUILD_IN_SOURCE     TRUE
+    INSTALL_DIR         ${CMAKE_SOURCE_DIR}/external
+    CONFIGURE_COMMAND   sh -c "CC=${CMAKE_C_COMPILER} ./autogen.sh --disable-debug --enable-static --prefix=<INSTALL_DIR> --silent"
+    INSTALL_COMMAND     cp -r lib ${EXT_LIB} &&
+                        cp -r include ${EXT_INCLUDE}
+)
+
+add_library(jemalloc STATIC IMPORTED)
+set_target_properties(jemalloc PROPERTIES IMPORTED_LOCATION ${EXT_LIB}/libjemalloc.a)
+add_dependencies(jemalloc prj_jemalloc)
+
+
+# Prepare the `kmc` library — required by the Cuttlefish algorithm implementation.
+message("Build system will fetch and install KMC3")
+ExternalProject_Add(prj_kmc
+    DOWNLOAD_DIR        ${CMAKE_SOURCE_DIR}/external
+    # DOWNLOAD_COMMAND    curl -k -L https://github.com/refresh-bio/KMC/archive/refs/heads/master.zip -o KMC-master.zip &&
+    #                     unzip -qq KMC-master.zip &&
+    #                     rm KMC-master.zip
+    DOWNLOAD_COMMAND    git clone https://github.com/refresh-bio/kmc &&
+                        cd kmc
+
+    # SOURCE_DIR          ${CMAKE_SOURCE_DIR}/external/KMC-master
+    SOURCE_DIR          ${CMAKE_SOURCE_DIR}/external/kmc
+    BUILD_IN_SOURCE     TRUE
+    INSTALL_DIR         ${CMAKE_SOURCE_DIR}/external/
+    CONFIGURE_COMMAND   ""
+    BUILD_COMMAND       make -j
+    INSTALL_COMMAND     cp bin/libkmc_core.a ${EXT_LIB} &&
+                        cp include/kmc_runner.h ${EXT_INCLUDE}
+)
+
+add_library(kmc STATIC IMPORTED)
+set_target_properties(kmc PROPERTIES IMPORTED_LOCATION ${EXT_LIB}/libkmc_core.a)
+add_dependencies(kmc prj_kmc)
 
 
 # The `Debug` configuration optimizes the program for debugging and enables full debug information.

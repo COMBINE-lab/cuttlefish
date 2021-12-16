@@ -1,10 +1,12 @@
 
 #include "CdBG.hpp"
+#include "utility.hpp"
 
 
 template <uint16_t k> 
 CdBG<k>::CdBG(const Build_Params& params):
-    params(params)
+    params(params),
+    Vertices(params.vertex_db_path())
 {
     Kmer<k>::set_k(params.k());
 }
@@ -14,11 +16,11 @@ template <uint16_t k>
 void CdBG<k>::construct()
 {
     std::cout << "\nConstructing the minimal perfect hash function (MPHF).\n";
-    Vertices.construct(params.kmc_db_path(), params.thread_count(), params.working_dir_path(), params.mph_file_path());
+    Vertices.construct(params.thread_count(), params.working_dir_path(), params.mph_file_path());
 
     if(params.remove_kmc_db())
     {
-        remove_kmer_set(params.kmc_db_path());
+        Kmer_Container<k>::remove(params.vertex_db_path());
         std::cout << "\nRemoved the KMC database from disk.\n";
     }
 
@@ -32,20 +34,6 @@ void CdBG<k>::construct()
     }
 
     Vertices.clear();
-}
-
-
-template <uint16_t k>
-void CdBG<k>::remove_kmer_set(const std::string& kmc_file_pref) const
-{
-    const std::string kmc_file1_path(kmc_file_pref + ".kmc_pre");
-    const std::string kmc_file2_path(kmc_file_pref + ".kmc_suf");
-
-    if(std::remove(kmc_file1_path.c_str()) || std::remove(kmc_file2_path.c_str()))
-    {
-        std::cerr << "Error removing the KMC database file from path prefix " << kmc_file_pref << ". Aborting.\n";
-        std::exit(EXIT_FAILURE);
-    }
 }
 
 
@@ -80,5 +68,5 @@ size_t CdBG<k>::search_valid_kmer(const char* const seq, const size_t left_end, 
 
 
 
-// Template instantiations for the required specializations.
+// Template instantiations for the required instances.
 ENUMERATE(INSTANCE_COUNT, INSTANTIATE, CdBG)

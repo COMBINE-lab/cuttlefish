@@ -73,6 +73,7 @@ State::State(const Vertex& vertex)
 }
 
 
+// TODO: Replace switch-case with `code |= static_cast<uint8_t>(base)`.
 inline void State::set_nibble_lower_half(const cuttlefish::base_t base)
 {
     switch(base)
@@ -99,6 +100,7 @@ inline void State::set_nibble_lower_half(const cuttlefish::base_t base)
 }
 
 
+// TODO: Replace switch-case with `code |= (static_cast<uint8_t>(base) << 2)`.
 inline void State::set_nibble_upper_half(const cuttlefish::base_t base)
 {
     switch(base)

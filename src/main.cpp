@@ -1,6 +1,7 @@
 
 #include "Input_Defaults.hpp"
 #include "CdBG.hpp"
+#include "Read_CdBG.hpp"
 #include "Validator.hpp"
 #include "Build_Params.hpp"
 #include "Validation_Params.hpp"
@@ -19,21 +20,43 @@
 // Driver function for the CdBG build.
 void build(int argc, char** argv)
 {
-    cxxopts::Options options("cuttlefish build", "Efficiently construct the compacted de Bruijn graph from references");
-    options.add_options()
-        ("r,refs", "reference files", cxxopts::value<std::vector<std::string>>()->default_value(cuttlefish::_default::EMPTY))
-        ("l,lists", "reference file lists", cxxopts::value<std::vector<std::string>>()->default_value(cuttlefish::_default::EMPTY))
-        ("d,dirs", "reference file directories", cxxopts::value<std::vector<std::string>>()->default_value(cuttlefish::_default::EMPTY))
-        ("k,kmer_len", "k-mer length", cxxopts::value<uint16_t>()->default_value(std::to_string(cuttlefish::_default::K)))
-        ("s,kmc_db", "set of k-mers (KMC database) prefix", cxxopts::value<std::string>())
+    cxxopts::Options options("cuttlefish build", "Efficiently construct the compacted de Bruijn graph from sequencing reads or reference sequences");
+
+    options.add_options("common")
+        ("r,refs", "input files", cxxopts::value<std::vector<std::string>>()->default_value(cuttlefish::_default::EMPTY))
+        ("l,lists", "input file lists", cxxopts::value<std::vector<std::string>>()->default_value(cuttlefish::_default::EMPTY))
+        ("d,dirs", "input file directories", cxxopts::value<std::vector<std::string>>()->default_value(cuttlefish::_default::EMPTY))
+        ("k,kmer-len", "k-mer length", cxxopts::value<uint16_t>()->default_value(std::to_string(cuttlefish::_default::K)))
         ("t,threads", "number of threads to use", cxxopts::value<uint16_t>()->default_value(std::to_string(cuttlefish::_default::THREAD_COUNT)))
         ("o,output", "output file", cxxopts::value<std::string>()->default_value(cuttlefish::_default::EMPTY))
+        ("w,work-dir", "working directory", cxxopts::value<std::string>()->default_value(cuttlefish::_default::WORK_DIR))
+        ("h,help", "print usage");
+
+    options.add_options("cuttlefish 2.0")
+        ("read", "construct a compacted read de Bruijn graph")
+        ("ref", "construct a compacted reference de Bruijn graph")
+        ("c,cutoff", "frequency cutoff for (k + 1)-mers", cxxopts::value<uint32_t>()->default_value(std::to_string(cuttlefish::_default::CUTOFF_FREQ)))
+        ("m,max-memory", "soft maximum memory limit (in GB)", cxxopts::value<std::size_t>()->default_value(std::to_string(cuttlefish::_default::MAX_MEMORY)))
+        ("unrestrict-memory", "do not impose memory usage restriction")
+        ("path-cover", "extract a maximal path cover of the de Bruijn graph");
+    
+    options.add_options("cuttlefish 1.0")
+        ("s,kmc-db", "set of vertices, i.e. k-mers (KMC database) prefix", cxxopts::value<std::string>()->default_value(cuttlefish::_default::WORK_DIR))
         ("f,format", "output format (0: txt, 1: GFA 1.0, 2: GFA 2.0, 3: GFA-reduced)", cxxopts::value<uint16_t>()->default_value(std::to_string(cuttlefish::_default::OP_FORMAT)))
-        ("w,work_dir", "working directory", cxxopts::value<std::string>()->default_value(cuttlefish::_default::WORK_DIR))
-        ("rm", "remove the KMC database")
+        ("rm", "remove the KMC database");
+
+    options.add_options("specialized")
+        // TODO: repurpose the following two options
         ("mph", "minimal perfect hash (BBHash) file (optional)", cxxopts::value<std::string>()->default_value(cuttlefish::_default::EMPTY))
         ("buckets", "hash table buckets (cuttlefish) file (optional)", cxxopts::value<std::string>()->default_value(cuttlefish::_default::EMPTY))
-        ("h,help", "print usage");
+        ("save-vertices", "save the vertex set of the graph");
+
+    options.add_options("debug")
+        ("e,edge-db", "set of edges, i.e. (k + 1)-mers (KMC database) prefix", cxxopts::value<std::string>()->default_value(cuttlefish::_default::EMPTY))
+#ifdef CF_DEVELOP_MODE
+        ("gamma", "gamma for the BBHash MPHF", cxxopts::value<double>()->default_value(std::to_string(cuttlefish::_default::GAMMA)))
+#endif
+        ;
 
     try
     {
@@ -44,35 +67,58 @@ void build(int argc, char** argv)
             return;
         }
 
+        const auto is_read_graph = result["read"].as<bool>();
+        const auto is_ref_graph = result["ref"].as<bool>();
         const auto refs = result["refs"].as<std::vector<std::string>>();
         const auto lists = result["lists"].as<std::vector<std::string>>();
         const auto dirs = result["dirs"].as<std::vector<std::string>>();
-        const auto k = result["kmer_len"].as<uint16_t>();
-        const auto kmer_database = result["kmc_db"].as<std::string>();
+        const auto k = result["kmer-len"].as<uint16_t>();
+        const auto cutoff = result["cutoff"].as<uint32_t>();
+        const auto kmer_database = result["kmc-db"].as<std::string>();
+        const auto edge_database = result["edge-db"].as<std::string>();
         const auto thread_count = result["threads"].as<uint16_t>();
+        const auto max_memory = result["max-memory"].as<std::size_t>();
+        const auto strict_memory = !result["unrestrict-memory"].as<bool>();
         const auto output_file = result["output"].as<std::string>();
         const auto format = result["format"].as<uint16_t>();
         const auto remove_kmc_db = result["rm"].as<bool>();
-        const auto working_dir = result["work_dir"].as<std::string>();
+        const auto working_dir = result["work-dir"].as<std::string>();
+        const auto path_cover = result["path-cover"].as<bool>();
         const auto mph_file = result["mph"].as<std::string>();
         const auto buckets_file = result["buckets"].as<std::string>();
+        const auto save_vertices = result["save-vertices"].as<bool>();
+#ifdef CF_DEVELOP_MODE
+        const double gamma = result["gamma"].as<double>();
+#endif
 
-        const Build_Params params(refs, lists, dirs, k, kmer_database, thread_count, output_file, format, working_dir, remove_kmc_db, mph_file, buckets_file);
+        const Build_Params params(  is_read_graph, is_ref_graph,
+                                    refs, lists, dirs,
+                                    k, cutoff, kmer_database, edge_database, thread_count, max_memory, strict_memory,
+                                    output_file, format, working_dir,
+                                    path_cover,
+                                    remove_kmc_db, mph_file, buckets_file, save_vertices
+#ifdef CF_DEVELOP_MODE
+                                    , gamma
+#endif
+                                );
         if(!params.is_valid())
         {
             std::cerr << "Invalid input configuration. Aborting.\n";
             std::exit(EXIT_FAILURE);
         }
 
-        std::cout.precision(3);
-        
+        // std::cout.precision(3);
 
-        std::cout << "\nConstructing the compacted de Bruijn graph for k = " << k << ".\n";
 
-        const Application<cuttlefish::MAX_K> app(params);
-        app.execute();
+        const std::string dBg_type(params.is_read_graph() ? "read" : "reference");
 
-        std::cout << "\nConstructed the compacted de Bruijn graph at " << output_file << ".\n";
+        std::cout << "\nConstructing the compacted " << dBg_type << " de Bruijn graph for k = " << k << ".\n";
+
+        (params.is_read_graph() || params.is_ref_graph()) ?
+            Application<cuttlefish::MAX_K, Read_CdBG>(params).execute() :
+            Application<cuttlefish::MAX_K, CdBG>(params).execute();
+
+        std::cout << "\nConstructed the " << dBg_type << " compacted de Bruijn graph at " << output_file << ".\n";
     }
     catch(const std::exception& e)
     {
@@ -128,8 +174,8 @@ void validate(int argc, char** argv)
 
         std::cout << "\nValidating the compacted de Bruijn graph for k = " << k << "\n";
 
-        const Application<cuttlefish::MAX_K> app(params);
-        std::cout << (app.validate() ? "\nValidation successful" : "\nValidation failed") << std::endl;
+        std::cout << (Application<cuttlefish::MAX_K, CdBG>(params).validate() ?
+                        "\nValidation successful" : "\nValidation failed") << std::endl;
     }
     catch(const std::exception& e)
     {
@@ -142,11 +188,20 @@ void validate(int argc, char** argv)
 
 int main(int argc, char** argv)
 {
+#ifdef CF_DEVELOP_MODE
+    std::cout << "Warning: Executing in Develop Mode.\n";
+#endif
+
     if(argc < 2)
+    {
         std::cout << "Usage:\ncuttlefish <command> [OPTIONS]" << std::endl;
+        std::cout << "Supported commands: `build` and `validate`." << std::endl;
+    }
     else
     {
-        const std::string command = argv[1];
+        std::string command(argv[1]);
+        std::transform(command.begin(), command.end(), command.begin(), [](const char ch) { return std::tolower(ch); });
+
         if(command == "build")
             build(argc - 1, argv + 1);
         else if(command == "validate")

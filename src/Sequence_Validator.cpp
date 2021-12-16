@@ -1,6 +1,6 @@
 
 #include "Validator.hpp"
-#include "Parser.hpp"
+#include "Ref_Parser.hpp"
 #include "Directed_Kmer.hpp"
 #include "Kmer_Container.hpp"
 #include "BBHash/BooPHF.h"
@@ -37,7 +37,7 @@ void Validator<k>::validate_sequence_completion(bool& result)
 
 
     // Open a parser for the FASTA / FASTQ file containing the reference.
-    Parser parser(params.reference_input());
+    Ref_Parser parser(params.reference_input());
 
 
     std::vector<std::thread> th(thread_count);  // Thread-pool (round-robin) to validate the sequences parallelly.
@@ -252,5 +252,5 @@ bool Validator<k>::walk_unitig(const char* const seq, const size_t seq_len, cons
 
 
 
-// Template instantiations for the required specializations.
+// Template instantiations for the required instances.
 ENUMERATE(INSTANCE_COUNT, INSTANTIATE, Validator)

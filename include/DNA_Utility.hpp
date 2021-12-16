@@ -41,6 +41,12 @@ private:
         T, G, C, A, N
     };
 
+    // Mapped ASCII characters for the `DNA::Base` notations.
+    static constexpr char MAPPED_CHAR[4] = 
+    {
+        'A', 'C', 'G', 'T'
+    };
+
     // DNA-complement characters for the ASCII characters in the range [0, 127] 
     static constexpr char COMPLEMENTED_CHAR[128] = 
     {
@@ -77,6 +83,20 @@ private:
         1, 1, 1, 1, 1, 1, 1, 1              // 120 - 127
     };
 
+    // Mapped `DNA::Extended_Base` for the corresponding `DNA::Base`, i.e.
+    // a mapping from [0(A) — T(3)] to [1(A) — 4(T)].
+    static constexpr DNA::Extended_Base MAPPED_EXTENDED_BASE[4] =
+    {
+        DNA::Extended_Base::A, DNA::Extended_Base::C, DNA::Extended_Base::G, DNA::Extended_Base::T
+    };
+
+    // Mapped `DNA::Base` for the corresponding `DNA::Extended_Base`, i.e.
+    // a mapping from [1(A) — 4(3)] to [0(A) — 3(T)].
+    static constexpr DNA::Base REVERSE_MAPPED_EXTENDED_BASE[5] =
+    {
+        DNA::Base::N, DNA::Base::A, DNA::Base::C, DNA::Base::G, DNA::Base::T
+    };
+
 
 public:
 
@@ -90,6 +110,12 @@ public:
     static DNA::Base complement(const DNA::Base base)
     {
         return COMPLEMENTED_BASE[base];
+    }
+
+    // Returns the mapping character of the nucleobase `base`.
+    static char map_char(const DNA::Base base)
+    {
+        return MAPPED_CHAR[static_cast<std::size_t>(base)];
     }
         
     // Returns the DNA-complement (upper-case) character of the character `base`.
@@ -108,6 +134,20 @@ public:
     static char upper(const char base)
     {
         return base <= 'T' ? base : (base - ('a' - 'A'));
+    }
+
+    // Returns the mapping `DNA::Extended_Base` representation of the
+    // `DNA::Base` representation `base`.
+    static DNA::Extended_Base map_extended_base(const DNA::Base base)
+    {
+        return MAPPED_EXTENDED_BASE[base];
+    }
+
+    // Returns the mapping `DNA::Base` representation of the
+    // `DNA::Extended_Base` representation `extended_base`.
+    static DNA::Base map_base(const DNA::Extended_Base extended_base)
+    {
+        return REVERSE_MAPPED_EXTENDED_BASE[static_cast<std::size_t>(extended_base)];
     }
 };
 

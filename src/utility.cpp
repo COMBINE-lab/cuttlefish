@@ -6,26 +6,22 @@
 #include <cstring>
 #include <cstdlib>
 #include <ctime>
+#include <iostream>
+#include <sstream>
+#include <cstdio>
+#include <iterator>
+#include <system_error>
 
 
-std::string get_random_string(const size_t len)
+std::string get_random_string(const size_t len, const char* const alphabet)
 {
-    static const char alphabet[] =
-        "0123456789"
-        "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-        "abcdefghijklmnopqrstuvwxyz";
-    char *s = new char[len + 1];
+    std::string str;
+    str.reserve(len);
 
-    const unsigned seed = time(NULL);
-    srand(seed);
+    const unsigned int seed = static_cast<unsigned int>(std::time(NULL));
+    std::srand(seed);
     for (size_t i = 0; i < len; ++i)
-        s[i] = alphabet[(std::rand() % (sizeof(alphabet) - 1))];
-
-    s[len] = '\0';
-
-
-    const std::string str(s);
-    delete[] s;
+        str += alphabet[(std::rand() % (sizeof(alphabet) - 1))];
 
     return str;
 }
@@ -40,6 +36,22 @@ bool is_prefix(const std::string& s, const std::string& pref)
     for(; idx < pref.length() && s[idx] == pref[idx]; ++idx);
 
     return idx == pref.length();
+}
+
+
+bool file_exists(const std::string& file_path)
+{
+    struct stat stat_buf;
+
+    return stat(file_path.c_str(), &stat_buf) == 0;
+}
+
+
+std::size_t file_size(const std::string& file_path)
+{
+    std::error_code ec;
+    const uintmax_t size = ghc::filesystem::file_size(file_path, ec);
+    return ec ? 0 : static_cast<std::size_t>(size);
 }
 
 
@@ -63,4 +75,87 @@ std::string remove_whitespaces(const char* s)
             str += *p;
 
     return str;
+}
+
+
+const std::string concat_strings(const std::vector<std::string>& s, const std::string& delimiter)
+{
+    std::ostringstream concat_stream;
+    std::copy(s.begin(), s.end(), std::ostream_iterator<std::string>(concat_stream, delimiter.c_str()));
+
+    std::string concat_str(concat_stream.str());
+    concat_str.erase(concat_str.size() - delimiter.size(), delimiter.size());
+    return concat_str;
+}
+
+
+bool remove_file(const std::string& file_path)
+{
+    return ghc::filesystem::remove(file_path);
+}
+
+
+void clear_file(const std::string& file_path)
+{
+    std::ofstream file(file_path.c_str(), std::ofstream::out | std::ofstream::trunc);
+    if(file.fail())
+    {
+        std::cerr << "Error opening file " << file_path << ". Aborting.\n";
+        std::exit(EXIT_FAILURE);
+    }
+
+    file.close();
+}
+
+
+const std::string filename(const std::string& file_path)
+{
+    return ghc::filesystem::path(file_path).filename().string();
+}
+
+
+const std::string dirname(const std::string& file_path)
+{
+    return ghc::filesystem::path(file_path).remove_filename().string();
+}
+
+
+void move_file(const std::string& from_path, const std::string& to_path)
+{
+    ghc::filesystem::copy(from_path, to_path);
+    ghc::filesystem::remove(from_path);
+}
+
+
+std::size_t process_peak_memory()
+{
+    constexpr const char* process_file = "/proc/self/status";
+    constexpr const char* peak_mem_field = "VmHWM:";
+    constexpr std::size_t field_len = std::strlen(peak_mem_field);
+
+    std::FILE* fp = std::fopen(process_file, "r");
+    if(fp == NULL)
+    {
+        std::cerr << "Error opening the process information file.\n";
+        return 0;
+    }
+
+    char line[1024];
+    std::size_t peak_mem = 0;
+    while(std::fgets(line, sizeof(line) - 1, fp))
+        if(std::strncmp(line, peak_mem_field, field_len) == 0)
+        {
+            peak_mem = std::strtoul(line + field_len, NULL, 0);
+            break;
+        }
+
+    
+    if(std::ferror(fp))
+    {
+        std::cerr << "Error reading the process information file.\n";
+        return 0;
+    }
+
+
+    return peak_mem * 1024;
 }

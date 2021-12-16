@@ -79,7 +79,7 @@ namespace boomphf {
 			int reso = fseek(_is,0,SEEK_SET);
 			if (reso) {
 			  fprintf(stderr, "fseek failed on FILE* %p with return code %d",
-					  is, reso);
+					  static_cast<void*>(is), reso);
 			}
 			// advance();
 			peek();

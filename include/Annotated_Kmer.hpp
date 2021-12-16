@@ -8,8 +8,8 @@
 #include "Kmer_Hash_Table.hpp"
 
 
-// Complete k-mer information: k-mer itself and its reverse complement,
-// canonical form, direction, index in corresponding sequence, and its class.
+// Complete k-mer information: the k-mer itself and its reverse complement, canonical
+// form, direction, index in the corresponding sequence, and its state-class.
 template <uint16_t k>
 class Annotated_Kmer: public Directed_Kmer<k>
 {
@@ -25,7 +25,10 @@ public:
     {}
 
     // Constructs an annotated k-mer with its complete information.
-    Annotated_Kmer(const Kmer<k>& kmer, size_t kmer_idx, const Kmer_Hash_Table<k>& hash);
+    // The template parameter `BITS_PER_KEY` is required to access
+    // the hash table `hash`.
+    template <uint8_t BITS_PER_KEY>
+    Annotated_Kmer(const Kmer<k>& kmer, size_t kmer_idx, const Kmer_Hash_Table<k, BITS_PER_KEY>& hash);
 
     // Copy constructs the annotated k-mer from `rhs`.
     Annotated_Kmer(const Annotated_Kmer& rhs) = default;
@@ -34,7 +37,8 @@ public:
     // appending the next base `next_base` to the end, i.e. rolls
     // the k-mer by one base, sets all the relevant k-mer
     // information accordingly (k-mer state is set using the `hash`).
-    void roll_to_next_kmer(char next_base, const Kmer_Hash_Table<k>& hash);
+    template <uint8_t BITS_PER_KEY>
+    void roll_to_next_kmer(char next_base, const Kmer_Hash_Table<k, BITS_PER_KEY>& hash);
 
     void operator=(const Annotated_Kmer<k>& rhs);
 
@@ -47,13 +51,15 @@ public:
 
 
 template <uint16_t k>
-inline Annotated_Kmer<k>::Annotated_Kmer(const Kmer<k>& kmer, const size_t kmer_idx, const Kmer_Hash_Table<k>& hash):
+template <uint8_t BITS_PER_KEY>
+inline Annotated_Kmer<k>::Annotated_Kmer(const Kmer<k>& kmer, const size_t kmer_idx, const Kmer_Hash_Table<k, BITS_PER_KEY>& hash):
     Directed_Kmer<k>(kmer), idx_(kmer_idx), state_class_(hash[this->canonical_].state_class())
 {}
 
 
 template <uint16_t k>
-inline void Annotated_Kmer<k>::roll_to_next_kmer(const char next_base, const Kmer_Hash_Table<k>& hash)
+template <uint8_t BITS_PER_KEY>
+inline void Annotated_Kmer<k>::roll_to_next_kmer(const char next_base, const Kmer_Hash_Table<k, BITS_PER_KEY>& hash)
 {
     Directed_Kmer<k>::roll_to_next_kmer(next_base);
 
@@ -65,10 +71,7 @@ inline void Annotated_Kmer<k>::roll_to_next_kmer(const char next_base, const Kme
 template <uint16_t k>
 inline void Annotated_Kmer<k>::operator=(const Annotated_Kmer<k>& rhs)
 {
-    this->kmer_ = rhs.kmer_;
-    this->rev_compl_ = rhs.rev_compl_;
-    this->canonical_ = rhs.canonical_;
-    this->dir_ = rhs.dir_;
+    Directed_Kmer<k>::operator=(rhs);
     
     idx_ = rhs.idx_;
     state_class_ = rhs.state_class_;

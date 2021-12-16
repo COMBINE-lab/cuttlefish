@@ -35,7 +35,7 @@ void build(int argc, char** argv)
     options.add_options("cuttlefish 2.0")
         ("read", "construct a compacted read de Bruijn graph")
         ("ref", "construct a compacted reference de Bruijn graph")
-        ("c,cutoff", "frequency cutoff for (k + 1)-mers (inapplicable for references)", cxxopts::value<uint32_t>()->default_value(std::to_string(cuttlefish::_default::CUTOFF_FREQ)))
+        ("c,cutoff", "frequency cutoff for (k + 1)-mers", cxxopts::value<uint32_t>()->default_value(std::to_string(cuttlefish::_default::CUTOFF_FREQ)))
         ("m,max-memory", "soft maximum memory limit (in GB)", cxxopts::value<std::size_t>()->default_value(std::to_string(cuttlefish::_default::MAX_MEMORY)))
         ("unrestrict-memory", "do not impose memory usage restriction")
         ("path-cover", "extract a maximal path cover of the de Bruijn graph");

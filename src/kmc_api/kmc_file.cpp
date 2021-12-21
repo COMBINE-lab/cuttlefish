@@ -412,7 +412,7 @@ bool CKMC_DB::ReadParamsFrom_prefix_file_buf(uint64 &size, const bool load_pref_
 			prefix_file_buf[last_data_index] = total_kmers + 1;
 		}
 		else if(init_pref_buf)
-			prefix_virt_buf.init_kmc1(file_pre, prefix_file_buf_size, total_kmers);
+			prefix_virt_buf.init(file_pre, prefix_file_buf_size, total_kmers);
 
 		sufix_size = (kmer_length - lut_prefix_length) / 4;
 

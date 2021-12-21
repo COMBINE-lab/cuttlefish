@@ -42,3 +42,23 @@ void Virtual_Prefix_File::init(std::FILE*& fptr, const uint64_t lut_area_bytes, 
 	prefix_chunk_start_index = 0;
 	prefix_chunk_end_index = read_prefixes();
 }
+
+
+void Virtual_Prefix_File::init_kmc1(std::FILE*& fptr, const uint64_t elems, const uint64_t kmer_count)
+{
+	// *Take ownership* of `fptr`.
+	fp = fptr;
+	fptr = NULL;
+	
+	// Set metadata.
+	lut_area_size_in_bytes = elems * sizeof(uint64_t);
+	prefix_file_elem_count = elems;
+	total_kmers = kmer_count;
+
+	// Allocate the prefix-file buffer.
+	prefix_file_buf.reserve(buffer_elem_count);
+
+	// Read in some prefix-file data, and initialize the virtual indices into the prefix-file.
+	prefix_chunk_start_index = 0;
+	prefix_chunk_end_index = read_prefixes();
+}

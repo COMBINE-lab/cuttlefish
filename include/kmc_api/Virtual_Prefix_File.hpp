@@ -53,6 +53,9 @@ public:
 	// database has `kmer_count` number of k-mers.
 	void init(std::FILE*& fptr, uint64_t lut_area_bytes, uint64_t kmer_count);
 
+	// TODO: merge with `init`.
+	void init_kmc1(std::FILE*& fptr, uint64_t elems, uint64_t kmer_count);
+
 	// Returns the data at index `idx` of the prefix-file.
 	uint64_t operator[](std::size_t idx);
 

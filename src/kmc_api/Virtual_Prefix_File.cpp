@@ -4,7 +4,6 @@
 
 Virtual_Prefix_File::Virtual_Prefix_File():
 	prefix_file_elem_count(0),
-	lut_area_size_in_bytes(0),
 	prefix_chunk_start_index(0),
 	prefix_chunk_end_index(0),
 	total_kmers(0),
@@ -29,7 +28,6 @@ void Virtual_Prefix_File::init(std::FILE*& fptr, const uint64_t prefix_count, co
 	fptr = NULL;
 	
 	prefix_file_elem_count = prefix_count;
-	lut_area_size_in_bytes = prefix_count * sizeof(uint64_t);
 	total_kmers = kmer_count;
 
 	// Allocate the prefix-file buffer.
@@ -48,7 +46,6 @@ void Virtual_Prefix_File::init_kmc1(std::FILE*& fptr, const uint64_t elems, cons
 	fptr = NULL;
 	
 	// Set metadata.
-	lut_area_size_in_bytes = elems * sizeof(uint64_t);
 	prefix_file_elem_count = elems;
 	total_kmers = kmer_count;
 

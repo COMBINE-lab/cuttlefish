@@ -21,7 +21,6 @@ private:
 	std::size_t prefix_file_elem_count;	// Size of the KMC3 prefix-file (*.kmc_pre) in elements (i.e. 64-bit prefixes).
 	std::vector<uint64_t> prefix_file_buf;	// The in-memory prefix-file buffer.
 
-	uint64_t lut_area_size_in_bytes;	// From KMC3.
 	std::size_t prefix_chunk_start_index;	// The index into the prefix-file where the prefix chunk currently loaded into memory starts.
 	std::size_t prefix_chunk_end_index;	// The (non-inclusive) index into the prefix-file where the prefix chunk currently loaded into memory ends.
 

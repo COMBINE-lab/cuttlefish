@@ -49,9 +49,9 @@ public:
 	~Virtual_Prefix_File();
 
 	// Initializes the file buffer with the file handle `fptr` that is supposed to contain
-	// `lut_area_bytes` amount of bytes for its prefix-content, and the associated KMC3
+	// `prefix_count` number of prefixes as its prefix-content, and the associated KMC3
 	// database has `kmer_count` number of k-mers.
-	void init(std::FILE*& fptr, uint64_t lut_area_bytes, uint64_t kmer_count);
+	void init(std::FILE*& fptr, uint64_t prefix_count, uint64_t kmer_count);
 
 	// TODO: merge with `init`.
 	void init_kmc1(std::FILE*& fptr, uint64_t elems, uint64_t kmer_count);

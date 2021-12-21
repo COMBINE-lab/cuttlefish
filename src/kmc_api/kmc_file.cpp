@@ -301,15 +301,17 @@ bool CKMC_DB::ReadParamsFrom_prefix_file_buf(uint64 &size, const bool load_pref_
 		single_LUT_size = 1 << (2 * lut_prefix_length);
 		uint64 last_data_index = lut_area_size_in_bytes / sizeof(uint64);
 
+		prefix_file_buf_size = (lut_area_size_in_bytes + 8) / sizeof(uint64);		//reads without 4 bytes of a header_offset (and without markers)
+
 		// Set auxiliary fields aiding in k-mer parsing by Cuttlefish.
 		prefix_mask_ = (1 << 2 * lut_prefix_length) - 1;
 		byte_alignment_ = (kmer_length % 4 != 0 ? 4 - (kmer_length % 4) : 0);
 
+		std::rewind(file_pre);
+		my_fseek(file_pre, +4, SEEK_CUR);	// Skip the first 4 bytes of header to get to the start of the prefixes.
+
 		if(load_pref_file)
 		{
-			std::rewind(file_pre);
-			my_fseek(file_pre, +4, SEEK_CUR);
-			prefix_file_buf_size = (lut_area_size_in_bytes + 8) / sizeof(uint64);		//reads without 4 bytes of a header_offset (and without markers)		
 			prefix_file_buf = new uint64[prefix_file_buf_size];
 			result = fread(prefix_file_buf, 1, (size_t)(lut_area_size_in_bytes + 8), file_pre);
 			if (result == 0)
@@ -323,10 +325,7 @@ bool CKMC_DB::ReadParamsFrom_prefix_file_buf(uint64 &size, const bool load_pref_
 				return false;
 		}
 		else if(init_pref_buf)
-		{
-			std::rewind(file_pre);
-			prefix_virt_buf.init(file_pre, lut_area_size_in_bytes, total_kmers);
-		}
+			prefix_virt_buf.init(file_pre, prefix_file_buf_size, total_kmers);
 
 		sufix_size = (kmer_length - lut_prefix_length) / 4;		 
 	

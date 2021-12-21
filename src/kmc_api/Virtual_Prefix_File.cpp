@@ -1,6 +1,5 @@
 
 #include "kmc_api/Virtual_Prefix_File.hpp"
-#include "kmc_api/kmer_defs.h"
 
 
 Virtual_Prefix_File::Virtual_Prefix_File():
@@ -23,16 +22,14 @@ Virtual_Prefix_File::~Virtual_Prefix_File()
 }
 
 
-void Virtual_Prefix_File::init(std::FILE*& fptr, const uint64_t lut_area_bytes, const uint64_t kmer_count)
+void Virtual_Prefix_File::init(std::FILE*& fptr, const uint64_t prefix_count, const uint64_t kmer_count)
 {
 	// *Take ownership* of `fptr`.
 	fp = fptr;
 	fptr = NULL;
 	
-	// Skip the first 4 bytes of header to get to the start of the prefixes.
-	my_fseek(fp, +4, SEEK_CUR);
-	lut_area_size_in_bytes = lut_area_bytes;
-	prefix_file_elem_count = (lut_area_size_in_bytes + 8) / sizeof(uint64_t);	// What's that extra 1 element for? KMC3 comment: reads without 4 bytes of a header_offset (and without markers)
+	prefix_file_elem_count = prefix_count;
+	lut_area_size_in_bytes = prefix_count * sizeof(uint64_t);
 	total_kmers = kmer_count;
 
 	// Allocate the prefix-file buffer.

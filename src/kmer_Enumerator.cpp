@@ -14,7 +14,7 @@ kmer_Enumeration_Stats<k> kmer_Enumerator<k>::enumerate(
 {
     // FunnyProgress progress;
 
-    const bool estimate_mem = (k > 13 && estimate_mem_usage);
+    const bool estimate_mem = (k > small_k_threshold && estimate_mem_usage);   // Histogram estimation is not supported for small enough k's yet.
     std::size_t memory = std::max(max_memory, min_memory);
     stage1_params
         .SetInputFileType(input_file_type)

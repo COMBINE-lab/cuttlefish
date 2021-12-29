@@ -43,6 +43,8 @@ private:
 
 public:
 
+    static constexpr uint16_t small_k_threshold = 13;   // KMC's internal threshold to switch modes for small-k optimizations.
+
     // Enumerates the k-mers from the sequences (of type `input_file_type`) present is `seqs`, that
     // are present at least `cutoff` times. Employs `thread_count` number of processor threads and
     // uses a soft memory-cap of `max_memory` (in GB). If `strict_memory` is `true`, then the memory

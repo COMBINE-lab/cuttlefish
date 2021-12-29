@@ -3,6 +3,9 @@
 #include "Kmer_Container.hpp"
 
 
+template <uint16_t k> const std::size_t kmer_Enumerator<k>::min_memory;
+
+
 template <uint16_t k>
 kmer_Enumeration_Stats<k> kmer_Enumerator<k>::enumerate(
     const KMC::InputFileType input_file_type, const std::vector<std::string>& seqs, const uint32_t cutoff,
@@ -11,6 +14,7 @@ kmer_Enumeration_Stats<k> kmer_Enumerator<k>::enumerate(
 {
     // FunnyProgress progress;
 
+    const bool estimate_mem = (k > 13 && estimate_mem_usage);
     std::size_t memory = std::max(max_memory, min_memory);
     stage1_params
         .SetInputFileType(input_file_type)
@@ -18,7 +22,7 @@ kmer_Enumeration_Stats<k> kmer_Enumerator<k>::enumerate(
         .SetKmerLen(k)
         .SetNThreads(thread_count)
         .SetTmpPath(working_dir_path)
-        .SetEstimateHistogramCfg(estimate_mem_usage ? KMC::EstimateHistogramCfg::ESTIMATE_AND_COUNT_KMERS : KMC::EstimateHistogramCfg::DONT_ESTIMATE)
+        .SetEstimateHistogramCfg(estimate_mem ? KMC::EstimateHistogramCfg::ESTIMATE_AND_COUNT_KMERS : KMC::EstimateHistogramCfg::DONT_ESTIMATE)
         // .SetPercentProgressObserver(&progress)
     ;
 
@@ -33,7 +37,7 @@ kmer_Enumeration_Stats<k> kmer_Enumerator<k>::enumerate(
 
 
     memory = std::max(
-        (estimate_mem_usage ? std::max(memory_limit(solid_kmer_count_approx(cutoff)), max_memory) : max_memory),
+        (estimate_mem ? std::max(memory_limit(solid_kmer_count_approx(cutoff)), max_memory) : max_memory),
         min_memory);
     stage2_params
         .SetCutoffMin(cutoff)

@@ -28,7 +28,7 @@ void build(int argc, char** argv)
         ("d,dirs", "input file directories", cxxopts::value<std::vector<std::string>>()->default_value(cuttlefish::_default::EMPTY))
         ("k,kmer-len", "k-mer length", cxxopts::value<uint16_t>()->default_value(std::to_string(cuttlefish::_default::K)))
         ("t,threads", "number of threads to use", cxxopts::value<uint16_t>()->default_value(std::to_string(cuttlefish::_default::THREAD_COUNT)))
-        ("o,output", "output file", cxxopts::value<std::string>()->default_value(cuttlefish::_default::EMPTY))
+        ("o,output", "output file", cxxopts::value<std::string>())
         ("w,work-dir", "working directory", cxxopts::value<std::string>()->default_value(cuttlefish::_default::WORK_DIR))
         ("h,help", "print usage");
 

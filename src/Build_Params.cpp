@@ -1,5 +1,6 @@
 
 #include "Build_Params.hpp"
+#include "Input_Defaults.hpp"
 #include "utility.hpp"
 
 
@@ -53,43 +54,17 @@ Build_Params::Build_Params( const bool is_read_graph,
 
 bool Build_Params::is_valid() const
 {
-    // TODO: do better — is a mess.
-    
     bool valid = true;
 
 
+    // Input data need to be non-empty.
     if(seq_input_.empty())
     {
         std::cout << "No sequence input provided for compacted de Bruijn graph construction.\n";
         valid = false;
     }
 
-
-    // Check if read and reference de Bruijn graph parameters are being mixed with.
-    if(is_read_graph_ && is_ref_graph_)
-    {
-        std::cout << "Both read and reference de Bruijn graph specified. Please select only one, or none for Cuttlefish 1.0.\n";
-        valid = false;
-    }
-
-    if(is_read_graph_ || is_ref_graph_)  // Is Cuttlefish 2.0.
-    {
-        if(output_format_ != cuttlefish::Output_Format::txt)
-        {
-            std::cout << "(Currently) Unsupported output file format requested for the compacted read de Bruijn graph.\n";
-            valid = false;
-        }
-    }
-    else    // Is Cuttlefish 1.0.
-    {
-        if(!vertex_db_path_.empty())
-        {
-            std::cout << "No edge (i.e. (k + 1)-mer) database is required for a compacted reference de Bruijn graph construction.\n";
-            valid = false;
-        }
-    }
-
-
+    
     // Even `k` values are not consistent with the theory.
     // Also, `k` needs to be in the range `[1, MAX_K]`.
     if((k_ & 1U) == 0 || (k_ > cuttlefish::MAX_K))
@@ -107,12 +82,84 @@ bool Build_Params::is_valid() const
         valid = false;
     }
 
-
-    // Discard invalid output formats.
-    if(output_format_ >= cuttlefish::num_op_formats)
+    
+    // Output directory must exist.
+    const std::string op_dir = dirname(output_file_path_);
+    if(!dir_exists(op_dir))
     {
-        std::cout << "Invalid output file format.\n";
+        std::cout << "Output directory " << op_dir << " does not exist.\n";
         valid = false;
+    }
+
+
+    // Working directory must exist.
+    const std::string work_dir = dirname(working_dir_path_);
+    if(!dir_exists(work_dir))
+    {
+        std::cout << "Working directory " << work_dir << " does not exist.\n";
+        valid = false;
+    }
+
+
+    if(is_read_graph_ || is_ref_graph_) // Validate Cuttlefish 2 specific arguments.
+    {
+        // Read and reference de Bruijn graph parameters can not be mixed with.
+        if(is_read_graph_ && is_ref_graph_)
+        {
+            std::cout << "Both read and reference de Bruijn graph specified. Please select only one for Cuttlefish 2, or none to use Cuttlefish 1.\n";
+            valid = false;
+        }
+
+
+        // A cutoff frequency of 0 is theoretically inconsistent.
+        if(cutoff_ == 0)
+        {
+            std::cout << "Cutoff frequency specified to be 0, which is theoretically inconsistent. Please use 1 if you wish to retain all the k-mers without filtering.\n";
+            valid = false;
+        }
+
+        // Cutoff frequency _should be_ 1 for reference de Bruijn graphs.
+        if(is_ref_graph_ && cutoff_ != 1)
+            std::cout << "WARNING: cutoff frequency specified not to be 1 on reference sequences.\n";
+
+        
+        // Memory budget options are being mixed with.
+        if(max_memory_ != cuttlefish::_default::MAX_MEMORY && !strict_memory_)
+            std::cout << "Both a memory bound and the option for unrestricted memory usage specified. Unrestricted memory mode will be used.\n";
+
+        
+        // Cuttlefish 1 specific arguments can not be specified.
+        if(vertex_db_path_ != cuttlefish::_default::WORK_DIR || output_format_ != cuttlefish::Output_Format::txt || remove_kmc_db_)
+        {
+            std::cout << "Cuttlefish 1 specific arguments specified while using Cuttlefish 2.\n";
+            valid = false;
+        }
+    }
+    else    // Validate Cuttlefish 1 specific arguments.
+    {
+        // Directory containing vertex database must exist.
+        const std::string vertex_db_dir = dirname(vertex_db_path_);
+        if(!dir_exists(vertex_db_dir))
+        {
+            std::cout << "Vertex database directory " << vertex_db_dir << " does not exist.\n";
+            valid = false;
+        }
+
+
+        // Discard invalid output formats.
+        if(output_format_ >= cuttlefish::num_op_formats)
+        {
+            std::cout << "Invalid output file format.\n";
+            valid = false;
+        }
+
+
+        // Cuttlefish 2 specific arguments can not be specified.
+        if(cutoff_ != cuttlefish::_default::CUTOFF_FREQ || max_memory_ != cuttlefish::_default::MAX_MEMORY || !strict_memory_ || path_cover_ || !edge_db_path_.empty())
+        {
+            std::cout << "Cuttelfish 2 specific arguments specified while using Cuttlefish 1.\n";
+            valid = false;
+        }
     }
 
 

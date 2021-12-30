@@ -47,6 +47,12 @@ bool file_exists(const std::string& file_path)
 }
 
 
+bool dir_exists(const std::string& dir_path)
+{
+    return ghc::filesystem::is_directory(dir_path);
+}
+
+
 std::size_t file_size(const std::string& file_path)
 {
     std::error_code ec;

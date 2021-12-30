@@ -22,6 +22,10 @@ bool is_prefix(const std::string& s, const std::string& pref);
 // `file_path`.
 bool file_exists(const std::string& file_path);
 
+// Returns `true` iff these exists a directory in the file system with the
+// path `dir_path`.
+bool dir_exists(const std::string& dir_path);
+
 // Returns the file size is bytes of the file at path `file_path`. Returns
 // `0` in case the file does not exist.
 std::size_t file_size(const std::string& file_path);

@@ -122,7 +122,8 @@ const std::string filename(const std::string& file_path)
 
 const std::string dirname(const std::string& file_path)
 {
-    return ghc::filesystem::path(file_path).remove_filename().string();
+    const std::string path = ghc::filesystem::path(file_path).remove_filename().string();
+    return path.empty() ? "." : path;
 }
 
 

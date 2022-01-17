@@ -24,7 +24,7 @@ private:
 
     nlohmann::ordered_json dBg_info;    // A JSON object wrapping all the information.
 
-    const std::string file_path;   // Path to the disk-file to store the JSON object.
+    const std::string file_path_;   // Path to the disk-file to store the JSON object.
 
     static constexpr const char* basic_field = "basic info";    // Category header for basic graph information.
     static constexpr const char* contigs_field = "contigs info";    // Category header for information about the contigs (maximal unitigs).

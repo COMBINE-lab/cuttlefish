@@ -11,7 +11,7 @@
 
 template <uint16_t k>
 dBG_Info<k>::dBG_Info(const std::string& file_path):
-    file_path(file_path)
+    file_path_(file_path)
 {
     if(file_exists(file_path))
         load_from_file();
@@ -21,13 +21,13 @@ dBG_Info<k>::dBG_Info(const std::string& file_path):
 template <uint16_t k>
 void dBG_Info<k>::load_from_file()
 {
-    std::ifstream input(file_path.c_str());
+    std::ifstream input(file_path_.c_str());
         
     input >> dBg_info;
 
     if(input.fail())
     {
-        std::cerr << "Error loading JSON object from file " << file_path << ". Aborting.\n";
+        std::cerr << "Error loading JSON object from file " << file_path_ << ". Aborting.\n";
         std::exit(EXIT_FAILURE);
     }
 
@@ -78,18 +78,18 @@ void dBG_Info<k>::add_build_params(const Build_Params& params)
 template <uint16_t k>
 void dBG_Info<k>::dump_info() const
 {
-    std::ofstream output(file_path.c_str());
+    std::ofstream output(file_path_.c_str());
     output << std::setw(4) << dBg_info << "\n"; // Pretty-print the JSON wrapper with overloaded `std::setw`.
 
     if(output.fail())
     {
-        std::cerr << "Error writing to the information file " << file_path << ". Aborting.\n";
+        std::cerr << "Error writing to the information file " << file_path_ << ". Aborting.\n";
         std::exit(EXIT_FAILURE);
     }
 
     output.close();
 
-    std::cout << "\nStructural information for the de Bruijn graph is written to " << file_path << ".\n";
+    std::cout << "\nStructural information for the de Bruijn graph is written to " << file_path_ << ".\n";
 }
 
 

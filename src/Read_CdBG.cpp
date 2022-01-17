@@ -35,7 +35,7 @@ void Read_CdBG<k>::construct()
 {
     if(is_constructed())
     {
-        std::cout << "\nThe compacted de Bruijn graph has been constructed earlier.\n";
+        std::cout << "\nThe compacted de Bruijn graph has been constructed earlier. Check " << dbg_info.file_path() << " for results.\n";
         return;
     }
 

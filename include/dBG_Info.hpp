@@ -42,6 +42,9 @@ public:
     // path `file_path`.
     dBG_Info(const std::string& file_path);
 
+    // Returns the path to the disk-file storing the corresponding JSON object.
+    std::string file_path() const;
+
     // Adds build parameters information of the Cuttlefish algorithm from `params`.
     void add_build_params(const Build_Params& params);
 

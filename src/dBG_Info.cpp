@@ -19,6 +19,13 @@ dBG_Info<k>::dBG_Info(const std::string& file_path):
 
 
 template <uint16_t k>
+std::string dBG_Info<k>::file_path() const
+{
+    return file_path_;
+}
+
+
+template <uint16_t k>
 void dBG_Info<k>::load_from_file()
 {
     std::ifstream input(file_path_.c_str());

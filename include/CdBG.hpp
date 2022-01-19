@@ -9,10 +9,14 @@
 #include "Annotated_Kmer.hpp"
 #include "Oriented_Unitig.hpp"
 #include "Build_Params.hpp"
+#include "Data_Logistics.hpp"
+#include "kmer_Enumeration_Stats.hpp"
+#include "dBG_Info.hpp"
 #include "Thread_Pool.hpp"
 #include "Job_Queue.hpp"
 #include "spdlog/async_logger.h"
 
+#include <memory>
 #include <string>
 
 
@@ -25,7 +29,13 @@ class CdBG
 private:
 
     const Build_Params params;    // Required parameters wrapped in one object.
-    Kmer_Hash_Table<k, cuttlefish::BITS_PER_REF_KMER> Vertices; // The hash table for the vertices (canonical k-mers) of the de Bruijn graph.
+    const Data_Logistics logistics; // Data logistics manager for the algorithm execution.
+    std::unique_ptr<Kmer_Hash_Table<k, cuttlefish::BITS_PER_REF_KMER>> hash_table;  // Hash table for the vertices (canonical k-mers) of the graph.
+
+    dBG_Info<k> dbg_info;   // Wrapper object for structural information of the graph.
+
+    static constexpr double bits_per_vertex = 8.71; // Expected number of bits required per vertex by Cuttlefish 2.
+    static constexpr std::size_t parser_memory = 256 * 1024U * 1024U;   // An empirical estimation of the memory used by the sequence parser. 256 MB.
 
     // Minimum size of a partition to be processed by one thread.
     static constexpr uint16_t PARTITION_SIZE_THRESHOLD = 1;
@@ -95,10 +105,27 @@ private:
 
     /* Build methods */
 
+    // Returns `true` iff the compacted de Bruijn graph to be built from the parameters
+    // collection `params` had been constructed in an earlier execution.
+    // NB: only the existence of the output meta-info file is checked for this purpose.
+    bool is_constructed() const;
+
+    // Enumerates the vertices of the de Bruijn graph and returns summary statistics of the
+    // enumearation.
+    kmer_Enumeration_Stats<k> enumerate_vertices() const;
+
+    // Constructs the Cuttlefish hash table for the `vertex_count` vertices of the graph.
+    // If `load` is specified, then it is loaded from disk.
+    void construct_hash_table(uint64_t vertex_count, bool load = false);
+
     // TODO: rename the "classify" methods with appropriate terminology that are consistent with the theory.
     
     // Classifies the vertices into different types (or, classes).
     void classify_vertices();
+
+    // Returns the maximum temporary disk-usage incurred by some execution of the algorithm,
+    // that has its vertices-enumeration stats in `vertex_stats`.
+    static std::size_t max_disk_usage(const kmer_Enumeration_Stats<k>& vertex_stats);
 
     // Distributes the classification task for the sequence `seq` of length
     // `seq_len` to the thread pool `thread_pool`.
@@ -413,6 +440,10 @@ public:
     // Constructs a `CdBG` object with the parameters required for the construction of the
     // compacted representation of the underlying reference de Bruijn graph wrapped in `params`.
     CdBG(const Build_Params& params);
+
+    // Destructs the compacted graph builder object, freeing its hash table and dumping the
+    // graph information to disk.
+    ~CdBG();
 
     // Constructs the compacted reference de Bruijn graph, employing the parameters received
     // with the object-constructor.

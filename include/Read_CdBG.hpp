@@ -29,6 +29,8 @@ private:
 
     dBG_Info<k> dbg_info;   // Wrapper object for structural information of the graph.
 
+    static constexpr double bits_per_vertex = 9.71; // Expected number of bits required per vertex by Cuttlefish 2.
+
 
     // Enumerates the edges of the de Bruijn graph and returns summary statistics of the
     // enumearation.

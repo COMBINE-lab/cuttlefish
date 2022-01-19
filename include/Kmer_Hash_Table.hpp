@@ -142,6 +142,15 @@ public:
     // Returns the value (in the hash-table) for the key `kmer`.
     const State operator[](const Kmer<k>& kmer) const;
 
+    // Returns an API to the entry (in the hash table) for the key `kmer`. The API
+    // wraps the hash table position and the state value at that position.
+    Kmer_Hash_Entry_API<BITS_PER_KEY> at(const Kmer<k>& kmer);
+
+    // Returns an API to the entry (in the hash table) for a k-mer hashing
+    // to the bucket number `bucket_id` of the hash table. The API wraps
+    // the hash table position and the state value at that position.
+    Kmer_Hash_Entry_API<BITS_PER_KEY> at(uint64_t bucket_id);
+
     // Attempts to update the entry (in the hash-table) for the API object according
     // to its wrapped state values, and returns `true` or `false` as per success
     // status. If the corresponding hash table position now contains a different
@@ -234,6 +243,20 @@ inline const State Kmer_Hash_Table<k, BITS_PER_KEY>::operator[](const Kmer<k>& k
     sparse_lock.unlock(bucket);
 
     return state;
+}
+
+
+template <uint16_t k, uint8_t BITS_PER_KEY>
+inline Kmer_Hash_Entry_API<BITS_PER_KEY> Kmer_Hash_Table<k, BITS_PER_KEY>::at(const Kmer<k>& kmer)
+{
+    return operator[](kmer);
+}
+
+
+template <uint16_t k, uint8_t BITS_PER_KEY>
+inline Kmer_Hash_Entry_API<BITS_PER_KEY> Kmer_Hash_Table<k, BITS_PER_KEY>::at(const uint64_t bucket_id)
+{
+    return operator[](bucket_id);
 }
 
 

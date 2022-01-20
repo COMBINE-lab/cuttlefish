@@ -4,7 +4,7 @@
 
 
 
-#include "globals.hpp"
+#include "Kmer.hpp"
 
 
 template <uint16_t k>

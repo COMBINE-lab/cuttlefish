@@ -5,6 +5,7 @@
 
 
 #include "globals.hpp"
+#include "DNA.hpp"
 
 
 template <uint8_t BITS_PER_KEY> class Kmer_Hash_Entry_API;

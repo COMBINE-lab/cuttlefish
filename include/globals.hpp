@@ -4,11 +4,9 @@
 
 
 
-#include "Kmer.hpp"
-
 #include "boost/preprocessor/repetition/repeat.hpp"
 
-#include <memory>
+#include <cstdint>
 
 
 // The macro `INSTANCE_COUNT` must be set exactly to `(MAX_K + 1) / 2` for a required maximum k-value.
@@ -17,6 +15,14 @@
     #define INSTANCE_COUNT 32
 #endif
 
+
+// Forward declarations of the DNA code types.
+namespace DNA
+{
+    enum Base: uint8_t;
+
+    enum class Extended_Base: uint8_t;
+}
 
 // Forward declarations of the type of the bitvector used and the type to access its entries (mutable).
 namespace compact
@@ -33,6 +39,14 @@ namespace compact
 namespace spdlog
 {
     class logger;
+}
+
+// Miscellaneous forward declarations.
+namespace std
+{
+    template <typename X> class shared_ptr;
+    
+    template <typename X> class allocator;
 }
 
 

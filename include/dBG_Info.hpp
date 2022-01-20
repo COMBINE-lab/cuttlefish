@@ -12,6 +12,7 @@
 // Forward declarations.
 template <uint16_t k> class Read_CdBG_Constructor;
 template <uint16_t k> class Read_CdBG_Extractor;
+template <uint16_t k> class Unipaths_Meta_info;
 class Build_Params;
 
 
@@ -34,6 +35,9 @@ private:
 
     // Loads the JSON file from disk, if the corresponding file exists.
     void load_from_file();
+
+    // Adds information about maximal unitigs tracked in `unipaths_info`.
+    void add_unipaths_info(const Unipaths_Meta_info<k>& unipaths_info);
 
 
 public:

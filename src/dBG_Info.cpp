@@ -2,6 +2,7 @@
 #include "dBG_Info.hpp"
 #include "Read_CdBG_Constructor.hpp"
 #include "Read_CdBG_Extractor.hpp"
+#include "Unipaths_Meta_info.hpp"
 #include "Build_Params.hpp"
 #include "utility.hpp"
 
@@ -55,6 +56,9 @@ void dBG_Info<k>::add_unipaths_info(const Read_CdBG_Extractor<k>& cdbg_extractor
 {
     const Unipaths_Meta_info<k>& unipaths_info = cdbg_extractor.unipaths_meta_info();
 
+template <uint16_t k>
+void dBG_Info<k>::add_unipaths_info(const Unipaths_Meta_info<k>& unipaths_info)
+{
     dBg_info[contigs_field]["maximal unitig count"] = unipaths_info.unipath_count();
     dBg_info[contigs_field]["vertex count in the maximal unitigs"] = unipaths_info.kmer_count();
     dBg_info[contigs_field]["shortest maximal unitig length"] = unipaths_info.min_len();
@@ -62,7 +66,14 @@ void dBG_Info<k>::add_unipaths_info(const Read_CdBG_Extractor<k>& cdbg_extractor
     dBg_info[contigs_field]["sum maximal unitig length"] = unipaths_info.sum_len();
     dBg_info[contigs_field]["avg. maximal unitig length"] = unipaths_info.avg_len();
     dBg_info[contigs_field]["_comment"] = "lengths are in bases";
+}
 
+
+template <uint16_t k>
+void dBG_Info<k>::add_unipaths_info(const Read_CdBG_Extractor<k>& cdbg_extractor)
+{
+    const Unipaths_Meta_info<k>& unipaths_info = cdbg_extractor.unipaths_meta_info();
+    add_unipaths_info(unipaths_info);
 
     dBg_info[dcc_field]["DCC count"] = unipaths_info.dcc_count();
     if(unipaths_info.dcc_count() > 0)

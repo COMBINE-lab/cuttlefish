@@ -55,7 +55,10 @@ void CdBG<k>::construct()
     std::cout << "\nConstructing the minimal perfect hash function (MPHF) over the vertex set.\n";
     construct_hash_table(vertex_count);
 
-    if(params.remove_kmc_db())
+#ifdef CF_DEVELOP_MODE
+    if(params.vertex_db_path().empty())
+#endif
+    if(!params.save_vertices())
         Kmer_Container<k>::remove(logistics.vertex_db_path());
 
     std::chrono::high_resolution_clock::time_point t_mphf = std::chrono::high_resolution_clock::now();

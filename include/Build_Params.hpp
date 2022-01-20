@@ -33,7 +33,6 @@ private:
     const cuttlefish::Output_Format output_format_;   // Output format (0: txt, 1: GFAv1, 2: GFAv2).
     const std::string working_dir_path_;    // Path to the working directory (for temporary files).
     const bool path_cover_; // Whether to extract a maximal path cover of the de Bruijn graph.
-    const bool remove_kmc_db_;  // Option to remove the KMC database, once no longer required.
     const std::string mph_file_path_;   // Optional path to file storing an MPH over the k-mer set.
     const std::string buckets_file_path_;   // Optional path to file storing the hash table buckets for the k-mer set.
     const bool save_vertices_;  // Option to save the vertex set of the de Bruijn graph (in KMC database format).
@@ -61,7 +60,6 @@ public:
                     const uint8_t output_format,
                     const std::string& working_dir_path,
                     const bool path_cover,
-                    const bool remove_kmc_db,
                     const std::string& mph_file_path,
                     const std::string& buckets_file_path,
                     const bool save_vertices
@@ -173,13 +171,6 @@ public:
     bool path_cover() const
     {
         return path_cover_;
-    }
-
-
-    // Returns the boolean flag for removing the KMC database.
-    bool remove_kmc_db() const
-    {
-        return remove_kmc_db_;
     }
 
 

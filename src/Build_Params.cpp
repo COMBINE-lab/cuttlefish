@@ -20,7 +20,6 @@ Build_Params::Build_Params( const bool is_read_graph,
                             const uint8_t output_format,
                             const std::string& working_dir_path,
                             const bool path_cover,
-                            const bool remove_kmc_db,
                             const std::string& mph_file_path,
                             const std::string& buckets_file_path,
                             const bool save_vertices
@@ -42,7 +41,6 @@ Build_Params::Build_Params( const bool is_read_graph,
         output_format_(cuttlefish::Output_Format(output_format)),
         working_dir_path_(working_dir_path.back() == '/' ? working_dir_path : working_dir_path + "/"),
         path_cover_(path_cover),
-        remove_kmc_db_(remove_kmc_db),
         mph_file_path_(mph_file_path),
         buckets_file_path_(buckets_file_path),
         save_vertices_(save_vertices)
@@ -129,7 +127,7 @@ bool Build_Params::is_valid() const
 
         
         // Cuttlefish 1 specific arguments can not be specified.
-        if(vertex_db_path_ != cuttlefish::_default::WORK_DIR || output_format_ != cuttlefish::Output_Format::txt || remove_kmc_db_)
+        if(vertex_db_path_ != cuttlefish::_default::WORK_DIR || output_format_ != cuttlefish::Output_Format::txt)
         {
             std::cout << "Cuttlefish 1 specific arguments specified while using Cuttlefish 2.\n";
             valid = false;

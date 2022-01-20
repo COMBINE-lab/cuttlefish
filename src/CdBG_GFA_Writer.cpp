@@ -294,9 +294,13 @@ void CdBG<k>::output_gfa_unitig(const uint16_t thread_id, const char* const seq,
 
         // If the hash table update is successful, only then this thread may output this unitig.
         if(hash_table->update(hash_table_entry))
+        {
             params.output_format() == cuttlefish::Output_Format::gfa_reduced ?
                 write_segment(thread_id, seq, unitig_id, start_kmer.idx(), end_kmer.idx(), unitig_dir) :
                 write_gfa_segment(thread_id, seq, unitig_id, start_kmer.idx(), end_kmer.idx(), unitig_dir);
+            
+            unipaths_info_local[thread_id].add_maximal_unitig(end_kmer.idx() - start_kmer.idx() + 1);
+        }
     }
 
 

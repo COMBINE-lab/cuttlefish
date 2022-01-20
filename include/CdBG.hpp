@@ -11,6 +11,7 @@
 #include "Build_Params.hpp"
 #include "Data_Logistics.hpp"
 #include "kmer_Enumeration_Stats.hpp"
+#include "Unipaths_Meta_info.hpp"
 #include "dBG_Info.hpp"
 #include "Thread_Pool.hpp"
 #include "Job_Queue.hpp"
@@ -18,6 +19,7 @@
 
 #include <memory>
 #include <string>
+#include <vector>
 
 
 // De Bruijn graph class to support the compaction algorithm.
@@ -31,6 +33,9 @@ private:
     const Build_Params params;    // Required parameters wrapped in one object.
     const Data_Logistics logistics; // Data logistics manager for the algorithm execution.
     std::unique_ptr<Kmer_Hash_Table<k, cuttlefish::BITS_PER_REF_KMER>> hash_table;  // Hash table for the vertices (canonical k-mers) of the graph.
+
+    Unipaths_Meta_info<k> unipaths_meta_info_;  // Meta-information over the extracted maximal unitigs.
+    std::vector<Unipaths_Meta_info<k>> unipaths_info_local; // Meta-information over the extracted maximal unitigs per thread.
 
     dBG_Info<k> dbg_info;   // Wrapper object for structural information of the graph.
 
@@ -448,6 +453,12 @@ public:
     // Constructs the compacted reference de Bruijn graph, employing the parameters received
     // with the object-constructor.
     void construct();
+
+    // Returns a wrapper over the meta-information of the extracted unitigs.
+    const Unipaths_Meta_info<k>& unipaths_meta_info() const;
+
+    // Returns the number of distinct vertices in the underlying graph.
+    uint64_t vertex_count() const;
 };
 
 

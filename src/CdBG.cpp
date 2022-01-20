@@ -159,6 +159,20 @@ std::size_t CdBG<k>::max_disk_usage(const kmer_Enumeration_Stats<k>& vertex_stat
 }
 
 
+template <uint16_t k>
+const Unipaths_Meta_info<k>& CdBG<k>::unipaths_meta_info() const
+{
+    return unipaths_meta_info_;
+}
+
+
+template <uint16_t k>
+uint64_t CdBG<k>::vertex_count() const
+{
+    return hash_table->size();
+}
+
+
 
 // Template instantiations for the required instances.
 ENUMERATE(INSTANCE_COUNT, INSTANTIATE, CdBG)

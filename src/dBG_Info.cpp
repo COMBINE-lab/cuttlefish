@@ -2,6 +2,7 @@
 #include "dBG_Info.hpp"
 #include "Read_CdBG_Constructor.hpp"
 #include "Read_CdBG_Extractor.hpp"
+#include "CdBG.hpp"
 #include "Unipaths_Meta_info.hpp"
 #include "Build_Params.hpp"
 #include "utility.hpp"
@@ -52,9 +53,11 @@ void dBG_Info<k>::add_basic_info(const Read_CdBG_Constructor<k>& cdbg_constructo
 
 
 template <uint16_t k>
-void dBG_Info<k>::add_unipaths_info(const Read_CdBG_Extractor<k>& cdbg_extractor)
+void dBG_Info<k>::add_basic_info(const CdBG<k>& cdbg)
 {
-    const Unipaths_Meta_info<k>& unipaths_info = cdbg_extractor.unipaths_meta_info();
+    dBg_info[basic_field]["vertex count"] = cdbg.vertex_count();
+}
+
 
 template <uint16_t k>
 void dBG_Info<k>::add_unipaths_info(const Unipaths_Meta_info<k>& unipaths_info)
@@ -81,6 +84,14 @@ void dBG_Info<k>::add_unipaths_info(const Read_CdBG_Extractor<k>& cdbg_extractor
         dBg_info[dcc_field]["vertex count in the DCCs"] = unipaths_info.dcc_kmer_count();
         dBg_info[dcc_field]["sum DCC length (in bases)"] = unipaths_info.dcc_sum_len();
     }
+}
+
+
+template <uint16_t k>
+void dBG_Info<k>::add_unipaths_info(const CdBG<k>& cdbg)
+{
+    const Unipaths_Meta_info<k>& unipaths_info = cdbg.unipaths_meta_info();
+    add_unipaths_info(unipaths_info);
 }
 
 

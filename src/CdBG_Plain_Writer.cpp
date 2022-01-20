@@ -151,7 +151,11 @@ void CdBG<k>::output_plain_unitig(const uint16_t thread_id, const char* const se
 
     // If the hash table update is successful, only then this thread may output this unitig.
     if(hash_table->update(hash_table_entry))
+    {
         write_path(thread_id, seq, start_kmer.idx(), end_kmer.idx(), start_kmer.kmer() < end_kmer.rev_compl());
+        
+        unipaths_info_local[thread_id].add_maximal_unitig(end_kmer.idx() - start_kmer.idx() + 1);
+    }
 }
 
 

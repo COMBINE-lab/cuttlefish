@@ -20,6 +20,7 @@ template <uint16_t k>
 void CdBG<k>::output_maximal_unitigs()
 {
     const uint8_t output_format = params.output_format();
+    unipaths_info_local.resize(params.thread_count());
 
     if(output_format == cuttlefish::txt)
         output_maximal_unitigs_plain();
@@ -27,6 +28,12 @@ void CdBG<k>::output_maximal_unitigs()
         output_maximal_unitigs_gfa();
     else if(output_format == cuttlefish::gfa_reduced)
         output_maximal_unitigs_gfa_reduced();
+
+    
+    for(uint16_t t_id = 0; t_id < params.thread_count(); ++t_id)
+        unipaths_meta_info_.aggregate(unipaths_info_local[t_id]);
+
+    dbg_info.add_unipaths_info(*this);
 }
 
 

@@ -12,6 +12,8 @@
 // Forward declarations.
 template <uint16_t k> class Read_CdBG_Constructor;
 template <uint16_t k> class Read_CdBG_Extractor;
+template <uint16_t k> class CdBG;
+template <uint16_t k> class Unipaths_Meta_info;
 class Build_Params;
 
 
@@ -24,7 +26,7 @@ private:
 
     nlohmann::ordered_json dBg_info;    // A JSON object wrapping all the information.
 
-    const std::string file_path;   // Path to the disk-file to store the JSON object.
+    const std::string file_path_;   // Path to the disk-file to store the JSON object.
 
     static constexpr const char* basic_field = "basic info";    // Category header for basic graph information.
     static constexpr const char* contigs_field = "contigs info";    // Category header for information about the contigs (maximal unitigs).
@@ -35,6 +37,9 @@ private:
     // Loads the JSON file from disk, if the corresponding file exists.
     void load_from_file();
 
+    // Adds information about maximal unitigs tracked in `unipaths_info`.
+    void add_unipaths_info(const Unipaths_Meta_info<k>& unipaths_info);
+
 
 public:
 
@@ -42,14 +47,23 @@ public:
     // path `file_path`.
     dBG_Info(const std::string& file_path);
 
+    // Returns the path to the disk-file storing the corresponding JSON object.
+    std::string file_path() const;
+
     // Adds build parameters information of the Cuttlefish algorithm from `params`.
     void add_build_params(const Build_Params& params);
 
     // Adds basic graph structural information from `cdbg_constructor`.
     void add_basic_info(const Read_CdBG_Constructor<k>& cdbg_constructor);
 
+    // Adds basic graph structural information from `cdbg`.
+    void add_basic_info(const CdBG<k>& cdbg);
+
     // Adds information about the extracted maximal unitigs from `cdbg_extractor`.
     void add_unipaths_info(const Read_CdBG_Extractor<k>& cdbg_extractor);
+
+    // Adds information about the extracted maximal unitigs from `cdbg`.
+    void add_unipaths_info(const CdBG<k>& cdbg);
 
     // Writes the JSON object to its corresponding disk-file.
     void dump_info() const;

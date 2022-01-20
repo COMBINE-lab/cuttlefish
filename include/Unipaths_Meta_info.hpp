@@ -37,6 +37,9 @@ public:
     // to the tracker.
     void add_maximal_unitig(const Maximal_Unitig_Scratch<k>& maximal_unitig);
 
+    // Adds information of a maximal unitig with vertex count `size` to the tracker.
+    void add_maximal_unitig(std::size_t size);
+
     // Aggregates the information of the tracker `other` to this tracker.
     void aggregate(const Unipaths_Meta_info<k>& other);
 
@@ -73,11 +76,11 @@ public:
 
 
 template <uint16_t k>
-inline void Unipaths_Meta_info<k>::add_maximal_unitig(const Maximal_Unitig_Scratch<k>& maximal_unitig)
+inline void Unipaths_Meta_info<k>::add_maximal_unitig(const std::size_t size)
 {
     unipath_count_++;
 
-    const std::size_t vertex_count = maximal_unitig.size();
+    const std::size_t vertex_count = size;
     const std::size_t unipath_size = vertex_count + (k - 1);
     kmer_count_ += vertex_count;
 
@@ -88,13 +91,19 @@ inline void Unipaths_Meta_info<k>::add_maximal_unitig(const Maximal_Unitig_Scrat
         min_len_ = unipath_size;
 
     sum_len_ += unipath_size;
+}
 
+
+template <uint16_t k>
+inline void Unipaths_Meta_info<k>::add_maximal_unitig(const Maximal_Unitig_Scratch<k>& maximal_unitig)
+{
+    add_maximal_unitig(maximal_unitig.size());
 
     if(maximal_unitig.is_cycle())
     {
         dcc_count_++;
-        dcc_kmer_count_ += vertex_count;
-        dcc_sum_len_ += unipath_size;
+        dcc_kmer_count_ += maximal_unitig.size();
+        dcc_sum_len_ += maximal_unitig.size() + (k - 1);
     }
 }
 

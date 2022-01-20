@@ -35,7 +35,7 @@ void Read_CdBG<k>::construct()
 {
     if(is_constructed())
     {
-        std::cout << "\nThe compacted de Bruijn graph has been constructed earlier.\n";
+        std::cout << "\nThe compacted de Bruijn graph has been constructed earlier. Check " << dbg_info.file_path() << " for results.\n";
         return;
     }
 
@@ -136,8 +136,8 @@ kmer_Enumeration_Stats<k + 1> Read_CdBG<k>::enumerate_edges() const
 {
     const KMC::InputFileType ip_type = (params.is_read_graph() ? KMC::InputFileType::FASTQ : KMC::InputFileType::MULTILINE_FASTA);
     return kmer_Enumerator<k + 1>().enumerate(
-        ip_type, logistics.input_paths_collection(), params.cutoff(),
-        params.thread_count(), params.max_memory(), params.strict_memory(), params.strict_memory(),
+        ip_type, logistics.input_paths_collection(), params.cutoff(), params.thread_count(),
+        params.max_memory(), params.strict_memory(), params.strict_memory(), bits_per_vertex,
         logistics.working_dir_path(), logistics.edge_db_path());
 }
 
@@ -150,14 +150,14 @@ kmer_Enumeration_Stats<k> Read_CdBG<k>::enumerate_vertices(const std::size_t max
     {
         const KMC::InputFileType ip_type = (params.is_read_graph() ? KMC::InputFileType::FASTQ : KMC::InputFileType::MULTILINE_FASTA);
         return kmer_Enumerator<k>().enumerate(
-            ip_type, logistics.input_paths_collection(), 1,
-            params.thread_count(), max_memory, params.strict_memory(), false,
+            ip_type, logistics.input_paths_collection(), 1, params.thread_count(),
+            max_memory, params.strict_memory(), false, bits_per_vertex,
             logistics.working_dir_path(), logistics.vertex_db_path());
     }
 
     return kmer_Enumerator<k>().enumerate(
-        KMC::InputFileType::KMC, std::vector<std::string>(1, logistics.edge_db_path()), 1,
-        params.thread_count(), max_memory, params.strict_memory(), false,
+        KMC::InputFileType::KMC, std::vector<std::string>(1, logistics.edge_db_path()), 1, params.thread_count(),
+        max_memory, params.strict_memory(), false, bits_per_vertex,
         logistics.working_dir_path(), logistics.vertex_db_path());
 }
 

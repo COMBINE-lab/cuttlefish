@@ -21,7 +21,6 @@ private:
     static constexpr std::size_t min_memory = 3;    // In GB; set as per the KMC3 library requirement.
     static constexpr uint16_t bin_count = 2000;
     static constexpr uint16_t signature_len = 11;
-    static constexpr double bits_per_kmer = 9.71;
     static constexpr uint64_t counter_max = 1;  // The `-cs` argument for KMC3; we're not interested in the counts and `cs = 1` will trigger skipping the counts.
 
     KMC::Stage1Params stage1_params;    // Parameters collection for the k-mer statistics approximation step of KMC3.
@@ -37,8 +36,9 @@ private:
     uint64_t solid_kmer_count_approx(uint16_t cutoff) const;
 
     // Returns the strict memory limit (in GB) for the actual KMC3 execution, based on the number of
-    // unique k-mers `unique_kmer_count` (typically approximated earlier).
-    std::size_t memory_limit(uint64_t unique_kmer_count) const;
+    // unique k-mers `unique_kmer_count` (typically approximated earlier) and the expected bits/kmer
+    // `bits_per_kmer` requested.
+    std::size_t memory_limit(uint64_t unique_kmer_count, double bits_per_kmer) const;
 
 
 public:
@@ -54,8 +54,8 @@ public:
     // written to `working_dir_path`. The output database is stored at path prefix `output_db_path`.
     // Returns summary statistics of the enumeration.
     kmer_Enumeration_Stats<k> enumerate(
-        KMC::InputFileType input_file_type, const std::vector<std::string>& seqs, uint32_t cutoff,
-        uint16_t thread_count, std::size_t max_memory, bool strict_memory, bool estimate_mem_usage,
+        KMC::InputFileType input_file_type, const std::vector<std::string>& seqs, uint32_t cutoff, uint16_t thread_count,
+        std::size_t max_memory, bool strict_memory, bool estimate_mem_usage, double bits_per_kmer,
         const std::string& working_dir_path, const std::string& output_db_path);
 };
 

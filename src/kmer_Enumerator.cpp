@@ -8,8 +8,8 @@ template <uint16_t k> const std::size_t kmer_Enumerator<k>::min_memory;
 
 template <uint16_t k>
 kmer_Enumeration_Stats<k> kmer_Enumerator<k>::enumerate(
-    const KMC::InputFileType input_file_type, const std::vector<std::string>& seqs, const uint32_t cutoff,
-    const uint16_t thread_count, const std::size_t max_memory, const bool strict_memory, const bool estimate_mem_usage,
+    const KMC::InputFileType input_file_type, const std::vector<std::string>& seqs, const uint32_t cutoff, const uint16_t thread_count,
+    const std::size_t max_memory, const bool strict_memory, const bool estimate_mem_usage, const double bits_per_kmer,
     const std::string& working_dir_path, const std::string& output_db_path)
 {
     // FunnyProgress progress;
@@ -37,7 +37,7 @@ kmer_Enumeration_Stats<k> kmer_Enumerator<k>::enumerate(
 
 
     memory = std::max(
-        (estimate_mem ? std::max(memory_limit(solid_kmer_count_approx(cutoff)), max_memory) : max_memory),
+        (estimate_mem ? std::max(memory_limit(solid_kmer_count_approx(cutoff), bits_per_kmer), max_memory) : max_memory),
         min_memory);
     stage2_params
         .SetCutoffMin(cutoff)
@@ -71,7 +71,7 @@ uint64_t kmer_Enumerator<k>::solid_kmer_count_approx(const uint16_t cutoff) cons
 
 
 template <uint16_t k>
-std::size_t kmer_Enumerator<k>::memory_limit(const uint64_t unique_kmer_count) const
+std::size_t kmer_Enumerator<k>::memory_limit(const uint64_t unique_kmer_count, const double bits_per_kmer) const
 {
     const double memory_in_bits = bits_per_kmer * unique_kmer_count;
     const double memory_in_bytes = memory_in_bits / 8.0;

@@ -30,7 +30,8 @@ void build(int argc, char** argv)
         ("t,threads", "number of threads to use", cxxopts::value<uint16_t>()->default_value(std::to_string(cuttlefish::_default::THREAD_COUNT)))
         ("o,output", "output file", cxxopts::value<std::string>())
         ("w,work-dir", "working directory", cxxopts::value<std::string>()->default_value(cuttlefish::_default::WORK_DIR))
-        ("h,help", "print usage");
+        ("h,help", "print usage")
+        ;
 
     options.add_options("cuttlefish 2.0")
         ("read", "construct a compacted read de Bruijn graph")
@@ -38,18 +39,21 @@ void build(int argc, char** argv)
         ("c,cutoff", "frequency cutoff for (k + 1)-mers", cxxopts::value<uint32_t>()->default_value(std::to_string(cuttlefish::_default::CUTOFF_FREQ)))
         ("m,max-memory", "soft maximum memory limit (in GB)", cxxopts::value<std::size_t>()->default_value(std::to_string(cuttlefish::_default::MAX_MEMORY)))
         ("unrestrict-memory", "do not impose memory usage restriction")
-        ("path-cover", "extract a maximal path cover of the de Bruijn graph");
+        ("path-cover", "extract a maximal path cover of the de Bruijn graph")
+        ;
     
     options.add_options("cuttlefish 1.0")
         ("s,kmc-db", "set of vertices, i.e. k-mers (KMC database) prefix", cxxopts::value<std::string>()->default_value(cuttlefish::_default::WORK_DIR))
         ("f,format", "output format (0: txt, 1: GFA 1.0, 2: GFA 2.0, 3: GFA-reduced)", cxxopts::value<uint16_t>()->default_value(std::to_string(cuttlefish::_default::OP_FORMAT)))
-        ("rm", "remove the KMC database");
+        ("rm", "remove the KMC database")   // TODO: rename it to `keep` and move to a common option.
+        ;
 
     options.add_options("specialized")
         // TODO: repurpose the following two options
         ("mph", "minimal perfect hash (BBHash) file (optional)", cxxopts::value<std::string>()->default_value(cuttlefish::_default::EMPTY))
         ("buckets", "hash table buckets (cuttlefish) file (optional)", cxxopts::value<std::string>()->default_value(cuttlefish::_default::EMPTY))
-        ("save-vertices", "save the vertex set of the graph");
+        ("save-vertices", "save the vertex set of the graph")
+        ;
 
     options.add_options("debug")
         ("e,edge-db", "set of edges, i.e. (k + 1)-mers (KMC database) prefix", cxxopts::value<std::string>()->default_value(cuttlefish::_default::EMPTY))

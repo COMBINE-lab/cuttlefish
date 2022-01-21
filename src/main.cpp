@@ -43,7 +43,6 @@ void build(int argc, char** argv)
         ;
     
     options.add_options("cuttlefish 1.0")
-        ("s,kmc-db", "set of vertices, i.e. k-mers (KMC database) prefix", cxxopts::value<std::string>()->default_value(cuttlefish::_default::WORK_DIR))
         ("f,format", "output format (0: txt, 1: GFA 1.0, 2: GFA 2.0, 3: GFA-reduced)", cxxopts::value<uint16_t>()->default_value(std::to_string(cuttlefish::_default::OP_FORMAT)))
         ;
 
@@ -55,6 +54,7 @@ void build(int argc, char** argv)
         ;
 
     options.add_options("debug")
+        ("s,kmc-db", "set of vertices, i.e. k-mers (KMC database) prefix", cxxopts::value<std::string>()->default_value(cuttlefish::_default::EMPTY))
         ("e,edge-db", "set of edges, i.e. (k + 1)-mers (KMC database) prefix", cxxopts::value<std::string>()->default_value(cuttlefish::_default::EMPTY))
 #ifdef CF_DEVELOP_MODE
         ("gamma", "gamma for the BBHash MPHF", cxxopts::value<double>()->default_value(std::to_string(cuttlefish::_default::GAMMA)))

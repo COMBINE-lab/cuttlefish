@@ -23,9 +23,9 @@ void build(int argc, char** argv)
     cxxopts::Options options("cuttlefish build", "Efficiently construct the compacted de Bruijn graph from sequencing reads or reference sequences");
 
     options.add_options("common")
-        ("r,refs", "input files", cxxopts::value<std::vector<std::string>>()->default_value(cuttlefish::_default::EMPTY))
-        ("l,lists", "input file lists", cxxopts::value<std::vector<std::string>>()->default_value(cuttlefish::_default::EMPTY))
-        ("d,dirs", "input file directories", cxxopts::value<std::vector<std::string>>()->default_value(cuttlefish::_default::EMPTY))
+        ("s,seq", "input files", cxxopts::value<std::vector<std::string>>()->default_value(cuttlefish::_default::EMPTY))
+        ("l,list", "input file lists", cxxopts::value<std::vector<std::string>>()->default_value(cuttlefish::_default::EMPTY))
+        ("d,dir", "input file directories", cxxopts::value<std::vector<std::string>>()->default_value(cuttlefish::_default::EMPTY))
         ("k,kmer-len", "k-mer length", cxxopts::value<uint16_t>()->default_value(std::to_string(cuttlefish::_default::K)))
         ("t,threads", "number of threads to use", cxxopts::value<uint16_t>()->default_value(std::to_string(cuttlefish::_default::THREAD_COUNT)))
         ("o,output", "output file", cxxopts::value<std::string>())
@@ -72,9 +72,9 @@ void build(int argc, char** argv)
 
         const auto is_read_graph = result["read"].as<bool>();
         const auto is_ref_graph = result["ref"].as<bool>();
-        const auto refs = result["refs"].as<std::vector<std::string>>();
-        const auto lists = result["lists"].as<std::vector<std::string>>();
-        const auto dirs = result["dirs"].as<std::vector<std::string>>();
+        const auto seqs = result["seq"].as<std::vector<std::string>>();
+        const auto lists = result["list"].as<std::vector<std::string>>();
+        const auto dirs = result["dir"].as<std::vector<std::string>>();
         const auto k = result["kmer-len"].as<uint16_t>();
         const auto cutoff = result["cutoff"].as<uint32_t>();
         const auto vertex_db = result["vertex-set"].as<std::string>();
@@ -94,7 +94,7 @@ void build(int argc, char** argv)
 #endif
 
         const Build_Params params(  is_read_graph, is_ref_graph,
-                                    refs, lists, dirs,
+                                    seqs, lists, dirs,
                                     k, cutoff, vertex_db, edge_db, thread_count, max_memory, strict_memory,
                                     output_file, format, working_dir,
                                     path_cover,

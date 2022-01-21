@@ -72,7 +72,7 @@ bool Build_Params::is_valid() const
     }
 
 
-    // Discard unsupported thread counts.
+    // Unsupported thread counts are to be discarded.
     const auto num_threads = std::thread::hardware_concurrency();
     if(num_threads > 0 && thread_count_ > num_threads)
     {
@@ -99,6 +99,11 @@ bool Build_Params::is_valid() const
     }
 
 
+    // Memory budget options should not be mixed with.
+    if(max_memory_ != cuttlefish::_default::MAX_MEMORY && !strict_memory_)
+        std::cout << "Both a memory bound and the option for unrestricted memory usage specified. Unrestricted memory mode will be used.\n";
+
+
     if(is_read_graph_ || is_ref_graph_) // Validate Cuttlefish 2 specific arguments.
     {
         // Read and reference de Bruijn graph parameters can not be mixed with.
@@ -121,11 +126,6 @@ bool Build_Params::is_valid() const
             std::cout << "WARNING: cutoff frequency specified not to be 1 on reference sequences.\n";
 
         
-        // Memory budget options are being mixed with.
-        if(max_memory_ != cuttlefish::_default::MAX_MEMORY && !strict_memory_)
-            std::cout << "Both a memory bound and the option for unrestricted memory usage specified. Unrestricted memory mode will be used.\n";
-
-        
         // Cuttlefish 1 specific arguments can not be specified.
         if(output_format_ != cuttlefish::Output_Format::txt)
         {
@@ -135,16 +135,7 @@ bool Build_Params::is_valid() const
     }
     else    // Validate Cuttlefish 1 specific arguments.
     {
-        // Directory containing vertex database must exist.
-        const std::string vertex_db_dir = dirname(vertex_db_path_);
-        if(!dir_exists(vertex_db_dir))
-        {
-            std::cout << "Vertex database directory " << vertex_db_dir << " does not exist.\n";
-            valid = false;
-        }
-
-
-        // Discard invalid output formats.
+        // Invalid output formats are to be discarded.
         if(output_format_ >= cuttlefish::num_op_formats)
         {
             std::cout << "Invalid output file format.\n";
@@ -161,7 +152,7 @@ bool Build_Params::is_valid() const
     }
 
 
-    // Develop-mode options are not to be provided in regular use.
+    // Develop-mode options can not to be provided in regular use.
 #ifndef CF_DEVELOP_MODE
     if(!vertex_db_path_.empty() || !edge_db_path_.empty())
     {

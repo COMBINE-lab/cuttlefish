@@ -127,7 +127,7 @@ bool Build_Params::is_valid() const
 
         
         // Cuttlefish 1 specific arguments can not be specified.
-        if(vertex_db_path_ != cuttlefish::_default::WORK_DIR || output_format_ != cuttlefish::Output_Format::txt)
+        if(output_format_ != cuttlefish::Output_Format::txt)
         {
             std::cout << "Cuttlefish 1 specific arguments specified while using Cuttlefish 2.\n";
             valid = false;
@@ -153,7 +153,7 @@ bool Build_Params::is_valid() const
 
 
         // Cuttlefish 2 specific arguments can not be specified.
-        if(cutoff_ != cuttlefish::_default::CUTOFF_FREQ || max_memory_ != cuttlefish::_default::MAX_MEMORY || !strict_memory_ || path_cover_ || !edge_db_path_.empty())
+        if(cutoff_ != cuttlefish::_default::CUTOFF_FREQ || path_cover_)
         {
             std::cout << "Cuttelfish 2 specific arguments specified while using Cuttlefish 1.\n";
             valid = false;

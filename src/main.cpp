@@ -30,6 +30,8 @@ void build(int argc, char** argv)
         ("t,threads", "number of threads to use", cxxopts::value<uint16_t>()->default_value(std::to_string(cuttlefish::_default::THREAD_COUNT)))
         ("o,output", "output file", cxxopts::value<std::string>())
         ("w,work-dir", "working directory", cxxopts::value<std::string>()->default_value(cuttlefish::_default::WORK_DIR))
+        ("m,max-memory", "soft maximum memory limit (in GB)", cxxopts::value<std::size_t>()->default_value(std::to_string(cuttlefish::_default::MAX_MEMORY)))
+        ("unrestrict-memory", "do not impose memory usage restriction")
         ("h,help", "print usage")
         ;
 
@@ -37,8 +39,6 @@ void build(int argc, char** argv)
         ("read", "construct a compacted read de Bruijn graph")
         ("ref", "construct a compacted reference de Bruijn graph")
         ("c,cutoff", "frequency cutoff for (k + 1)-mers", cxxopts::value<uint32_t>()->default_value(std::to_string(cuttlefish::_default::CUTOFF_FREQ)))
-        ("m,max-memory", "soft maximum memory limit (in GB)", cxxopts::value<std::size_t>()->default_value(std::to_string(cuttlefish::_default::MAX_MEMORY)))
-        ("unrestrict-memory", "do not impose memory usage restriction")
         ("path-cover", "extract a maximal path cover of the de Bruijn graph")
         ;
     

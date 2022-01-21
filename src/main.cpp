@@ -54,8 +54,8 @@ void build(int argc, char** argv)
         ;
 
     options.add_options("debug")
-        ("s,kmc-db", "set of vertices, i.e. k-mers (KMC database) prefix", cxxopts::value<std::string>()->default_value(cuttlefish::_default::EMPTY))
-        ("e,edge-db", "set of edges, i.e. (k + 1)-mers (KMC database) prefix", cxxopts::value<std::string>()->default_value(cuttlefish::_default::EMPTY))
+        ("vertex-set", "set of vertices, i.e. k-mers (KMC database) prefix", cxxopts::value<std::string>()->default_value(cuttlefish::_default::EMPTY))
+        ("edge-set", "set of edges, i.e. (k + 1)-mers (KMC database) prefix", cxxopts::value<std::string>()->default_value(cuttlefish::_default::EMPTY))
 #ifdef CF_DEVELOP_MODE
         ("gamma", "gamma for the BBHash MPHF", cxxopts::value<double>()->default_value(std::to_string(cuttlefish::_default::GAMMA)))
 #endif
@@ -77,8 +77,8 @@ void build(int argc, char** argv)
         const auto dirs = result["dirs"].as<std::vector<std::string>>();
         const auto k = result["kmer-len"].as<uint16_t>();
         const auto cutoff = result["cutoff"].as<uint32_t>();
-        const auto kmer_database = result["kmc-db"].as<std::string>();
-        const auto edge_database = result["edge-db"].as<std::string>();
+        const auto vertex_db = result["vertex-set"].as<std::string>();
+        const auto edge_db = result["edge-set"].as<std::string>();
         const auto thread_count = result["threads"].as<uint16_t>();
         const auto max_memory = result["max-memory"].as<std::size_t>();
         const auto strict_memory = !result["unrestrict-memory"].as<bool>();
@@ -95,7 +95,7 @@ void build(int argc, char** argv)
 
         const Build_Params params(  is_read_graph, is_ref_graph,
                                     refs, lists, dirs,
-                                    k, cutoff, kmer_database, edge_database, thread_count, max_memory, strict_memory,
+                                    k, cutoff, vertex_db, edge_db, thread_count, max_memory, strict_memory,
                                     output_file, format, working_dir,
                                     path_cover,
                                     mph_file, buckets_file, save_vertices

@@ -150,7 +150,7 @@ kmer_Enumeration_Stats<k> Read_CdBG<k>::enumerate_vertices(const std::size_t max
     {
         const KMC::InputFileType ip_type = (params.is_read_graph() ? KMC::InputFileType::FASTQ : KMC::InputFileType::MULTILINE_FASTA);
         return kmer_Enumerator<k>().enumerate(
-            ip_type, logistics.input_paths_collection(), 1, params.thread_count(),
+            ip_type, logistics.input_paths_collection(), params.cutoff(), params.thread_count(),
             max_memory, params.strict_memory(), false, bits_per_vertex,
             logistics.working_dir_path(), logistics.vertex_db_path());
     }

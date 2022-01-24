@@ -140,7 +140,8 @@ void CdBG<k>::output_plain_unitig(const uint16_t thread_id, const char* const se
     // For a particular unitig, always query the same well-defined canonical flanking
     // k-mer, irrespective of which direction the unitig may be traversed at.
     const Kmer<k> min_flanking_kmer = std::min(start_kmer.canonical(), end_kmer.canonical());
-    Kmer_Hash_Entry_API<cuttlefish::BITS_PER_REF_KMER> hash_table_entry = hash_table->at(min_flanking_kmer);
+    const uint64_t bucket_id = hash_table->bucket_id(min_flanking_kmer);
+    Kmer_Hash_Entry_API<cuttlefish::BITS_PER_REF_KMER> hash_table_entry = hash_table->at(bucket_id);
     State& state = hash_table_entry.get_state();
 
     if(state.is_outputted())
@@ -152,7 +153,7 @@ void CdBG<k>::output_plain_unitig(const uint16_t thread_id, const char* const se
     // If the hash table update is successful, only then this thread may output this unitig.
     if(hash_table->update(hash_table_entry))
     {
-        write_path(thread_id, seq, start_kmer.idx(), end_kmer.idx(), start_kmer.kmer() < end_kmer.rev_compl());
+        write_path(thread_id, seq, bucket_id, start_kmer.idx(), end_kmer.idx(), start_kmer.kmer() < end_kmer.rev_compl());
         
         unipaths_info_local[thread_id].add_maximal_unitig(end_kmer.idx() - start_kmer.idx() + 1);
     }
@@ -160,15 +161,20 @@ void CdBG<k>::output_plain_unitig(const uint16_t thread_id, const char* const se
 
 
 template <uint16_t k>
-void CdBG<k>::write_path(const uint16_t thread_id, const char* const seq, const size_t start_kmer_idx, const size_t end_kmer_idx, const cuttlefish::dir_t dir) 
+void CdBG<k>::write_path(const uint16_t thread_id, const char* const seq, const uint64_t unitig_id, const size_t start_kmer_idx, const size_t end_kmer_idx, const cuttlefish::dir_t dir) 
 {
     std::chrono::high_resolution_clock::time_point t_start = std::chrono::high_resolution_clock::now();
 
     std::string& buffer = output_buffer[thread_id];
     const size_t path_len = end_kmer_idx - start_kmer_idx + k;
+    constexpr std::size_t header_len = 12;  // FASTA header len: '>' + <id> + '\n'
 
 
-    ensure_buffer_space(buffer, path_len, output_[thread_id]);
+    ensure_buffer_space(buffer, path_len + header_len, output_[thread_id]);
+
+    buffer += ">";
+    buffer += fmt::format_int(unitig_id).c_str();
+    buffer += "\n";
 
     if(dir == cuttlefish::FWD)
         for(size_t offset = 0; offset < path_len; ++offset)

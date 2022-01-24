@@ -30,7 +30,7 @@ private:
     const std::size_t max_memory_;  // Soft maximum memory limit (in GB).
     const bool strict_memory_;  // Whether strict memory limit restriction is specifiied.
     const std::string output_file_path_;    // Path to the output file.
-    const cuttlefish::Output_Format output_format_;   // Output format (0: txt, 1: GFAv1, 2: GFAv2).
+    const cuttlefish::Output_Format output_format_;   // Output format (0: FASTA, 1: GFAv1, 2: GFAv2).
     const std::string working_dir_path_;    // Path to the working directory (for temporary files).
     const bool path_cover_; // Whether to extract a maximal path cover of the de Bruijn graph.
     const std::string mph_file_path_;   // Optional path to file storing an MPH over the k-mer set.
@@ -149,7 +149,7 @@ public:
     // Returns the path to the output file.
     const std::string output_file_path() const
     {
-        return (is_read_graph() || is_ref_graph()) ? (output_file_path_ + cuttlefish::file_ext::unipaths_ext) : output_file_path_;
+        return output_file_path_ + cuttlefish::file_ext::unipaths_ext;
     }
 
 

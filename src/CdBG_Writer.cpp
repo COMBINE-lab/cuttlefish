@@ -22,7 +22,7 @@ void CdBG<k>::output_maximal_unitigs()
     const uint8_t output_format = params.output_format();
     unipaths_info_local.resize(params.thread_count());
 
-    if(output_format == cuttlefish::txt)
+    if(output_format == cuttlefish::fa)
         output_maximal_unitigs_plain();
     else if(output_format == cuttlefish::gfa1 || output_format == cuttlefish::gfa2)
         output_maximal_unitigs_gfa();
@@ -482,7 +482,7 @@ void CdBG<k>::clear_output_file() const
     const cuttlefish::Output_Format op_format = params.output_format();
     const std::string& output_file_path = params.output_file_path();
 
-    if(op_format == cuttlefish::txt || op_format == cuttlefish::gfa1 || op_format == cuttlefish::gfa2)
+    if(op_format == cuttlefish::fa || op_format == cuttlefish::gfa1 || op_format == cuttlefish::gfa2)
         clear_file(output_file_path);
     else if(op_format == cuttlefish::gfa_reduced)
     {

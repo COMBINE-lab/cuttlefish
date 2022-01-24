@@ -285,10 +285,10 @@ private:
     // Writes the path in the sequence `seq` with its starting and ending k-mers
     // located at the indices `start_kmer_idx` and `end_kmer_idx` respectively to
     // the output buffer of the thread number `thread_id`, putting into the logger
-    // of the thread, if necessary. If `dir` is `FWD`, then the string spelled by the
-    // path is written; otherwise its reverse complement is written.
-    // Note that, the output operation appends a newline at the end.
-    void write_path(uint16_t thread_id, const char* seq, size_t start_kmer_idx, size_t end_kmer_idx, cuttlefish::dir_t dir);
+    // of the thread, if necessary. The unitig is named as `unitig_id`. If `dir` is
+    // `FWD`, then the string spelled by the path is written; otherwise its reverse
+    // complement is written. Note that, the output operation appends a newline at the end.
+    void write_path(uint16_t thread_id, const char* seq, const uint64_t unitig_id, size_t start_kmer_idx, size_t end_kmer_idx, cuttlefish::dir_t dir);
 
     // Writes the maximal unitigs from the sequence `seq` (of length `seq_len`) that
     // have their starting indices between (inclusive) `left_end` and `right_end`.
@@ -393,7 +393,7 @@ private:
     // Ensures that the string `buf` has enough free space to append a log of length
     // `log_len` at its end without overflowing its capacity by flushing its content
     // to the logger `log` if necessary. The request is non-binding in the sense that
-    // if the capacity of the buffer `str` is smaller than `log_len`, then this method
+    // if the capacity of the buffer `buf` is smaller than `log_len`, then this method
     // does not ensure enough buffer space.
     static void ensure_buffer_space(std::string& buf, size_t log_len, const cuttlefish::logger_t& log);
 

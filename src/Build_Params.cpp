@@ -127,7 +127,7 @@ bool Build_Params::is_valid() const
 
         
         // Cuttlefish 1 specific arguments can not be specified.
-        if(output_format_ != cuttlefish::Output_Format::txt)
+        if(output_format_ != cuttlefish::Output_Format::fa)
         {
             std::cout << "Cuttlefish 1 specific arguments specified while using Cuttlefish 2.\n";
             valid = false;

@@ -53,11 +53,13 @@ void CdBG<k>::reset_path_loggers(const uint64_t file_id)
 
     path_output_.clear();
     if(gfa_v == cuttlefish::Output_Format::gfa1)
-        overlap_output_.clear();
+        overlap_output_.clear(),
+        link_added.clear();
 
     path_output_.resize(thread_count);
     if(gfa_v == cuttlefish::Output_Format::gfa1)
-        overlap_output_.resize(thread_count);
+        overlap_output_.resize(thread_count),
+        link_added.resize(thread_count);
 
     
     // Instantiate a `spdlog` thread pool for outputting paths and overlaps.
@@ -460,6 +462,9 @@ void CdBG<k>::write_gfa_link(const uint16_t thread_id, const Oriented_Unitig& le
     
     // Append a link to the growing path for this thread.
     append_link_to_path(thread_id, left_unitig, right_unitig);
+
+    // Mark the addition of a link for this thread.
+    link_added[thread_id] = true;
 }
 
 
@@ -591,7 +596,8 @@ void CdBG<k>::append_link_to_path(const uint16_t thread_id, const Oriented_Uniti
     p_buffer += (right_unitig.dir == cuttlefish::FWD ? "+" : "-");
 
     std::string& o_buffer = overlap_buffer[thread_id];
-    o_buffer += ",";
+    if(link_added[thread_id])
+        o_buffer += ",";
     o_buffer += fmt::format_int(right_unitig.start_kmer_idx == left_unitig.end_kmer_idx + 1 ? k - 1 : 0).c_str();
     o_buffer += "M";
 
@@ -797,11 +803,8 @@ void CdBG<k>::write_gfa_path(const std::string& path_name)
         output << "*";  // Write an empty CIGAR string at the 'Overlaps' field.
     else
     {
-        // The first overlap of the path (not inferrable from the path output files).
-        const uint16_t overlap = (right_unitig.start_kmer_idx == left_unitig.end_kmer_idx +  1 ? k - 1 : 0);
-        output << overlap << "M";
-
         // Copy the thread-specific overlap output file contents to the GFA output file.
+        bool overlap_written = false;   // Whether some overlap information has been written to the final output.
         for(uint16_t t_id = 0; t_id < thread_count; ++t_id)
         {
             const std::string overlap_file_name = (overlap_file_prefix + std::to_string(t_id));
@@ -815,7 +818,13 @@ void CdBG<k>::write_gfa_path(const std::string& path_name)
 
             // Copy the overlaps output for thread number `t_id` to the end of the output GFA file.
             if(input.peek() != EOF)
+            {
+                if(overlap_written)
+                    output << ",";
+                
                 output << input.rdbuf();
+                overlap_written = true;
+            }
 
             input.close();
         }

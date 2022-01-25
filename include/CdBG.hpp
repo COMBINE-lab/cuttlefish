@@ -37,6 +37,9 @@ private:
     // output content yet to be written to the disk from the thread number `t_id`.
     std::vector<std::string> path_buffer, overlap_buffer;
 
+    // `link_added[t_id]` is `true` iff at least one link has been added to the output for thread id `t_id`.
+    std::vector<uint64_t> link_added;
+
     // Capacities for the memory pre-allocation of each output buffer, and the threshold buffer size
     // that triggers a disk-flush.
     static constexpr size_t BUFFER_THRESHOLD = 100 * 1024;  // 100 KB.

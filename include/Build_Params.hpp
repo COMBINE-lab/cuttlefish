@@ -8,11 +8,13 @@
 #include "Seq_Input.hpp"
 #include "Output_Format.hpp"
 #include "File_Extensions.hpp"
+#include "Input_Defaults.hpp"
 
 #include <string>
 #include <vector>
 #include <thread>
 #include <iostream>
+#include <optional>
 
 
 class Build_Params
@@ -23,7 +25,7 @@ private:
     const bool is_ref_graph_;   // Whether to build a compacted reference de Bruijn graph or not.
     const Seq_Input seq_input_; // Collection of the input sequences.
     const uint16_t k_;   // The k parameter for the edge-centric de Bruijn graph to be compacted.
-    const uint32_t cutoff_; // Frequency cutoff for the (k + 1)-mers (for short-read set input).
+    const std::optional<uint32_t> cutoff_;  // Frequency cutoff for the (k + 1)-mers.
     const std::string vertex_db_path_;  // Path to the KMC database containing the vertices (canonical k-mers).
     const std::string edge_db_path_;    // Path to the KMC database containing the edges (canonical (k + 1)-mers).
     const uint16_t thread_count_;    // Number of threads to work with.
@@ -50,7 +52,7 @@ public:
                     const std::vector<std::string>& list_paths,
                     const std::vector<std::string>& dir_paths,
                     const uint16_t k,
-                    const uint32_t cutoff,
+                    const std::optional<uint32_t> cutoff,
                     const std::string& vertex_db_path,
                     const std::string& edge_db_path,
                     const uint16_t thread_count,
@@ -100,7 +102,7 @@ public:
     // Returns the frequency cutoff for the (k + 1)-mers (for short-reads set input).
     uint32_t cutoff() const
     {
-        return cutoff_;
+        return cutoff_.value_or(is_read_graph() ? cuttlefish::_default::CUTOFF_FREQ_READS : cuttlefish::_default::CUTOFF_FREQ_REFS);
     }
 
 

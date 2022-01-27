@@ -15,6 +15,7 @@
 #include <fstream>
 #include <iostream>
 #include <iomanip>
+#include <optional>
 
 
 // Driver function for the CdBG build.
@@ -35,10 +36,11 @@ void build(int argc, char** argv)
         ("h,help", "print usage")
         ;
 
+    std::optional<uint32_t> cutoff;
     options.add_options("cuttlefish 2.0")
         ("read", "construct a compacted read de Bruijn graph")
         ("ref", "construct a compacted reference de Bruijn graph")
-        ("c,cutoff", "frequency cutoff for (k + 1)-mers", cxxopts::value<uint32_t>()->default_value(std::to_string(cuttlefish::_default::CUTOFF_FREQ)))
+        ("c,cutoff", "frequency cutoff for (k + 1)-mers (default: refs: 1, reads: 2)", cxxopts::value<std::optional<uint32_t>>(cutoff))
         ("path-cover", "extract a maximal path cover of the de Bruijn graph")
         ;
     
@@ -76,7 +78,6 @@ void build(int argc, char** argv)
         const auto lists = result["list"].as<std::vector<std::string>>();
         const auto dirs = result["dir"].as<std::vector<std::string>>();
         const auto k = result["kmer-len"].as<uint16_t>();
-        const auto cutoff = result["cutoff"].as<uint32_t>();
         const auto vertex_db = result["vertex-set"].as<std::string>();
         const auto edge_db = result["edge-set"].as<std::string>();
         const auto thread_count = result["threads"].as<uint16_t>();

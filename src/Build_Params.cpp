@@ -10,7 +10,7 @@ Build_Params::Build_Params( const bool is_read_graph,
                             const std::vector<std::string>& list_paths,
                             const std::vector<std::string>& dir_paths,
                             const uint16_t k,
-                            const uint32_t cutoff,
+                            const std::optional<uint32_t> cutoff,
                             const std::string& vertex_db_path,
                             const std::string& edge_db_path,
                             const uint16_t thread_count,
@@ -115,14 +115,14 @@ bool Build_Params::is_valid() const
 
 
         // A cutoff frequency of 0 is theoretically inconsistent.
-        if(cutoff_ == 0)
+        if(cutoff() == 0)
         {
             std::cout << "Cutoff frequency specified to be 0, which is theoretically inconsistent. Please use 1 if you wish to retain all the k-mers without filtering.\n";
             valid = false;
         }
 
         // Cutoff frequency _should be_ 1 for reference de Bruijn graphs.
-        if(is_ref_graph_ && cutoff_ != 1)
+        if(is_ref_graph_ && cutoff() != 1)
             std::cout << "WARNING: cutoff frequency specified not to be 1 on reference sequences.\n";
 
         
@@ -144,7 +144,7 @@ bool Build_Params::is_valid() const
 
 
         // Cuttlefish 2 specific arguments can not be specified.
-        if(cutoff_ != cuttlefish::_default::CUTOFF_FREQ || path_cover_)
+        if(cutoff_ || path_cover_)
         {
             std::cout << "Cuttelfish 2 specific arguments specified while using Cuttlefish 1.\n";
             valid = false;

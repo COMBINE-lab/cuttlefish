@@ -40,7 +40,7 @@ void build(int argc, char** argv)
     options.add_options("cuttlefish_2")
         ("read", "construct a compacted read de Bruijn graph (for FASTQ input)")
         ("ref", "construct a compacted reference de Bruijn graph (for FASTA input)")
-        ("c,cutoff", "frequency cutoff for (k + 1)-mers (default: refs: 1, reads: 2)", cxxopts::value<std::optional<uint32_t>>(cutoff))
+        ("c,cutoff", "frequency cutoff for (k + 1)-mers (default: refs: " + std::to_string(cuttlefish::_default::CUTOFF_FREQ_REFS) + ", reads: " + std::to_string(cuttlefish::_default::CUTOFF_FREQ_READS) + ")", cxxopts::value<std::optional<uint32_t>>(cutoff))
         ("path-cover", "extract a maximal path cover of the de Bruijn graph")
         ;
     

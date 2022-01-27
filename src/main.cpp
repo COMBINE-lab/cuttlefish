@@ -37,14 +37,14 @@ void build(int argc, char** argv)
         ;
 
     std::optional<uint32_t> cutoff;
-    options.add_options("cuttlefish 2.0")
-        ("read", "construct a compacted read de Bruijn graph")
-        ("ref", "construct a compacted reference de Bruijn graph")
+    options.add_options("cuttlefish_2")
+        ("read", "construct a compacted read de Bruijn graph (for FASTQ input)")
+        ("ref", "construct a compacted reference de Bruijn graph (for FASTA input)")
         ("c,cutoff", "frequency cutoff for (k + 1)-mers (default: refs: 1, reads: 2)", cxxopts::value<std::optional<uint32_t>>(cutoff))
         ("path-cover", "extract a maximal path cover of the de Bruijn graph")
         ;
     
-    options.add_options("cuttlefish 1.0")
+    options.add_options("cuttlefish_1")
         ("f,format", "output format (0: FASTA, 1: GFA 1.0, 2: GFA 2.0, 3: GFA-reduced)", cxxopts::value<uint16_t>()->default_value(std::to_string(cuttlefish::_default::OP_FORMAT)))
         ;
 

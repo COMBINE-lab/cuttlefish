@@ -13,7 +13,7 @@ namespace cuttlefish
     namespace _default
     {
         constexpr char EMPTY[] = "";
-        constexpr uint16_t K = 25;  // Set as per the KMC3 default.
+        constexpr uint16_t K = 27;
         constexpr uint32_t CUTOFF_FREQ_READS = 2;   // Typical practice
         constexpr uint32_t CUTOFF_FREQ_REFS = 1;    // Typical assumption
         constexpr uint16_t THREAD_COUNT = 1;

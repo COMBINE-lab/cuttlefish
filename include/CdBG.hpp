@@ -120,8 +120,7 @@ private:
     kmer_Enumeration_Stats<k> enumerate_vertices() const;
 
     // Constructs the Cuttlefish hash table for the `vertex_count` vertices of the graph.
-    // If `load` is specified, then it is loaded from disk.
-    void construct_hash_table(uint64_t vertex_count, bool load = false);
+    void construct_hash_table(uint64_t vertex_count);
 
     // TODO: rename the "classify" methods with appropriate terminology that are consistent with the theory.
     

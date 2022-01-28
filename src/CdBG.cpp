@@ -97,24 +97,16 @@ kmer_Enumeration_Stats<k> CdBG<k>::enumerate_vertices() const
 
 
 template <uint16_t k>
-void CdBG<k>::construct_hash_table(const uint64_t vertex_count, const bool load)
+void CdBG<k>::construct_hash_table(const uint64_t vertex_count)
 {
-    if(load)
-    {
-        hash_table = std::make_unique<Kmer_Hash_Table<k, cuttlefish::BITS_PER_REF_KMER>>(logistics.vertex_db_path(), vertex_count);
-        hash_table->load(params);
-    }
-    else
-    {
-        std::size_t max_memory = std::max(process_peak_memory(), params.max_memory() * 1024U * 1024U * 1024U);
-        max_memory = (max_memory > parser_memory ? max_memory - parser_memory : 0);
+    std::size_t max_memory = std::max(process_peak_memory(), params.max_memory() * 1024U * 1024U * 1024U);
+    max_memory = (max_memory > parser_memory ? max_memory - parser_memory : 0);
 
-        hash_table = (params.strict_memory() ?
-                        std::make_unique<Kmer_Hash_Table<k, cuttlefish::BITS_PER_REF_KMER>>(logistics.vertex_db_path(), vertex_count, max_memory) :
-                        std::make_unique<Kmer_Hash_Table<k, cuttlefish::BITS_PER_REF_KMER>>(logistics.vertex_db_path(), vertex_count, max_memory, std::numeric_limits<double>::max()));
+    hash_table = (params.strict_memory() ?
+                    std::make_unique<Kmer_Hash_Table<k, cuttlefish::BITS_PER_REF_KMER>>(logistics.vertex_db_path(), vertex_count, max_memory) :
+                    std::make_unique<Kmer_Hash_Table<k, cuttlefish::BITS_PER_REF_KMER>>(logistics.vertex_db_path(), vertex_count, max_memory, std::numeric_limits<double>::max()));
 
-        hash_table->construct(params.thread_count(), logistics.working_dir_path(), params.mph_file_path(), params.save_mph());
-    }
+    hash_table->construct(params.thread_count(), logistics.working_dir_path(), params.mph_file_path(), params.save_mph());
 }
 
 

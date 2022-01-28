@@ -17,7 +17,7 @@ Build_Params::Build_Params( const bool is_read_graph,
                             const std::optional<std::size_t> max_memory,
                             const bool strict_memory,
                             const std::string& output_file_path,
-                            const uint8_t output_format,
+                            const std::optional<cuttlefish::Output_Format> output_format,
                             const std::string& working_dir_path,
                             const bool path_cover,
                             const std::string& mph_file_path,
@@ -38,7 +38,7 @@ Build_Params::Build_Params( const bool is_read_graph,
         max_memory_(max_memory),
         strict_memory_(strict_memory),
         output_file_path_(output_file_path),
-        output_format_(cuttlefish::Output_Format(output_format)),
+        output_format_(output_format),
         working_dir_path_(working_dir_path.back() == '/' ? working_dir_path : working_dir_path + "/"),
         path_cover_(path_cover),
         mph_file_path_(mph_file_path),
@@ -127,7 +127,7 @@ bool Build_Params::is_valid() const
 
         
         // Cuttlefish 1 specific arguments can not be specified.
-        if(output_format_ != cuttlefish::Output_Format::fa)
+        if(output_format_)
         {
             std::cout << "Cuttlefish 1 specific arguments specified while using Cuttlefish 2.\n";
             valid = false;

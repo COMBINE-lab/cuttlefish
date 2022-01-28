@@ -21,7 +21,7 @@ namespace cuttlefish
 #ifdef CF_DEVELOP_MODE
         constexpr double GAMMA = 0;
 #endif
-        constexpr uint16_t OP_FORMAT = Output_Format::fa;
+        constexpr Output_Format OP_FORMAT = Output_Format::fa;
         constexpr char WORK_DIR[] = ".";
     }
 }

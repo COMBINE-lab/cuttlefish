@@ -54,9 +54,10 @@ void build(int argc, char** argv)
         ("path-cover", "extract a maximal path cover of the de Bruijn graph")
         ;
     
+    std::optional<uint16_t> format_code;
     options.add_options("cuttlefish_1")
         ("f,format", "output format (0: FASTA, 1: GFA 1.0, 2: GFA 2.0, 3: GFA-reduced)",
-            cxxopts::value<uint16_t>()->default_value(std::to_string(cuttlefish::_default::OP_FORMAT)))
+            cxxopts::value<std::optional<uint16_t>>(format_code))
         ;
 
     options.add_options("specialized")
@@ -99,7 +100,8 @@ void build(int argc, char** argv)
         const auto thread_count = result["threads"].as<uint16_t>();
         const auto strict_memory = !result["unrestrict-memory"].as<bool>();
         const auto output_file = result["output"].as<std::string>();
-        const auto format = result["format"].as<uint16_t>();
+        const auto format = format_code ?   std::optional<cuttlefish::Output_Format>(cuttlefish::Output_Format(format_code.value())) :
+                                            std::optional<cuttlefish::Output_Format>();
         const auto working_dir = result["work-dir"].as<std::string>();
         const auto path_cover = result["path-cover"].as<bool>();
         const auto mph_file = result["mph"].as<std::string>();

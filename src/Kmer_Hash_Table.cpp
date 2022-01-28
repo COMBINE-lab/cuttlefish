@@ -69,8 +69,7 @@ template <uint16_t k, uint8_t BITS_PER_KEY>
 void Kmer_Hash_Table<k, BITS_PER_KEY>::build_mph_function(const uint16_t thread_count, const std::string& working_dir_path, const std::string& mph_file_path)
 {
     // The serialized BBHash file (saved from some earlier execution) exists.
-    struct stat buffer;
-    if(!mph_file_path.empty() && stat(mph_file_path.c_str(), &buffer) == 0)
+    if(!mph_file_path.empty() && file_exists(mph_file_path))
     {
         std::cout << "Found the MPHF at file " << mph_file_path << ".\n";
         std::cout << "Loading the MPHF.\n";
@@ -79,7 +78,7 @@ void Kmer_Hash_Table<k, BITS_PER_KEY>::build_mph_function(const uint16_t thread_
 
         std::cout << "Loaded the MPHF into memory.\n";
     }
-    else    // No BBHash file name provided, or does not exist. Build and save (if specified) one now.
+    else    // No BBHash file name provided, or does not exist. Build one now.
     {
         // Open a container over the k-mer database.
         const Kmer_Container<k> kmer_container(kmc_db_path);
@@ -95,10 +94,6 @@ void Kmer_Hash_Table<k, BITS_PER_KEY>::build_mph_function(const uint16_t thread_
         std::cout << "Built the MPHF in memory.\n";
 
         // std::cout << "Total data copy time to BBHash buffers " << mph->data_copy_time << "\n\n";
-        
-
-        // Save the MPHF if specified.
-        // TODO: add `--save-hash` CL-parameter in main, replacing `--mph`.
     }
 }
 
@@ -201,7 +196,7 @@ void Kmer_Hash_Table<k, BITS_PER_KEY>::remove(const Build_Params& params) const
 
 
 template <uint16_t k, uint8_t BITS_PER_KEY>
-void Kmer_Hash_Table<k, BITS_PER_KEY>::construct(const uint16_t thread_count, const std::string& working_dir_path, const std::string& mph_file_path)
+void Kmer_Hash_Table<k, BITS_PER_KEY>::construct(const uint16_t thread_count, const std::string& working_dir_path, const std::string& mph_file_path, const bool save_mph)
 {
     // std::chrono::high_resolution_clock::time_point t_start = std::chrono::high_resolution_clock::now();
 
@@ -211,6 +206,9 @@ void Kmer_Hash_Table<k, BITS_PER_KEY>::construct(const uint16_t thread_count, co
 
     // Build the minimal perfect hash function.
     build_mph_function(thread_count, working_dir_path, mph_file_path);
+
+    if(save_mph)
+        save_mph_function(mph_file_path);
 
     const uint64_t total_bits = mph->totalBitSize();
     std::cout <<    "\nTotal MPHF size: " << total_bits / (8 * 1024 * 1024) << " MB."

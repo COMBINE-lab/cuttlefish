@@ -20,11 +20,11 @@ Build_Params::Build_Params( const bool is_read_graph,
                             const std::optional<cuttlefish::Output_Format> output_format,
                             const std::string& working_dir_path,
                             const bool path_cover,
-                            const std::string& mph_file_path,
-                            const std::string& buckets_file_path,
+                            const bool save_mph,
+                            const bool save_buckets,
                             const bool save_vertices
 #ifdef CF_DEVELOP_MODE
-                    , const double gamma
+                            , const double gamma
 #endif
                     ):
         is_read_graph_(is_read_graph),
@@ -41,8 +41,8 @@ Build_Params::Build_Params( const bool is_read_graph,
         output_format_(output_format),
         working_dir_path_(working_dir_path.back() == '/' ? working_dir_path : working_dir_path + "/"),
         path_cover_(path_cover),
-        mph_file_path_(mph_file_path),
-        buckets_file_path_(buckets_file_path),
+        save_mph_(save_mph),
+        save_buckets_(save_buckets),
         save_vertices_(save_vertices)
 #ifdef CF_DEVELOP_MODE
         , gamma_(gamma)

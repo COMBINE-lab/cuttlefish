@@ -55,6 +55,15 @@ void Read_CdBG_Constructor<k>::compute_DFA_states(const std::string& edge_db_pat
         thread_pool.close();
 
         std::cout << "\nNumber of processed edges: " << edges_processed << "\n";
+
+
+        // Save the hash table buckets, if a file path is provided.
+        if(params.save_buckets())
+        {
+            std::cout << "Saving the hash table buckets into file " << buckets_file_path << "\n";
+            hash_table.save_hash_buckets(buckets_file_path); 
+            std::cout << "Saved the buckets in disk.\n";
+        }
     }
 
 

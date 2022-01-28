@@ -113,7 +113,7 @@ void CdBG<k>::construct_hash_table(const uint64_t vertex_count, const bool load)
                         std::make_unique<Kmer_Hash_Table<k, cuttlefish::BITS_PER_REF_KMER>>(logistics.vertex_db_path(), vertex_count, max_memory) :
                         std::make_unique<Kmer_Hash_Table<k, cuttlefish::BITS_PER_REF_KMER>>(logistics.vertex_db_path(), vertex_count, max_memory, std::numeric_limits<double>::max()));
 
-        hash_table->construct(params.thread_count(), logistics.working_dir_path(), params.mph_file_path());
+        hash_table->construct(params.thread_count(), logistics.working_dir_path(), params.mph_file_path(), params.save_mph());
     }
 }
 

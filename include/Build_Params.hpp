@@ -35,8 +35,8 @@ private:
     const std::optional<cuttlefish::Output_Format> output_format_;  // Output format (0: FASTA, 1: GFAv1, 2: GFAv2, 3: GFA-reduced).
     const std::string working_dir_path_;    // Path to the working directory (for temporary files).
     const bool path_cover_; // Whether to extract a maximal path cover of the de Bruijn graph.
-    const std::string mph_file_path_;   // Optional path to file storing an MPH over the k-mer set.
-    const std::string buckets_file_path_;   // Optional path to file storing the hash table buckets for the k-mer set.
+    const bool save_mph_;   // Option to save the MPH over the vertex set of the de Bruijn graph.
+    const bool save_buckets_;   // Option to save the DFA-states collection of the vertices of the de Bruijn graph.
     const bool save_vertices_;  // Option to save the vertex set of the de Bruijn graph (in KMC database format).
 #ifdef CF_DEVELOP_MODE
     const double gamma_;    // The gamma parameter for the BBHash MPHF.
@@ -62,8 +62,8 @@ public:
                     const std::optional<cuttlefish::Output_Format> output_format,
                     const std::string& working_dir_path,
                     const bool path_cover,
-                    const std::string& mph_file_path,
-                    const std::string& buckets_file_path,
+                    const bool save_mph,
+                    const bool save_buckets,
                     const bool save_vertices
 #ifdef CF_DEVELOP_MODE
                     , const double gamma
@@ -179,14 +179,27 @@ public:
     // Returns the path to the optional MPH file.
     const std::string mph_file_path() const
     {
-        return (is_read_graph() || is_ref_graph()) ? (output_file_path_ + cuttlefish::file_ext::hash_ext) : mph_file_path_;
+        return output_file_path_ + cuttlefish::file_ext::hash_ext;
     }
 
 
     // Returns the path to the optional file storing the hash table buckets.
     const std::string buckets_file_path() const
     {
-        return (is_read_graph() || is_ref_graph()) ? (output_file_path_ + cuttlefish::file_ext::buckets_ext) : buckets_file_path_;
+        return output_file_path_ + cuttlefish::file_ext::buckets_ext;
+    }
+
+    // Returns whether the option to save the MPH over the vertex set of the de Bruijn graph is specified ot not.
+    bool save_mph() const
+    {
+        return save_mph_;
+    }
+
+
+    // Returns whether the option to save the DFA-states collection of the vertices of the de Bruijn graph.
+    bool save_buckets() const
+    {
+        return save_buckets_;
     }
 
 

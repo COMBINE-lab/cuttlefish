@@ -23,6 +23,7 @@ void build(int argc, char** argv)
 {
     cxxopts::Options options("cuttlefish build", "Efficiently construct the compacted de Bruijn graph from sequencing reads or reference sequences");
 
+    std::optional<std::size_t> max_memory;
     options.add_options("common")
         ("s,seq", "input files", cxxopts::value<std::vector<std::string>>()->default_value(cuttlefish::_default::EMPTY))
         ("l,list", "input file lists", cxxopts::value<std::vector<std::string>>()->default_value(cuttlefish::_default::EMPTY))
@@ -31,7 +32,7 @@ void build(int argc, char** argv)
         ("t,threads", "number of threads to use", cxxopts::value<uint16_t>()->default_value(std::to_string(cuttlefish::_default::THREAD_COUNT)))
         ("o,output", "output file", cxxopts::value<std::string>())
         ("w,work-dir", "working directory", cxxopts::value<std::string>()->default_value(cuttlefish::_default::WORK_DIR))
-        ("m,max-memory", "soft maximum memory limit (in GB)", cxxopts::value<std::size_t>()->default_value(std::to_string(cuttlefish::_default::MAX_MEMORY)))
+        ("m,max-memory", "soft maximum memory limit in GB (default: " + std::to_string(cuttlefish::_default::MAX_MEMORY) + ")", cxxopts::value<std::optional<std::size_t>>(max_memory))
         ("unrestrict-memory", "do not impose memory usage restriction")
         ("h,help", "print usage")
         ;
@@ -81,7 +82,6 @@ void build(int argc, char** argv)
         const auto vertex_db = result["vertex-set"].as<std::string>();
         const auto edge_db = result["edge-set"].as<std::string>();
         const auto thread_count = result["threads"].as<uint16_t>();
-        const auto max_memory = result["max-memory"].as<std::size_t>();
         const auto strict_memory = !result["unrestrict-memory"].as<bool>();
         const auto output_file = result["output"].as<std::string>();
         const auto format = result["format"].as<uint16_t>();

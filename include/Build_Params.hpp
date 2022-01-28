@@ -29,7 +29,7 @@ private:
     const std::string vertex_db_path_;  // Path to the KMC database containing the vertices (canonical k-mers).
     const std::string edge_db_path_;    // Path to the KMC database containing the edges (canonical (k + 1)-mers).
     const uint16_t thread_count_;    // Number of threads to work with.
-    const std::size_t max_memory_;  // Soft maximum memory limit (in GB).
+    const std::optional<std::size_t> max_memory_;   // Soft maximum memory limit (in GB).
     const bool strict_memory_;  // Whether strict memory limit restriction is specifiied.
     const std::string output_file_path_;    // Path to the output file.
     const cuttlefish::Output_Format output_format_;   // Output format (0: FASTA, 1: GFAv1, 2: GFAv2).
@@ -56,7 +56,7 @@ public:
                     const std::string& vertex_db_path,
                     const std::string& edge_db_path,
                     const uint16_t thread_count,
-                    const std::size_t max_memory,
+                    const std::optional<std::size_t> max_memory,
                     const bool strict_memory,
                     const std::string& output_file_path,
                     const uint8_t output_format,
@@ -130,7 +130,7 @@ public:
     // Returns the soft maximum memory limit (in GB).
     std::size_t max_memory() const
     {
-        return max_memory_;
+        return max_memory_.value_or(cuttlefish::_default::MAX_MEMORY);
     }
 
 

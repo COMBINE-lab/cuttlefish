@@ -14,7 +14,7 @@ Build_Params::Build_Params( const bool is_read_graph,
                             const std::string& vertex_db_path,
                             const std::string& edge_db_path,
                             const uint16_t thread_count,
-                            const std::size_t max_memory,
+                            const std::optional<std::size_t> max_memory,
                             const bool strict_memory,
                             const std::string& output_file_path,
                             const uint8_t output_format,
@@ -100,7 +100,7 @@ bool Build_Params::is_valid() const
 
 
     // Memory budget options should not be mixed with.
-    if(max_memory_ != cuttlefish::_default::MAX_MEMORY && !strict_memory_)
+    if(max_memory_  && !strict_memory_)
         std::cout << "Both a memory bound and the option for unrestricted memory usage specified. Unrestricted memory mode will be used.\n";
 
 

@@ -25,14 +25,22 @@ void build(int argc, char** argv)
 
     std::optional<std::size_t> max_memory;
     options.add_options("common")
-        ("s,seq", "input files", cxxopts::value<std::vector<std::string>>()->default_value(cuttlefish::_default::EMPTY))
-        ("l,list", "input file lists", cxxopts::value<std::vector<std::string>>()->default_value(cuttlefish::_default::EMPTY))
-        ("d,dir", "input file directories", cxxopts::value<std::vector<std::string>>()->default_value(cuttlefish::_default::EMPTY))
-        ("k,kmer-len", "k-mer length", cxxopts::value<uint16_t>()->default_value(std::to_string(cuttlefish::_default::K)))
-        ("t,threads", "number of threads to use", cxxopts::value<uint16_t>()->default_value(std::to_string(cuttlefish::_default::THREAD_COUNT)))
-        ("o,output", "output file", cxxopts::value<std::string>())
-        ("w,work-dir", "working directory", cxxopts::value<std::string>()->default_value(cuttlefish::_default::WORK_DIR))
-        ("m,max-memory", "soft maximum memory limit in GB (default: " + std::to_string(cuttlefish::_default::MAX_MEMORY) + ")", cxxopts::value<std::optional<std::size_t>>(max_memory))
+        ("s,seq", "input files",
+            cxxopts::value<std::vector<std::string>>()->default_value(cuttlefish::_default::EMPTY))
+        ("l,list", "input file lists",
+            cxxopts::value<std::vector<std::string>>()->default_value(cuttlefish::_default::EMPTY))
+        ("d,dir", "input file directories",
+            cxxopts::value<std::vector<std::string>>()->default_value(cuttlefish::_default::EMPTY))
+        ("k,kmer-len", "k-mer length",
+            cxxopts::value<uint16_t>()->default_value(std::to_string(cuttlefish::_default::K)))
+        ("t,threads", "number of threads to use",
+            cxxopts::value<uint16_t>()->default_value(std::to_string(cuttlefish::_default::THREAD_COUNT)))
+        ("o,output", "output file",
+            cxxopts::value<std::string>())
+        ("w,work-dir", "working directory",
+            cxxopts::value<std::string>()->default_value(cuttlefish::_default::WORK_DIR))
+        ("m,max-memory", "soft maximum memory limit in GB (default: " + std::to_string(cuttlefish::_default::MAX_MEMORY) + ")",
+            cxxopts::value<std::optional<std::size_t>>(max_memory))
         ("unrestrict-memory", "do not impose memory usage restriction")
         ("h,help", "print usage")
         ;
@@ -41,26 +49,33 @@ void build(int argc, char** argv)
     options.add_options("cuttlefish_2")
         ("read", "construct a compacted read de Bruijn graph (for FASTQ input)")
         ("ref", "construct a compacted reference de Bruijn graph (for FASTA input)")
-        ("c,cutoff", "frequency cutoff for (k + 1)-mers (default: refs: " + std::to_string(cuttlefish::_default::CUTOFF_FREQ_REFS) + ", reads: " + std::to_string(cuttlefish::_default::CUTOFF_FREQ_READS) + ")", cxxopts::value<std::optional<uint32_t>>(cutoff))
+        ("c,cutoff", "frequency cutoff for (k + 1)-mers (default: refs: " + std::to_string(cuttlefish::_default::CUTOFF_FREQ_REFS) + ", reads: " + std::to_string(cuttlefish::_default::CUTOFF_FREQ_READS) + ")",
+            cxxopts::value<std::optional<uint32_t>>(cutoff))
         ("path-cover", "extract a maximal path cover of the de Bruijn graph")
         ;
     
     options.add_options("cuttlefish_1")
-        ("f,format", "output format (0: FASTA, 1: GFA 1.0, 2: GFA 2.0, 3: GFA-reduced)", cxxopts::value<uint16_t>()->default_value(std::to_string(cuttlefish::_default::OP_FORMAT)))
+        ("f,format", "output format (0: FASTA, 1: GFA 1.0, 2: GFA 2.0, 3: GFA-reduced)",
+            cxxopts::value<uint16_t>()->default_value(std::to_string(cuttlefish::_default::OP_FORMAT)))
         ;
 
     options.add_options("specialized")
         // TODO: repurpose the following two options
-        ("mph", "minimal perfect hash (BBHash) file (optional)", cxxopts::value<std::string>()->default_value(cuttlefish::_default::EMPTY))
-        ("buckets", "hash table buckets (cuttlefish) file (optional)", cxxopts::value<std::string>()->default_value(cuttlefish::_default::EMPTY))
+        ("mph", "minimal perfect hash (BBHash) file (optional)",
+            cxxopts::value<std::string>()->default_value(cuttlefish::_default::EMPTY))
+        ("buckets", "hash table buckets (cuttlefish) file (optional)",
+            cxxopts::value<std::string>()->default_value(cuttlefish::_default::EMPTY))
         ("save-vertices", "save the vertex set of the graph")
         ;
 
     options.add_options("debug")
-        ("vertex-set", "set of vertices, i.e. k-mers (KMC database) prefix", cxxopts::value<std::string>()->default_value(cuttlefish::_default::EMPTY))
-        ("edge-set", "set of edges, i.e. (k + 1)-mers (KMC database) prefix", cxxopts::value<std::string>()->default_value(cuttlefish::_default::EMPTY))
+        ("vertex-set", "set of vertices, i.e. k-mers (KMC database) prefix",
+            cxxopts::value<std::string>()->default_value(cuttlefish::_default::EMPTY))
+        ("edge-set", "set of edges, i.e. (k + 1)-mers (KMC database) prefix",
+            cxxopts::value<std::string>()->default_value(cuttlefish::_default::EMPTY))
 #ifdef CF_DEVELOP_MODE
-        ("gamma", "gamma for the BBHash MPHF", cxxopts::value<double>()->default_value(std::to_string(cuttlefish::_default::GAMMA)))
+        ("gamma", "gamma for the BBHash MPHF",
+            cxxopts::value<double>()->default_value(std::to_string(cuttlefish::_default::GAMMA)))
 #endif
         ;
 
@@ -137,15 +152,24 @@ void validate(int argc, char** argv)
 {
     cxxopts::Options options("cuttlefish validate", "Validate a compacted de Bruijn graph constructed by cuttlefish");
     options.add_options()
-        ("r,refs", "reference files", cxxopts::value<std::vector<std::string>>()->default_value(""))
-        ("l,lists", "reference file lists", cxxopts::value<std::vector<std::string>>()->default_value(""))
-        ("d,dirs", "reference file directories", cxxopts::value<std::vector<std::string>>()->default_value(""))
-        ("k,kmer_len", "k-mer length", cxxopts::value<uint16_t>())
-        ("s,kmc_db", "set of k-mers (KMC database) prefix", cxxopts::value<std::string>())
-        ("g,cdbg", "compacted de Bruijn graph file", cxxopts::value<std::string>())
-        ("t,threads", "number of threads to use", cxxopts::value<uint16_t>()->default_value("1"))
-        ("w,work_dir", "working directory", cxxopts::value<std::string>()->default_value("."))
-        ("mph", "minimal perfect hash (BBHash) file (optional)", cxxopts::value<std::string>()->default_value(""))
+        ("r,refs", "reference files",
+            cxxopts::value<std::vector<std::string>>()->default_value(""))
+        ("l,lists", "reference file lists",
+            cxxopts::value<std::vector<std::string>>()->default_value(""))
+        ("d,dirs", "reference file directories",
+            cxxopts::value<std::vector<std::string>>()->default_value(""))
+        ("k,kmer_len", "k-mer length",
+            cxxopts::value<uint16_t>())
+        ("s,kmc_db", "set of k-mers (KMC database) prefix",
+            cxxopts::value<std::string>())
+        ("g,cdbg", "compacted de Bruijn graph file",
+            cxxopts::value<std::string>())
+        ("t,threads", "number of threads to use",
+            cxxopts::value<uint16_t>()->default_value("1"))
+        ("w,work_dir", "working directory",
+            cxxopts::value<std::string>()->default_value("."))
+        ("mph", "minimal perfect hash (BBHash) file (optional)",
+            cxxopts::value<std::string>()->default_value(""))
         ("h,help", "print usage");
 
     try

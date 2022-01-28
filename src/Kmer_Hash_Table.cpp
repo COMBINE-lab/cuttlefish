@@ -208,7 +208,10 @@ void Kmer_Hash_Table<k, BITS_PER_KEY>::construct(const uint16_t thread_count, co
     build_mph_function(thread_count, working_dir_path, mph_file_path);
 
     if(save_mph)
+    {
         save_mph_function(mph_file_path);
+        std::cout << "Saved the hash function at " << mph_file_path << "\n";
+    }
 
     const uint64_t total_bits = mph->totalBitSize();
     std::cout <<    "\nTotal MPHF size: " << total_bits / (8 * 1024 * 1024) << " MB."

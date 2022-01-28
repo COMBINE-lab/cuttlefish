@@ -6,12 +6,22 @@
 #include <iostream>
 
 
+const std::vector<std::string> Seq_Input::empty_collection;
+
+
 Seq_Input::Seq_Input(   const std::vector<std::string>& seqs,
                         const std::vector<std::string>& lists,
                         const std::vector<std::string>& dirs):
     seq_paths_(seqs),
     list_paths_(lists),
     dir_paths_(dirs)
+{}
+
+
+Seq_Input::Seq_Input(   const std::optional<std::vector<std::string>>& seqs,
+                        const std::optional<std::vector<std::string>>& lists,
+                        const std::optional<std::vector<std::string>>& dirs):
+    Seq_Input(seqs.value_or(empty_collection), lists.value_or(empty_collection), dirs.value_or(empty_collection))
 {}
 
 

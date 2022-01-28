@@ -23,14 +23,17 @@ void build(int argc, char** argv)
 {
     cxxopts::Options options("cuttlefish build", "Efficiently construct the compacted de Bruijn graph from sequencing reads or reference sequences");
 
+    std::optional<std::vector<std::string>> seqs;
+    std::optional<std::vector<std::string>> lists;
+    std::optional<std::vector<std::string>> dirs;
     std::optional<std::size_t> max_memory;
     options.add_options("common")
         ("s,seq", "input files",
-            cxxopts::value<std::vector<std::string>>()->default_value(cuttlefish::_default::EMPTY))
+            cxxopts::value<std::optional<std::vector<std::string>>>(seqs))
         ("l,list", "input file lists",
-            cxxopts::value<std::vector<std::string>>()->default_value(cuttlefish::_default::EMPTY))
+            cxxopts::value<std::optional<std::vector<std::string>>>(lists))
         ("d,dir", "input file directories",
-            cxxopts::value<std::vector<std::string>>()->default_value(cuttlefish::_default::EMPTY))
+            cxxopts::value<std::optional<std::vector<std::string>>>(dirs))
         ("k,kmer-len", "k-mer length",
             cxxopts::value<uint16_t>()->default_value(std::to_string(cuttlefish::_default::K)))
         ("t,threads", "number of threads to use",
@@ -91,9 +94,6 @@ void build(int argc, char** argv)
 
         const auto is_read_graph = result["read"].as<bool>();
         const auto is_ref_graph = result["ref"].as<bool>();
-        const auto seqs = result["seq"].as<std::vector<std::string>>();
-        const auto lists = result["list"].as<std::vector<std::string>>();
-        const auto dirs = result["dir"].as<std::vector<std::string>>();
         const auto k = result["kmer-len"].as<uint16_t>();
         const auto vertex_db = result["vertex-set"].as<std::string>();
         const auto edge_db = result["edge-set"].as<std::string>();

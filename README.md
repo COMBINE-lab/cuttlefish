@@ -6,7 +6,7 @@
 
 [![install with bioconda](https://img.shields.io/badge/install%20with-bioconda-brightgreen.svg?style=flat)](http://bioconda.github.io/recipes/cuttlefish/README.html)
 
-Cuttlefish is a fast, parallel, and very lightweight memory tool to construct the compacted de Bruijn graph from sequencing reads or reference sequences, and is highly scalable in terms of the size of the input data.
+Cuttlefish is a fast, parallel, and very lightweight memory tool to construct the compacted de Bruijn graph from sequencing reads or reference sequences. It is highly scalable in terms of the size of the input data.
 
 ## Table of contents
 
@@ -33,7 +33,7 @@ The papers describing the work are: [Cuttlefish (original)](https://academic.oup
 Cuttlefish can be installed using Bioconda (check [Installation](#installation)).
 If installing _from source_, the following are required:
 
-- [GCC](https://gcc.gnu.org/) compilers for C++17 and C11
+- [GCC](https://gcc.gnu.org/) **or** [Clang](https://clang.llvm.org) compilers for C++17 and C11
 - [CMake](https://cmake.org/) (version >= 3.14)
 - [zlib](https://zlib.net/)
 - [bzip2](https://www.sourceware.org/bzip2/)
@@ -149,11 +149,12 @@ The common arguments (for Cuttlefish 1 and 2) are set as following.
 
   In case of using sequencing reads as input, the files should be in the FASTQ format.
   For reference sequences, those should be in the FASTA format.
-  The input files can also be possibly gzipped.
+  The input files can also be gzipped.
 - The _k_-mer length `k` must be odd and within `127` (and `63` if installed from source; see [Larger _k_-mer sizes](#larger-k-mer-sizes) to increase the _k_-mer size capacity beyond these).
 The default value is `27`.
 - The number of threads `t` is set to a quarter of the number of concurrent threads supported, by default.
-The use of high-enough values is recommended.
+The use of high-enough values is recommended.  See the Cuttlefish and Cuttlefish 2 papers for experiments detailing the scaling 
+behavior of this tool with increasing thread counts.
 - Cuttlefish generates two output files:
   - A FASTA / GFA1 / GFA2 file containing the maximal unitigs of the de Bruijn graph (with the extension `.fa` / `.gfa1` / `.gfa2`).
   The GFA output formats are exclusive for Cuttlefish 1.
@@ -162,7 +163,7 @@ The use of high-enough values is recommended.
 The current directory is set as the default working directory.
 - A soft maximum memory-limit `m` (in GB) can be provided to trade-off the RAM usage for faster execution time;
 this will only be adhered to if the provided limit is at least the minimum required memory for Cuttlefish, determined internally.
-- No memory-usage restriction can be imposed using `unrestrict-memory`, trading off RAM usage for faster execution time.
+- Memory-usage restrictions can be lifted by using `unrestrict-memory`, trading off extra RAM usage for faster execution time.
 
 Cuttlefish 1 specific arguments are set as following.
 
@@ -235,8 +236,8 @@ The currently supported output formats are —
   Whether a pair <code>(u<sub>i</sub>, u<sub>i+1</sub>)</code> is an edge or a gap can be inferred by checking the suffix and the prefix (of length `k - 1`) of the unitigs <code>u<sub>i</sub></code> and <code>u<sub>i+1</sub></code>, respectively (in their correct orientations, based on their following `+`/`-` signs).
   Note that, a gap is possible in a sequence-tiling only if the sequence contains characters outside of `A`, `C`, `G`, and `T`.
   
-  For moderate to large sized genomes, this output format is preferrable to the GFA ones—the GFA formats can be quite verbose for this particular scenario, while the reduced representation provides effitively the same information, while taking much lesser space.
-  For example, for the 7-human genomes (experimented with in the manuscripts) and using `k = 31`, the compacted graph takes 112 GB in GFA2, while 29.3 GB in this reduced format.
+  For moderate to large sized genomes, this output format is preferrable to the GFA ones as the GFA formats can be quite verbose for this particular scenario, while the reduced representation provides effitively the same information, while taking much less space.
+  For example, for the 7-human genome dataset (experimented with in the manuscripts) and using `k = 31`, the compacted graph takes 112 GB in GFA2, but only 29.3 GB in this reduced format.
 
 ### Orientation of the output
 
@@ -287,7 +288,7 @@ Multiple seq-files, lists of seq-files, or directories of seq-files may also be 
 To output the compacted de Bruijn graph (in GFA 2.0) for the example FASTA files `refs1.fa` and `refs2.fa` (provided in the `data` directory), the following may be used:
 
 ```bash
-cuttlefish build -s refs1.fa,refs2.fa -k 3 -t 4 -o cdbg.gfa2 -f 2 -w temp/
+cuttlefish build -r refs1.fa,refs2.fa -k 3 -s kmers -t 4 -o cdbg.gfa2 -f 2 -w temp/
 ```
 
 You may also provide lists or directories of reference files as input, as described in [Usage](#usage).
@@ -306,17 +307,19 @@ Cuttlefish supports only the odd `k` values within `MAX_K` due to theoretical re
 Currently, `MAX_K` is supported upto 255.
 Please contact the authors if support for a larger `MAX_K` is required.
 
-Note that, Cuttlefish uses only as many bytes as required (rounded up to multiples of 8) for a _k_-mer as necessary—thus increasing the maximum _k_-mer size capacity through setting large values for `MAX_K` does not affect the performance for smaller _k_-mer sizes.
+Note that, Cuttlefish uses only as many bytes as required (rounded up to multiples of 8) for a _k_-mer. Thus, increasing the maximum _k_-mer size capacity through setting large values for `MAX_K` does not affect the performance for smaller _k_-mer sizes.
 
 ## Differences between Cuttlefish 1 & 2
 
-- Cuttlefish 1 is applicable only for (whole-genome or transcriptome) reference sequences.
+- Cuttlefish 1 is applicable only for assembled reference sequences.
 Whereas Cuttlefish 2 is applicable for both sequencing reads and reference sequences.
 - For reference sequences, Cuttlefish 1 supports outputting the compacted graph in the GFA formats, whereas Cuttlefish 2 does not support this _yet_.
 - Cuttlefish 2 can be used by passing either one of the following arguments to the `cuttlefish build` command: `--read` or `--ref`.
 Passing neither of these invokes Cuttlefish 1.
 
 ## Citations & Acknowledgement
+
+If you use Cuttlefish or Cuttlefish 2 in your work, please include the following citations, as appropriate:
 
 ### [Cuttlefish (original)](https://doi.org/10.1093/bioinformatics/btab309)
 
@@ -365,4 +368,4 @@ This work is supported by _NIH R01 HG009937_, and by _NSF CCF-1750472_, and _CNS
 - The [kseq](http://lh3lh3.users.sourceforge.net/kseq.shtml) library is MIT licensed.
 - The [spdlog](https://github.com/gabime/spdlog) library is MIT licensed.
 - The [xxHash](https://github.com/Cyan4973/xxHash) library is BSD licensed.
-- Cuttlefish is Revised BSD licensed.
+- Cuttlefish itself is licensed under a Revised BSD license.

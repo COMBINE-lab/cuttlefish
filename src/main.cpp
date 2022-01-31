@@ -212,6 +212,15 @@ void validate(int argc, char** argv)
 }
 
 
+void display_help_message()
+{
+    std::cout << "Supported commands: `build`, `help`.\n";
+    
+    std::cout << "Usage:\n";
+    std::cout << "\tcuttlefish build [options]\n";
+}
+
+
 int main(int argc, char** argv)
 {
 #ifdef CF_DEVELOP_MODE
@@ -219,10 +228,7 @@ int main(int argc, char** argv)
 #endif
 
     if(argc < 2)
-    {
-        std::cout << "Usage:\ncuttlefish <command> [OPTIONS]" << std::endl;
-        std::cout << "Supported commands: `build` and `validate`." << std::endl;
-    }
+        display_help_message();
     else
     {
         std::string command(argv[1]);
@@ -232,8 +238,10 @@ int main(int argc, char** argv)
             build(argc - 1, argv + 1);
         else if(command == "validate")
             validate(argc - 1, argv + 1);
+        else if(command == "help")
+            display_help_message();
         else
-            std::cout << "Invalid command. Supported commands: `build` and `validate`" << std::endl;
+            display_help_message();
     }
 
     return EXIT_SUCCESS;

@@ -115,14 +115,11 @@ add_dependencies(jemalloc prj_jemalloc)
 message("Build system will fetch and install KMC3")
 ExternalProject_Add(prj_kmc
     DOWNLOAD_DIR        ${CMAKE_SOURCE_DIR}/external
-    # DOWNLOAD_COMMAND    curl -k -L https://github.com/refresh-bio/KMC/archive/refs/heads/master.zip -o KMC-master.zip &&
-    #                     unzip -qq KMC-master.zip &&
-    #                     rm KMC-master.zip
-    DOWNLOAD_COMMAND    git clone https://github.com/refresh-bio/kmc &&
-                        cd kmc
+    DOWNLOAD_COMMAND    curl -k -L https://github.com/refresh-bio/KMC/archive/refs/tags/v3.2.1.tar.gz -o KMC-3.2.1.tar.gz &&
+                        tar -xzf KMC-3.2.1.tar.gz &&
+                        rm KMC-3.2.1.tar.gz
 
-    # SOURCE_DIR          ${CMAKE_SOURCE_DIR}/external/KMC-master
-    SOURCE_DIR          ${CMAKE_SOURCE_DIR}/external/kmc
+    SOURCE_DIR          ${CMAKE_SOURCE_DIR}/external/KMC-3.2.1
     BUILD_IN_SOURCE     TRUE
     INSTALL_DIR         ${CMAKE_SOURCE_DIR}/external/
     CONFIGURE_COMMAND   ""

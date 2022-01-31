@@ -153,8 +153,7 @@ The common arguments (for Cuttlefish 1 and 2) are set as following.
 - The _k_-mer length `k` must be odd and within `127` (and `63` if installed from source; see [Larger _k_-mer sizes](#larger-k-mer-sizes) to increase the _k_-mer size capacity beyond these).
 The default value is `27`.
 - The number of threads `t` is set to a quarter of the number of concurrent threads supported, by default.
-The use of high-enough values is recommended.  See the Cuttlefish and Cuttlefish 2 papers for experiments detailing the scaling 
-behavior of this tool with increasing thread counts.
+The use of high-enough values is recommended.
 - Cuttlefish generates two output files:
   - A FASTA / GFA1 / GFA2 file containing the maximal unitigs of the de Bruijn graph (with the extension `.fa` / `.gfa1` / `.gfa2`).
   The GFA output formats are exclusive for Cuttlefish 1.
@@ -288,7 +287,7 @@ Multiple seq-files, lists of seq-files, or directories of seq-files may also be 
 To output the compacted de Bruijn graph (in GFA 2.0) for the example FASTA files `refs1.fa` and `refs2.fa` (provided in the `data` directory), the following may be used:
 
 ```bash
-cuttlefish build -r refs1.fa,refs2.fa -k 3 -s kmers -t 4 -o cdbg.gfa2 -f 2 -w temp/
+cuttlefish build -s refs1.fa,refs2.fa -k 3 -t 4 -o cdbg.gfa2 -f 2 -w temp/
 ```
 
 You may also provide lists or directories of reference files as input, as described in [Usage](#usage).
@@ -368,4 +367,4 @@ This work is supported by _NIH R01 HG009937_, and by _NSF CCF-1750472_, and _CNS
 - The [kseq](http://lh3lh3.users.sourceforge.net/kseq.shtml) library is MIT licensed.
 - The [spdlog](https://github.com/gabime/spdlog) library is MIT licensed.
 - The [xxHash](https://github.com/Cyan4973/xxHash) library is BSD licensed.
-- Cuttlefish itself is licensed under a Revised BSD license.
+- Cuttlefish itself is Revised BSD licensed.

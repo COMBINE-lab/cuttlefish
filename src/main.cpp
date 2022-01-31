@@ -215,7 +215,7 @@ void validate(int argc, char** argv)
 
 std::string executable_version()
 {
-    return "cuttlefish " + version();
+    return "cuttlefish " VERSION;
 }
 
 

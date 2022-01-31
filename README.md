@@ -287,7 +287,7 @@ Multiple seq-files, lists of seq-files, or directories of seq-files may also be 
 To output the compacted de Bruijn graph (in GFA 2.0) for the example FASTA files `refs1.fa` and `refs2.fa` (provided in the `data` directory), the following may be used:
 
 ```bash
-cuttlefish build -r refs1.fa,refs2.fa -k 3 -s kmers -t 4 -o cdbg.gfa2 -f 2 -w temp/
+cuttlefish build -s refs1.fa,refs2.fa -k 3 -t 4 -o cdbg.gfa2 -f 2 -w temp/
 ```
 
 You may also provide lists or directories of reference files as input, as described in [Usage](#usage).

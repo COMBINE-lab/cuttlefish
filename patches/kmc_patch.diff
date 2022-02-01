@@ -2,13 +2,12 @@ diff --git a/Makefile b/Makefile
 index bc07d35..4bfd785 100644
 --- a/Makefile
 +++ b/Makefile
-@@ -13,10 +13,10 @@ OUT_BIN_DIR = bin
+@@ -13,15 +13,11 @@
  OUT_INCLUDE_DIR = include
  
  ifeq ($(UNAME_S),Darwin)
 -	CC = /usr/local/bin/g++-10
-+	CC = clang++
- 
+-
 -	CFLAGS	= -Wall -O3 -m64 -static-libgcc -static-libstdc++ -pthread -std=c++14
 -	CLINK	= -lm -static-libgcc -static-libstdc++ -O3 -pthread -std=c++14
 +	CFLAGS	= -Wall -O3 -m64 -pthread -std=c++14
@@ -16,7 +15,12 @@ index bc07d35..4bfd785 100644
  
  	PY_KMC_API_CFLAGS = -Wl,-undefined,dynamic_lookup -fPIC -Wall -shared -std=c++14 -O3
  else
-@@ -61,7 +61,7 @@ ifeq ($(UNAME_S),Darwin)
+-	CC 	= g++
+-
+ 	CFLAGS	= -Wall -O3 -m64 -static -Wl,--whole-archive -lpthread -Wl,--no-whole-archive -std=c++14
+ 	CLINK	= -lm -static -O3 -Wl,--whole-archive -lpthread -Wl,--no-whole-archive -std=c++14
+ 
+@@ -61,7 +57,7 @@
  	$(KMC_TOOLS_DIR)/libs/libz.1.2.5.dylib \
  	$(KMC_TOOLS_DIR)/libs/libbz2.1.0.5.dylib
  

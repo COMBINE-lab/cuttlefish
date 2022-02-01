@@ -98,9 +98,6 @@ private:
     std::string overlap_file_prefix = "cuttlefish-overlap-output-";
     static constexpr size_t TEMP_FILE_PREFIX_LEN = 10;
 
-    // File extensions for the GFA-reduced output format files.
-    const static std::string SEG_FILE_EXT, SEQ_FILE_EXT;
-
     // Debug
     std::vector<double> seg_write_time;
     std::vector<double> link_write_time;

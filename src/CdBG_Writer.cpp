@@ -11,11 +11,6 @@
 #include <numeric>
 
 
-// Define the static fields required for the GFA-reduced output.
-template <uint16_t k> const std::string CdBG<k>::SEG_FILE_EXT = ".cf_seg";
-template <uint16_t k> const std::string CdBG<k>::SEQ_FILE_EXT = ".cf_seq";
-
-
 template <uint16_t k>
 void CdBG<k>::output_maximal_unitigs()
 {
@@ -480,14 +475,13 @@ template <uint16_t k>
 void CdBG<k>::clear_output_file() const
 {
     const cuttlefish::Output_Format op_format = params.output_format();
-    const std::string& output_file_path = params.output_file_path();
 
     if(op_format == cuttlefish::fa || op_format == cuttlefish::gfa1 || op_format == cuttlefish::gfa2)
-        clear_file(output_file_path);
+        clear_file(params.output_file_path());
     else if(op_format == cuttlefish::gfa_reduced)
     {
-        const std::string seg_file_path(output_file_path + SEG_FILE_EXT);
-        const std::string seq_file_path(output_file_path + SEQ_FILE_EXT);
+        const std::string seg_file_path(params.segment_file_path());
+        const std::string seq_file_path(params.sequence_file_path());
 
         clear_file(seg_file_path);
         clear_file(seq_file_path);
@@ -500,7 +494,7 @@ void CdBG<k>::init_output_loggers()
 {
     const cuttlefish::Output_Format gfa_v = params.output_format();
     const std::string& output_file_path = (gfa_v == cuttlefish::Output_Format::gfa_reduced ?
-                                            params.output_file_path() + SEG_FILE_EXT : params.output_file_path());
+                                            params.segment_file_path() : params.output_file_path());
     const uint16_t thread_count = params.thread_count();
 
 

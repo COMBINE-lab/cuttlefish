@@ -43,6 +43,32 @@ private:
 #endif
 
 
+    // Returns the extension of the output file, depending on the output format requested.
+    const std::string output_file_ext() const
+    {
+        if(is_read_graph() || is_ref_graph())
+            return cuttlefish::file_ext::unipaths_ext;
+
+        switch(output_format())
+        {
+        case cuttlefish::Output_Format::fa:
+            return cuttlefish::file_ext::unipaths_ext;
+
+        case cuttlefish::Output_Format::gfa1:
+            return cuttlefish::file_ext::gfa1_ext;
+
+        case cuttlefish::Output_Format::gfa2:
+            return cuttlefish::file_ext::gfa2_ext;
+
+        default:
+            break;
+        }
+
+
+        return "";
+    }
+
+
 public:
 
     // Constructs a parameters wrapper object with the self-explanatory parameters.
@@ -151,7 +177,7 @@ public:
     // Returns the path to the output file.
     const std::string output_file_path() const
     {
-        return output_file_path_ + cuttlefish::file_ext::unipaths_ext;
+        return output_file_path_ + output_file_ext();
     }
 
 
@@ -159,6 +185,20 @@ public:
     cuttlefish::Output_Format output_format() const
     {
         return output_format_.value_or(cuttlefish::_default::OP_FORMAT);
+    }
+
+
+    // Returns the path to the output segment-file for the GFA-reduced format.
+    const std::string segment_file_path() const
+    {
+        return output_file_path_ + cuttlefish::file_ext::seg_ext;
+    }
+
+
+    // Returns the path to the output sequence-file for the GFA-reduced format.
+    const std::string sequence_file_path() const
+    {
+        return output_file_path_ + cuttlefish::file_ext::seq_ext;
     }
 
 

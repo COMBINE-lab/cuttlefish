@@ -106,8 +106,11 @@ endif()
 
 # Module required to download and install external projects.
 include(ExternalProject)
+
 set(EXT_LIB ${CMAKE_SOURCE_DIR}/external/lib/)
 set(EXT_INCLUDE ${CMAKE_SOURCE_DIR}/external/include/)
+
+file(MAKE_DIRECTORY ${EXT_LIB} ${EXT_INCLUDE})
 
 
 # Prepare the `jemalloc` library. It provides scalable concurrency support and better avoidance

@@ -56,19 +56,29 @@ if(CF_DEVELOP_MODE)
     add_compile_definitions(CF_DEVELOP_MODE)
 endif()
 
+
+# Here, we have some platform-specific considerations
+# of which we must take care
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-execute_process(
-    COMMAND getconf LEVEL1_DCACHE_LINESIZE
-    COMMAND tr -d '\n'
-    OUTPUT_VARIABLE L1_CACHE_LINE_SIZE
-)
+	execute_process(
+	    COMMAND getconf LEVEL1_DCACHE_LINESIZE
+	    COMMAND tr -d '\n'
+	    OUTPUT_VARIABLE L1_CACHE_LINE_SIZE
+	)
 elseif(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
-execute_process(
-    COMMAND sysctl machdep.cpu.cache.linesize
-    COMMAND awk "{print $2}"
-    COMMAND tr -d '\n'
-    OUTPUT_VARIABLE L1_CACHE_LINE_SIZE
-)
+        # OSX has getconf, but doesn't report LEVEL1_DCACHE_LINESIZE
+	# so we instead use sysctl and the corresponding variable
+	execute_process(
+	    COMMAND sysctl machdep.cpu.cache.linesize
+	    COMMAND awk "{print $2}"
+	    COMMAND tr -d '\n'
+	    OUTPUT_VARIABLE L1_CACHE_LINE_SIZE
+	)
+	
+	# later on, jemalloc will complain if the C compiler 
+	# hasn't been properly set 
+	set(CMAKE_C_COMPILER clang)
+	set(CMAKE_CXX_COMPILER clang++)
 endif()
 
 add_compile_definitions(L1_CACHE_LINE_SIZE=${L1_CACHE_LINE_SIZE})

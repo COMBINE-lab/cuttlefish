@@ -5,6 +5,7 @@
 
 
 #include "DNA.hpp"
+#include <cstddef>
 
 
 class DNA_Utility

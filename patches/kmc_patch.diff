@@ -1,0 +1,142 @@
+diff --git a/Makefile b/Makefile
+index bc07d35..4bfd785 100644
+--- a/Makefile
++++ b/Makefile
+@@ -13,10 +13,10 @@ OUT_BIN_DIR = bin
+ OUT_INCLUDE_DIR = include
+ 
+ ifeq ($(UNAME_S),Darwin)
+-	CC = /usr/local/bin/g++-10
++	CC = clang++
+ 
+-	CFLAGS	= -Wall -O3 -m64 -static-libgcc -static-libstdc++ -pthread -std=c++14
+-	CLINK	= -lm -static-libgcc -static-libstdc++ -O3 -pthread -std=c++14
++	CFLAGS	= -Wall -O3 -m64 -pthread -std=c++14
++	CLINK	= -lm -O3 -pthread -std=c++14
+ 
+ 	PY_KMC_API_CFLAGS = -Wl,-undefined,dynamic_lookup -fPIC -Wall -shared -std=c++14 -O3
+ else
+@@ -61,7 +61,7 @@ ifeq ($(UNAME_S),Darwin)
+ 	$(KMC_TOOLS_DIR)/libs/libz.1.2.5.dylib \
+ 	$(KMC_TOOLS_DIR)/libs/libbz2.1.0.5.dylib
+ 
+-	LIB_KMC_CORE = $(OUT_BIN_DIR)/libkmc_core.mac.a
++	LIB_KMC_CORE = $(OUT_BIN_DIR)/libkmc_core.a
+ else
+ 	RADULS_OBJS = \
+ 	$(KMC_MAIN_DIR)/raduls_sse2.o \
+diff --git a/kmc_CLI/kmc.cpp b/kmc_CLI/kmc.cpp
+index 15e579e..1d62040 100644
+--- a/kmc_CLI/kmc.cpp
++++ b/kmc_CLI/kmc.cpp
+@@ -1,5 +1,7 @@
+ #define _CRT_SECURE_NO_WARNINGS
+ #include "../kmc_core/kmc_runner.h"
++#include <random>
++#include <algorithm>
+ #include <cstring>
+ #include <iostream>
+ #include <fstream>
+@@ -246,6 +248,9 @@ bool parse_parameters(int argc, char* argv[], Params& params)
+ 		stage2Params.SetOutputFileName(argv[i++]);
+ 	stage1Params.SetTmpPath(argv[i++]);
+ 
++	std::random_device rd;
++	std::mt19937 g(rd());
++
+ 	std::vector<std::string> input_file_names;	
+ 	if (input_file_name[0] != '@')
+ 		input_file_names.push_back(input_file_name);
+@@ -264,7 +269,7 @@ bool parse_parameters(int argc, char* argv[], Params& params)
+ 				input_file_names.push_back(s);
+ 
+ 		in.close();
+-		std::random_shuffle(input_file_names.begin(), input_file_names.end());
++		std::shuffle(input_file_names.begin(), input_file_names.end(), g);
+ 	}
+ 	stage1Params.SetInputFiles(input_file_names);
+ 
+diff --git a/kmc_api/kmer_defs.h b/kmc_api/kmer_defs.h
+index 90b0db4..4fe8aaf 100644
+--- a/kmc_api/kmer_defs.h
++++ b/kmc_api/kmer_defs.h
+@@ -34,7 +34,7 @@
+ 
+ 
+ 	#include <stdio.h>
+-	#include <ext/algorithm>
++	#include <algorithm>
+ 	#include <iostream>
+ 
+ #else
+diff --git a/kmc_core/defs.h b/kmc_core/defs.h
+index 75afc97..e0ec1df 100644
+--- a/kmc_core/defs.h
++++ b/kmc_core/defs.h
+@@ -8,6 +8,7 @@
+   Date   : 2022-01-04
+ */
+ 
++
+ #ifndef _DEFS_H
+ #define _DEFS_H
+ 
+@@ -32,6 +33,7 @@
+ 
+ #define COMPACT_CUMSUM_PART_SIZE (1<<10)
+ 
++
+ #define KMER_X		3
+ 
+ #define STATS_FASTQ_SIZE (1 << 28)
+@@ -66,6 +68,7 @@
+ #define MAX_SR		128
+ 
+ //Range of number of sorter threads pre sorter in strict memory mode
++
+ #define MIN_SMSO	1
+ #define MAX_SMSO	16
+ 
+@@ -109,8 +112,8 @@ using uint64 = uint64_t;
+ #include <string.h>
+ 
+ #include <stdio.h>
+-#include <ext/algorithm>
+-using __gnu_cxx::copy_n;
++#include <algorithm>
++//using __gnu_cxx::copy_n;
+ 
+ #endif
+ 
+diff --git a/kmc_core/queues.h b/kmc_core/queues.h
+index 17a0465..2c0e587 100644
+--- a/kmc_core/queues.h
++++ b/kmc_core/queues.h
+@@ -11,6 +11,8 @@
+ #ifndef _QUEUES_H
+ #define _QUEUES_H
+ 
++#include <algorithm>
++#include <random>
+ #include "defs.h"
+ #include <stdio.h>
+ #include <tuple>
+@@ -571,6 +573,9 @@ public:
+ 	void init_random()
+ 	{
+ 		lock_guard<mutex> lck(mtx);
++	        std::random_device rd;
++		std::mt19937 g(rd());
++ 
+ 		vector<pair<int32, int64>> bin_sizes;
+ 
+ 		for (auto& p : m)
+@@ -589,7 +594,7 @@ public:
+ 		for (uint32 i = no_sort_end; i < bin_sizes.size(); ++i)
+ 			random_bins.push_back(bin_sizes[i].first);
+ 
+-		random_shuffle(random_bins.begin(), random_bins.end());
++		shuffle(random_bins.begin(), random_bins.end(), g);
+ 
+ 		for (uint32 i = no_sort_start; i < no_sort_end; ++i)
+ 			random_bins.push_back(bin_sizes[i].first);

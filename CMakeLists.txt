@@ -1,4 +1,5 @@
 
+
 # Specify the minimum version of CMake to use.
 # CMake can have different behaviors (policies) based on its version used.
 cmake_minimum_required(VERSION 3.14)
@@ -55,11 +56,21 @@ if(CF_DEVELOP_MODE)
     add_compile_definitions(CF_DEVELOP_MODE)
 endif()
 
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
 execute_process(
     COMMAND getconf LEVEL1_DCACHE_LINESIZE
     COMMAND tr -d '\n'
     OUTPUT_VARIABLE L1_CACHE_LINE_SIZE
 )
+elseif(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+execute_process(
+    COMMAND sysctl machdep.cpu.cache.linesize
+    COMMAND awk "{print $2}"
+    COMMAND tr -d '\n'
+    OUTPUT_VARIABLE L1_CACHE_LINE_SIZE
+)
+endif()
+
 add_compile_definitions(L1_CACHE_LINE_SIZE=${L1_CACHE_LINE_SIZE})
 
 
@@ -118,7 +129,7 @@ ExternalProject_Add(prj_kmc
     DOWNLOAD_COMMAND    curl -k -L https://github.com/refresh-bio/KMC/archive/refs/tags/v3.2.1.tar.gz -o KMC-3.2.1.tar.gz &&
                         tar -xzf KMC-3.2.1.tar.gz &&
                         rm KMC-3.2.1.tar.gz
-
+    PATCH_COMMAND	patch --strip 1 < ${CMAKE_SOURCE_DIR}/patches/kmc_patch.diff
     SOURCE_DIR          ${CMAKE_SOURCE_DIR}/external/KMC-3.2.1
     BUILD_IN_SOURCE     TRUE
     INSTALL_DIR         ${CMAKE_SOURCE_DIR}/external/

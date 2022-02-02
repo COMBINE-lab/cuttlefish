@@ -1,6 +1,6 @@
 
 #include "CdBG.hpp"
-#include "Parser.hpp"
+#include "Ref_Parser.hpp"
 #include "Output_Format.hpp"
 #include "utility.hpp"
 #include "spdlog/spdlog.h"
@@ -11,22 +11,24 @@
 #include <numeric>
 
 
-// Define the static fields required for the GFA-reduced output.
-template <uint16_t k> const std::string CdBG<k>::SEG_FILE_EXT = ".cf_seg";
-template <uint16_t k> const std::string CdBG<k>::SEQ_FILE_EXT = ".cf_seq";
-
-
 template <uint16_t k>
 void CdBG<k>::output_maximal_unitigs()
 {
     const uint8_t output_format = params.output_format();
+    unipaths_info_local.resize(params.thread_count());
 
-    if(output_format == cuttlefish::txt)
+    if(output_format == cuttlefish::fa)
         output_maximal_unitigs_plain();
     else if(output_format == cuttlefish::gfa1 || output_format == cuttlefish::gfa2)
         output_maximal_unitigs_gfa();
     else if(output_format == cuttlefish::gfa_reduced)
         output_maximal_unitigs_gfa_reduced();
+
+    
+    for(uint16_t t_id = 0; t_id < params.thread_count(); ++t_id)
+        unipaths_meta_info_.aggregate(unipaths_info_local[t_id]);
+
+    dbg_info.add_unipaths_info(*this);
 }
 
 
@@ -36,11 +38,11 @@ void CdBG<k>::output_maximal_unitigs_plain()
     std::chrono::high_resolution_clock::time_point t_start = std::chrono::high_resolution_clock::now();
 
     
-    const Reference_Input& reference_input = params.reference_input();
+    const Seq_Input& reference_input = params.sequence_input();
     const uint16_t thread_count = params.thread_count();
 
     // Open a parser for the FASTA / FASTQ file containing the reference.
-    Parser parser(reference_input);
+    Ref_Parser parser(reference_input);
 
 
     // Clear the output file and initialize the output loggers.
@@ -149,7 +151,7 @@ void CdBG<k>::output_maximal_unitigs_gfa()
     std::chrono::high_resolution_clock::time_point t_start = std::chrono::high_resolution_clock::now();
 
 
-    const Reference_Input& reference_input = params.reference_input();
+    const Seq_Input& reference_input = params.sequence_input();
     const uint16_t thread_count = params.thread_count();
     const std::string& working_dir_path = params.working_dir_path();
 
@@ -181,7 +183,7 @@ void CdBG<k>::output_maximal_unitigs_gfa()
 
 
     // Open a parser for the FASTA / FASTQ file containing the reference.
-    Parser parser(reference_input);
+    Ref_Parser parser(reference_input);
 
     // Track the maximum sequence buffer size used and the total length of the references.
     size_t max_buf_sz = 0;
@@ -313,7 +315,7 @@ void CdBG<k>::output_maximal_unitigs_gfa_reduced()
     std::chrono::high_resolution_clock::time_point t_start = std::chrono::high_resolution_clock::now();
 
 
-    const Reference_Input& reference_input = params.reference_input();
+    const Seq_Input& reference_input = params.sequence_input();
     const uint16_t thread_count = params.thread_count();
     const std::string& working_dir_path = params.working_dir_path();
 
@@ -356,7 +358,7 @@ void CdBG<k>::output_maximal_unitigs_gfa_reduced()
 
 
     // Open a parser for the FASTA / FASTQ file containing the reference.
-    Parser parser(reference_input);
+    Ref_Parser parser(reference_input);
 
     // Track the maximum sequence buffer size used and the total length of the references.
     size_t max_buf_sz = 0;
@@ -473,31 +475,16 @@ template <uint16_t k>
 void CdBG<k>::clear_output_file() const
 {
     const cuttlefish::Output_Format op_format = params.output_format();
-    const std::string& output_file_path = params.output_file_path();
 
-    if(op_format == cuttlefish::txt || op_format == cuttlefish::gfa1 || op_format == cuttlefish::gfa2)
-    {
-        std::ofstream output(output_file_path.c_str(), std::ofstream::out | std::ofstream::trunc);
-        if(!output)
-        {
-            std::cerr << "Error opening output file " << output_file_path << ". Aborting.\n";
-            std::exit(EXIT_FAILURE);
-        }
-
-        output.close();
-    }
+    if(op_format == cuttlefish::fa || op_format == cuttlefish::gfa1 || op_format == cuttlefish::gfa2)
+        clear_file(params.output_file_path());
     else if(op_format == cuttlefish::gfa_reduced)
     {
-        const std::string seg_file_path(output_file_path + SEG_FILE_EXT);
-        const std::string seq_file_path(output_file_path + SEQ_FILE_EXT);
+        const std::string seg_file_path(params.segment_file_path());
+        const std::string seq_file_path(params.sequence_file_path());
 
-        std::ofstream   output_seg(seg_file_path.c_str(), std::ofstream::out | std::ofstream::trunc),
-                        output_seq(seq_file_path.c_str(), std::ofstream::out | std::ofstream::trunc);
-        if(!output_seg || !output_seq)
-        {
-            std::cerr << "Error opening output files " << seg_file_path << " and " << seq_file_path << ". Aborting.\n";
-            std::exit(EXIT_FAILURE);
-        }
+        clear_file(seg_file_path);
+        clear_file(seq_file_path);
     }
 }
 
@@ -507,7 +494,7 @@ void CdBG<k>::init_output_loggers()
 {
     const cuttlefish::Output_Format gfa_v = params.output_format();
     const std::string& output_file_path = (gfa_v == cuttlefish::Output_Format::gfa_reduced ?
-                                            params.output_file_path() + SEG_FILE_EXT : params.output_file_path());
+                                            params.segment_file_path() : params.output_file_path());
     const uint16_t thread_count = params.thread_count();
 
 
@@ -755,5 +742,5 @@ void CdBG<k>::flush_path_loggers()
 
 
 
-// Template instantiations for the required specializations.
+// Template instantiations for the required instances.
 ENUMERATE(INSTANCE_COUNT, INSTANTIATE, CdBG)

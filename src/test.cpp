@@ -5,6 +5,9 @@
 #include "BBHash/BooPHF.h"
 #include "Kmer_Hasher.hpp"
 #include "Validator.hpp"
+#include "Character_Buffer.hpp"
+#include "Kmer_SPMC_Iterator.hpp"
+#include "FASTA_Record.hpp"
 #include "kseq/kseq.h"
 #include "spdlog/spdlog.h"
 #include "spdlog/async.h"
@@ -23,8 +26,9 @@
 #include <map>
 
 
+/*
 // STEP 1: declare the type of file handler and the read() function
-KSEQ_INIT(int, read);
+KSEQ_INIT(int, read)
 
 
 void test_kseq(const char* fileName)
@@ -265,7 +269,6 @@ void test_kmer_iterator(const char* file_name)
 }
 
 
-/*
 void check_uint64_BBHash(const char* file_name, uint16_t thread_count)
 {
     typedef boomphf::SingleHashFunctor<uint64_t> hasher_t;
@@ -284,7 +287,6 @@ void check_uint64_BBHash(const char* file_name, uint16_t thread_count)
     boophf_t * bphf = new boomphf::mphf<uint64_t, hasher_t>(input_keys.size(), input_keys, ".", thread_count);
     delete bphf;
 }
-*/
 
 
 void test_async_writer(const char* log_file_name)
@@ -393,7 +395,8 @@ void test_SPMC_iterator_performance(const char* const db_path, const size_t cons
 {
     Kmer_Container<k> kmer_container(db_path);
 
-    Kmer_SPMC_Iterator<k> it(kmer_container.spmc_begin(consumer_count));
+    // Kmer_SPMC_Iterator<k> it(kmer_container.spmc_begin(consumer_count));
+    Kmer_SPMC_Iterator<k> it(&kmer_container, consumer_count);
     it.launch_production();
 
     std::cout << "\nProduction ongoing\n";
@@ -401,10 +404,10 @@ void test_SPMC_iterator_performance(const char* const db_path, const size_t cons
     std::vector<std::unique_ptr<std::thread>> T(consumer_count);
     std::vector<Kmer<k>> max_kmer(consumer_count);
 
+    std::atomic<uint64_t> ctr{0};
     for(size_t i = 0; i < consumer_count; ++i)
     {
         const size_t consumer_id = i;
-        std::atomic<uint64_t> ctr{0};
         auto& mk = max_kmer[consumer_id];
         T[consumer_id].reset(
             new std::thread([&kmer_container, &it, &mk, &ctr, consumer_id]()
@@ -419,35 +422,14 @@ void test_SPMC_iterator_performance(const char* const db_path, const size_t cons
                         {
                             max_kmer = std::max(max_kmer, kmer);
                             local_count++;
-                            if (local_count % 5000000 == 0) {
+                            if (local_count % 10000000 == 0) {
                                 ctr += local_count;
                                 local_count = 0;
-                                std::cerr << "parsed " << ctr << " k-mers\n";
+                                std::cerr << "\rparsed " << ctr << " k-mers";
                             }
                         }
-                            /*
-                        if(it.task_available(consumer_id)) {// && it.value_at(consumer_id, kmer)) {
-                            //
-                            {
-                                auto* ts = it.thread_state_for(consumer_id);
-                                while (ts->kmers_parsed < ts->kmers_available)
-                                {
-                                    kmerdb->parse_kmer<k>(ts->pref_idx, ts->suff_idx, ts->buffer,
-                                                          ts->kmers_parsed * kmerdb->suff_record_size(), kmer);
 
-                                    max_kmer = std::max(max_kmer, kmer);
-                                    //auto v = ctr++;
-                                    //if (v % 10000000 == 1)
-                                    //{
-                                    //    std::cerr << "parsed " << ctr << " k-mers\n";
-                                    //}
-                                    ts->kmers_parsed++;
-                                }
-                                it.set_pending(consumer_id);
-                            }
-                        }
-                        */
-                                // max_kmer[i] = std::max(max_kmer[i], kmer);
+                    ctr += local_count;
                     mk = max_kmer;
                 }
             )
@@ -463,6 +445,7 @@ void test_SPMC_iterator_performance(const char* const db_path, const size_t cons
     //for (size_t i = 0; i < consumer_count; ++i) {
     //    global_max = std::max(global_max, max_kmer[i]);
     //}
+    std::cout << "\nParsed " << ctr << " k-mers\n";
     std::cout << "Max k-mer: " << std::max_element(max_kmer.begin(), max_kmer.end())->string_label() << "\n";
 }
 
@@ -553,7 +536,6 @@ void test_iterator_correctness(const char* const db_path, const size_t consumer_
         for(size_t i = 0; i < buf_kmers.size(); ++i)
             if(!(buf_kmers[i] == spmc_kmers[i]))
             {
-                // std::cout << "Mismatching k-mers found\n";
                 mis++;
             }
 
@@ -561,6 +543,60 @@ void test_iterator_correctness(const char* const db_path, const size_t consumer_
         std::cout << (mis > 0 ? "Incorrect" : "Correct") << " k-mer set parsed.\n";
     }
 }
+
+
+template <uint16_t k>
+void write_kmers(const std::string& kmc_db_path, const uint16_t thread_count, const std::string& output_file_path)
+{
+    const Kmer_Container<k> kmer_container(kmc_db_path);
+    Kmer_SPMC_Iterator<k> parser(&kmer_container, thread_count);
+
+    parser.launch_production();
+    
+    std::ofstream output(output_file_path);
+
+    std::vector<std::unique_ptr<std::thread>> T(thread_count);
+
+    for(size_t i = 0; i < thread_count; ++i)
+    {
+        const size_t consumer_id = i;
+        
+        T[consumer_id].reset(
+            new std::thread([&parser, consumer_id, &output]()
+                {
+                    Kmer<k> kmer;
+                    std::vector<char> str;
+                    str.reserve(k + 2);
+
+                    uint64_t local_count{0};
+                    Character_Buffer<10485760, std::ofstream> buffer(output);
+
+                    while(parser.tasks_expected(consumer_id))
+                        if(parser.value_at(consumer_id, kmer))
+                        {
+                            kmer.get_label(str);
+                            str.emplace_back('\n');
+                            // buffer += str;
+                            buffer += FASTA_Record<std::vector<char>>(0, str);
+
+                            local_count++;
+                            if(local_count % 10000000 == 0)
+                                std::cout << "Thread " << consumer_id << " parsed " << local_count << " k-mers\n";
+                        }
+                }
+            )
+        );
+    }
+
+
+    parser.seize_production();
+    for(std::size_t id = 0; id < thread_count; ++id)
+        T[id]->join();
+
+    output.close();
+}
+
+*/
 
 
 int main(int argc, char** argv)
@@ -593,12 +629,12 @@ int main(int argc, char** argv)
 
     // count_kmers_in_unitigs(argv[1], atoi(argv[2]));
 
-    // static constexpr uint16_t k = 25;
+    // static constexpr uint16_t k = 28;
     // static const size_t consumer_count = std::atoi(argv[2]);
 
     // test_buffered_iterator_performance<k>(argv[1]);
     // test_SPMC_iterator_performance<k>(argv[1], consumer_count);
-
-
+    // test_iterator_correctness<k>(argv[1], consumer_count);
+    // write_kmers<32>(argv[1], std::atoi(argv[2]), argv[3]);
     return 0;
 }

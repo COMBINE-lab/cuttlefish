@@ -91,5 +91,5 @@ size_t Validator<k>::search_valid_kmer(const char* const seq, const size_t seq_l
 
 
 
-// Template instantiations for the required specializations.
+// Template instantiations for the required instances.
 ENUMERATE(INSTANCE_COUNT, INSTANTIATE, Validator)

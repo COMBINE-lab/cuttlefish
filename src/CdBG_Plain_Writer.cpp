@@ -29,7 +29,7 @@ size_t CdBG<k>::output_maximal_unitigs_plain(const uint16_t thread_id, const cha
 
     // assert(kmer_idx <= seq_len - k);
 
-    Annotated_Kmer<k> curr_kmer(Kmer<k>(seq, kmer_idx), kmer_idx, Vertices);
+    Annotated_Kmer<k> curr_kmer(Kmer<k>(seq, kmer_idx), kmer_idx, *hash_table);
 
     // The subsequence contains only an isolated k-mer, i.e. there's no valid left or right
     // neighboring k-mer to this k-mer. So it's a maximal unitig by itself.
@@ -42,7 +42,7 @@ size_t CdBG<k>::output_maximal_unitigs_plain(const uint16_t thread_id, const cha
         if(kmer_idx + k == seq_len || Kmer<k>::is_placeholder(seq[kmer_idx + k]))
         {
             // A valid left neighbor exists as it's not an isolated k-mer.
-            Annotated_Kmer<k> prev_kmer(Kmer<k>(seq, kmer_idx - 1), kmer_idx, Vertices);
+            Annotated_Kmer<k> prev_kmer(Kmer<k>(seq, kmer_idx - 1), kmer_idx, *hash_table);
             
             if(is_unipath_start(curr_kmer.state_class(), curr_kmer.dir(), prev_kmer.state_class(), prev_kmer.dir()))
                 // A maximal unitig ends at the ending of a maximal valid subsequence.
@@ -55,7 +55,7 @@ size_t CdBG<k>::output_maximal_unitigs_plain(const uint16_t thread_id, const cha
 
         // A valid right neighbor exists for the k-mer.
         Annotated_Kmer<k> next_kmer = curr_kmer;
-        next_kmer.roll_to_next_kmer(seq[kmer_idx + k], Vertices);
+        next_kmer.roll_to_next_kmer(seq[kmer_idx + k], *hash_table);
 
         bool on_unipath = false;
         Annotated_Kmer<k> unipath_start_kmer;
@@ -71,7 +71,7 @@ size_t CdBG<k>::output_maximal_unitigs_plain(const uint16_t thread_id, const cha
         // Both left and right valid neighbors exist for this k-mer.
         else
         {
-            prev_kmer = Annotated_Kmer<k>(Kmer<k>(seq, kmer_idx - 1), kmer_idx, Vertices);
+            prev_kmer = Annotated_Kmer<k>(Kmer<k>(seq, kmer_idx - 1), kmer_idx, *hash_table);
             if(is_unipath_start(curr_kmer.state_class(), curr_kmer.dir(), prev_kmer.state_class(), prev_kmer.dir()))
             {
                 on_unipath = true;
@@ -114,7 +114,7 @@ size_t CdBG<k>::output_maximal_unitigs_plain(const uint16_t thread_id, const cha
             }
             else    // A valid right neighbor exists.
             {
-                next_kmer.roll_to_next_kmer(seq[kmer_idx + k], Vertices);
+                next_kmer.roll_to_next_kmer(seq[kmer_idx + k], *hash_table);
                 
                 if(on_unipath && is_unipath_end(curr_kmer.state_class(), curr_kmer.dir(), next_kmer.state_class(), next_kmer.dir()))
                 {
@@ -140,7 +140,8 @@ void CdBG<k>::output_plain_unitig(const uint16_t thread_id, const char* const se
     // For a particular unitig, always query the same well-defined canonical flanking
     // k-mer, irrespective of which direction the unitig may be traversed at.
     const Kmer<k> min_flanking_kmer = std::min(start_kmer.canonical(), end_kmer.canonical());
-    Kmer_Hash_Entry_API hash_table_entry = Vertices[min_flanking_kmer];
+    const uint64_t bucket_id = hash_table->bucket_id(min_flanking_kmer);
+    Kmer_Hash_Entry_API<cuttlefish::BITS_PER_REF_KMER> hash_table_entry = hash_table->at(bucket_id);
     State& state = hash_table_entry.get_state();
 
     if(state.is_outputted())
@@ -150,21 +151,30 @@ void CdBG<k>::output_plain_unitig(const uint16_t thread_id, const char* const se
     state = state.outputted();
 
     // If the hash table update is successful, only then this thread may output this unitig.
-    if(Vertices.update(hash_table_entry))
-        write_path(thread_id, seq, start_kmer.idx(), end_kmer.idx(), start_kmer.kmer() < end_kmer.rev_compl());
+    if(hash_table->update(hash_table_entry))
+    {
+        write_path(thread_id, seq, bucket_id, start_kmer.idx(), end_kmer.idx(), start_kmer.kmer() < end_kmer.rev_compl());
+        
+        unipaths_info_local[thread_id].add_maximal_unitig(end_kmer.idx() - start_kmer.idx() + 1);
+    }
 }
 
 
 template <uint16_t k>
-void CdBG<k>::write_path(const uint16_t thread_id, const char* const seq, const size_t start_kmer_idx, const size_t end_kmer_idx, const cuttlefish::dir_t dir) 
+void CdBG<k>::write_path(const uint16_t thread_id, const char* const seq, const uint64_t unitig_id, const size_t start_kmer_idx, const size_t end_kmer_idx, const cuttlefish::dir_t dir) 
 {
     std::chrono::high_resolution_clock::time_point t_start = std::chrono::high_resolution_clock::now();
 
     std::string& buffer = output_buffer[thread_id];
     const size_t path_len = end_kmer_idx - start_kmer_idx + k;
+    constexpr std::size_t header_len = 12;  // FASTA header len: '>' + <id> + '\n'
 
 
-    ensure_buffer_space(buffer, path_len, output_[thread_id]);
+    ensure_buffer_space(buffer, path_len + header_len, output_[thread_id]);
+
+    buffer += ">";
+    buffer += fmt::format_int(unitig_id).c_str();
+    buffer += "\n";
 
     if(dir == cuttlefish::FWD)
         for(size_t offset = 0; offset < path_len; ++offset)
@@ -189,5 +199,5 @@ void CdBG<k>::write_path(const uint16_t thread_id, const char* const seq, const 
 
 
 
-// Template instantiations for the required specializations.
+// Template instantiations for the required instances.
 ENUMERATE(INSTANCE_COUNT, INSTANTIATE, CdBG)

@@ -12,7 +12,7 @@ namespace cuttlefish
     // Output format options for the algorithm.
     enum Output_Format: uint8_t
     {
-        txt = 0,
+        fa = 0,
         gfa1 = 1,
         gfa2 = 2,
         gfa_reduced = 3,

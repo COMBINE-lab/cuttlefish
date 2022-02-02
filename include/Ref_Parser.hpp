@@ -1,10 +1,10 @@
 
-#ifndef PARSER_HPP
-#define PARSER_HPP
+#ifndef REF_PARSER_HPP
+#define REF_PARSER_HPP
 
 
 
-#include "Reference_Input.hpp"
+#include "Seq_Input.hpp"
 
 #include <string>
 #include <queue>
@@ -15,7 +15,7 @@ struct _KSEQ_DATA;  // Forward declaration for `kseq`'s sequence-data format.
 
 
 // Wrapper class to parse FASTA/FASTQ files using the `kseq` library.
-class Parser
+class Ref_Parser
 {
     typedef _KSEQ_DATA kseq_t;
 
@@ -30,6 +30,9 @@ private:
     uint64_t seq_id_; // Number of the current sequence (in the current reference).
 
 
+    // Constructs a parser for the reference input collection `refs`.
+    Ref_Parser(const std::vector<std::string>& refs);
+
     // Opens the reference at path `reference_path`.
     void open_reference(const std::string& reference_path);
 
@@ -39,8 +42,11 @@ private:
 
 public:
 
+    // Constructs a parser for the file at path `file_path`.
+    Ref_Parser(const std::string& file_path);
+
     // Constructs a parser for the reference input collection present at `ref_input`.
-    Parser(const Reference_Input& ref_input);
+    Ref_Parser(const Seq_Input& ref_input);
 
     // Returns the path to the reference currently being parsed.
     const std::string& curr_ref() const;

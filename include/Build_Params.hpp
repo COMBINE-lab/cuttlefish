@@ -4,62 +4,117 @@
 
 
 
-#include "Reference_Input.hpp"
+#include "globals.hpp"
+#include "Seq_Input.hpp"
 #include "Output_Format.hpp"
+#include "File_Extensions.hpp"
+#include "Input_Defaults.hpp"
 
 #include <string>
 #include <vector>
 #include <thread>
+#include <iostream>
+#include <optional>
 
 
 class Build_Params
 {
 private:
 
-    const Reference_Input reference_input_; // Collection of the input references.
+    const bool is_read_graph_;  // Whether to build a compacted read de Bruijn graph or not.
+    const bool is_ref_graph_;   // Whether to build a compacted reference de Bruijn graph or not.
+    const Seq_Input seq_input_; // Collection of the input sequences.
     const uint16_t k_;   // The k parameter for the edge-centric de Bruijn graph to be compacted.
-    const std::string kmc_db_path_; // Path to the KMC database containing the k-mer set.
+    const std::optional<uint32_t> cutoff_;  // Frequency cutoff for the (k + 1)-mers.
+    const std::string vertex_db_path_;  // Path to the KMC database containing the vertices (canonical k-mers).
+    const std::string edge_db_path_;    // Path to the KMC database containing the edges (canonical (k + 1)-mers).
     const uint16_t thread_count_;    // Number of threads to work with.
-    const std::string& output_file_path_;   // Path to the output file.
-    const cuttlefish::Output_Format output_format_;   // Output format (0: txt, 1: GFAv1, 2: GFAv2).
-    const std::string& working_dir_path_;    // Path to the working directory (for temporary files).
-    const bool remove_kmc_db_;  // Option to remove the KMC database, once no longer required.
-    const std::string& mph_file_path_;   // Optional path to file storing an MPH over the k-mer set.
-    const std::string& buckets_file_path_;  // Optional path to file storing the hash table buckets for the k-mer set.
+    const std::optional<std::size_t> max_memory_;   // Soft maximum memory limit (in GB).
+    const bool strict_memory_;  // Whether strict memory limit restriction is specifiied.
+    const std::string output_file_path_;    // Path to the output file.
+    const std::optional<cuttlefish::Output_Format> output_format_;  // Output format (0: FASTA, 1: GFAv1, 2: GFAv2, 3: GFA-reduced).
+    const std::string working_dir_path_;    // Path to the working directory (for temporary files).
+    const bool path_cover_; // Whether to extract a maximal path cover of the de Bruijn graph.
+    const bool save_mph_;   // Option to save the MPH over the vertex set of the de Bruijn graph.
+    const bool save_buckets_;   // Option to save the DFA-states collection of the vertices of the de Bruijn graph.
+    const bool save_vertices_;  // Option to save the vertex set of the de Bruijn graph (in KMC database format).
+#ifdef CF_DEVELOP_MODE
+    const double gamma_;    // The gamma parameter for the BBHash MPHF.
+#endif
+
+
+    // Returns the extension of the output file, depending on the output format requested.
+    const std::string output_file_ext() const
+    {
+        if(is_read_graph() || is_ref_graph())
+            return cuttlefish::file_ext::unipaths_ext;
+
+        switch(output_format())
+        {
+        case cuttlefish::Output_Format::fa:
+            return cuttlefish::file_ext::unipaths_ext;
+
+        case cuttlefish::Output_Format::gfa1:
+            return cuttlefish::file_ext::gfa1_ext;
+
+        case cuttlefish::Output_Format::gfa2:
+            return cuttlefish::file_ext::gfa2_ext;
+
+        default:
+            break;
+        }
+
+
+        return "";
+    }
 
 
 public:
 
     // Constructs a parameters wrapper object with the self-explanatory parameters.
-    Build_Params(   const std::vector<std::string>& ref_paths,
-                    const std::vector<std::string>& list_paths,
-                    const std::vector<std::string>& dir_paths,
+    Build_Params(   const bool is_read_graph,
+                    const bool is_ref_graph,
+                    const std::optional<std::vector<std::string>>& seq_paths,
+                    const std::optional<std::vector<std::string>>& list_paths,
+                    const std::optional<std::vector<std::string>>& dir_paths,
                     const uint16_t k,
-                    const std::string& kmc_db_path,
+                    const std::optional<uint32_t> cutoff,
+                    const std::string& vertex_db_path,
+                    const std::string& edge_db_path,
                     const uint16_t thread_count,
+                    const std::optional<std::size_t> max_memory,
+                    const bool strict_memory,
                     const std::string& output_file_path,
-                    const uint8_t output_format,
+                    const std::optional<cuttlefish::Output_Format> output_format,
                     const std::string& working_dir_path,
-                    const bool remove_kmc_db,
-                    const std::string& mph_file_path,
-                    const std::string& buckets_file_path):
-        reference_input_(ref_paths, list_paths, dir_paths),
-        k_(k),
-        kmc_db_path_(kmc_db_path),
-        thread_count_(thread_count),
-        output_file_path_(output_file_path),
-        output_format_(cuttlefish::Output_Format(output_format)),
-        working_dir_path_(working_dir_path),
-        remove_kmc_db_(remove_kmc_db),
-        mph_file_path_(mph_file_path),
-        buckets_file_path_(buckets_file_path)
-    {}
+                    const bool path_cover,
+                    const bool save_mph,
+                    const bool save_buckets,
+                    const bool save_vertices
+#ifdef CF_DEVELOP_MODE
+                    , const double gamma
+#endif
+                    );
 
 
-    // Returns the reference input collections.
-    const Reference_Input& reference_input() const
+    // Returns the boolean flag to whether to build a compacted read de Bruijn graph or not.
+    bool is_read_graph() const
     {
-        return reference_input_;
+        return is_read_graph_;
+    }
+
+
+    // Returns the boolean flag to whether to build a compacted reference de Bruijn graph or not.
+    bool is_ref_graph() const
+    {
+        return is_ref_graph_;
+    }
+
+
+    // Returns the sequence input collection.
+    const Seq_Input& sequence_input() const
+    {
+        return seq_input_;
     }
 
 
@@ -70,10 +125,24 @@ public:
     }
 
 
-    // Returns the path to the KMC database.
-    const std::string& kmc_db_path() const
+    // Returns the frequency cutoff for the (k + 1)-mers (for short-reads set input).
+    uint32_t cutoff() const
     {
-        return kmc_db_path_;
+        return cutoff_.value_or(is_read_graph() ? cuttlefish::_default::CUTOFF_FREQ_READS : cuttlefish::_default::CUTOFF_FREQ_REFS);
+    }
+
+
+    // Returns the path to the vertex database.
+    const std::string& vertex_db_path() const
+    {
+        return vertex_db_path_;
+    }
+
+
+    // Returns the path to the edge database.
+    const std::string& edge_db_path() const
+    {
+        return edge_db_path_;
     }
 
 
@@ -84,17 +153,52 @@ public:
     }
 
 
-    // Returns the path to the output file.
-    const std::string& output_file_path() const
+    // Returns the soft maximum memory limit (in GB).
+    std::size_t max_memory() const
+    {
+        return max_memory_.value_or(cuttlefish::_default::MAX_MEMORY);
+    }
+
+
+    // Returns whether strict memory limit restriction is specifiied.
+    bool strict_memory() const
+    {
+        return strict_memory_;
+    }
+
+
+    // Returns the path prefix for all outputs of the algorithm.
+    const std::string output_prefix() const
     {
         return output_file_path_;
+    }
+
+
+    // Returns the path to the output file.
+    const std::string output_file_path() const
+    {
+        return output_file_path_ + output_file_ext();
     }
 
 
     // Returns the output format.
     cuttlefish::Output_Format output_format() const
     {
-        return output_format_;
+        return output_format_.value_or(cuttlefish::_default::OP_FORMAT);
+    }
+
+
+    // Returns the path to the output segment-file for the GFA-reduced format.
+    const std::string segment_file_path() const
+    {
+        return output_file_path_ + cuttlefish::file_ext::seg_ext;
+    }
+
+
+    // Returns the path to the output sequence-file for the GFA-reduced format.
+    const std::string sequence_file_path() const
+    {
+        return output_file_path_ + cuttlefish::file_ext::seq_ext;
     }
 
 
@@ -105,62 +209,66 @@ public:
     }
 
 
-    // Returns the boolean flag for removing the KMC database.
-    bool remove_kmc_db() const
+    // Returns whether to extract a maximal path cover of the de Bruijn graph.
+    bool path_cover() const
     {
-        return remove_kmc_db_;
+        return path_cover_;
     }
 
 
     // Returns the path to the optional MPH file.
-    const std::string& mph_file_path() const
+    const std::string mph_file_path() const
     {
-        return mph_file_path_;
+        return output_file_path_ + cuttlefish::file_ext::hash_ext;
     }
 
 
     // Returns the path to the optional file storing the hash table buckets.
-    const std::string& buckets_file_path() const
+    const std::string buckets_file_path() const
     {
-        return buckets_file_path_;
+        return output_file_path_ + cuttlefish::file_ext::buckets_ext;
     }
+
+    // Returns whether the option to save the MPH over the vertex set of the de Bruijn graph is specified ot not.
+    bool save_mph() const
+    {
+        return save_mph_;
+    }
+
+
+    // Returns whether the option to save the DFA-states collection of the vertices of the de Bruijn graph.
+    bool save_buckets() const
+    {
+        return save_buckets_;
+    }
+
+
+    // Returns whether the option to save the vertex set of the de Bruijn graph (in KMC database format) is specified or not.
+    bool save_vertices() const
+    {
+        return save_vertices_;
+    }
+
+
+    // Returns the path to the optional file storing meta-information about the graph and cuttlefish executions.
+    const std::string json_file_path() const
+    {
+        return output_file_path_ + cuttlefish::file_ext::json_ext;
+    }
+
+
+#ifdef CF_DEVELOP_MODE
+    // Returns the gamma parameter for the BBHash MPHF.
+    double gamma() const
+    {
+        return gamma_;
+    }
+#endif
 
 
     // Returns `true` iff the parameters selections are valid.
     bool is_valid() const;
 };
-
-
-inline bool Build_Params::is_valid() const
-{
-    // Even `k` values are not consistent with the theory.
-    // Also, `k` needs to be in the range `[1, MAX_K]`.
-    if((k_ & 1) == 0 || (k_ > cuttlefish::MAX_K))
-    {
-        std::cout << "The k-mer length (k) needs to be odd and within " << cuttlefish::MAX_K << ".\n";
-        return false;
-    }
-
-
-    // Discard unsupported thread counts.
-    const auto num_threads = std::thread::hardware_concurrency();
-    if(num_threads > 0 && thread_count_ > num_threads)
-    {
-        std::cout << "At most " << num_threads << " concurrent threads are supported at the machine.\n";
-        return false;
-    }
-
-
-    // Discard invalid output formats.
-    if(output_format_ >= cuttlefish::num_op_formats)
-    {
-        std::cout << "Invalid output file format.\n";
-        return false;
-    }
-
-
-    return true;
-}
 
 
 

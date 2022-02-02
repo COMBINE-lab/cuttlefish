@@ -53,11 +53,13 @@ void CdBG<k>::reset_path_loggers(const uint64_t file_id)
 
     path_output_.clear();
     if(gfa_v == cuttlefish::Output_Format::gfa1)
-        overlap_output_.clear();
+        overlap_output_.clear(),
+        link_added.clear();
 
     path_output_.resize(thread_count);
     if(gfa_v == cuttlefish::Output_Format::gfa1)
-        overlap_output_.resize(thread_count);
+        overlap_output_.resize(thread_count),
+        link_added.resize(thread_count);
 
     
     // Instantiate a `spdlog` thread pool for outputting paths and overlaps.
@@ -165,7 +167,7 @@ size_t CdBG<k>::output_maximal_unitigs_gfa(const uint16_t thread_id, const char*
 
     // assert(kmer_idx <= seq_len - k);
 
-    Annotated_Kmer<k> curr_kmer(Kmer<k>(seq, kmer_idx), kmer_idx, Vertices);
+    Annotated_Kmer<k> curr_kmer(Kmer<k>(seq, kmer_idx), kmer_idx, *hash_table);
 
     // The subsequence contains only an isolated k-mer, i.e. there's no valid left or right
     // neighboring k-mer to this k-mer. So it's a maximal unitig by itself.
@@ -178,7 +180,7 @@ size_t CdBG<k>::output_maximal_unitigs_gfa(const uint16_t thread_id, const char*
         if(kmer_idx + k == seq_len || Kmer<k>::is_placeholder(seq[kmer_idx + k]))
         {
             // A valid left neighbor exists as it's not an isolated k-mer.
-            Annotated_Kmer<k> prev_kmer(Kmer<k>(seq, kmer_idx - 1), kmer_idx, Vertices);
+            Annotated_Kmer<k> prev_kmer(Kmer<k>(seq, kmer_idx - 1), kmer_idx, *hash_table);
             
             if(is_unipath_start(curr_kmer.state_class(), curr_kmer.dir(), prev_kmer.state_class(), prev_kmer.dir()))
                 // A maximal unitig ends at the ending of a maximal valid subsequence.
@@ -191,7 +193,7 @@ size_t CdBG<k>::output_maximal_unitigs_gfa(const uint16_t thread_id, const char*
 
         // A valid right neighbor exists for the k-mer.
         Annotated_Kmer<k> next_kmer = curr_kmer;
-        next_kmer.roll_to_next_kmer(seq[kmer_idx + k], Vertices);
+        next_kmer.roll_to_next_kmer(seq[kmer_idx + k], *hash_table);
 
         bool on_unipath = false;
         Annotated_Kmer<k> unipath_start_kmer;
@@ -207,7 +209,7 @@ size_t CdBG<k>::output_maximal_unitigs_gfa(const uint16_t thread_id, const char*
         // Both left and right valid neighbors exist for this k-mer.
         else
         {
-            prev_kmer = Annotated_Kmer<k>(Kmer<k>(seq, kmer_idx - 1), kmer_idx, Vertices);
+            prev_kmer = Annotated_Kmer<k>(Kmer<k>(seq, kmer_idx - 1), kmer_idx, *hash_table);
             if(is_unipath_start(curr_kmer.state_class(), curr_kmer.dir(), prev_kmer.state_class(), prev_kmer.dir()))
             {
                 on_unipath = true;
@@ -250,7 +252,7 @@ size_t CdBG<k>::output_maximal_unitigs_gfa(const uint16_t thread_id, const char*
             }
             else    // A valid right neighbor exists.
             {
-                next_kmer.roll_to_next_kmer(seq[kmer_idx + k], Vertices);
+                next_kmer.roll_to_next_kmer(seq[kmer_idx + k], *hash_table);
                 
                 if(on_unipath && is_unipath_end(curr_kmer.state_class(), curr_kmer.dir(), next_kmer.state_class(), next_kmer.dir()))
                 {
@@ -276,8 +278,8 @@ void CdBG<k>::output_gfa_unitig(const uint16_t thread_id, const char* const seq,
     // For a particular unitig, always query the same well-defined canonical flanking
     // k-mer, irrespective of which direction the unitig may be traversed at.
     const Kmer<k> min_flanking_kmer = std::min(start_kmer.canonical(), end_kmer.canonical());
-    const uint64_t bucket_id = Vertices.bucket_id(min_flanking_kmer);
-    Kmer_Hash_Entry_API hash_table_entry = Vertices[bucket_id];
+    const uint64_t bucket_id = hash_table->bucket_id(min_flanking_kmer);
+    Kmer_Hash_Entry_API<cuttlefish::BITS_PER_REF_KMER> hash_table_entry = hash_table->at(bucket_id);
     State& state = hash_table_entry.get_state();
 
     // Name the GFA segment with the hash value of the first k-mer of the canonical form unitig.
@@ -293,10 +295,14 @@ void CdBG<k>::output_gfa_unitig(const uint16_t thread_id, const char* const seq,
         state = state.outputted();
 
         // If the hash table update is successful, only then this thread may output this unitig.
-        if(Vertices.update(hash_table_entry))
+        if(hash_table->update(hash_table_entry))
+        {
             params.output_format() == cuttlefish::Output_Format::gfa_reduced ?
                 write_segment(thread_id, seq, unitig_id, start_kmer.idx(), end_kmer.idx(), unitig_dir) :
                 write_gfa_segment(thread_id, seq, unitig_id, start_kmer.idx(), end_kmer.idx(), unitig_dir);
+            
+            unipaths_info_local[thread_id].add_maximal_unitig(end_kmer.idx() - start_kmer.idx() + 1);
+        }
     }
 
 
@@ -460,6 +466,9 @@ void CdBG<k>::write_gfa_link(const uint16_t thread_id, const Oriented_Unitig& le
     
     // Append a link to the growing path for this thread.
     append_link_to_path(thread_id, left_unitig, right_unitig);
+
+    // Mark the addition of a link for this thread.
+    link_added[thread_id] = true;
 }
 
 
@@ -591,7 +600,8 @@ void CdBG<k>::append_link_to_path(const uint16_t thread_id, const Oriented_Uniti
     p_buffer += (right_unitig.dir == cuttlefish::FWD ? "+" : "-");
 
     std::string& o_buffer = overlap_buffer[thread_id];
-    o_buffer += ",";
+    if(link_added[thread_id])
+        o_buffer += ",";
     o_buffer += fmt::format_int(right_unitig.start_kmer_idx == left_unitig.end_kmer_idx + 1 ? k - 1 : 0).c_str();
     o_buffer += "M";
 
@@ -797,11 +807,8 @@ void CdBG<k>::write_gfa_path(const std::string& path_name)
         output << "*";  // Write an empty CIGAR string at the 'Overlaps' field.
     else
     {
-        // The first overlap of the path (not inferrable from the path output files).
-        const uint16_t overlap = (right_unitig.start_kmer_idx == left_unitig.end_kmer_idx +  1 ? k - 1 : 0);
-        output << overlap << "M";
-
         // Copy the thread-specific overlap output file contents to the GFA output file.
+        bool overlap_written = false;   // Whether some overlap information has been written to the final output.
         for(uint16_t t_id = 0; t_id < thread_count; ++t_id)
         {
             const std::string overlap_file_name = (overlap_file_prefix + std::to_string(t_id));
@@ -815,7 +822,13 @@ void CdBG<k>::write_gfa_path(const std::string& path_name)
 
             // Copy the overlaps output for thread number `t_id` to the end of the output GFA file.
             if(input.peek() != EOF)
+            {
+                if(overlap_written)
+                    output << ",";
+                
                 output << input.rdbuf();
+                overlap_written = true;
+            }
 
             input.close();
         }
@@ -926,5 +939,5 @@ void CdBG<k>::remove_temp_files(const uint64_t file_id) const
 
 
 
-// Template instantiations for the required specializations.
+// Template instantiations for the required instances.
 ENUMERATE(INSTANCE_COUNT, INSTANTIATE, CdBG)

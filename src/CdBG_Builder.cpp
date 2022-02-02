@@ -1,7 +1,7 @@
 
 #include "CdBG.hpp"
 #include "Kmer_Iterator.hpp"
-#include "Parser.hpp"
+#include "Ref_Parser.hpp"
 
 #include <iomanip>
 #include <thread>
@@ -18,20 +18,19 @@ void CdBG<k>::classify_vertices()
     const std::string& buckets_file_path = params.buckets_file_path();
 
     // The serialized hash table buckets (saved from some earlier execution) exists.
-    struct stat buffer;
-    if(!buckets_file_path.empty() && stat(buckets_file_path.c_str(), &buffer) == 0)
+    if(!buckets_file_path.empty() && file_exists(buckets_file_path))
     {
         std::cout << "Found the hash table buckets at file " << buckets_file_path << "\n";
         std::cout << "Loading the buckets.\n";
 
-        Vertices.load_hash_buckets(buckets_file_path);
+        hash_table->load_hash_buckets(buckets_file_path);
 
         std::cout << "Loaded the buckets into memory.\n";
     }
     else    // No buckets file name provided, or does not exist. Build and save (if specified) one now.
     {
         // Open a parser for the FASTA / FASTQ file containing the reference.
-        Parser parser(params.reference_input());
+        Ref_Parser parser(params.sequence_input());
 
 
         // Construct a thread pool.
@@ -81,16 +80,15 @@ void CdBG<k>::classify_vertices()
 
 
         // Save the hash table buckets, if a file path is provided.
-        if(!buckets_file_path.empty())
+        if(params.save_buckets())
         {
-            std::cout << "Saving the hash table buckets into file " << buckets_file_path << "\n";
-
-            Vertices.save_hash_buckets(buckets_file_path);
-            
-            std::cout << "Saved the buckets in disk.\n";
+            hash_table->save_hash_buckets(buckets_file_path);
+            std::cout << "Saved the hash buckets at " << buckets_file_path << "\n";
         }
     }
 
+
+    dbg_info.add_basic_info(*this);
 
     std::chrono::high_resolution_clock::time_point t_end = std::chrono::high_resolution_clock::now();
     double elapsed_seconds = std::chrono::duration_cast<std::chrono::duration<double>>(t_end - t_start).count();
@@ -250,11 +248,11 @@ bool CdBG<k>::process_loop(const Directed_Kmer<k>& kmer, const Directed_Kmer<k>&
     {
         // Fetch the entry for `kmer_hat`.
         const Kmer<k>& kmer_hat = kmer.canonical();
-        Kmer_Hash_Entry_API hash_table_entry = Vertices[kmer_hat];
+        Kmer_Hash_Entry_API<cuttlefish::BITS_PER_REF_KMER> hash_table_entry = hash_table->at(kmer_hat);
         State& state = hash_table_entry.get_state();
         state = State(Vertex(cuttlefish::State_Class::multi_in_multi_out));
 
-        return Vertices.update(hash_table_entry);
+        return hash_table->update(hash_table_entry);
     }
 
     
@@ -273,7 +271,7 @@ bool CdBG<k>::process_leftmost_kmer(const Directed_Kmer<k>& kmer, const Directed
     const Kmer<k>& next_kmer_hat = next_kmer.canonical();
 
     // Fetch the entry for `kmer_hat`.
-    Kmer_Hash_Entry_API hash_table_entry = Vertices[kmer_hat];
+    Kmer_Hash_Entry_API<cuttlefish::BITS_PER_REF_KMER> hash_table_entry = hash_table->at(kmer_hat);
     State& state = hash_table_entry.get_state();
 
     // The k-mer is already classified as a complex node.
@@ -364,7 +362,7 @@ bool CdBG<k>::process_leftmost_kmer(const Directed_Kmer<k>& kmer, const Directed
     // in the hash table by the time this method completes, making no updates at this point is theoretically
     // equivalent to returning instantaneously as soon as the hash table value had been read; and also (2) the
     // ordering of the edges processed does not matter in the algorithm.
-    return state == old_state ? true : Vertices.update(hash_table_entry);
+    return state == old_state ? true : hash_table->update(hash_table_entry);
 }
 
 
@@ -375,7 +373,7 @@ bool CdBG<k>::process_rightmost_kmer(const Directed_Kmer<k>& kmer, const char pr
     const cuttlefish::dir_t dir = kmer.dir();
 
     // Fetch the entry for `kmer_hat`.
-    Kmer_Hash_Entry_API hash_table_entry = Vertices[kmer_hat];
+    Kmer_Hash_Entry_API<cuttlefish::BITS_PER_REF_KMER> hash_table_entry = hash_table->at(kmer_hat);
     State& state = hash_table_entry.get_state();
 
     // The k-mer is already classified as a complex node.
@@ -463,7 +461,7 @@ bool CdBG<k>::process_rightmost_kmer(const Directed_Kmer<k>& kmer, const char pr
     // in the hash table by the time this method completes, making no updates at this point is theoretically
     // equivalent to returning instantaneously as soon as the hash table value had been read; and also (2) the
     // ordering of the edges processed does not matter in the algorithm.
-    return state == old_state ? true : Vertices.update(hash_table_entry);
+    return state == old_state ? true : hash_table->update(hash_table_entry);
 }
 
 
@@ -475,7 +473,7 @@ bool CdBG<k>::process_internal_kmer(const Directed_Kmer<k>& kmer, const Directed
     const Kmer<k>& next_kmer_hat = next_kmer.canonical();
 
     // Fetch the hash table entry for `kmer_hat`.
-    Kmer_Hash_Entry_API hash_table_entry = Vertices[kmer_hat];
+    Kmer_Hash_Entry_API<cuttlefish::BITS_PER_REF_KMER> hash_table_entry = hash_table->at(kmer_hat);
     State& state = hash_table_entry.get_state();
 
     // The k-mer is already classified as a complex node.
@@ -581,7 +579,7 @@ bool CdBG<k>::process_internal_kmer(const Directed_Kmer<k>& kmer, const Directed
     // in the hash table by the time this method completes, making no updates at this point is theoretically
     // equivalent to returning instantaneously as soon as the hash table value had been read; and also (2) the
     // ordering of the edges processed does not matter in the algorithm.
-    return state == old_state ? true : Vertices.update(hash_table_entry);
+    return state == old_state ? true : hash_table->update(hash_table_entry);
 }
 
 
@@ -591,7 +589,7 @@ bool CdBG<k>::process_isolated_kmer(const Directed_Kmer<k>& kmer)
     const Kmer<k>& kmer_hat = kmer.canonical();
 
     // Fetch the hash table entry for `kmer_hat`.
-    Kmer_Hash_Entry_API hash_table_entry = Vertices[kmer_hat];
+    Kmer_Hash_Entry_API<cuttlefish::BITS_PER_REF_KMER> hash_table_entry = hash_table->at(kmer_hat);
     State& state = hash_table_entry.get_state();
 
 
@@ -601,10 +599,10 @@ bool CdBG<k>::process_isolated_kmer(const Directed_Kmer<k>& kmer)
     
     // Classify the isolated k-mer as a complex node.
     state = State(Vertex(cuttlefish::State_Class::multi_in_multi_out));
-    return Vertices.update(hash_table_entry);
+    return hash_table->update(hash_table_entry);
 }
 
 
 
-// Template instantiations for the required specializations.
+// Template instantiations for the required instances.
 ENUMERATE(INSTANCE_COUNT, INSTANTIATE, CdBG)

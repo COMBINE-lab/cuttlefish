@@ -1,0 +1,5 @@
+
+// https://stackoverflow.com/a/20632065/2007834
+#define STRINGIFY2(X) #X
+#define STRINGIFY(X) STRINGIFY2(X)
+#define VERSION STRINGIFY(PROJECT_VERSION)

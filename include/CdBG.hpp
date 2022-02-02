@@ -9,11 +9,17 @@
 #include "Annotated_Kmer.hpp"
 #include "Oriented_Unitig.hpp"
 #include "Build_Params.hpp"
+#include "Data_Logistics.hpp"
+#include "kmer_Enumeration_Stats.hpp"
+#include "Unipaths_Meta_info.hpp"
+#include "dBG_Info.hpp"
 #include "Thread_Pool.hpp"
 #include "Job_Queue.hpp"
 #include "spdlog/async_logger.h"
 
+#include <memory>
 #include <string>
+#include <vector>
 
 
 // De Bruijn graph class to support the compaction algorithm.
@@ -25,7 +31,16 @@ class CdBG
 private:
 
     const Build_Params params;    // Required parameters wrapped in one object.
-    Kmer_Hash_Table<k> Vertices;   // The hash table for the vertices (canonical k-mers) of the de Bruijn graph.
+    const Data_Logistics logistics; // Data logistics manager for the algorithm execution.
+    std::unique_ptr<Kmer_Hash_Table<k, cuttlefish::BITS_PER_REF_KMER>> hash_table;  // Hash table for the vertices (canonical k-mers) of the graph.
+
+    Unipaths_Meta_info<k> unipaths_meta_info_;  // Meta-information over the extracted maximal unitigs.
+    std::vector<Unipaths_Meta_info<k>> unipaths_info_local; // Meta-information over the extracted maximal unitigs per thread.
+
+    dBG_Info<k> dbg_info;   // Wrapper object for structural information of the graph.
+
+    static constexpr double bits_per_vertex = 8.71; // Expected number of bits required per vertex by Cuttlefish 2.
+    static constexpr std::size_t parser_memory = 256 * 1024U * 1024U;   // An empirical estimation of the memory used by the sequence parser. 256 MB.
 
     // Minimum size of a partition to be processed by one thread.
     static constexpr uint16_t PARTITION_SIZE_THRESHOLD = 1;
@@ -36,6 +51,9 @@ private:
     // `path_buffer[t_id]` and `overlap_buffer[t_id]` (applicable for GFA1) holds path and overlap
     // output content yet to be written to the disk from the thread number `t_id`.
     std::vector<std::string> path_buffer, overlap_buffer;
+
+    // `link_added[t_id]` is `true` iff at least one link has been added to the output for thread id `t_id`.
+    std::vector<uint64_t> link_added;
 
     // Capacities for the memory pre-allocation of each output buffer, and the threshold buffer size
     // that triggers a disk-flush.
@@ -80,9 +98,6 @@ private:
     std::string overlap_file_prefix = "cuttlefish-overlap-output-";
     static constexpr size_t TEMP_FILE_PREFIX_LEN = 10;
 
-    // File extensions for the GFA-reduced output format files.
-    const static std::string SEG_FILE_EXT, SEQ_FILE_EXT;
-
     // Debug
     std::vector<double> seg_write_time;
     std::vector<double> link_write_time;
@@ -93,16 +108,28 @@ private:
     double logger_flush_time = 0;
 
 
-    // Removes the k-mer set (KMC database) with the path prefix `kmc_file_pref`.
-    void remove_kmer_set(const std::string& kmc_file_pref) const;
-
-
     /* Build methods */
+
+    // Returns `true` iff the compacted de Bruijn graph to be built from the parameters
+    // collection `params` had been constructed in an earlier execution.
+    // NB: only the existence of the output meta-info file is checked for this purpose.
+    bool is_constructed() const;
+
+    // Enumerates the vertices of the de Bruijn graph and returns summary statistics of the
+    // enumearation.
+    kmer_Enumeration_Stats<k> enumerate_vertices() const;
+
+    // Constructs the Cuttlefish hash table for the `vertex_count` vertices of the graph.
+    void construct_hash_table(uint64_t vertex_count);
 
     // TODO: rename the "classify" methods with appropriate terminology that are consistent with the theory.
     
     // Classifies the vertices into different types (or, classes).
     void classify_vertices();
+
+    // Returns the maximum temporary disk-usage incurred by some execution of the algorithm,
+    // that has its vertices-enumeration stats in `vertex_stats`.
+    static std::size_t max_disk_usage(const kmer_Enumeration_Stats<k>& vertex_stats);
 
     // Distributes the classification task for the sequence `seq` of length
     // `seq_len` to the thread pool `thread_pool`.
@@ -257,10 +284,10 @@ private:
     // Writes the path in the sequence `seq` with its starting and ending k-mers
     // located at the indices `start_kmer_idx` and `end_kmer_idx` respectively to
     // the output buffer of the thread number `thread_id`, putting into the logger
-    // of the thread, if necessary. If `dir` is `FWD`, then the string spelled by the
-    // path is written; otherwise its reverse complement is written.
-    // Note that, the output operation appends a newline at the end.
-    void write_path(uint16_t thread_id, const char* seq, size_t start_kmer_idx, size_t end_kmer_idx, cuttlefish::dir_t dir);
+    // of the thread, if necessary. The unitig is named as `unitig_id`. If `dir` is
+    // `FWD`, then the string spelled by the path is written; otherwise its reverse
+    // complement is written. Note that, the output operation appends a newline at the end.
+    void write_path(uint16_t thread_id, const char* seq, const uint64_t unitig_id, size_t start_kmer_idx, size_t end_kmer_idx, cuttlefish::dir_t dir);
 
     // Writes the maximal unitigs from the sequence `seq` (of length `seq_len`) that
     // have their starting indices between (inclusive) `left_end` and `right_end`.
@@ -365,7 +392,7 @@ private:
     // Ensures that the string `buf` has enough free space to append a log of length
     // `log_len` at its end without overflowing its capacity by flushing its content
     // to the logger `log` if necessary. The request is non-binding in the sense that
-    // if the capacity of the buffer `str` is smaller than `log_len`, then this method
+    // if the capacity of the buffer `buf` is smaller than `log_len`, then this method
     // does not ensure enough buffer space.
     static void ensure_buffer_space(std::string& buf, size_t log_len, const cuttlefish::logger_t& log);
 
@@ -414,12 +441,23 @@ private:
 
 public:
 
-    // Constructs a `CdBG` object with the parameters wrapped at `params`.
+    // Constructs a `CdBG` object with the parameters required for the construction of the
+    // compacted representation of the underlying reference de Bruijn graph wrapped in `params`.
     CdBG(const Build_Params& params);
 
-    // Constructs the compacted de Bruijn graph using up-to `thread_count` threads, and
-    // outputs the maximal unitigs into the file named `output_file_name`.
+    // Destructs the compacted graph builder object, freeing its hash table and dumping the
+    // graph information to disk.
+    ~CdBG();
+
+    // Constructs the compacted reference de Bruijn graph, employing the parameters received
+    // with the object-constructor.
     void construct();
+
+    // Returns a wrapper over the meta-information of the extracted unitigs.
+    const Unipaths_Meta_info<k>& unipaths_meta_info() const;
+
+    // Returns the number of distinct vertices in the underlying graph.
+    uint64_t vertex_count() const;
 };
 
 

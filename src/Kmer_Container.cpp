@@ -6,8 +6,8 @@ template <uint16_t k>
 Kmer_Container<k>::Kmer_Container(const std::string& kmc_file_path):
     kmc_file_path(kmc_file_path)
 {
-    CKMCFile kmer_database;
-    if(!kmer_database.OpenForListing(kmc_file_path))
+    CKMC_DB kmer_database;
+    if(!kmer_database.read_parameters(kmc_file_path))
     {
         std::cout << "Error opening KMC database files with prefix " << kmc_file_path << ". Aborting.\n";
         std::exit(EXIT_FAILURE);
@@ -52,11 +52,56 @@ uint64_t Kmer_Container<k>::size() const
 }
 
 
-// template <uint16_t k>
-// typename Kmer_Container<k>::iterator Kmer_Container<k>::begin() const
-// {
-//     return iterator(this);
-// }
+template <uint16_t k>
+uint64_t Kmer_Container<k>::size(const std::string& kmc_db_path)
+{
+    const Kmer_Container<k> kmer_container(kmc_db_path);
+    return kmer_container.size();
+}
+
+
+template <uint16_t k>
+bool Kmer_Container<k>::exists(const std::string& kmc_db_path)
+{
+    const std::string kmc_pref_file(kmc_db_path + ".kmc_pre");
+    const std::string kmc_suff_file(kmc_db_path + ".kmc_suf");
+
+    return file_exists(kmc_pref_file) && file_exists(kmc_suff_file);
+}
+
+
+template <uint16_t k>
+void Kmer_Container<k>::remove(const std::string& kmc_db_path)
+{
+    const std::string kmc_pref_file(kmc_db_path + ".kmc_pre");
+    const std::string kmc_suff_file(kmc_db_path + ".kmc_suf");
+
+    if(!remove_file(kmc_pref_file) || !remove_file(kmc_suff_file))
+    {
+        std::cerr << "Error removing the KMC database file from path prefix " << kmc_db_path << ". Aborting.\n";
+        std::exit(EXIT_FAILURE);
+    }
+}
+
+
+template <uint16_t k>
+std::size_t Kmer_Container<k>::database_size(const std::string& kmc_db_prefix)
+{
+    const std::string kmc_pref_file(kmc_db_prefix + ".kmc_pre");
+    const std::string kmc_suff_file(kmc_db_prefix + ".kmc_suf");
+
+    const std::size_t pref_sz = file_size(kmc_pref_file);
+    const std::size_t suff_sz = file_size(kmc_suff_file);
+
+    if(!pref_sz || !suff_sz)
+    {
+        std::cerr << "Error computing size of KMC database at " << kmc_db_prefix << ". Possibly missing file(s). Aborting.\n";
+        std::exit(EXIT_FAILURE);
+    }
+
+
+    return pref_sz + suff_sz;
+}
 
 
 // template <uint16_t k>
@@ -94,5 +139,5 @@ typename Kmer_Container<k>::spmc_iterator Kmer_Container<k>::spmc_end(const size
 
 
 
-// Template instantiations for the required specializations.
-ENUMERATE(INSTANCE_COUNT, INSTANTIATE, Kmer_Container)
+// Template instantiations for the required instances.
+ENUMERATE(INSTANCE_COUNT, INSTANTIATE_ALL, Kmer_Container)

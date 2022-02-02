@@ -187,5 +187,11 @@ set(CMAKE_C_FLAGS_DEBUG "-g")
 set(CMAKE_C_FLAGS_RELEASE "-O3")
 
 
+# Help `conda` build for OSX through circumventing some of its old SDK-based checks.
+if(CONDA_BUILD)
+    set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -D_LIBCPP_DISABLE_AVAILABILITY")
+endif()
+
+
 # Add subdirectory `src` to the build; CMake will open `src/CMakeLists.txt` for such.
 add_subdirectory(src)

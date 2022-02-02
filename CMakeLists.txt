@@ -126,8 +126,7 @@ ExternalProject_Add(prj_jemalloc
     BUILD_IN_SOURCE     TRUE
     INSTALL_DIR         ${CMAKE_SOURCE_DIR}/external
     CONFIGURE_COMMAND   sh -c "CC=${CMAKE_C_COMPILER} ./autogen.sh --disable-debug --enable-static --prefix=<INSTALL_DIR> --silent"
-    INSTALL_COMMAND     cp -r lib ${EXT_LIB} &&
-                        cp -r include ${EXT_INCLUDE}
+    INSTALL_COMMAND     cp lib/libjemalloc.a ${EXT_LIB}
 )
 
 add_library(jemalloc STATIC IMPORTED)

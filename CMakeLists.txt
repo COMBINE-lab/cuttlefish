@@ -115,23 +115,39 @@ file(MAKE_DIRECTORY ${EXT_LIB} ${EXT_INCLUDE})
 
 # Prepare the `jemalloc` library. It provides scalable concurrency support and better avoidance
 # of fragmentation.
-message("Build system will fetch and install jemalloc")
-ExternalProject_Add(prj_jemalloc
-    DOWNLOAD_DIR        ${CMAKE_SOURCE_DIR}/external
-    DOWNLOAD_COMMAND    curl -k -L https://github.com/jemalloc/jemalloc/archive/5.2.1.tar.gz -o jemalloc-5.2.1.tar.gz &&
-                        tar -xzf jemalloc-5.2.1.tar.gz &&
-                        rm jemalloc-5.2.1.tar.gz
+set(MALLOC_LIB "")
+set(JEMALLOC_MIN_VERSION "5.2.1")
+find_package(Jemalloc)
+if(JEMALLOC_FOUND)
+    if(${JEMALLOC_VERSION} VERSION_GREATER_EQUAL ${JEMALLOC_MIN_VERSION})
+        message("Found the jemalloc library (v${JEMALLOC_VERSION}) in the system.")
+        set(MALLOC_LIB ${JEMALLOC_LIBRARIES})
+    endif()
+endif()
 
-    SOURCE_DIR          ${CMAKE_SOURCE_DIR}/external/jemalloc-5.2.1
-    BUILD_IN_SOURCE     TRUE
-    INSTALL_DIR         ${CMAKE_SOURCE_DIR}/external
-    CONFIGURE_COMMAND   sh -c "CC=${CMAKE_C_COMPILER} ./autogen.sh --disable-debug --enable-static --prefix=<INSTALL_DIR> --silent"
-    INSTALL_COMMAND     cp lib/libjemalloc.a ${EXT_LIB}
-)
+if(MALLOC_LIB STREQUAL "")
+    message("Build system will fetch and install jemalloc")
+    ExternalProject_Add(prj_jemalloc
+        DOWNLOAD_DIR        ${CMAKE_SOURCE_DIR}/external
+        DOWNLOAD_COMMAND    curl -k -L https://github.com/jemalloc/jemalloc/archive/5.2.1.tar.gz -o jemalloc-5.2.1.tar.gz &&
+                            tar -xzf jemalloc-5.2.1.tar.gz &&
+                            rm jemalloc-5.2.1.tar.gz
+
+        SOURCE_DIR          ${CMAKE_SOURCE_DIR}/external/jemalloc-5.2.1
+        BUILD_IN_SOURCE     TRUE
+        INSTALL_DIR         ${CMAKE_SOURCE_DIR}/external
+        CONFIGURE_COMMAND   sh -c "CC=${CMAKE_C_COMPILER} ./autogen.sh --disable-debug --enable-static --prefix=<INSTALL_DIR> --silent"
+        INSTALL_COMMAND     cp lib/libjemalloc.a ${EXT_LIB}
+    )
+
+    set(MALLOC_LIB ${EXT_LIB}/libjemalloc.a)
+endif()
 
 add_library(jemalloc STATIC IMPORTED)
-set_target_properties(jemalloc PROPERTIES IMPORTED_LOCATION ${EXT_LIB}/libjemalloc.a)
-add_dependencies(jemalloc prj_jemalloc)
+set_target_properties(jemalloc PROPERTIES IMPORTED_LOCATION ${MALLOC_LIB})
+if(NOT JEMALLOC_FOUND)
+    add_dependencies(jemalloc prj_jemalloc)
+endif()
 
 
 # Prepare the `kmc` library — required by the Cuttlefish algorithm implementation.

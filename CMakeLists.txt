@@ -76,9 +76,11 @@ elseif(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
     )
 
     # Later on, jemalloc will complain if the C compiler 
-    # hasn't been properly set 
-    # set(CMAKE_C_COMPILER clang)
-    # set(CMAKE_CXX_COMPILER clang++)
+    # hasn't been properly set.
+    if(NOT CONDA_BUILD)
+        set(CMAKE_C_COMPILER clang)
+        set(CMAKE_CXX_COMPILER clang++)
+    endif()
 endif()
 
 add_compile_definitions(L1_CACHE_LINE_SIZE=${L1_CACHE_LINE_SIZE})

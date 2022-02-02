@@ -121,15 +121,11 @@ file(MAKE_DIRECTORY ${EXT_LIB} ${EXT_INCLUDE})
 # of fragmentation.
 set(MALLOC_LIB "")
 set(JEMALLOC_MIN_VERSION "5.2.1")
-find_package(Jemalloc)
+find_package(Jemalloc ${JEMALLOC_MIN_VERSION})
 if(JEMALLOC_FOUND)
-    if(${JEMALLOC_VERSION} VERSION_GREATER_EQUAL ${JEMALLOC_MIN_VERSION})
-        message("Found the jemalloc library (v${JEMALLOC_VERSION}) in the system.")
-        set(MALLOC_LIB ${JEMALLOC_LIBRARIES})
-    endif()
-endif()
-
-if(MALLOC_LIB STREQUAL "")
+    message("Found jemalloc (v${JEMALLOC_VERSION}) in the system")
+    set(MALLOC_LIB ${JEMALLOC_LIBRARIES})
+else()
     message("Build system will fetch and install jemalloc")
     ExternalProject_Add(prj_jemalloc
         DOWNLOAD_DIR        ${CMAKE_SOURCE_DIR}/external

@@ -104,6 +104,10 @@ if(NOT BZIP2_FOUND)
 endif()
 
 
+# Set path for modules required to search for existing packages in the system.
+set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_SOURCE_DIR}/cmake/Modules/")
+
+
 # Module required to download and install external projects.
 include(ExternalProject)
 

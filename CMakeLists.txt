@@ -1,4 +1,5 @@
 
+
 # Specify the minimum version of CMake to use.
 # CMake can have different behaviors (policies) based on its version used.
 cmake_minimum_required(VERSION 3.14)
@@ -7,14 +8,14 @@ cmake_minimum_required(VERSION 3.14)
 # Name the project, its version, and languages used in it.
 set(PROJECT_NAME cuttlefish)
 project(${PROJECT_NAME}
-        VERSION 1.0.0
+        VERSION 2.0.0
         LANGUAGES CXX C
         )
 
 
 # Fix language standards, and set hard requirements for such.
 # All targets defined from this point onward will pick up these requirements.
-set(CMAKE_CXX_STANDARD 14)  # Bump to 17
+set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 set(CMAKE_C_STANDARD 11)
@@ -41,6 +42,8 @@ set(OPTIMIZE_FLAGS -funroll-loops)
 # TODO: find out what are `__STDC_FORMAT_MACROS` and `SPDLOG_FMT_EXTERNAL_HO` for.
 add_compile_definitions(__STDC_FORMAT_MACROS SPDLOG_FMT_EXTERNAL_HO FMT_HEADER_ONLY XXH_INLINE_ALL)
 
+add_compile_definitions(PROJECT_VERSION=${CMAKE_PROJECT_VERSION})
+
 if(INSTANCE_COUNT)
     add_compile_definitions(INSTANCE_COUNT=${INSTANCE_COUNT})
 endif()
@@ -53,11 +56,33 @@ if(CF_DEVELOP_MODE)
     add_compile_definitions(CF_DEVELOP_MODE)
 endif()
 
-execute_process(
-    COMMAND getconf LEVEL1_DCACHE_LINESIZE
-    COMMAND tr -d '\n'
-    OUTPUT_VARIABLE L1_CACHE_LINE_SIZE
-)
+
+# Here, we have some platform-specific considerations
+# of which we must take care.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    execute_process(
+        COMMAND getconf LEVEL1_DCACHE_LINESIZE
+        COMMAND tr -d '\n'
+        OUTPUT_VARIABLE L1_CACHE_LINE_SIZE
+    )
+elseif(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+    # OSX has `getconf`, but doesn't report `LEVEL1_DCACHE_LINESIZE`;
+    # so we instead use `sysctl` for the corresponding variable.
+    execute_process(
+        COMMAND sysctl machdep.cpu.cache.linesize
+        COMMAND awk "{print $2}"
+        COMMAND tr -d '\n'
+        OUTPUT_VARIABLE L1_CACHE_LINE_SIZE
+    )
+
+    # Later on, jemalloc will complain if the C compiler 
+    # hasn't been properly set.
+    if(NOT CONDA_BUILD)
+        set(CMAKE_C_COMPILER clang)
+        set(CMAKE_CXX_COMPILER clang++)
+    endif()
+endif()
+
 add_compile_definitions(L1_CACHE_LINE_SIZE=${L1_CACHE_LINE_SIZE})
 
 
@@ -81,50 +106,65 @@ if(NOT BZIP2_FOUND)
 endif()
 
 
+# Set path for modules required to search for existing packages in the system.
+set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_SOURCE_DIR}/cmake/Modules/")
+
+
 # Module required to download and install external projects.
 include(ExternalProject)
+
 set(EXT_LIB ${CMAKE_SOURCE_DIR}/external/lib/)
 set(EXT_INCLUDE ${CMAKE_SOURCE_DIR}/external/include/)
+
+file(MAKE_DIRECTORY ${EXT_LIB} ${EXT_INCLUDE})
 
 
 # Prepare the `jemalloc` library. It provides scalable concurrency support and better avoidance
 # of fragmentation.
-message("Build system will fetch and install jemalloc")
-ExternalProject_Add(prj_jemalloc
-    DOWNLOAD_DIR        ${CMAKE_SOURCE_DIR}/external
-    DOWNLOAD_COMMAND    curl -k -L https://github.com/jemalloc/jemalloc/archive/5.2.1.tar.gz -o jemalloc-5.2.1.tar.gz &&
-                        tar -xzf jemalloc-5.2.1.tar.gz &&
-                        rm jemalloc-5.2.1.tar.gz
+set(MALLOC_LIB "")
+set(JEMALLOC_MIN_VERSION "5.2.1")
+find_package(Jemalloc ${JEMALLOC_MIN_VERSION})
+if(JEMALLOC_FOUND)
+    message("Found jemalloc (v${JEMALLOC_VERSION}) in the system")
+    set(MALLOC_LIB ${JEMALLOC_LIBRARIES})
+else()
+    message("Build system will fetch and install jemalloc")
+    ExternalProject_Add(prj_jemalloc
+        DOWNLOAD_DIR        ${CMAKE_SOURCE_DIR}/external
+        DOWNLOAD_COMMAND    curl -k -L https://github.com/jemalloc/jemalloc/archive/5.2.1.tar.gz -o jemalloc-5.2.1.tar.gz &&
+                            tar -xzf jemalloc-5.2.1.tar.gz &&
+                            rm jemalloc-5.2.1.tar.gz
 
-    SOURCE_DIR          ${CMAKE_SOURCE_DIR}/external/jemalloc-5.2.1
-    BUILD_IN_SOURCE     TRUE
-    INSTALL_DIR         ${CMAKE_SOURCE_DIR}/external
-    CONFIGURE_COMMAND   sh -c "CC=${CMAKE_C_COMPILER} ./autogen.sh --disable-debug --enable-static --prefix=<INSTALL_DIR> --silent"
-    INSTALL_COMMAND     cp -r lib ${EXT_LIB} &&
-                        cp -r include ${EXT_INCLUDE}
-)
+        SOURCE_DIR          ${CMAKE_SOURCE_DIR}/external/jemalloc-5.2.1
+        BUILD_IN_SOURCE     TRUE
+        INSTALL_DIR         ${CMAKE_SOURCE_DIR}/external
+        CONFIGURE_COMMAND   sh -c "CC=${CMAKE_C_COMPILER} ./autogen.sh --disable-debug --enable-static --prefix=<INSTALL_DIR> --silent"
+        INSTALL_COMMAND     cp lib/libjemalloc.a ${EXT_LIB}
+    )
+
+    set(MALLOC_LIB ${EXT_LIB}/libjemalloc.a)
+endif()
 
 add_library(jemalloc STATIC IMPORTED)
-set_target_properties(jemalloc PROPERTIES IMPORTED_LOCATION ${EXT_LIB}/libjemalloc.a)
-add_dependencies(jemalloc prj_jemalloc)
+set_target_properties(jemalloc PROPERTIES IMPORTED_LOCATION ${MALLOC_LIB})
+if(NOT JEMALLOC_FOUND)
+    add_dependencies(jemalloc prj_jemalloc)
+endif()
 
 
 # Prepare the `kmc` library — required by the Cuttlefish algorithm implementation.
 message("Build system will fetch and install KMC3")
 ExternalProject_Add(prj_kmc
     DOWNLOAD_DIR        ${CMAKE_SOURCE_DIR}/external
-    # DOWNLOAD_COMMAND    curl -k -L https://github.com/refresh-bio/KMC/archive/refs/heads/master.zip -o KMC-master.zip &&
-    #                     unzip -qq KMC-master.zip &&
-    #                     rm KMC-master.zip
-    DOWNLOAD_COMMAND    git clone https://github.com/refresh-bio/kmc &&
-                        cd kmc
-
-    # SOURCE_DIR          ${CMAKE_SOURCE_DIR}/external/KMC-master
-    SOURCE_DIR          ${CMAKE_SOURCE_DIR}/external/kmc
+    DOWNLOAD_COMMAND    curl -k -L https://github.com/refresh-bio/KMC/archive/refs/tags/v3.2.1.tar.gz -o KMC-3.2.1.tar.gz &&
+                        tar -xzf KMC-3.2.1.tar.gz &&
+                        rm KMC-3.2.1.tar.gz
+    PATCH_COMMAND       patch --strip 1 < ${CMAKE_SOURCE_DIR}/patches/kmc_patch.diff
+    SOURCE_DIR          ${CMAKE_SOURCE_DIR}/external/KMC-3.2.1
     BUILD_IN_SOURCE     TRUE
     INSTALL_DIR         ${CMAKE_SOURCE_DIR}/external/
     CONFIGURE_COMMAND   ""
-    BUILD_COMMAND       make -j
+    BUILD_COMMAND       make -j CC=${CMAKE_CXX_COMPILER}
     INSTALL_COMMAND     cp bin/libkmc_core.a ${EXT_LIB} &&
                         cp include/kmc_runner.h ${EXT_INCLUDE}
 )
@@ -145,6 +185,12 @@ set(CMAKE_CXX_FLAGS_DEBUG "-g")
 set(CMAKE_CXX_FLAGS_RELEASE "-O3")
 set(CMAKE_C_FLAGS_DEBUG "-g")
 set(CMAKE_C_FLAGS_RELEASE "-O3")
+
+
+# Help `conda` build for OSX through circumventing some of its old SDK-based checks.
+if(CONDA_BUILD)
+    set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -D_LIBCPP_DISABLE_AVAILABILITY")
+endif()
 
 
 # Add subdirectory `src` to the build; CMake will open `src/CMakeLists.txt` for such.

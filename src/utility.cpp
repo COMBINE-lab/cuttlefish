@@ -138,7 +138,7 @@ std::size_t process_peak_memory()
 {
     constexpr const char* process_file = "/proc/self/status";
     constexpr const char* peak_mem_field = "VmHWM:";
-    constexpr std::size_t field_len = std::strlen(peak_mem_field);
+    const std::size_t field_len = std::strlen(peak_mem_field);
 
     std::FILE* fp = std::fopen(process_file, "r");
     if(fp == NULL)

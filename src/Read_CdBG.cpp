@@ -145,16 +145,6 @@ kmer_Enumeration_Stats<k + 1> Read_CdBG<k>::enumerate_edges() const
 template <uint16_t k>
 kmer_Enumeration_Stats<k> Read_CdBG<k>::enumerate_vertices(const std::size_t max_memory) const
 {
-    // KMC-to-KMC operation isn't supported for small enough k's yet.
-    if(k < kmer_Enumerator<k>::small_k_threshold)
-    {
-        const KMC::InputFileType ip_type = (params.is_read_graph() ? KMC::InputFileType::FASTQ : KMC::InputFileType::MULTILINE_FASTA);
-        return kmer_Enumerator<k>().enumerate(
-            ip_type, logistics.input_paths_collection(), 1, params.thread_count(),
-            max_memory, params.strict_memory(), false, bits_per_vertex,
-            logistics.working_dir_path(), logistics.vertex_db_path());
-    }
-
     return kmer_Enumerator<k>().enumerate(
         KMC::InputFileType::KMC, std::vector<std::string>(1, logistics.edge_db_path()), 1, params.thread_count(),
         max_memory, params.strict_memory(), false, bits_per_vertex,
@@ -184,7 +174,7 @@ void Read_CdBG<k>::construct_hash_table(const uint64_t vertex_count, const bool 
                             std::make_unique<Kmer_Hash_Table<k, cuttlefish::BITS_PER_READ_KMER>>(logistics.vertex_db_path(), vertex_count, max_memory) :
                             std::make_unique<Kmer_Hash_Table<k, cuttlefish::BITS_PER_READ_KMER>>(logistics.vertex_db_path(), vertex_count, max_memory, std::numeric_limits<double>::max()));
 #endif
-        hash_table->construct(params.thread_count(), logistics.working_dir_path(), params.mph_file_path());
+        hash_table->construct(params.thread_count(), logistics.working_dir_path(), params.mph_file_path(), params.save_mph());
     }
 }
 

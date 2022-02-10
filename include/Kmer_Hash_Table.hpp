@@ -82,9 +82,10 @@ private:
 
     // Builds the minimal perfect hash function `mph` over the set of
     // k-mers present at the KMC database container `kmer_container`,
-    // with `mph_file_path` being the file to use for BBHash build
     // using `thread_count` number of threads. Uses the directory
-    // at `working_dir_path` to store temporary files.
+    // at `working_dir_path` to store temporary files. If the MPHF is
+    // found present at the file `mph_file_path`, then it is loaded
+    // instead.
     void build_mph_function(uint16_t thread_count, const std::string& working_dir_path, const std::string& mph_file_path);
 
     // Loads an MPH function from the file at `file_path` into `mph`.
@@ -118,10 +119,10 @@ public:
 
     // Constructs a minimal perfect hash function (specifically, the BBHash) for
     // the collection of k-mers present at the KMC database at path `kmc_db_path`,
-    // using up-to `thread_count` number of threads. If a non-empty path is passed
-    // with `mph_file_path`, either an MPH is loaded from there (instead of building
-    // from scratch), or the newly built MPH is saved there.
-    void construct(uint16_t thread_count, const std::string& working_dir_path, const std::string& mph_file_path);
+    // using up-to `thread_count` number of threads. The existence of an MPHF is
+    // checked at the path `mph_file_path`—if found, it is loaded from the file.
+    // If `save_mph` is specified, then the MPHF is saved into the file `mph_file_path`.
+    void construct(uint16_t thread_count, const std::string& working_dir_path, const std::string& mph_file_path, const bool save_mph = false);
 
     // Returns the id / number of the bucket in the hash table that is
     // supposed to store value items for the key `kmer`.

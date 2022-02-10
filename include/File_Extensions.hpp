@@ -19,7 +19,8 @@ namespace cuttlefish
         
         // For reference dBGs only:
 
-        // TODO: use these to replace the corresponding constants from `CdBG_Writer`.
+        constexpr char gfa1_ext[] = ".gfa1";
+        constexpr char gfa2_ext[] = ".gfa2";
         constexpr char seg_ext[] = ".cf_seg";
         constexpr char seq_ext[] = ".cf_seq";
     }

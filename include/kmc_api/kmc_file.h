@@ -20,6 +20,7 @@
 #include <vector>
 #include <unistd.h>
 #include <utility>
+#include <limits>
 
 
 struct CKMCFileInfo
@@ -491,7 +492,8 @@ inline uint64_t CKMC_DB::read_raw_suffixes(uint8_t* const suff_buf, std::vector<
 	if(is_opened != opened_for_listing)
 		return 0;
 
-	const size_t max_suff_count = max_bytes_to_read / suff_record_size();
+	const size_t max_suff_count = (suff_record_size() > 0 ?	max_bytes_to_read / suff_record_size() :
+															std::numeric_limits<std::size_t>::max());
 	uint64_t suff_read_count = 0;	// Count of suffixes to be read into the buffer `suff_buf`.
 	pref_buf.clear();
 

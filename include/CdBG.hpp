@@ -52,6 +52,9 @@ private:
     // output content yet to be written to the disk from the thread number `t_id`.
     std::vector<std::string> path_buffer, overlap_buffer;
 
+    // `link_added[t_id]` is `true` iff at least one link has been added to the output for thread id `t_id`.
+    std::vector<uint64_t> link_added;
+
     // Capacities for the memory pre-allocation of each output buffer, and the threshold buffer size
     // that triggers a disk-flush.
     static constexpr size_t BUFFER_THRESHOLD = 100 * 1024;  // 100 KB.
@@ -95,9 +98,6 @@ private:
     std::string overlap_file_prefix = "cuttlefish-overlap-output-";
     static constexpr size_t TEMP_FILE_PREFIX_LEN = 10;
 
-    // File extensions for the GFA-reduced output format files.
-    const static std::string SEG_FILE_EXT, SEQ_FILE_EXT;
-
     // Debug
     std::vector<double> seg_write_time;
     std::vector<double> link_write_time;
@@ -120,8 +120,7 @@ private:
     kmer_Enumeration_Stats<k> enumerate_vertices() const;
 
     // Constructs the Cuttlefish hash table for the `vertex_count` vertices of the graph.
-    // If `load` is specified, then it is loaded from disk.
-    void construct_hash_table(uint64_t vertex_count, bool load = false);
+    void construct_hash_table(uint64_t vertex_count);
 
     // TODO: rename the "classify" methods with appropriate terminology that are consistent with the theory.
     
@@ -285,10 +284,10 @@ private:
     // Writes the path in the sequence `seq` with its starting and ending k-mers
     // located at the indices `start_kmer_idx` and `end_kmer_idx` respectively to
     // the output buffer of the thread number `thread_id`, putting into the logger
-    // of the thread, if necessary. If `dir` is `FWD`, then the string spelled by the
-    // path is written; otherwise its reverse complement is written.
-    // Note that, the output operation appends a newline at the end.
-    void write_path(uint16_t thread_id, const char* seq, size_t start_kmer_idx, size_t end_kmer_idx, cuttlefish::dir_t dir);
+    // of the thread, if necessary. The unitig is named as `unitig_id`. If `dir` is
+    // `FWD`, then the string spelled by the path is written; otherwise its reverse
+    // complement is written. Note that, the output operation appends a newline at the end.
+    void write_path(uint16_t thread_id, const char* seq, const uint64_t unitig_id, size_t start_kmer_idx, size_t end_kmer_idx, cuttlefish::dir_t dir);
 
     // Writes the maximal unitigs from the sequence `seq` (of length `seq_len`) that
     // have their starting indices between (inclusive) `left_end` and `right_end`.
@@ -393,7 +392,7 @@ private:
     // Ensures that the string `buf` has enough free space to append a log of length
     // `log_len` at its end without overflowing its capacity by flushing its content
     // to the logger `log` if necessary. The request is non-binding in the sense that
-    // if the capacity of the buffer `str` is smaller than `log_len`, then this method
+    // if the capacity of the buffer `buf` is smaller than `log_len`, then this method
     // does not ensure enough buffer space.
     static void ensure_buffer_space(std::string& buf, size_t log_len, const cuttlefish::logger_t& log);
 

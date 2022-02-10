@@ -14,7 +14,7 @@ class Spin_Lock
 {
 private:
 
-    std::atomic_flag lock_{ATOMIC_FLAG_INIT};
+    std::atomic_flag lock_ = ATOMIC_FLAG_INIT;
 
 
 public:

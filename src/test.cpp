@@ -26,6 +26,7 @@
 #include <map>
 
 
+/*
 // STEP 1: declare the type of file handler and the read() function
 KSEQ_INIT(int, read)
 
@@ -268,7 +269,6 @@ void test_kmer_iterator(const char* file_name)
 }
 
 
-/*
 void check_uint64_BBHash(const char* file_name, uint16_t thread_count)
 {
     typedef boomphf::SingleHashFunctor<uint64_t> hasher_t;
@@ -287,7 +287,6 @@ void check_uint64_BBHash(const char* file_name, uint16_t thread_count)
     boophf_t * bphf = new boomphf::mphf<uint64_t, hasher_t>(input_keys.size(), input_keys, ".", thread_count);
     delete bphf;
 }
-*/
 
 
 void test_async_writer(const char* log_file_name)
@@ -597,6 +596,8 @@ void write_kmers(const std::string& kmc_db_path, const uint16_t thread_count, co
     output.close();
 }
 
+*/
+
 
 int main(int argc, char** argv)
 {
@@ -628,8 +629,8 @@ int main(int argc, char** argv)
 
     // count_kmers_in_unitigs(argv[1], atoi(argv[2]));
 
-    static constexpr uint16_t k = 28;
-    static const size_t consumer_count = std::atoi(argv[2]);
+    // static constexpr uint16_t k = 28;
+    // static const size_t consumer_count = std::atoi(argv[2]);
 
     // test_buffered_iterator_performance<k>(argv[1]);
     // test_SPMC_iterator_performance<k>(argv[1], consumer_count);

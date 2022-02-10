@@ -2,11 +2,6 @@
 #include "CdBG.hpp"
 
 
-// Define the static fields required for the GFA-reduced output.
-template <uint16_t k> const std::string CdBG<k>::SEG_FILE_EXT = ".cf_seg";
-template <uint16_t k> const std::string CdBG<k>::SEQ_FILE_EXT = ".cf_seq";
-
-
 template <uint16_t k>
 void CdBG<k>::write_segment(const uint16_t thread_id, const char* const seq, const uint64_t segment_name, const size_t start_kmer_idx, const size_t end_kmer_idx, const cuttlefish::dir_t dir)
 {
@@ -54,7 +49,7 @@ void CdBG<k>::write_sequence_tiling(Job_Queue<std::string, Oriented_Unitig>& job
 
 
     const uint16_t thread_count = params.thread_count();
-    const std::string& seq_file_path = params.output_file_path() + SEQ_FILE_EXT;
+    const std::string& seq_file_path = params.sequence_file_path();
 
     // Open the output file in append mode.
     std::ofstream output(seq_file_path.c_str(), std::ios_base::app);

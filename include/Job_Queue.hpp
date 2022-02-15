@@ -4,7 +4,7 @@
 
 
 
-#include "SpinLock/SpinLock.hpp"
+#include "Spin_Lock.hpp"
 
 #include <atomic>
 #include <string>
@@ -19,7 +19,7 @@ class Job_Queue
 
 private:
 
-    SpinLock job_lock;  // Mutual-exclusion lock to avoid concurrent modification (post / fetch) of the job queue.
+    Spin_Lock job_lock; // Mutual-exclusion lock to avoid concurrent modification (post / fetch) of the job queue.
     std::queue<T_id_> job_id_queue;   // FIFO queue for the id (name) of the jobs.
     std::queue<T_info_> job_info_queue; // FIFO queue for additional information required for the jobs.
 

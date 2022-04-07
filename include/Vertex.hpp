@@ -7,7 +7,6 @@
 #include "globals.hpp"
 
 #include <cstdint>
-#include <cstdlib>
 #include <iostream>
 
 

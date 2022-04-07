@@ -1,9 +1,9 @@
 
 #include "Read_CdBG_Constructor.hpp"
 #include "Edge.hpp"
-#include "utility.hpp"
+#include "Kmer_SPMC_Iterator.hpp"
+#include "Thread_Pool.hpp"
 
-#include <cmath>
 #include <chrono>
 
 

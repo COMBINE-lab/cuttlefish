@@ -8,14 +8,10 @@
 #include "Application.hpp"
 #include "version.hpp"
 #include "cxxopts/cxxopts.hpp"
-#include "spdlog/sinks/stdout_color_sinks.h"
 
 #include <string>
 #include <vector>
-#include <cstdlib>
-#include <fstream>
 #include <iostream>
-#include <iomanip>
 #include <optional>
 
 

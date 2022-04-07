@@ -6,6 +6,7 @@
 
 #include "Spin_Lock.hpp"
 
+#include <cstdint>
 #include <string>
 #include <cmath>
 #include <iostream>

@@ -4,8 +4,12 @@
 
 
 
+#include "globals.hpp"
 #include "Directed_Kmer.hpp"
 #include "Kmer_Hash_Table.hpp"
+
+#include <cstdint>
+#include <cstddef>
 
 
 // Complete k-mer information: the k-mer itself and its reverse complement, canonical

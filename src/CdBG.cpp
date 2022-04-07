@@ -1,8 +1,8 @@
 
 #include "CdBG.hpp"
 #include "kmer_Enumerator.hpp"
-#include "Kmer_SPMC_Iterator.hpp"
-#include "utility.hpp"
+#include "Kmer_Container.hpp"
+#include "kmer_Enumeration_Stats.hpp"
 
 
 template <uint16_t k> 

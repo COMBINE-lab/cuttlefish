@@ -4,9 +4,11 @@
 
 
 
-#include "globals.hpp"
+#include "Kmer.hpp"
 #include "Kmer_Container.hpp"
 #include "kmc_api/kmc_file.h"
+
+#include <cstdint>
 
 
 // Iterator class to iterate over KMC databases on disk.

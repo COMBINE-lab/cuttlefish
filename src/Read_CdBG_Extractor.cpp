@@ -2,9 +2,7 @@
 #include "Read_CdBG_Extractor.hpp"
 #include "Kmer_Container.hpp"
 #include "Kmer_SPMC_Iterator.hpp"
-#include "FASTA_Record.hpp"
 #include "Character_Buffer.hpp"
-#include "utility.hpp"
 #include "Thread_Pool.hpp"
 
 

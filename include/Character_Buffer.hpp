@@ -8,6 +8,8 @@
 #include "Async_Logger_Wrapper.hpp"
 #include "FASTA_Record.hpp"
 
+#include <cstdint>
+#include <cstddef>
 #include <vector>
 #include <fstream>
 #include <iostream>

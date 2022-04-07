@@ -3,7 +3,6 @@
 #include "Kmer_Container.hpp"
 #include "Kmer_SPMC_Iterator.hpp"
 #include "Spin_Lock.hpp"
-#include "globals.hpp"
 
 #include <memory>
 #include <utility>

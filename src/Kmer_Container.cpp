@@ -1,6 +1,9 @@
 
 #include "Kmer_Container.hpp"
 #include "Kmer_SPMC_Iterator.hpp"
+#include "utility.hpp"
+#include "globals.hpp"
+
 
 template <uint16_t k>
 Kmer_Container<k>::Kmer_Container(const std::string& kmc_file_path):

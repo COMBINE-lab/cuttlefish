@@ -6,6 +6,8 @@
 
 #include "globals.hpp"
 
+#include <cstdint>
+#include <cstddef>
 #include <limits>
 
 

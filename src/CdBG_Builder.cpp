@@ -1,11 +1,10 @@
 
 #include "CdBG.hpp"
-#include "Kmer_Iterator.hpp"
+#include "Directed_Kmer.hpp"
 #include "Ref_Parser.hpp"
+#include "Thread_Pool.hpp"
 
 #include <iomanip>
-#include <thread>
-#include <cassert>
 #include <chrono>
 
 

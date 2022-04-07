@@ -1,13 +1,12 @@
 
 #include "Kmer_Hash_Table.hpp"
 #include "Kmer_SPMC_Iterator.hpp"
+#include "Build_Params.hpp"
 #include "utility.hpp"
 
 #include <fstream>
-#include <vector>
 #include <algorithm>
 #include <chrono>
-#include <sys/stat.h>
 #include <cstdio>
 
 

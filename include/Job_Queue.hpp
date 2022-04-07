@@ -6,8 +6,8 @@
 
 #include "Spin_Lock.hpp"
 
+#include <cstdint>
 #include <atomic>
-#include <string>
 #include <queue>
 
 

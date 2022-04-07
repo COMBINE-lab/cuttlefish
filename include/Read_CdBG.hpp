@@ -8,9 +8,10 @@
 #include "Build_Params.hpp"
 #include "Data_Logistics.hpp"
 #include "Kmer_Hash_Table.hpp"
-#include "kmer_Enumeration_Stats.hpp"
 #include "dBG_Info.hpp"
 
+#include <cstddef>
+#include <cstdint>
 #include <memory>
 
 

@@ -10,6 +10,8 @@
 #include "kmc_api/kmc_file.h"
 #include "xxHash/xxh3.h"
 
+#include <cstdint>
+#include <cstddef>
 #include <cstring>
 #include <string>
 #include <algorithm>
@@ -21,7 +23,7 @@
 
 
 template <uint16_t k>
-class Kmer: public DNA_Utility
+class Kmer: public DNA_Utility  // TODO: replace this "is-a" inheritance; semantically inconsistent.
 {
     // Make k-mers friend for (k + 1)-mer, so that de Bruijn graph vertices, i.e. k-mers,
     // may access private information (the raw data) from edges, i.e. (k + 1)-mers.

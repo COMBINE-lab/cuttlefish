@@ -4,9 +4,11 @@
 
 
 
-#include "globals.hpp"
 #include "kmc_api/kmc_file.h"
 
+#include <cstdint>
+#include <cstddef>
+#include <string>
 
 
 template <uint16_t k> class Kmer_Iterator;

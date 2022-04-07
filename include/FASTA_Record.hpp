@@ -7,6 +7,8 @@
 #include "fmt/format.h"
 
 #include <cstdint>
+#include <cstddef>
+#include <vector>
 
 
 // =============================================================================

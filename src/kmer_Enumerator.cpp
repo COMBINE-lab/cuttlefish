@@ -1,6 +1,8 @@
 
+#include "globals.hpp"
 #include "kmer_Enumerator.hpp"
 #include "Kmer_Container.hpp"
+#include "kmer_Enumeration_Stats.hpp"
 
 
 template <uint16_t k> const std::size_t kmer_Enumerator<k>::min_memory;

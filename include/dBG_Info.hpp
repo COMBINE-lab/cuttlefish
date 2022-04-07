@@ -4,9 +4,10 @@
 
 
 
-#include "globals.hpp"
-
 #include "nlohmann/json.hpp"
+
+#include <cstdint>
+#include <string>
 
 
 // Forward declarations.

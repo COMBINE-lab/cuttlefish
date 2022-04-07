@@ -5,8 +5,12 @@
 
 
 #include "Validator.hpp"
-#include "Build_Params.hpp"
-#include "Validation_Params.hpp"
+
+#include <cstdint>
+
+
+class Build_Params;
+class Validation_Params;
 
 
 // The top-level application class for the compaction algorithm.

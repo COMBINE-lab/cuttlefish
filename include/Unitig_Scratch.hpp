@@ -7,6 +7,7 @@
 #include "Directed_Vertex.hpp"
 #include "dBG_Utilities.hpp"
 
+#include <cstddef>
 #include <cstdint>
 #include <vector>
 

@@ -1,14 +1,13 @@
 
 #include "Read_CdBG.hpp"
 #include "kmer_Enumerator.hpp"
+#include "Kmer_SPMC_Iterator.hpp"
+#include "kmer_Enumeration_Stats.hpp"
 #include "Read_CdBG_Constructor.hpp"
 #include "Read_CdBG_Extractor.hpp"
-#include "File_Extensions.hpp"
-#include "utility.hpp"
 #include "kmc_runner.h"
 
 #include <limits>
-#include <iomanip>
 
 
 template <uint16_t k>

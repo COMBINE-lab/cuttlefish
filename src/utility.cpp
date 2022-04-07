@@ -2,7 +2,6 @@
 #include "utility.hpp"
 #include "ghc/filesystem.hpp"
 
-#include <cctype>
 #include <cstring>
 #include <cstdlib>
 #include <ctime>
@@ -10,7 +9,6 @@
 #include <sstream>
 #include <cstdio>
 #include <iterator>
-#include <system_error>
 
 
 std::string get_random_string(const size_t len, const char* const alphabet)
@@ -41,6 +39,7 @@ bool is_prefix(const std::string& s, const std::string& pref)
 
 bool file_exists(const std::string& file_path)
 {
+    // TODO: replace impl with `std::filesystem` functionality.
     struct stat stat_buf;
 
     return stat(file_path.c_str(), &stat_buf) == 0;

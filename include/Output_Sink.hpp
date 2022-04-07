@@ -8,6 +8,7 @@
 #include "spdlog/spdlog.h"
 
 #include <fstream>
+#include <string>
 
 
 // A basic sink wrapper with minimal functionality — open, get reference to the wrapped sink, and close.

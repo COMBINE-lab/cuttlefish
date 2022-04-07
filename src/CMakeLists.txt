@@ -15,7 +15,6 @@ set(PROJECT_SRC
         Thread_Pool.cpp
         DNA_Utility.cpp
         Kmer_Utility.cpp
-        Kmer_u64.cpp
         Vertex.cpp
         State.cpp
         Kmer_Container.cpp
@@ -45,7 +44,6 @@ set(PROJECT_SRC
         Sequence_Validator.cpp
         Kmers_Validator.cpp
         utility.cpp
-        Minimizer_Policy.cpp
     )
 
 

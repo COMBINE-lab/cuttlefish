@@ -9,6 +9,11 @@
 #include "Validation_Params.hpp"
 #include "BBHash/BooPHF.h"
 
+#include <cstddef>
+#include <cstdint>
+#include <vector>
+#include <string>
+
 
 template <uint16_t k>
 class Validator

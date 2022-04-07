@@ -5,21 +5,26 @@
 
 
 #include "globals.hpp"
-#include "Kmer_Hash_Table.hpp"
-#include "Annotated_Kmer.hpp"
 #include "Oriented_Unitig.hpp"
 #include "Build_Params.hpp"
 #include "Data_Logistics.hpp"
-#include "kmer_Enumeration_Stats.hpp"
 #include "Unipaths_Meta_info.hpp"
 #include "dBG_Info.hpp"
-#include "Thread_Pool.hpp"
-#include "Job_Queue.hpp"
-#include "spdlog/async_logger.h"
+#include "spdlog/sinks/basic_file_sink.h"
 
+#include <cstdint>
+#include <cstddef>
 #include <memory>
 #include <string>
 #include <vector>
+
+
+template <uint16_t k, uint8_t BITS_PER_KEY> class Kmer_Hash_Table;
+template <uint16_t k> class Directed_Kmer;
+template <uint16_t k> class Annotated_Kmer;
+template <uint16_t k> class kmer_Enumeration_Stats;
+template <uint16_t k> class Thread_Pool;
+template <typename T_id_, typename T_info_> class Job_Queue;
 
 
 // De Bruijn graph class to support the compaction algorithm.

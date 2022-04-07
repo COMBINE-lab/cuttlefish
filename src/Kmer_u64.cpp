@@ -1,8 +1,7 @@
 
 #include "Kmer_u64.hpp"
 
-#include <algorithm>
-#include <cassert>
+#include <string>
 
 
 // Static fields initialization.

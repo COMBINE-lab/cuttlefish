@@ -2,7 +2,6 @@
 #include "Validator.hpp"
 #include "Directed_Kmer.hpp"
 #include "Kmer_Container.hpp"
-#include "BBHash/BooPHF.h"
 #include "spdlog/sinks/stdout_color_sinks.h"
 
 #include <fstream>

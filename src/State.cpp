@@ -1,6 +1,7 @@
 
 #include "State.hpp"
 #include "globals.hpp"
+#include "DNA.hpp"
 
 #include <cstdlib>
 #include <iostream>

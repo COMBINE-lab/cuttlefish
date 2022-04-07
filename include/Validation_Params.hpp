@@ -6,7 +6,9 @@
 
 #include "Seq_Input.hpp"
 
+#include <cstdint>
 #include <string>
+#include <vector>
 #include <thread>
 
 

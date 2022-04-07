@@ -4,13 +4,15 @@
 
 
 
-#include "Seq_Input.hpp"
-
-#include <string>
-#include <queue>
 #include "zlib.h"
 
+#include <cstddef>
+#include <cstdint>
+#include <string>
+#include <queue>
 
+
+class Seq_Input;
 struct _KSEQ_DATA;  // Forward declaration for `kseq`'s sequence-data format.
 
 

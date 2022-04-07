@@ -1,9 +1,8 @@
 
 #include "Ref_Parser.hpp"
+#include "Seq_Input.hpp"
 #include "kseq/kseq.h"
-#include "ghc/filesystem.hpp"
 
-#include <fstream>
 #include <iostream>
 
 

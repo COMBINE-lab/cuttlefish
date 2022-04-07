@@ -3,7 +3,8 @@
 #define UTILITY_HPP
 
 
-#include <cstdint>
+
+#include <cstddef>
 #include <string>
 #include <vector>
 

@@ -3,12 +3,11 @@
 #define READ_CDBG_EXTRACTOR_HPP
 
 
-// TODO: reduce header-inclusions throughout the entire headers-collection using forward decl.
+
 #include "globals.hpp"
 #include "Kmer_Hash_Table.hpp"
 #include "Directed_Vertex.hpp"
 #include "Maximal_Unitig_Scratch.hpp"
-#include "dBG_Utilities.hpp"
 #include "Build_Params.hpp"
 #include "Spin_Lock.hpp"
 #include "Async_Logger_Wrapper.hpp"
@@ -16,14 +15,14 @@
 #include "Unipaths_Meta_info.hpp"
 #include "Progress_Tracker.hpp"
 
-#include <limits>
-#include <fstream>
+#include <cstddef>
+#include <cstdint>
+#include <string>
 
 
 // Forward declarations.
 template <uint16_t k> class Kmer_SPMC_Iterator;
 template <uint16_t k> class Thread_Pool;
-template <uint16_t k> class dBG_Info;
 
 
 // A class to extract the vertices from a compacted de Bruin graph — which are the maximal unitigs of some ordinary de Bruijn graph.

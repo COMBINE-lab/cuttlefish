@@ -1,7 +1,7 @@
 
 #include "CdBG.hpp"
+#include "Annotated_Kmer.hpp"
 #include "Output_Format.hpp"
-#include "utility.hpp"
 #include "fmt/format.h"
 #include "spdlog/spdlog.h"
 #include "spdlog/async.h"

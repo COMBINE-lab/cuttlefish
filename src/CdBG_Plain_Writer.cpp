@@ -1,5 +1,6 @@
 
 #include "CdBG.hpp"
+#include "Annotated_Kmer.hpp"
 
 #include <chrono>
 

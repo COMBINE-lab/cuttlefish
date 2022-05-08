@@ -178,6 +178,18 @@ Cuttlefish 2 specific arguments are set as following.
 - The frequency threshold `c` (of (k + 1)-mers) is set to `2` for read inputs, and `1` for reference inputs, by default.
 - `path-cover` is used to construct a maximal vertex-disjoint path cover of the de Bruijn graph, instead of its compacted variant.
 
+### Note
+
+The edge- and / or the vertex-set generation step could produce a high number of temporary files in disk, up-to 2000.
+Failure to ensure the capability of opening this many files could produce error messages of the following form:
+> Error: Cannot open temporary file ./kmc_00000.bin
+
+The concurrently open file-handle limit for the user running the process can be raised with the following command:
+
+  ```bash
+  ulimit -n 2048
+  ```
+
 ## Output formats
 
 ### Cuttlefish 2 output

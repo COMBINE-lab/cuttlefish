@@ -69,7 +69,7 @@ Besides, these should also be available via some package manager for your operat
 
   ```bash
   git clone https://github.com/COMBINE-lab/cuttlefish.git
-  cd cuttlefish/ && git checkout develop
+  cd cuttlefish/
   mkdir build && cd build/
   cmake -DCMAKE_INSTALL_PREFIX=../ ..
   make -j 8 install

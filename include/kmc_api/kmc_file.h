@@ -509,6 +509,15 @@ inline uint64_t CKMC_DB::read_raw_suffixes(uint8_t* const suff_buf, std::vector<
 
 		// There are this many k-mers with the prefix `prefix_index`.
 		const uint64_t suff_to_read = suff_id_next - sufix_number;
+		
+		if(suff_id_next < sufix_number)
+		{
+			std::cout <<	"Inconsistent suffix ID encountered in the suffix file.\n"
+							"next suffix id: " << suff_id_next << ", suffix count read so far: " << sufix_number <<
+							". \nAborting.\n";
+			std::exit(EXIT_FAILURE);
+		}
+
 		if(suff_to_read > 0)
 		{
 			if(suff_read_count + suff_to_read <= max_suff_count)

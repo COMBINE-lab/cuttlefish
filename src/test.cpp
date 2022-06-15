@@ -388,6 +388,7 @@ void test_buffered_iterator_performance(const char* const file_name)
     std::cout << "Max k-mer: " << max_kmer.string_label() << "\n";
     std::cout << "k-mers count found using iterators: " << count << "\n";
 }
+*/
 
 
 template <uint16_t k>
@@ -450,6 +451,7 @@ void test_SPMC_iterator_performance(const char* const db_path, const size_t cons
 }
 
 
+/*
 template <uint16_t k>
 void test_iterator_correctness(const char* const db_path, const size_t consumer_count)
 {
@@ -629,11 +631,11 @@ int main(int argc, char** argv)
 
     // count_kmers_in_unitigs(argv[1], atoi(argv[2]));
 
-    // static constexpr uint16_t k = 28;
-    // static const size_t consumer_count = std::atoi(argv[2]);
+    static constexpr uint16_t k = 31;
+    static const size_t consumer_count = std::atoi(argv[2]);
 
     // test_buffered_iterator_performance<k>(argv[1]);
-    // test_SPMC_iterator_performance<k>(argv[1], consumer_count);
+    test_SPMC_iterator_performance<k>(argv[1], consumer_count);
     // test_iterator_correctness<k>(argv[1], consumer_count);
     // write_kmers<32>(argv[1], std::atoi(argv[2]), argv[3]);
     return 0;

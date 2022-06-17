@@ -283,6 +283,11 @@ bool CKMC_DB::ReadParamsFrom_prefix_file_buf(uint64 &size, const bool load_pref_
 		my_fseek(file_pre, (0LL - (header_offset + 8)), SEEK_END);
 		result = fread(&kmer_length, 1, sizeof(uint32), file_pre);
 		result = fread(&mode, 1, sizeof(uint32), file_pre);
+		if (mode != 0)
+		{
+			std::cerr << "Error: Quake quake compatible counters are not supported anymore\n";
+			return false;
+		}
 		result = fread(&counter_size, 1, sizeof(uint32), file_pre);
 		result = fread(&lut_prefix_length, 1, sizeof(uint32), file_pre);
 		result = fread(&signature_len, 1, sizeof(uint32), file_pre);
@@ -335,72 +340,47 @@ bool CKMC_DB::ReadParamsFrom_prefix_file_buf(uint64 &size, const bool load_pref_
 	}
 	else if (kmc_version == 0)	// Used with cuttlefish for k <= 13.
 	{
-		const size_t prefix_data_pos = my_ftell(file_pre);
-		prefix_file_buf_size = (size - 4) / sizeof(uint64);		//reads without 4 bytes of a header_offset (and without markers)		
-		// prefix_file_buf = new uint64[prefix_file_buf_size];
-		// result = fread(prefix_file_buf, 1, (size_t)(size - 4), file_pre);
-		// if (result == 0)
-		// 	return false;
-
 		my_fseek(file_pre, -8, SEEK_END);
 
 		uint64 header_offset;
 		header_offset = fgetc(file_pre);
-		my_fseek(file_pre, prefix_data_pos, SEEK_SET);
 
 		size = size - 4;
 
-		uint64 header_index = (size - header_offset) / sizeof(uint64);
-		uint64 last_data_index = header_index;
+		my_fseek(file_pre, (0LL - (header_offset + 8)), SEEK_END);
+		result = fread(&kmer_length, 1, sizeof(uint32), file_pre);
+		result = fread(&mode, 1, sizeof(uint32), file_pre);
+		if (mode != 0)
+		{
+			std::cerr << "Error: Quake quake compatible counters are not supported anymore\n";
+			return false;
+		}
+		result = fread(&counter_size, 1, sizeof(uint32), file_pre);
+		result = fread(&lut_prefix_length, 1, sizeof(uint32), file_pre);
+		result = fread(&min_count, 1, sizeof(uint32), file_pre);
+		original_min_count = min_count;
 
-		// uint64 d = prefix_file_buf[header_index];
-		uint64 data;
-		my_fseek(file_pre, header_index * sizeof(uint64), SEEK_CUR);
-		fread(&data, 1, sizeof(uint64), file_pre);
-
-		// kmer_length = (uint32)d;			//- kmer's length
-		// mode = d >> 32;				//- mode: 0 or 1
-		kmer_length = (uint32)data;
-		mode = data >> 32;
-
-		// header_index++;
-		// counter_size = (uint32)prefix_file_buf[header_index];	//- the size of a counter in bytes; 
-		fread(&data, 1, sizeof(uint64), file_pre);
-		counter_size = (uint32)data;
-		//- for mode 0 counter_size is 1, 2, 3, or 4 (or 5, 6, 7, 8 for small k values)
-		//- for mode = 1 counter_size is 4;
-		// lut_prefix_length = prefix_file_buf[header_index] >> 32;		//- the number of prefix's symbols cut frm kmers; 
-		lut_prefix_length = data >> 32;
-		//- (kmer_length - lut_prefix_length) is divisible by 4
-
-		// header_index++;
-		// original_min_count = (uint32)prefix_file_buf[header_index];    //- the minimal number of kmer's appearances 
-		fread(&data, 1, sizeof(uint64), file_pre);
-		original_min_count = (uint32)data;
-		min_count = original_min_count;
-		// original_max_count = prefix_file_buf[header_index] >> 32;      //- the maximal number of kmer's appearances
-		original_max_count = data >> 32;
-		//max_count = original_max_count;
-
-		// header_index++;
-		// total_kmers = prefix_file_buf[header_index];					//- the total number of kmers 
-		fread(&total_kmers, 1, sizeof(uint64), file_pre);
-
-		// header_index++;
-		// both_strands = (prefix_file_buf[header_index] & 0x000000000000000F) == 1;
-		fread(&data, 1, sizeof(uint64), file_pre);
-		both_strands = (data  & 0x000000000000000F) == 1;
+		uint32 max_count_lo;
+		result = fread(&max_count_lo, 1, sizeof(uint32), file_pre);
+		max_count = max_count_lo;
+		original_max_count = max_count;
+		result = fread(&total_kmers, 1, sizeof(uint64), file_pre);
+		result = fread(&both_strands, 1, 1, file_pre);
 		both_strands = !both_strands;
 
-		// original_max_count += prefix_file_buf[header_index] & 0xFFFFFFFF00000000;
-		original_max_count += data & 0xFFFFFFFF00000000;
-		max_count = original_max_count;
+		uint32 max_count_hi;
+		result = fread(&max_count_hi, 1, sizeof(uint32), file_pre);
+		max_count += (uint64)max_count_hi << 32;
+		original_max_count = max_count;
+
+		prefix_file_buf_size = (1ull << (2 * lut_prefix_length)) + 1;
+		uint64 last_data_index = prefix_file_buf_size - 1;
 
 		// Set auxiliary fields aiding in k-mer parsing by Cuttlefish.
 		prefix_mask_ = (1 << 2 * lut_prefix_length) - 1;
 		byte_alignment_ = (kmer_length % 4 != 0 ? 4 - (kmer_length % 4) : 0);
 
-		my_fseek(file_pre, prefix_data_pos, SEEK_SET);
+		fseek(file_pre, 4, SEEK_SET);
 
 		if(load_pref_file)
 		{

@@ -78,9 +78,12 @@ inline std::size_t Virtual_Prefix_File::read_prefixes()
 
 inline uint64_t Virtual_Prefix_File::operator[](const std::size_t idx)
 {
-	if(idx >= prefix_file_elem_count) 
+	if(idx >= prefix_file_elem_count)
 		return total_kmers + 1;
-	
+
+	if(idx == prefix_file_elem_count - 1)
+		return total_kmers;
+
 	if(idx >= prefix_chunk_end_index)
 	{
 		prefix_chunk_start_index = idx;

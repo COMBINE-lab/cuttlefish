@@ -91,7 +91,7 @@ struct gs {
 
     return res;
   }
-  static inline IDX get(const W* p, unsigned b, unsigned o) { return get(p, o); }
+  static inline IDX get(const W* p, unsigned, unsigned o) { return get(p, o); }
 
 
   // Set a value at position p, offset o. TS set to true makes it safe
@@ -793,7 +793,8 @@ class lhs_setter
 
 public:
   lhs_setter(W* p, int o) : super(p, o) { }
-  lhs_setter(W* p, unsigned bits, int o) : super(p, o) { }
+  lhs_setter(W* p, unsigned, int o) : super(p, o) { }
+  lhs_setter(const lhs_setter& other) = default;
   lhs_setter& operator=(const IDX x) {
     gf_sp_helper::template setpush<IDX, BITS, W, UB>(x, super::m_ptr, super::m_offset);
     return *this;
@@ -937,7 +938,7 @@ public:
   iterator() = default;
   iterator(W* p, unsigned o)
     : m_ptr(p), m_offset(o) { }
-  iterator(W* p, unsigned b, unsigned o)
+  iterator(W* p, unsigned, unsigned o)
     : m_ptr(p), m_offset(o) { } // XXX Should we assert that BITS == b?
   template<bool TTS>
   iterator(const iterator<IDX, BITS, W, TTS>& rhs)
@@ -985,7 +986,7 @@ public:
   const_iterator() = default;
   const_iterator(const W* p, unsigned o)
     : m_ptr(p), m_offset(o) { }
-  const_iterator(const W* p, unsigned b, unsigned o)
+  const_iterator(const W* p, unsigned, unsigned o)
     : m_ptr(p), m_offset(o) { }
   const_iterator(const const_iterator& rhs)
     : m_ptr(rhs.m_ptr), m_offset(rhs.m_offset) { }

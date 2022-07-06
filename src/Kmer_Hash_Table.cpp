@@ -159,7 +159,7 @@ void Kmer_Hash_Table<k, BITS_PER_KEY>::load_hash_buckets(const std::string& file
     input.close();
 
 
-    hash_table.deserialize(file_path, false);
+    hash_table.deserialize(file_path);
 }
 
 

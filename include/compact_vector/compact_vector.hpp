@@ -261,7 +261,7 @@ public:
     //std::cerr << "wrote " << bytes() << " bytes of data at the end\n";
 }
 
-void deserialize(const std::string &fname, bool mmap) {
+void deserialize(const std::string &fname) {
 std::error_code error;
 // load the vector by reading from file
 std::ifstream ifile(fname, std::ios::binary);

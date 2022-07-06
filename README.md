@@ -357,10 +357,10 @@ If you use Cuttlefish or Cuttlefish 2 in your work, please include the following
   author = {Khan, Jamshed and Kokot, Marek and Deorowicz, Sebastian and Patro, Rob},
   title = "{Scalable, ultra-fast, and low-memory construction of compacted de Bruijn graphs with Cuttlefish 2}",
   elocation-id = {2021.12.14.472718},
-  year = {2021},
+  year = {2022},
   doi = {10.1101/2021.12.14.472718},
   publisher = {Cold Spring Harbor Laboratory},
-  URL = {https://www.biorxiv.org/content/early/2021/12/16/2021.12.14.472718},
+  URL = {https://www.biorxiv.org/content/early/2022/06/19/2021.12.14.472718},
   journal = {bioRxiv}
 }
 ```

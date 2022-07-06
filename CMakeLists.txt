@@ -178,7 +178,7 @@ add_dependencies(kmc prj_kmc)
 # The `Release` configuration enables most compiler optimizations for speed and defines `NDEBUG`
 # (No Debug) which will remove all traces of the standard library assert calls.
 if(NOT CMAKE_BUILD_TYPE)
-    set(CMAKE_BUILD_TYPE Release)
+    set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
 endif()
 
 set(CMAKE_CXX_FLAGS_DEBUG "-g")

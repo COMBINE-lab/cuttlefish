@@ -28,6 +28,7 @@ Kmer_Hash_Table<k, BITS_PER_KEY>::Kmer_Hash_Table(const std::string& kmc_db_path
     gamma(gamma_min),
     kmc_db_path(kmc_db_path),
     kmer_count(kmer_count),
+    hash_table(kmer_count),
     sparse_lock(kmer_count, lock_count)
 {}
 
@@ -217,7 +218,7 @@ void Kmer_Hash_Table<k, BITS_PER_KEY>::construct(const uint16_t thread_count, co
                     " Bits per k-mer: " << static_cast<double>(total_bits) / kmer_count << ".\n";
 
     // Allocate the hash table buckets.
-    hash_table.resize(kmer_count, State().code);
+    hash_table.clear_mem();
     std::cout << "Allocated hash table buckets for the k-mers. Total size: " <<
                 hash_table.bytes() / (1024 * 1024) << " MB.\n";
 

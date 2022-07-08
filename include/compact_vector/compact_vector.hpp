@@ -262,32 +262,32 @@ public:
 }
 
 void deserialize(const std::string &fname) {
-std::error_code error;
-// load the vector by reading from file
-std::ifstream ifile(fname, std::ios::binary);
-uint64_t static_flag{0};
-ifile.read(reinterpret_cast<char *>(&static_flag), sizeof(static_flag));
+    std::error_code error;
+    // load the vector by reading from file
+    std::ifstream ifile(fname, std::ios::binary);
+    uint64_t static_flag{0};
+    ifile.read(reinterpret_cast<char *>(&static_flag), sizeof(static_flag));
 
-uint64_t bits_per_element;
-ifile.read(reinterpret_cast<char *>(&bits_per_element), sizeof(bits_per_element));
+    uint64_t bits_per_element;
+    ifile.read(reinterpret_cast<char *>(&bits_per_element), sizeof(bits_per_element));
 
-//std::cerr<< "bits / element = " << bits_per_element << "\n";
+    //std::cerr<< "bits / element = " << bits_per_element << "\n";
 
-uint64_t w_size{0};
-ifile.read(reinterpret_cast<char *>(&w_size), sizeof(w_size));
-m_size = w_size;
-// std::cerr << "size = " << m_size << "\n";
+    uint64_t w_size{0};
+    ifile.read(reinterpret_cast<char *>(&w_size), sizeof(w_size));
+    m_size = w_size;
+    // std::cerr << "size = " << m_size << "\n";
 
-uint64_t w_capacity{0};
-ifile.read(reinterpret_cast<char *>(&w_capacity), sizeof(w_capacity));
-m_capacity = w_capacity;
-//std::cerr<< "capacity = " << m_capacity << "\n";
+    uint64_t w_capacity{0};
+    ifile.read(reinterpret_cast<char *>(&w_capacity), sizeof(w_capacity));
+    m_capacity = w_capacity;
+    //std::cerr<< "capacity = " << m_capacity << "\n";
 
-m_allocator.deallocate(m_mem, elements_to_words(m_capacity, bits()));
-m_mem = m_allocator.allocate(elements_to_words(m_capacity, bits()));
-if (m_mem == nullptr) throw std::bad_alloc();
-ifile.read(reinterpret_cast<char *>(m_mem), sizeof(W) * elements_to_words(m_size, bits()));
-}
+    m_allocator.deallocate(m_mem, elements_to_words(m_capacity, bits()));
+    m_mem = m_allocator.allocate(elements_to_words(m_capacity, bits()));
+    if (m_mem == nullptr) throw std::bad_alloc();
+    ifile.read(reinterpret_cast<char *>(m_mem), sizeof(W) * elements_to_words(m_size, bits()));
+  }
 
 protected:
   void enlarge(size_t given = 0) {

@@ -9,7 +9,7 @@
 
 
 template <uint16_t k>
-void CdBG<k>::classify_vertices()
+void CdBG<k>::classify_vertices(std::vector<std::pair<std::string, size_t>>& short_refs)
 {
     std::chrono::high_resolution_clock::time_point t_start = std::chrono::high_resolution_clock::now();
 
@@ -55,8 +55,10 @@ void CdBG<k>::classify_vertices()
             std::cerr << "\rProcessing sequence " << parser.seq_id() << ", with length:\t" << std::setw(10) << seq_len << ".";
 
             // Nothing to process for sequences with length shorter than `k`.
-            if(seq_len < k)
+            if(seq_len < k) {
+                short_refs.emplace_back(std::make_pair(parser.seq_name(), seq_len));
                 continue;
+            }
 
 
             // Single-threaded classification.

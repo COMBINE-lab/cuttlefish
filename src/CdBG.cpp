@@ -66,7 +66,8 @@ void CdBG<k>::construct()
     
 
     std::cout << "\nComputing the DFA states.\n";
-    classify_vertices();
+    classify_vertices(short_refs);
+    dbg_info.add_short_refs_info(short_refs);
 
     std::chrono::high_resolution_clock::time_point t_dfa = std::chrono::high_resolution_clock::now();
     std::cout << "Computed the states of the automata. Time taken = " << std::chrono::duration_cast<std::chrono::duration<double>>(t_dfa - t_mphf).count() << " seconds.\n";

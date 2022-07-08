@@ -103,6 +103,9 @@ private:
     std::string overlap_file_prefix = "cuttlefish-overlap-output-";
     static constexpr size_t TEMP_FILE_PREFIX_LEN = 10;
 
+    // Hold information about references too short for processing
+    std::vector<std::pair<std::string, size_t>> short_refs;
+    
     // Debug
     std::vector<double> seg_write_time;
     std::vector<double> link_write_time;
@@ -130,7 +133,7 @@ private:
     // TODO: rename the "classify" methods with appropriate terminology that are consistent with the theory.
     
     // Classifies the vertices into different types (or, classes).
-    void classify_vertices();
+    void classify_vertices(std::vector<std::pair<std::string, size_t>>& short_refs_info);
 
     // Returns the maximum temporary disk-usage incurred by some execution of the algorithm,
     // that has its vertices-enumeration stats in `vertex_stats`.

@@ -10,7 +10,6 @@
 
 // TODO: wrap everything here in some namespaces.
 
-
 // Returns a random string of length `len`, using characters from `alphabet`.
 std::string get_random_string(size_t len, const char* alphabet =    "0123456789"
                                                                     "ABCDEFGHIJKLMNOPQRSTUVWXYZ"

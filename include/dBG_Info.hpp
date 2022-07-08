@@ -29,6 +29,7 @@ private:
 
     const std::string file_path_;   // Path to the disk-file to store the JSON object.
 
+    static constexpr const char* short_refs_field = "short refs";    // Category header for information about short references.
     static constexpr const char* basic_field = "basic info";    // Category header for basic graph information.
     static constexpr const char* contigs_field = "contigs info";    // Category header for information about the contigs (maximal unitigs).
     static constexpr const char* dcc_field = "detached chordless cycles (DCC) info";  // Category header for information about the DCCs.
@@ -65,6 +66,9 @@ public:
 
     // Adds information about the extracted maximal unitigs from `cdbg`.
     void add_unipaths_info(const CdBG<k>& cdbg);
+
+    // Adds information about the references shorter than length k.
+    void add_short_refs_info(const std::vector<std::pair<std::string, size_t>>& short_refs);
 
     // Writes the JSON object to its corresponding disk-file.
     void dump_info() const;

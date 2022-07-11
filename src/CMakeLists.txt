@@ -1,5 +1,5 @@
 
-# Bundle the core source files into a variable.
+# Bundle the cfcore source files into a variable.
 set(PROJECT_SRC
         kmc_api/kmc_file.cpp
         kmc_api/kmer_api.cpp
@@ -44,53 +44,55 @@ set(PROJECT_SRC
         Sequence_Validator.cpp
         Kmers_Validator.cpp
         utility.cpp
+        commands.cpp
     )
 
 
 # Build a library with the provided source(s).
 # `STATIC` will force the creation of a static library (and so no runtime linking).
-add_library(core STATIC ${PROJECT_SRC})
+add_library(cfcore STATIC ${PROJECT_SRC})
 
 
 # This controls the `-I` (include paths) switch of the compiler invocation.
 # Since `include` is declared `PUBLIC` for the library, it is propagated to all the
 # consumers of the library.
 set(INCLUDE_DIR ${CMAKE_SOURCE_DIR}/include)
-target_include_directories(core PUBLIC ${INCLUDE_DIR} ${EXT_INCLUDE})
+target_include_directories(cfcore PUBLIC ${INCLUDE_DIR} ${EXT_INCLUDE})
 
 
 # Specify the warnings and the extra optimization flags to the compiler for the target library.
 # As the flags are specified as `PRIVATE`, they will only be used when compiling this library.
 # These will not be propagated to the targets linking to it.
-target_compile_options(core PRIVATE ${WARNING_FLAGS} ${SUPPRESS_WARNING_FLAGS} ${OPTIMIZE_FLAGS})
+target_compile_options(cfcore PRIVATE ${WARNING_FLAGS} ${SUPPRESS_WARNING_FLAGS} ${OPTIMIZE_FLAGS})
 
 
 # Create an executable from the driver program.
 add_executable(${PROJECT_NAME} main.cpp)
+target_include_directories(${PROJECT_NAME} PUBLIC ${INCLUDE_DIR} ${EXT_INCLUDE})
 
 
-# Link the core library to the `jemalloc` library, for better `malloc` support.
-target_link_libraries(core PRIVATE jemalloc)
+# Link the cfcore library to the `jemalloc` library, for better `malloc` support.
+target_link_libraries(cfcore PRIVATE jemalloc)
 
-# Link the core library to the `dl` library, required in using dynamic shared object.
+# Link the cfcore library to the `dl` library, required in using dynamic shared object.
 # Needed by `jemalloc`.
-target_link_libraries(core PRIVATE ${CMAKE_DL_LIBS})
+target_link_libraries(cfcore PRIVATE ${CMAKE_DL_LIBS})
 
-# Link the core library to the `kmc` library.
-target_link_libraries(core PRIVATE kmc)
+# Link the cfcore library to the `kmc` library.
+target_link_libraries(cfcore PRIVATE kmc)
 
-# Link the core library to the `zlib` library.
-target_link_libraries(core PRIVATE ZLIB::ZLIB)
+# Link the cfcore library to the `zlib` library.
+target_link_libraries(cfcore PRIVATE ZLIB::ZLIB)
 
-# Link the core library ti the `bzip2` library.
-target_link_libraries(core PRIVATE BZip2::BZip2)
+# Link the cfcore library ti the `bzip2` library.
+target_link_libraries(cfcore PRIVATE BZip2::BZip2)
 
-# Link the core library to the threads package in the platform.
-target_link_libraries(core PRIVATE ${CMAKE_THREAD_LIBS_INIT})
+# Link the cfcore library to the threads package in the platform.
+target_link_libraries(cfcore PRIVATE ${CMAKE_THREAD_LIBS_INIT})
 
 
 # Link the executable to the required libraries.
-target_link_libraries(${PROJECT_NAME} PRIVATE core)
+target_link_libraries(${PROJECT_NAME} PRIVATE cfcore)
 
 
 # Specify warnings flags to the compiler for the target executable.
@@ -104,7 +106,10 @@ install(TARGETS ${PROJECT_NAME}
         DESTINATION bin
         )
 
+install(TARGETS cfcore
+        DESTINATION lib 
+        )
 
 add_executable(test test.cpp)
-target_link_libraries(test PRIVATE core)
+target_link_libraries(test PRIVATE cfcore)
 target_compile_options(test PRIVATE ${WARNING_FLAGS} ${SUPPRESS_WARNING_FLAGS} ${OPTIMIZE_FLAGS})

@@ -6,7 +6,7 @@ set(PROJECT_SRC
         kmc_api/mmer.cpp
         kmc_api/Virtual_Prefix_File.cpp
         xxHash/xxhash.c
-        xxHash/xxhsum.c
+        # xxHash/xxhsum.c
         Build_Params.cpp
         Application.cpp
         Seq_Input.cpp

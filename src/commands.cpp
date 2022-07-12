@@ -14,12 +14,12 @@
 #include <optional>
 
 extern "C" {
-  void build(int argc, char** argv);
-  void validate(int argc, char** argv);
+  void cf_build(int argc, char** argv);
+  void cf_validate(int argc, char** argv);
 }
 
 // Driver function for the CdBG build.
-void build(int argc, char** argv)
+void cf_build(int argc, char** argv)
 {
     cxxopts::Options options("cuttlefish build", "Efficiently construct the compacted de Bruijn graph from sequencing reads or reference sequences");
 
@@ -147,7 +147,7 @@ void build(int argc, char** argv)
 
 
 // Driver function for the CdBG validation.
-void validate(int argc, char** argv)
+void cf_validate(int argc, char** argv)
 {
     cxxopts::Options options("cuttlefish validate", "Validate a compacted de Bruijn graph constructed by cuttlefish");
     options.add_options()

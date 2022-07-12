@@ -63,7 +63,14 @@ target_include_directories(cfcore PUBLIC ${INCLUDE_DIR} ${EXT_INCLUDE})
 # Specify the warnings and the extra optimization flags to the compiler for the target library.
 # As the flags are specified as `PRIVATE`, they will only be used when compiling this library.
 # These will not be propagated to the targets linking to it.
-target_compile_options(cfcore PRIVATE ${WARNING_FLAGS} ${SUPPRESS_WARNING_FLAGS} ${OPTIMIZE_FLAGS})
+target_compile_options(cfcore PRIVATE "$<$<CONFIG:DEBUG>:${WARNING_FLAGS}>" 
+  PRIVATE "$<$<CONFIG:DEBUG>:${SUPPRESS_WARNING_FLAGS}>" 
+  PRIVATE "$<$<CONFIG:DEBUG>:${OPTIMIZE_FLAGS}>")
+target_compile_options(cfcore PRIVATE "$<$<CONFIG:RELEASE>:${WARNING_FLAGS}>" 
+  PRIVATE "$<$<CONFIG:RELEASE>:${SUPPRESS_WARNING_FLAGS}>" 
+  PRIVATE "$<$<CONFIG:RELEASE>:${OPTIMIZE_FLAGS}>")
+target_compile_features(cfcore PUBLIC cxx_std_17)
+
 
 
 # Create an executable from the driver program.
@@ -96,7 +103,14 @@ target_link_libraries(${PROJECT_NAME} PRIVATE cfcore)
 
 
 # Specify warnings flags to the compiler for the target executable.
-target_compile_options(${PROJECT_NAME} PRIVATE ${WARNING_FLAGS} ${SUPPRESS_WARNING_FLAGS} ${OPTIMIZE_FLAGS})
+target_compile_options(${PROJECT_NAME} PRIVATE "$<$<CONFIG:DEBUG>:${WARNING_FLAGS}>" 
+  PRIVATE "$<$<CONFIG:DEBUG>:${SUPPRESS_WARNING_FLAGS}>" 
+  PRIVATE "$<$<CONFIG:DEBUG>:${OPTIMIZE_FLAGS}>")
+target_compile_options(${PROJECT_NAME} PRIVATE "$<$<CONFIG:RELEASE>:${WARNING_FLAGS}>" 
+  PRIVATE "$<$<CONFIG:RELEASE>:${SUPPRESS_WARNING_FLAGS}>" 
+  PRIVATE "$<$<CONFIG:RELEASE>:${OPTIMIZE_FLAGS}>")
+target_compile_features(${PROJECT_NAME} PUBLIC cxx_std_17)
+
 
 
 # Set the installation directory. The parent directory is `/usr/local/` by default, and the
@@ -112,4 +126,11 @@ install(TARGETS cfcore
 
 add_executable(test test.cpp)
 target_link_libraries(test PRIVATE cfcore)
-target_compile_options(test PRIVATE ${WARNING_FLAGS} ${SUPPRESS_WARNING_FLAGS} ${OPTIMIZE_FLAGS})
+target_compile_options(test PRIVATE "$<$<CONFIG:DEBUG>:${WARNING_FLAGS}>" 
+  PRIVATE "$<$<CONFIG:DEBUG>:${SUPPRESS_WARNING_FLAGS}>" 
+  PRIVATE "$<$<CONFIG:DEBUG>:${OPTIMIZE_FLAGS}>")
+target_compile_options(test PRIVATE "$<$<CONFIG:RELEASE>:${WARNING_FLAGS}>" 
+  PRIVATE "$<$<CONFIG:RELEASE>:${SUPPRESS_WARNING_FLAGS}>" 
+  PRIVATE "$<$<CONFIG:RELEASE>:${OPTIMIZE_FLAGS}>")
+target_compile_features(test PUBLIC cxx_std_17)
+

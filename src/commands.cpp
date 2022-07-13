@@ -13,13 +13,18 @@
 #include <iostream>
 #include <optional>
 
+#ifdef __cplusplus
 extern "C" {
-  void cf_build(int argc, char** argv);
-  void cf_validate(int argc, char** argv);
+#endif
+  int cf_build(int argc, char** argv);
+  int cf_validate(int argc, char** argv);
+#ifdef __cplusplus
 }
+#endif
+
 
 // Driver function for the CdBG build.
-void cf_build(int argc, char** argv)
+int cf_build(int argc, char** argv)
 {
     cxxopts::Options options("cuttlefish build", "Efficiently construct the compacted de Bruijn graph from sequencing reads or reference sequences");
 
@@ -86,7 +91,7 @@ void cf_build(int argc, char** argv)
         if(result.count("help"))
         {
             std::cout << options.help() << std::endl;
-            return;
+            return 0;
         }
 
         const auto is_read_graph = result["read"].as<bool>();
@@ -143,11 +148,12 @@ void cf_build(int argc, char** argv)
         std::cerr << std::endl << "Usage :" << std::endl;
         std::cerr << options.help() << std::endl;
     }
+    return 0;
 }
 
 
 // Driver function for the CdBG validation.
-void cf_validate(int argc, char** argv)
+int cf_validate(int argc, char** argv)
 {
     cxxopts::Options options("cuttlefish validate", "Validate a compacted de Bruijn graph constructed by cuttlefish");
     options.add_options()
@@ -177,7 +183,7 @@ void cf_validate(int argc, char** argv)
         if(result.count("help"))
         {
             std::cout << options.help() << std::endl;
-            return;
+            return 0;
         }
 
         const auto refs = result["refs"].as<std::vector<std::string>>();
@@ -209,6 +215,7 @@ void cf_validate(int argc, char** argv)
         std::cerr << std::endl << "Usage :" << std::endl;
         std::cerr << options.help() << std::endl;
     }
+  return 0;
 }
 
 

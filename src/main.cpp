@@ -10,8 +10,8 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-  void cf_build(int argc, char** argv);
-  void cf_validate(int argc, char** argv);
+  int cf_build(int argc, char** argv);
+  int cf_validate(int argc, char** argv);
 #ifdef __cplusplus
 }
 #endif
@@ -47,9 +47,9 @@ int main(int argc, char** argv)
         std::transform(command.begin(), command.end(), command.begin(), [](const char ch) { return std::tolower(ch); });
 
         if(command == "build")
-            cf_build(argc - 1, argv + 1);
+            return cf_build(argc - 1, argv + 1);
         else if(command == "validate")
-            cf_validate(argc - 1, argv + 1);
+            return cf_validate(argc - 1, argv + 1);
         else if(command == "help")
             display_help_message();
         else if(command == "version")

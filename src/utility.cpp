@@ -1,14 +1,15 @@
 
 #include "utility.hpp"
-#include "ghc/filesystem.hpp"
 
 #include <cstring>
 #include <cstdlib>
 #include <ctime>
 #include <iostream>
 #include <sstream>
-#include <cstdio>
 #include <iterator>
+#include <filesystem>
+#include <fstream>
+#include <cstdio>
 
 
 std::string get_random_string(const size_t len, const char* const alphabet)
@@ -39,30 +40,27 @@ bool is_prefix(const std::string& s, const std::string& pref)
 
 bool file_exists(const std::string& file_path)
 {
-    // TODO: replace impl with `std::filesystem` functionality.
-    struct stat stat_buf;
-
-    return stat(file_path.c_str(), &stat_buf) == 0;
+    return std::filesystem::exists(file_path);
 }
 
 
 bool dir_exists(const std::string& dir_path)
 {
-    return ghc::filesystem::is_directory(dir_path);
+    return std::filesystem::is_directory(dir_path);
 }
 
 
 std::size_t file_size(const std::string& file_path)
 {
     std::error_code ec;
-    const uintmax_t size = ghc::filesystem::file_size(file_path, ec);
+    const uintmax_t size = std::filesystem::file_size(file_path, ec);
     return ec ? 0 : static_cast<std::size_t>(size);
 }
 
 
 bool file_prefix_exists(const std::string& path, const std::string& prefix)
 {
-    for(const auto& entry: ghc::filesystem::directory_iterator(path))
+    for(const auto& entry: std::filesystem::directory_iterator(path))
         if(is_prefix(entry.path(), prefix))
             return true;
 
@@ -96,7 +94,7 @@ const std::string concat_strings(const std::vector<std::string>& s, const std::s
 
 bool remove_file(const std::string& file_path)
 {
-    return ghc::filesystem::remove(file_path);
+    return std::filesystem::remove(file_path);
 }
 
 
@@ -115,21 +113,21 @@ void clear_file(const std::string& file_path)
 
 const std::string filename(const std::string& file_path)
 {
-    return ghc::filesystem::path(file_path).filename().string();
+    return std::filesystem::path(file_path).filename().string();
 }
 
 
 const std::string dirname(const std::string& file_path)
 {
-    const std::string path = ghc::filesystem::path(file_path).remove_filename().string();
+    const std::string path = std::filesystem::path(file_path).remove_filename().string();
     return path.empty() ? "." : path;
 }
 
 
 void move_file(const std::string& from_path, const std::string& to_path)
 {
-    ghc::filesystem::copy(from_path, to_path);
-    ghc::filesystem::remove(from_path);
+    std::filesystem::copy(from_path, to_path);
+    std::filesystem::remove(from_path);
 }
 
 

@@ -374,7 +374,6 @@ This work is supported by _NIH R01 HG009937_, and by _NSF CCF-1750472_, and _CNS
 - The [compact_vector](https://github.com/gmarcais/compact_vector) library is MIT licensed.
 - The [cxxopts](https://github.com/jarro2783/cxxopts) library is MIT licensed.
 - The [fmt](https://github.com/fmtlib/fmt) library is MIT licensed.
-- The [(ghc) filesystem](https://github.com/gulrak/filesystem) library is MIT licensed.
 - The [KMC](https://github.com/refresh-bio/KMC) software is GNU GPL 3 licensed.
 - The [kseq](http://lh3lh3.users.sourceforge.net/kseq.shtml) library is MIT licensed.
 - The [spdlog](https://github.com/gabime/spdlog) library is MIT licensed.

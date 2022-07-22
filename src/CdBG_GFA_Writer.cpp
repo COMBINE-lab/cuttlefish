@@ -7,8 +7,6 @@
 #include "spdlog/async.h"
 #include "spdlog/sinks/basic_file_sink.h"
 
-#include <chrono>
-
 
 // Define the static fields required with `spdlog` thread pools.
 template <uint16_t k> constexpr size_t CdBG<k>::ASYNC_LOG_QUEUE_SZ;
@@ -347,8 +345,6 @@ void CdBG<k>::write_gfa_header() const
 template <uint16_t k>
 void CdBG<k>::write_gfa_segment(const uint16_t thread_id, const char* const seq, const uint64_t segment_name, const size_t start_kmer_idx, const size_t end_kmer_idx, const cuttlefish::dir_t dir)
 {
-    std::chrono::high_resolution_clock::time_point t_start = std::chrono::high_resolution_clock::now();
-
     const cuttlefish::Output_Format gfa_v = params.output_format();
 
     std::string& buffer = output_buffer[thread_id];
@@ -393,11 +389,6 @@ void CdBG<k>::write_gfa_segment(const uint16_t thread_id, const char* const seq,
     // End the segment line.
     buffer += "\n";
 
-    std::chrono::high_resolution_clock::time_point t_end = std::chrono::high_resolution_clock::now();
-    double elapsed_seconds = std::chrono::duration_cast<std::chrono::duration<double>>(t_end - t_start).count();
-
-    seg_write_time[thread_id] += elapsed_seconds;
-
 
     // Mark buffer size increment.
     check_output_buffer(thread_id);
@@ -426,8 +417,6 @@ void CdBG<k>::write_gfa_connection(const uint16_t thread_id, const Oriented_Unit
 template <uint16_t k>
 void CdBG<k>::write_gfa_link(const uint16_t thread_id, const Oriented_Unitig& left_unitig, const Oriented_Unitig& right_unitig)
 {
-    std::chrono::high_resolution_clock::time_point t_start = std::chrono::high_resolution_clock::now();
-
     std::string& buffer = output_buffer[thread_id];
 
     // The 'RecordType' field for link lines.
@@ -453,11 +442,6 @@ void CdBG<k>::write_gfa_link(const uint16_t thread_id, const Oriented_Unitig& le
 
     // End the link line.
     buffer += "\n";
-
-    std::chrono::high_resolution_clock::time_point t_end = std::chrono::high_resolution_clock::now();
-    double elapsed_seconds = std::chrono::duration_cast<std::chrono::duration<double>>(t_end - t_start).count();
-
-    link_write_time[thread_id] += elapsed_seconds;
 
 
     // Mark buffer size increment.
@@ -589,8 +573,6 @@ void CdBG<k>::write_gfa_gap(const uint16_t thread_id, const Oriented_Unitig& lef
 template <uint16_t k>
 void CdBG<k>::append_link_to_path(const uint16_t thread_id, const Oriented_Unitig& left_unitig, const Oriented_Unitig& right_unitig)
 {
-    std::chrono::high_resolution_clock::time_point t_start = std::chrono::high_resolution_clock::now();
-
     // The destination vertex (unitig) is written for each link.
     // Note that, the very first vertex of the path tiling for the sequence is thus missing in the path outputs.
 
@@ -604,11 +586,6 @@ void CdBG<k>::append_link_to_path(const uint16_t thread_id, const Oriented_Uniti
         o_buffer += ",";
     o_buffer += fmt::format_int(right_unitig.start_kmer_idx == left_unitig.end_kmer_idx + 1 ? k - 1 : 0).c_str();
     o_buffer += "M";
-
-    std::chrono::high_resolution_clock::time_point t_end = std::chrono::high_resolution_clock::now();
-    double elapsed_seconds = std::chrono::duration_cast<std::chrono::duration<double>>(t_end - t_start).count();
-
-    path_write_time[thread_id] += elapsed_seconds;
 
 
     check_path_buffer(thread_id);
@@ -639,21 +616,12 @@ void CdBG<k>::append_edge_to_path(const uint16_t thread_id, const Oriented_Uniti
 template <uint16_t k>
 void CdBG<k>::check_path_buffer(const uint16_t thread_id)
 {
-    std::chrono::high_resolution_clock::time_point t_start = std::chrono::high_resolution_clock::now();
-
-
     if(path_buffer[thread_id].size() >= BUFFER_THRESHOLD)
         flush_buffer(path_buffer[thread_id], path_output_[thread_id]);
 
     const cuttlefish::Output_Format gfa_v = params.output_format();
     if(gfa_v == cuttlefish::Output_Format::gfa1 && overlap_buffer[thread_id].size() >= BUFFER_THRESHOLD)
         flush_buffer(overlap_buffer[thread_id], overlap_output_[thread_id]);
-
-
-    std::chrono::high_resolution_clock::time_point t_end = std::chrono::high_resolution_clock::now();
-    double elapsed_seconds = std::chrono::duration_cast<std::chrono::duration<double>>(t_end - t_start).count();
-
-    path_flush_time[thread_id] += elapsed_seconds;
 }
 
 
@@ -728,18 +696,11 @@ void CdBG<k>::flush_path_buffers()
 
     for(uint16_t t_id = 0; t_id < thread_count; ++t_id)
     {
-        std::chrono::high_resolution_clock::time_point t_start = std::chrono::high_resolution_clock::now();
-
         if(!path_buffer[t_id].empty())
             flush_buffer(path_buffer[t_id], path_output_[t_id]);
 
         if(gfa_v == cuttlefish::Output_Format::gfa1 && !overlap_buffer[t_id].empty())
             flush_buffer(overlap_buffer[t_id], overlap_output_[t_id]);
-
-        std::chrono::high_resolution_clock::time_point t_end = std::chrono::high_resolution_clock::now();
-        double elapsed_seconds = std::chrono::duration_cast<std::chrono::duration<double>>(t_end - t_start).count();
-
-        path_flush_time[t_id] += elapsed_seconds;
     }
 }
 
@@ -747,9 +708,6 @@ void CdBG<k>::flush_path_buffers()
 template <uint16_t k>
 void CdBG<k>::write_gfa_path(const std::string& path_name)
 {
-    std::chrono::high_resolution_clock::time_point t_start = std::chrono::high_resolution_clock::now();
-
-
     const uint16_t thread_count = params.thread_count();
     const std::string& output_file_path = params.output_file_path();
     
@@ -839,21 +797,12 @@ void CdBG<k>::write_gfa_path(const std::string& path_name)
     output << "\n";
 
     output.close();
-
-    std::chrono::high_resolution_clock::time_point t_end = std::chrono::high_resolution_clock::now();
-    double elapsed_seconds = std::chrono::duration_cast<std::chrono::duration<double>>(t_end - t_start).count();
-    // std::cout << "Time taken to write paths = " << elapsed_seconds << " seconds.\n";
-
-    path_concat_time += elapsed_seconds;
 }
 
 
 template <uint16_t k>
 void CdBG<k>::write_gfa_ordered_group(const std::string& path_id)
 {
-    std::chrono::high_resolution_clock::time_point t_start = std::chrono::high_resolution_clock::now();
-
-
     const uint16_t thread_count = params.thread_count();
     const std::string& output_file_path = params.output_file_path();
     
@@ -907,12 +856,6 @@ void CdBG<k>::write_gfa_ordered_group(const std::string& path_id)
     output << "\n";
 
     output.close();
-
-    std::chrono::high_resolution_clock::time_point t_end = std::chrono::high_resolution_clock::now();
-    double elapsed_seconds = std::chrono::duration_cast<std::chrono::duration<double>>(t_end - t_start).count();
-    // (void)elapsed_seconds;
-    path_concat_time += elapsed_seconds;
-    // std::cout << "Time taken to write paths = " << elapsed_seconds << " seconds.\n";
 }
 
 

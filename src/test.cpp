@@ -634,7 +634,6 @@ int main(int argc, char** argv)
     static constexpr uint16_t k = 31;
     static const size_t consumer_count = std::atoi(argv[2]);
 
-    assert(false);
     // test_buffered_iterator_performance<k>(argv[1]);
     test_SPMC_iterator_performance<k>(argv[1], consumer_count);
     // test_iterator_correctness<k>(argv[1], consumer_count);

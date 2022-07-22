@@ -105,15 +105,6 @@ private:
 
     // Hold information about references too short for processing
     std::vector<std::pair<std::string, size_t>> short_refs;
-    
-    // Debug
-    std::vector<double> seg_write_time;
-    std::vector<double> link_write_time;
-    std::vector<double> buff_flush_time;
-    std::vector<double> path_write_time;
-    std::vector<double> path_flush_time;
-    double path_concat_time = 0;
-    double logger_flush_time = 0;
 
 
     /* Build methods */

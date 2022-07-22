@@ -2,8 +2,6 @@
 #include "CdBG.hpp"
 #include "Annotated_Kmer.hpp"
 
-#include <chrono>
-
 
 template <uint16_t k>
 void CdBG<k>::output_plain_off_substring(const uint16_t thread_id, const char* const seq, const size_t seq_len, const size_t left_end, const size_t right_end)
@@ -164,8 +162,6 @@ void CdBG<k>::output_plain_unitig(const uint16_t thread_id, const char* const se
 template <uint16_t k>
 void CdBG<k>::write_path(const uint16_t thread_id, const char* const seq, const uint64_t unitig_id, const size_t start_kmer_idx, const size_t end_kmer_idx, const cuttlefish::dir_t dir) 
 {
-    std::chrono::high_resolution_clock::time_point t_start = std::chrono::high_resolution_clock::now();
-
     std::string& buffer = output_buffer[thread_id];
     const size_t path_len = end_kmer_idx - start_kmer_idx + k;
     constexpr std::size_t header_len = 12;  // FASTA header len: '>' + <id> + '\n'
@@ -188,12 +184,6 @@ void CdBG<k>::write_path(const uint16_t thread_id, const char* const seq, const 
     buffer += "\n";
 
 
-    std::chrono::high_resolution_clock::time_point t_end = std::chrono::high_resolution_clock::now();
-    double elapsed_seconds = std::chrono::duration_cast<std::chrono::duration<double>>(t_end - t_start).count();
-
-    seg_write_time[thread_id] += elapsed_seconds;
-
-    
     // Mark buffer size increment.
     check_output_buffer(thread_id);
 }

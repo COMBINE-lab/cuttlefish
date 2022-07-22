@@ -56,10 +56,6 @@ void CdBG<k>::output_maximal_unitigs_plain()
     // Construct a thread pool.
     Thread_Pool<k> thread_pool(thread_count, this, Thread_Pool<k>::Task_Type::output_plain);
 
-    // Debug
-    seg_write_time.resize(thread_count);
-    buff_flush_time.resize(thread_count);
-
 
     // Track the maximum sequence buffer size used and the total length of the references.
     size_t max_buf_sz = 0;
@@ -108,13 +104,6 @@ void CdBG<k>::output_maximal_unitigs_plain()
 
     // Close the parser.
     parser.close();
-
-
-    // Debug
-    // std::cout << "Unitigs writing time to in-memory buffers (total): " <<
-    //     std::accumulate(seg_write_time.begin(), seg_write_time.end(), 0) << "\n";
-    // std::cout << "Unitigs flush time to disk (total): " <<
-    //     std::accumulate(buff_flush_time.begin(), buff_flush_time.end(), 0) << "\n";
 
 
     std::chrono::high_resolution_clock::time_point t_end = std::chrono::high_resolution_clock::now();
@@ -173,13 +162,6 @@ void CdBG<k>::output_maximal_unitigs_gfa()
 
     // Construct a thread pool.
     Thread_Pool<k> thread_pool(thread_count, this, Thread_Pool<k>::Task_Type::output_gfa);
-
-    // Debug
-    seg_write_time.resize(thread_count);
-    link_write_time.resize(thread_count);
-    buff_flush_time.resize(thread_count);
-    path_write_time.resize(thread_count);
-    path_flush_time.resize(thread_count);
 
 
     // Open a parser for the FASTA / FASTQ file containing the reference.
@@ -264,21 +246,6 @@ void CdBG<k>::output_maximal_unitigs_gfa()
     parser.close();
 
 
-    // Debug
-    // std::cout << "Segments writing time to in-memory buffers (total): " <<
-    //     std::accumulate(seg_write_time.begin(), seg_write_time.end(), 0) << "\n";
-    // std::cout << "Links writing time to in-memory buffers (total): " <<
-    //     std::accumulate(link_write_time.begin(), link_write_time.end(), 0) << "\n";
-    // std::cout << "Segments and links flush time to disk (total): " <<
-    //     std::accumulate(buff_flush_time.begin(), buff_flush_time.end(), 0) << "\n";
-    // std::cout << "Paths writing time to in-memory buffers (total): " <<
-    //     std::accumulate(path_write_time.begin(), path_write_time.end(), 0) << "\n";
-    // std::cout << "Paths flush time to disk (total): " <<
-    //     std::accumulate(path_flush_time.begin(), path_flush_time.end(), 0) << "\n";
-    // std::cout << "Total paths concatenation time: " << path_concat_time << "\n";
-    // std::cout << "Total logger shutdown time: " << logger_flush_time << "\n";
-
-
     std::chrono::high_resolution_clock::time_point t_end = std::chrono::high_resolution_clock::now();
     double elapsed_seconds = std::chrono::duration_cast<std::chrono::duration<double>>(t_end - t_start).count();
     std::cout <<    "Done writing the compacted graph"
@@ -332,13 +299,6 @@ void CdBG<k>::output_maximal_unitigs_gfa_reduced()
     // Allocate the output buffers and the path buffers for each thread.
     allocate_output_buffers();
     allocate_path_buffers();
-
-
-    seg_write_time.resize(thread_count);
-    link_write_time.resize(thread_count);
-    buff_flush_time.resize(thread_count);
-    path_write_time.resize(thread_count);
-    path_flush_time.resize(thread_count);
 
 
     // Construct a thread pool.
@@ -448,21 +408,6 @@ void CdBG<k>::output_maximal_unitigs_gfa_reduced()
 
     // Close the parser.
     parser.close();
-
-
-    // Debug
-    // std::cout << "Segments writing time to in-memory buffers (total): " <<
-    //     std::accumulate(seg_write_time.begin(), seg_write_time.end(), 0) << "\n";
-    // std::cout << "Links writing time to in-memory buffers (total): " <<
-    //     std::accumulate(link_write_time.begin(), link_write_time.end(), 0) << "\n";
-    // std::cout << "Segments and links flush time to disk (total): " <<
-    //     std::accumulate(buff_flush_time.begin(), buff_flush_time.end(), 0) << "\n";
-    // std::cout << "Paths writing time to in-memory buffers (total): " <<
-    //     std::accumulate(path_write_time.begin(), path_write_time.end(), 0) << "\n";
-    // std::cout << "Paths flush time to disk (total): " <<
-    //     std::accumulate(path_flush_time.begin(), path_flush_time.end(), 0) << "\n";
-    // std::cout << "Total paths concatenation time: " << path_concat_time << "\n";
-    // std::cout << "Total logger shutdown time: " << logger_flush_time << "\n";
 
 
     std::chrono::high_resolution_clock::time_point t_end = std::chrono::high_resolution_clock::now();
@@ -636,15 +581,8 @@ void CdBG<k>::write(const std::string& str, const cuttlefish::logger_t& log)
 template <uint16_t k>
 void CdBG<k>::check_output_buffer(const uint16_t thread_id)
 {
-    std::chrono::high_resolution_clock::time_point t_start = std::chrono::high_resolution_clock::now();
-
     if(output_buffer[thread_id].size() >= BUFFER_THRESHOLD)
         flush_buffer(output_buffer[thread_id], output_[thread_id]);
-
-    std::chrono::high_resolution_clock::time_point t_end = std::chrono::high_resolution_clock::now();
-    double elapsed_seconds = std::chrono::duration_cast<std::chrono::duration<double>>(t_end - t_start).count();
-
-    buff_flush_time[thread_id] += elapsed_seconds;
 }
 
 
@@ -655,16 +593,7 @@ void CdBG<k>::flush_output_buffers()
 
     for (uint16_t t_id = 0; t_id < thread_count; ++t_id)
         if(!output_buffer[t_id].empty())
-        {
-            std::chrono::high_resolution_clock::time_point t_start = std::chrono::high_resolution_clock::now();
-
             flush_buffer(output_buffer[t_id], output_[t_id]);
-
-            std::chrono::high_resolution_clock::time_point t_end = std::chrono::high_resolution_clock::now();
-            double elapsed_seconds = std::chrono::duration_cast<std::chrono::duration<double>>(t_end - t_start).count();
-
-            buff_flush_time[t_id] += elapsed_seconds;
-        }
 }
 
 
@@ -711,13 +640,7 @@ void CdBG<k>::flush_loggers()
 template <uint16_t k>
 void CdBG<k>::flush_output_logger()
 {
-    std::chrono::high_resolution_clock::time_point t_s = std::chrono::high_resolution_clock::now();
-    
     output->flush();
-
-    std::chrono::high_resolution_clock::time_point t_e = std::chrono::high_resolution_clock::now();
-    double elapsed_seconds = std::chrono::duration_cast<std::chrono::duration<double>>(t_e - t_s).count();
-    logger_flush_time += elapsed_seconds;
 }
 
 
@@ -728,15 +651,9 @@ void CdBG<k>::flush_path_loggers()
     const uint8_t gfa_v = params.output_format();
     for(uint16_t t_id = 0; t_id < thread_count; ++t_id)
     {
-        std::chrono::high_resolution_clock::time_point t_s = std::chrono::high_resolution_clock::now();
-
         path_output_[t_id]->flush();
         if(gfa_v == cuttlefish::gfa1)
             overlap_output_[t_id]->flush();
-
-        std::chrono::high_resolution_clock::time_point t_e = std::chrono::high_resolution_clock::now();
-        double elapsed_seconds = std::chrono::duration_cast<std::chrono::duration<double>>(t_e - t_s).count();
-        path_flush_time[t_id] += elapsed_seconds;
     }
 }
 

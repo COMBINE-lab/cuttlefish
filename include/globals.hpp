@@ -6,6 +6,7 @@
 
 #include "boost/preprocessor/repetition/repeat.hpp"
 
+#include <memory> // for allocator & shared_ptr
 #include <cstdint>
 
 
@@ -42,13 +43,16 @@ namespace spdlog
 }
 
 // Miscellaneous forward declarations.
+// I believe we are not allowed to muck around like this 
+// in the `std` namespace.
+/*
 namespace std
 {
     template <typename X> class shared_ptr;
     
     template <typename X> class allocator;
 }
-
+*/
 
 namespace cuttlefish
 {

@@ -112,7 +112,7 @@ struct gs {
     }
   }
   template<bool TS>
-  static inline IDX set(IDX x, W* p, unsigned b, unsigned o) { return set(x, p, o); }
+  static inline IDX set(IDX x, W* p, unsigned, unsigned o) { return set(x, p, o); }
 
   // Do a CAS at position p, offset o and number of bits b. Expect
   // value exp and set value x. It takes care of the tricky case when
@@ -144,7 +144,7 @@ struct gs {
     mask_store<W, true>::store(p, msb, 0);
     return res;
   }
-  static inline bool cas(const IDX x, const IDX exp, W* p, unsigned b, unsigned o) {
+  static inline bool cas(const IDX x, const IDX exp, W* p, unsigned, unsigned o) {
     return cas(x, exp, p, o);
   }
 
@@ -181,7 +181,7 @@ struct gs {
     while(!try_fetch(res, p, o)) { }
     return res;
   }
-  static inline IDX fetch(W* p, unsigned b, unsigned o) { return fetch(p, o); }
+  static inline IDX fetch(W* p, unsigned, unsigned o) { return fetch(p, o); }
 
   // Push value y at position p, offset o and number of bits b. This
   // can be used when multiple threads may update the same position
@@ -445,7 +445,7 @@ public:
     return self;
   }
 
-  Derived& operator=(std::nullptr_t p) {
+  Derived& operator=(std::nullptr_t) {
     Derived& self = *static_cast<Derived*>(this);
     self.m_ptr    = nullptr;
     self.m_offset = 0;
@@ -483,11 +483,11 @@ public:
     return !(*this == rhs);
   }
 
-  bool operator==(std::nullptr_t p) const {
+  bool operator==(std::nullptr_t) const {
     const Derived& self = *static_cast<const Derived*>(this);
     return self.m_ptr == nullptr && self.m_offset == 0;
   }
-  bool operator!=(std::nullptr_t p) const {
+  bool operator!=(std::nullptr_t) const {
     return !(*this == nullptr);
   }
 
@@ -705,7 +705,7 @@ bool lexicographical_compare_n(Iterator first1, const size_t len1,
 }
 
 template<typename D, typename I, unsigned B, typename W, unsigned U>
-inline bool operator==(std::nullptr_t lfs, const common<D, I, B, W, U>& rhs) {
+inline bool operator==(std::nullptr_t, const common<D, I, B, W, U>& rhs) {
   return rhs.operator==(nullptr);
 }
 
@@ -959,7 +959,7 @@ public:
 
   constexpr unsigned bits() const { return BITS; }
 protected:
-  void bits(unsigned b) { } // NOOP
+  void bits(unsigned) { } // NOOP
 };
 
 template<typename IDX, unsigned BITS, typename W, unsigned UB>
@@ -998,7 +998,7 @@ public:
 
   constexpr unsigned bits() const { return BITS; }
 protected:
-  void bits(unsigned b) { } // NOOP
+  void bits(unsigned) { } // NOOP
 };
 
 template<typename I, unsigned BITS, typename W, bool TS, unsigned UB>

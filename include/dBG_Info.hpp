@@ -29,9 +29,9 @@ private:
 
     const std::string file_path_;   // Path to the disk-file to store the JSON object.
 
-    static constexpr const char* short_refs_field = "short refs";    // Category header for information about short references.
     static constexpr const char* basic_field = "basic info";    // Category header for basic graph information.
     static constexpr const char* contigs_field = "contigs info";    // Category header for information about the contigs (maximal unitigs).
+    static constexpr const char* short_refs_field = "short refs";   // Category header for information about references shorter than length `k`.
     static constexpr const char* dcc_field = "detached chordless cycles (DCC) info";  // Category header for information about the DCCs.
     static constexpr const char* params_field = "parameters info"; // Category header for the graph build parameters.
 

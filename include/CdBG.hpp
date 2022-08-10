@@ -17,6 +17,7 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include <utility>
 
 
 template <uint16_t k, uint8_t BITS_PER_KEY> class Kmer_Hash_Table;
@@ -103,8 +104,8 @@ private:
     std::string overlap_file_prefix = "cuttlefish-overlap-output-";
     static constexpr size_t TEMP_FILE_PREFIX_LEN = 10;
 
-    // Hold information about references too short for processing
-    std::vector<std::pair<std::string, size_t>> short_refs;
+    // Hold information about references too short for processing, i.e. with length < `k`.
+    std::vector<std::pair<std::string, std::size_t>> short_refs;
 
 
     /* Build methods */
@@ -124,7 +125,7 @@ private:
     // TODO: rename the "classify" methods with appropriate terminology that are consistent with the theory.
     
     // Classifies the vertices into different types (or, classes).
-    void classify_vertices(std::vector<std::pair<std::string, size_t>>& short_refs_info);
+    void classify_vertices();
 
     // Returns the maximum temporary disk-usage incurred by some execution of the algorithm,
     // that has its vertices-enumeration stats in `vertex_stats`.

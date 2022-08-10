@@ -58,10 +58,13 @@ void dBG_Info<k>::add_basic_info(const CdBG<k>& cdbg)
     dBg_info[basic_field]["vertex count"] = cdbg.vertex_count();
 }
 
+
 template <uint16_t k>
-void dBG_Info<k>::add_short_refs_info(const std::vector<std::pair<std::string, size_t>>& short_refs) {
+void dBG_Info<k>::add_short_refs_info(const std::vector<std::pair<std::string, size_t>>& short_refs)
+{
     dBg_info[short_refs_field] = short_refs;
 }
+
 
 template <uint16_t k>
 void dBG_Info<k>::add_unipaths_info(const Unipaths_Meta_info<k>& unipaths_info)

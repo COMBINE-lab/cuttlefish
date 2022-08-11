@@ -555,7 +555,7 @@ bool CdBG<k>::is_unipath_end(const cuttlefish::State_Class state_class, const cu
 
 
 template <uint16_t k>
-void CdBG<k>::ensure_buffer_space(std::string& buf, const size_t log_len, const cuttlefish::logger_t& log)
+void CdBG<k>::ensure_buffer_space(std::string& buf, const size_t log_len, const logger_t& log)
 {
     if(buf.size() + log_len >= BUFFER_CAPACITY - 1)
         flush_buffer(buf, log);
@@ -563,7 +563,7 @@ void CdBG<k>::ensure_buffer_space(std::string& buf, const size_t log_len, const 
 
 
 template <uint16_t k>
-void CdBG<k>::flush_buffer(std::string& str, const cuttlefish::logger_t& log)
+void CdBG<k>::flush_buffer(std::string& str, const logger_t& log)
 {
     write(str, log);
 
@@ -572,7 +572,7 @@ void CdBG<k>::flush_buffer(std::string& str, const cuttlefish::logger_t& log)
 
 
 template <uint16_t k>
-void CdBG<k>::write(const std::string& str, const cuttlefish::logger_t& log)
+void CdBG<k>::write(const std::string& str, const logger_t& log)
 {
     log->info("{}", str);
 }

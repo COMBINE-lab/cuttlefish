@@ -78,16 +78,18 @@ private:
     // `spdlog` thread pool for outputting GFA paths.
     std::shared_ptr<spdlog::details::thread_pool> tp_path;
 
+    typedef std::shared_ptr<spdlog::logger> logger_t;
+
     // The asynchronous output logger (for GFA segments and connections).
-    cuttlefish::logger_t output;
+    logger_t output;
 
     // Copies of the asynchronous logger `output` for each thread.
-    std::vector<cuttlefish::logger_t> output_;
+    std::vector<logger_t> output_;
 
     // `path_output_[t_id]` and `overlap_output_[t_id]` are the output loggers for the paths
     // and the overlaps between the links in the paths respectively, produced from the
     // underlying sequence, by the thread number `t_id`.
-    std::vector<cuttlefish::logger_t> path_output_, overlap_output_;
+    std::vector<logger_t> path_output_, overlap_output_;
 
     // After all the threads finish the parallel GFA outputting, `first_unitig[t_id]`,
     // `second_unitig[t_id]`, and `last_unitig[t_id]` contain the first unitig, the
@@ -394,13 +396,13 @@ private:
     // to the logger `log` if necessary. The request is non-binding in the sense that
     // if the capacity of the buffer `buf` is smaller than `log_len`, then this method
     // does not ensure enough buffer space.
-    static void ensure_buffer_space(std::string& buf, size_t log_len, const cuttlefish::logger_t& log);
+    static void ensure_buffer_space(std::string& buf, size_t log_len, const logger_t& log);
 
     // Writes the string `str` to the logger `log`, and empties `str`.
-    static void flush_buffer(std::string& str, const cuttlefish::logger_t& log);
+    static void flush_buffer(std::string& str, const logger_t& log);
 
     // Puts the content of the string `str` to the logger `log`.
-    static void write(const std::string& str, const cuttlefish::logger_t& log);
+    static void write(const std::string& str, const logger_t& log);
 
     // Checks the output buffer for the thread number `thread_id`. If the buffer
     // size exceeds `BUFFER_THRESHOLD`, then the buffer content is put into the

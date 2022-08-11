@@ -1,12 +1,11 @@
 
 #include "Validator.hpp"
-#include "spdlog/sinks/stdout_color_sinks.h"
 
 #include <thread>
 
 
 template <uint16_t k>
-Validator<k>::Validator(const Validation_Params& params, cuttlefish::logger_t console):
+Validator<k>::Validator(const Validation_Params& params, logger_t console):
     params(params), console(console)
 {
     Kmer<k>::set_k(params.k());

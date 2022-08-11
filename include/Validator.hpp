@@ -8,6 +8,7 @@
 #include "Kmer_Hasher.hpp"
 #include "Validation_Params.hpp"
 #include "BBHash/BooPHF.h"
+#include "spdlog/sinks/stdout_color_sinks.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -53,8 +54,10 @@ private:
     // Obviously, `kmer` must be a flanking k-mer of that unitig, i.e. the unitig is at `U [ unitig_id [h] ]`.
     std::vector<Unitig_Dir> unitig_dir;
 
+    typedef std::shared_ptr<spdlog::logger> logger_t;
+
     // Console logger to display log messages.
-    cuttlefish::logger_t console;
+    logger_t console;
 
 
     // Builds the minimal perfect hash function `mph` or loads it from disk.
@@ -115,7 +118,7 @@ private:
 public:
 
     // Constructs a `CdBG` object with the parameters wrapped at `params`, and uses `console` for logging.
-    Validator(const Validation_Params& params, cuttlefish::logger_t console);
+    Validator(const Validation_Params& params, logger_t console);
 
     // Constructs a `CdBG` object with the parameters wrapped at `params`.
     Validator(const Validation_Params& params);

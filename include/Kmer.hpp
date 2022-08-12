@@ -293,22 +293,27 @@ inline Kmer<k>::Kmer():
 
 template <uint16_t k>
 inline Kmer<k>::Kmer(const char* const label, const size_t kmer_idx):
-    Kmer()
-{
-    // TODO: avoid the chaining left-shift at each turn. Insert the 2-bit base directly at it's target position.
-    for(size_t idx = kmer_idx; idx < kmer_idx + k; ++idx)
-    {
-        const DNA::Base base = map_base(label[idx]);
-
-        left_shift();
-        kmer_data[0] |= base;
-    }
-}
+    Kmer(label + kmer_idx)
+{}
 
 
 template <uint16_t k>
-inline Kmer<k>::Kmer(const char* const label): Kmer(label, 0)
-{}
+inline Kmer<k>::Kmer(const char* const label):
+    Kmer()
+{
+    constexpr uint16_t PACKED_WORD_COUNT = k / 32;
+
+    // Get the fully packed words' binary representations.
+    for(uint16_t data_idx = 0; data_idx < PACKED_WORD_COUNT; ++data_idx)
+        for(uint16_t bit_pair_idx = 0; bit_pair_idx < 32; ++bit_pair_idx)
+            kmer_data[data_idx] |=
+                (static_cast<uint64_t>(map_base(label[(k - 1) - ((data_idx << 5) + bit_pair_idx)])) << (2 * bit_pair_idx));
+
+    // Get the partially packed (highest index) word's binary representation.
+    for(uint16_t bit_pair_idx = 0; bit_pair_idx < (k & 31); ++bit_pair_idx)
+        kmer_data[NUM_INTS - 1] |=
+            (static_cast<uint64_t>(map_base(label[(k - 1) - (((NUM_INTS - 1) << 5) + bit_pair_idx)])) << (2 * bit_pair_idx));
+}
 
 
 template <uint16_t k>

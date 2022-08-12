@@ -92,14 +92,6 @@ public:
     // Copy assignment operator.
     Kmer<k>& operator=(const Kmer<k>& rhs);
 
-    // Sets the value of the `k` parameter across the `Kmer` class.
-    // Note: For this general k-mer class with `k` being fixed at compile-time,
-    // this method effectively does nothing.
-    static void set_k(uint16_t kmer_len);
-
-    // Returns the k-parameter.
-    constexpr static uint16_t get_k();
-
     // Returns a 64-bit hash value for the k-mer.
     uint64_t to_u64(uint64_t seed=0) const;
 
@@ -344,24 +336,6 @@ inline Kmer<k>& Kmer<k>::operator=(const Kmer<k>& rhs)
     //for(uint16_t idx = 0; idx < NUM_INTS; ++idx)
     //    kmer_data[idx] = rhs.kmer_data[idx];
     return *this;
-}
-
-
-template <uint16_t k>
-inline void Kmer<k>::set_k(const uint16_t kmer_len)
-{
-    if(kmer_len != k)
-    {
-        std::cerr << "Expected k = " << k << ", recieved " << kmer_len << ". Aborting.\n";
-        std::exit(EXIT_FAILURE);
-    }
-}
-
-
-template <uint16_t k>
-inline constexpr uint16_t Kmer<k>::get_k()
-{
-    return k;
 }
 
 

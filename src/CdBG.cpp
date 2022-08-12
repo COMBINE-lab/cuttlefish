@@ -11,9 +11,7 @@ CdBG<k>::CdBG(const Build_Params& params):
     logistics(this->params),
     hash_table(nullptr),
     dbg_info(params.json_file_path())
-{
-    Kmer<k>::set_k(params.k());
-}
+{}
 
 
 template <uint16_t k>

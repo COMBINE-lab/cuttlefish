@@ -234,12 +234,7 @@ public:
 template <uint16_t k>
 inline void Kmer<k>::left_shift()
 {
-    constexpr uint64_t mask_MSN = (uint64_t(0b11) << 62);
-
-    for(uint16_t idx = NUM_INTS - 1; idx > 0; --idx)
-        kmer_data[idx] = (kmer_data[idx] << 2) | ((kmer_data[idx - 1] & mask_MSN) >> 62);
-
-    kmer_data[0] <<= 2;
+    left_shift<1>();
 }
 
 

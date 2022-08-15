@@ -4,6 +4,8 @@
 
 
 
+#include "DNA_Utility.hpp"
+
 #include <cstdint>
 
 
@@ -42,7 +44,23 @@ public:
     {
         return REVERSE_COMPLEMENT_BYTE[byte];
     }
+
+    // Returns the binary encoding word of the literal k-mer `label`.
+    template <uint16_t k>
+    static uint64_t encode(const char* label);
 };
+
+
+template <uint16_t k>
+inline uint64_t Kmer_Utility::encode(const char* const label)
+{
+    static_assert(0 < k && k <= 32, "invalid k-mer label length for machine word encoding");
+
+    if constexpr(k > 1)
+        return (static_cast<uint64_t>(DNA_Utility::map_base(*label)) << (2 * (k - 1))) | encode<k - 1>(label + 1);
+
+    return static_cast<uint64_t>(DNA_Utility::map_base(*label));
+}
 
 
 

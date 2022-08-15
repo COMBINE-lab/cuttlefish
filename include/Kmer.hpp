@@ -15,6 +15,7 @@
 #include <cstring>
 #include <string>
 #include <algorithm>
+#include <cassert>
 
 
 // Defining this macro states our intent that only odd k-values will be used for de Bruijn graph vertices.
@@ -285,21 +286,20 @@ inline Kmer<k>::Kmer(const char* const label, const size_t kmer_idx):
 
 
 template <uint16_t k>
-inline Kmer<k>::Kmer(const char* const label):
-    Kmer()
+__attribute__((optimize("unroll-loops")))
+inline Kmer<k>::Kmer(const char* const label)
 {
-    constexpr uint16_t PACKED_WORD_COUNT = k / 32;
+    assert(std::strlen(label) == k);
+
+    constexpr uint16_t packed_word_count = k / 32;
 
     // Get the fully packed words' binary representations.
-    for(uint16_t data_idx = 0; data_idx < PACKED_WORD_COUNT; ++data_idx)
-        for(uint16_t bit_pair_idx = 0; bit_pair_idx < 32; ++bit_pair_idx)
-            kmer_data[data_idx] |=
-                (static_cast<uint64_t>(map_base(label[(k - 1) - ((data_idx << 5) + bit_pair_idx)])) << (2 * bit_pair_idx));
+    for(uint16_t data_idx = 0; data_idx < packed_word_count; ++data_idx)
+        kmer_data[data_idx] = Kmer_Utility::encode<32>((label + k) - (data_idx << 5) - 32);
 
     // Get the partially packed (highest index) word's binary representation.
-    for(uint16_t bit_pair_idx = 0; bit_pair_idx < (k & 31); ++bit_pair_idx)
-        kmer_data[NUM_INTS - 1] |=
-            (static_cast<uint64_t>(map_base(label[(k - 1) - (((NUM_INTS - 1) << 5) + bit_pair_idx)])) << (2 * bit_pair_idx));
+    if constexpr(k & 31)
+        kmer_data[NUM_INTS - 1] = Kmer_Utility::encode<k & 31>(label);
 }
 
 

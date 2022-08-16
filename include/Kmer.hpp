@@ -36,7 +36,7 @@ class Kmer: public DNA_Utility  // TODO: replace this "is-a" inheritance; semant
 private:
 
     // Number of 64-bit integers required to compactly represent the underlying k-mer with 2-bits/base encoding.
-    static constexpr const uint16_t NUM_INTS = (k + 31) / 32;
+    static constexpr uint16_t NUM_INTS = (k + 31) / 32;
 
     // Bitmask used to clear the most significant DNA base character, i.e. the first base of the k-mer which is at the bits `2k-1 : 2k-2`.
     static constexpr const uint64_t CLEAR_MSN_MASK = ~(uint64_t(0b11) << (2 * ((k - 1) % 32)));
@@ -70,7 +70,7 @@ public:
 
     // Constructs a k-mer from the provided characters at
     // `label[kmer_idx,...,kmer_idx + k - 1]`.
-    Kmer(const char* label, size_t kmer_idx);
+    Kmer(const char* label, std::size_t kmer_idx);
 
     // Constructs a k-mer from the provided characters at
     // `label[0, ..., k - 1]`.
@@ -81,7 +81,7 @@ public:
 
     // Constructs a k-mer from the provided characters at
     // `label[kmer_idx,...,kmer_idx + k - 1]`.
-    Kmer(const std::string& label, size_t kmer_idx);
+    Kmer(const std::string& label, std::size_t kmer_idx);
 
     // Constructs a k-mer from `kmer_api`, a k-mer object built from KMC.
     Kmer(const CKmerAPI& kmer_api);
@@ -129,11 +129,6 @@ public:
 
     // Returns true iff this k-mer is not identical to the other k-mer `rhs`.
     bool operator!=(const Kmer<k>& rhs) const;
-
-    // Returns true iff the bitwise encoding of this k-mer is either equal
-    // or greater to the other k-mer `rhs`. The current encoding corresponds
-    // to the lexical ordering.
-    bool operator>=(const Kmer<k>& rhs) const;
 
     // Returns the `DNA::Base` (2-bit) encoding of the character at the front,
     // i.e. at the first index of the literal representation. For a k-mer
@@ -233,7 +228,7 @@ inline void Kmer<k>::left_shift()
 template <uint16_t k>
 inline void Kmer<k>::right_shift()
 {
-    constexpr uint64_t mask_LSN = uint64_t(0b11);
+    constexpr uint64_t mask_LSN = 0b11;
 
     for(uint16_t idx = 0; idx < NUM_INTS - 1; ++idx)
         kmer_data[idx] = (kmer_data[idx] >> 2) | ((kmer_data[idx + 1] & mask_LSN) << 62);
@@ -264,7 +259,7 @@ inline void Kmer<k>::left_shift()
 template <uint16_t k>
 inline uint64_t Kmer<k>::to_u64(const uint64_t seed) const
 {
-    constexpr const uint16_t NUM_BYTES = (k + 3) / 4;
+    constexpr uint16_t NUM_BYTES = (k + 3) / 4;
     return XXH3_64bits_withSeed(kmer_data, NUM_BYTES, seed);
 }
 
@@ -276,7 +271,7 @@ inline Kmer<k>::Kmer():
 
 
 template <uint16_t k>
-inline Kmer<k>::Kmer(const char* const label, const size_t kmer_idx):
+inline Kmer<k>::Kmer(const char* const label, const std::size_t kmer_idx):
     Kmer(label + kmer_idx)
 {}
 
@@ -300,12 +295,14 @@ inline Kmer<k>::Kmer(const char* const label)
 
 
 template <uint16_t k>
-inline Kmer<k>::Kmer(const std::string& label): Kmer(label.c_str())
+inline Kmer<k>::Kmer(const std::string& label):
+    Kmer(label.c_str())
 {}
 
 
 template <uint16_t k>
-inline Kmer<k>::Kmer(const std::string& label, const size_t kmer_idx): Kmer(label.c_str(), kmer_idx)
+inline Kmer<k>::Kmer(const std::string& label, const std::size_t kmer_idx):
+    Kmer(label.c_str(), kmer_idx)
 {}
 
 
@@ -319,18 +316,15 @@ inline Kmer<k>::Kmer(const CKmerAPI& kmer_api)
 template <uint16_t k>
 inline Kmer<k>::Kmer(const Kmer<k>& rhs)
 {
-    memcpy(kmer_data, rhs.kmer_data, NUM_INTS * sizeof(uint64_t));
-    //for(uint16_t idx = 0; idx < NUM_INTS; ++idx)
-    //    kmer_data[idx] = rhs.kmer_data[idx];
+    std::memcpy(kmer_data, rhs.kmer_data, NUM_INTS * sizeof(uint64_t));
 }
 
 
 template <uint16_t k>
 inline Kmer<k>& Kmer<k>::operator=(const Kmer<k>& rhs)
 {
-    memcpy(kmer_data, rhs.kmer_data, NUM_INTS * sizeof(uint64_t));
-    //for(uint16_t idx = 0; idx < NUM_INTS; ++idx)
-    //    kmer_data[idx] = rhs.kmer_data[idx];
+    std::memcpy(kmer_data, rhs.kmer_data, NUM_INTS * sizeof(uint64_t));
+
     return *this;
 }
 
@@ -431,15 +425,14 @@ inline void Kmer<k>::as_reverse_complement(const Kmer<k>& other)
     // Get the reverse complement for the fully packed bytes.
 
     constexpr uint16_t packed_byte_count = k / 4;
-
     for(uint16_t byte_idx = 0; byte_idx < packed_byte_count; ++byte_idx)
         rev_compl[packed_byte_count - 1 - byte_idx] = Kmer_Utility::reverse_complement(data[byte_idx]);
 
 
     // Get the reverse complement for the only byte that might be partially packed (possible for the highest-indexed byte only).
 
-    constexpr uint16_t rem_base_count = (k & 3);
-    if(rem_base_count == 0) // if constexpr(rem_base_count == 0)    // C++17 compile-time optimization
+    constexpr uint16_t rem_base_count = k % 4;
+    if constexpr(rem_base_count == 0)
         return;
     
     rev_compl[packed_byte_count] = 0;
@@ -476,11 +469,7 @@ inline bool Kmer<k>::operator>(const Kmer<k>& rhs) const
 template <uint16_t k>
 inline bool Kmer<k>::operator==(const Kmer<k>& rhs) const
 {
-    for(uint16_t idx = 0; idx < NUM_INTS; ++idx)
-        if(kmer_data[idx] != rhs.kmer_data[idx])
-            return false;
-
-    return true;
+    return std::memcmp(kmer_data, rhs.kmer_data, NUM_INTS * sizeof(uint64_t)) == 0;
 }
 
 
@@ -492,19 +481,12 @@ inline bool Kmer<k>::operator!=(const Kmer<k>& rhs) const
 
 
 template <uint16_t k>
-inline bool Kmer<k>::operator>=(const Kmer<k>& rhs) const
-{
-    return !operator<(rhs);
-}
-
-
-template <uint16_t k>
 inline DNA::Base Kmer<k>::front() const
 {
     // Relative index of the most significant nucleotide in it's 64-bit word.
     constexpr uint16_t rel_idx_MSN = 2 * ((k - 1) % 32);
 
-    // Mask to extract the most significant nucelotide.
+    // Mask to extract the most significant nucleotide.
     constexpr uint64_t mask_MSN = (static_cast<uint64_t>(0b11) << rel_idx_MSN);
 
     return DNA::Base((kmer_data[NUM_INTS - 1] & mask_MSN) >> rel_idx_MSN);
@@ -524,7 +506,7 @@ inline DNA::Base Kmer<k>::back() const
 template <uint16_t k>
 inline bool Kmer<k>::in_forward(const Kmer<k>& kmer_hat) const
 {
-    return this->operator==(kmer_hat);
+    return operator==(kmer_hat);
 }
 
 
@@ -548,7 +530,7 @@ inline void Kmer<k>::roll_to_next_kmer(const DNA::Base base, Kmer<k>& rev_compl)
     kmer_data[0] |= base;
 
     rev_compl.right_shift();
-    rev_compl.kmer_data[NUM_INTS - 1] |= (uint64_t(complement(base)) << (2 * ((k - 1) & 31)));
+    rev_compl.kmer_data[NUM_INTS - 1] |= (static_cast<uint64_t>(complement(base)) << (2 * ((k - 1) & 31)));
 }
 
 
@@ -657,10 +639,10 @@ inline void Kmer<k>::get_label(T_container_& label) const
 {
     label.resize(k);
 
-    constexpr uint16_t PACKED_BYTE_COUNT = k / 32;
+    constexpr uint16_t packed_word_count = k / 32;
 
     // Get the fully packed words' representations.
-    for(uint16_t data_idx = 0; data_idx < PACKED_BYTE_COUNT; ++data_idx)
+    for(uint16_t data_idx = 0; data_idx < packed_word_count; ++data_idx)
         for(uint16_t bit_pair_idx = 0; bit_pair_idx < 32; ++bit_pair_idx)
             label[(k - 1) - ((data_idx << 5) + bit_pair_idx)] =
                 map_char(static_cast<DNA::Base>((kmer_data[data_idx] & (0b11ULL << (2 * bit_pair_idx))) >> (2 * bit_pair_idx)));

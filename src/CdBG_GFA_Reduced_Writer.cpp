@@ -1,5 +1,6 @@
 
 #include "CdBG.hpp"
+#include "DNA_Utility.hpp"
 #include "Job_Queue.hpp"
 #include "fmt/format.h"
 
@@ -21,10 +22,10 @@ void CdBG<k>::write_segment(const uint16_t thread_id, const char* const seq, con
     buffer += "\t";
     if(dir == cuttlefish::FWD)
         for(size_t offset = 0; offset < segment_len; ++offset)
-            buffer += Kmer<k>::upper(seq[start_kmer_idx + offset]);
+            buffer += DNA_Utility::upper(seq[start_kmer_idx + offset]);
     else
         for(size_t offset = 0; offset < segment_len; ++offset)
-            buffer += Kmer<k>::complement(seq[end_kmer_idx + k - 1 - offset]);
+            buffer += DNA_Utility::complement(seq[end_kmer_idx + k - 1 - offset]);
 
 
     // End the segment line.

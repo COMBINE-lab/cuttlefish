@@ -1,5 +1,6 @@
 
 #include "Validator.hpp"
+#include "DNA_Utility.hpp"
 
 #include <thread>
 
@@ -66,7 +67,7 @@ size_t Validator<k>::search_valid_kmer(const char* const seq, const size_t seq_l
     while(idx <= seq_len - k)
     {
         // Go over the contiguous subsequence of 'N's.
-        for(; idx <= seq_len - k && Kmer<k>::is_placeholder(seq[idx]); idx++);
+        for(; idx <= seq_len - k && DNA_Utility::is_placeholder(seq[idx]); idx++);
 
         // Go over the contiguous subsequence of non-'N's.
         if(idx <= seq_len - k)
@@ -74,7 +75,7 @@ size_t Validator<k>::search_valid_kmer(const char* const seq, const size_t seq_l
             valid_start_idx = idx;
             base_count = 0;
 
-            for(; idx < seq_len && !Kmer<k>::is_placeholder(seq[idx]); ++idx)
+            for(; idx < seq_len && !DNA_Utility::is_placeholder(seq[idx]); ++idx)
                 if(++base_count == k)
                     return valid_start_idx;
         }

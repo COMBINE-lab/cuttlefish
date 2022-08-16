@@ -1,5 +1,6 @@
 
 #include "CdBG.hpp"
+#include "DNA_Utility.hpp"
 #include "Annotated_Kmer.hpp"
 #include "Output_Format.hpp"
 #include "fmt/format.h"
@@ -169,13 +170,13 @@ size_t CdBG<k>::output_maximal_unitigs_gfa(const uint16_t thread_id, const char*
 
     // The subsequence contains only an isolated k-mer, i.e. there's no valid left or right
     // neighboring k-mer to this k-mer. So it's a maximal unitig by itself.
-    if((kmer_idx == 0 || Kmer<k>::is_placeholder(seq[kmer_idx - 1])) &&
-        (kmer_idx + k == seq_len || Kmer<k>::is_placeholder(seq[kmer_idx + k])))
+    if((kmer_idx == 0 || DNA_Utility::is_placeholder(seq[kmer_idx - 1])) &&
+        (kmer_idx + k == seq_len || DNA_Utility::is_placeholder(seq[kmer_idx + k])))
         output_gfa_unitig(thread_id, seq, curr_kmer, curr_kmer);
     else    // At least one valid neighbor exists, either to the left or to the right, or on both sides.
     {
         // No valid right neighbor exists for the k-mer.
-        if(kmer_idx + k == seq_len || Kmer<k>::is_placeholder(seq[kmer_idx + k]))
+        if(kmer_idx + k == seq_len || DNA_Utility::is_placeholder(seq[kmer_idx + k]))
         {
             // A valid left neighbor exists as it's not an isolated k-mer.
             Annotated_Kmer<k> prev_kmer(Kmer<k>(seq, kmer_idx - 1), kmer_idx, *hash_table);
@@ -198,7 +199,7 @@ size_t CdBG<k>::output_maximal_unitigs_gfa(const uint16_t thread_id, const char*
         Annotated_Kmer<k> prev_kmer;
 
         // No valid left neighbor exists for the k-mer.
-        if(kmer_idx == 0 || Kmer<k>::is_placeholder(seq[kmer_idx - 1]))
+        if(kmer_idx == 0 || DNA_Utility::is_placeholder(seq[kmer_idx - 1]))
         {
             // A maximal unitig starts at the beginning of a maximal valid subsequence.
             on_unipath = true;
@@ -236,7 +237,7 @@ size_t CdBG<k>::output_maximal_unitigs_gfa(const uint16_t thread_id, const char*
 
 
             // No valid right neighbor exists for the k-mer.
-            if(kmer_idx + k == seq_len || Kmer<k>::is_placeholder(seq[kmer_idx + k]))
+            if(kmer_idx + k == seq_len || DNA_Utility::is_placeholder(seq[kmer_idx + k]))
             {
                 // A maximal unitig ends at the ending of a maximal valid subsequence.
                 if(on_unipath)
@@ -371,10 +372,10 @@ void CdBG<k>::write_gfa_segment(const uint16_t thread_id, const char* const seq,
     buffer += "\t";
     if(dir == cuttlefish::FWD)
         for(size_t offset = 0; offset < segment_len; ++offset)
-            buffer += Kmer<k>::upper(seq[start_kmer_idx + offset]);
+            buffer += DNA_Utility::upper(seq[start_kmer_idx + offset]);
     else
         for(size_t offset = 0; offset < segment_len; ++offset)
-            buffer += Kmer<k>::complement(seq[end_kmer_idx + k - 1 - offset]);
+            buffer += DNA_Utility::complement(seq[end_kmer_idx + k - 1 - offset]);
 
 
     // Write some optional fields that are trivially inferrable here.

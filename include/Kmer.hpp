@@ -24,7 +24,7 @@
 
 
 template <uint16_t k>
-class Kmer: public DNA_Utility  // TODO: replace this "is-a" inheritance; semantically inconsistent.
+class Kmer
 {
     // Make k-mers friend for (k + 1)-mer, so that de Bruijn graph vertices, i.e. k-mers,
     // may access private information (the raw data) from edges, i.e. (k + 1)-mers.
@@ -513,7 +513,7 @@ inline bool Kmer<k>::in_forward(const Kmer<k>& kmer_hat) const
 template <uint16_t k>
 inline void Kmer<k>::roll_to_next_kmer(const char next_base, Kmer<k>& rev_compl)
 {
-    const DNA::Base mapped_base = map_base(next_base);
+    const DNA::Base mapped_base = DNA_Utility::map_base(next_base);
 
     roll_to_next_kmer(mapped_base, rev_compl);
 }
@@ -530,14 +530,14 @@ inline void Kmer<k>::roll_to_next_kmer(const DNA::Base base, Kmer<k>& rev_compl)
     kmer_data[0] |= base;
 
     rev_compl.right_shift();
-    rev_compl.kmer_data[NUM_INTS - 1] |= (static_cast<uint64_t>(complement(base)) << (2 * ((k - 1) & 31)));
+    rev_compl.kmer_data[NUM_INTS - 1] |= (static_cast<uint64_t>(DNA_Utility::complement(base)) << (2 * ((k - 1) & 31)));
 }
 
 
 template <uint16_t k>
 inline void Kmer<k>::roll_to_next_kmer(const DNA::Extended_Base edge, Kmer<k>& rev_compl)
 {
-    const DNA::Base mapped_base = map_base(edge);
+    const DNA::Base mapped_base = DNA_Utility::map_base(edge);
 
     roll_to_next_kmer(mapped_base, rev_compl);
 }
@@ -546,7 +546,7 @@ inline void Kmer<k>::roll_to_next_kmer(const DNA::Extended_Base edge, Kmer<k>& r
 template <uint16_t k>
 inline void Kmer<k>::roll_forward(const DNA::Extended_Base edge)
 {
-    const DNA::Base mapped_base = map_base(edge);
+    const DNA::Base mapped_base = DNA_Utility::map_base(edge);
 
     kmer_data[NUM_INTS - 1] &= CLEAR_MSN_MASK;
     left_shift<1>();
@@ -560,7 +560,7 @@ inline void Kmer<k>::roll_backward(const DNA::Extended_Base edge)
     // Relative index of the most significant nucleotide in it's 64-bit word.
     constexpr uint16_t rel_idx_MSN = 2 * ((k - 1) % 32);
 
-    const DNA::Base mapped_base = map_base(edge);
+    const DNA::Base mapped_base = DNA_Utility::map_base(edge);
 
     right_shift();
     kmer_data[NUM_INTS - 1] |= (static_cast<uint64_t>(mapped_base) << rel_idx_MSN);
@@ -645,12 +645,12 @@ inline void Kmer<k>::get_label(T_container_& label) const
     for(uint16_t data_idx = 0; data_idx < packed_word_count; ++data_idx)
         for(uint16_t bit_pair_idx = 0; bit_pair_idx < 32; ++bit_pair_idx)
             label[(k - 1) - ((data_idx << 5) + bit_pair_idx)] =
-                map_char(static_cast<DNA::Base>((kmer_data[data_idx] & (0b11ULL << (2 * bit_pair_idx))) >> (2 * bit_pair_idx)));
+                DNA_Utility::map_char(static_cast<DNA::Base>((kmer_data[data_idx] & (0b11ULL << (2 * bit_pair_idx))) >> (2 * bit_pair_idx)));
 
     // Get the partially packed (highest index) word's representation.
     for(uint16_t bit_pair_idx = 0; bit_pair_idx < (k & 31); ++bit_pair_idx)
         label[(k - 1) - (((NUM_INTS - 1) << 5) + bit_pair_idx)] =
-            map_char(static_cast<DNA::Base>((kmer_data[NUM_INTS - 1] & (0b11ULL << (2 * bit_pair_idx))) >> (2 * bit_pair_idx)));
+            DNA_Utility::map_char(static_cast<DNA::Base>((kmer_data[NUM_INTS - 1] & (0b11ULL << (2 * bit_pair_idx))) >> (2 * bit_pair_idx)));
 }
 
 

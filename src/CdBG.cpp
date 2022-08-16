@@ -1,5 +1,6 @@
 
 #include "CdBG.hpp"
+#include "DNA_Utility.hpp"
 #include "kmer_Enumerator.hpp"
 #include "Kmer_Container.hpp"
 #include "kmer_Enumeration_Stats.hpp"
@@ -127,7 +128,7 @@ size_t CdBG<k>::search_valid_kmer(const char* const seq, const size_t left_end, 
     while(idx <= right_end)
     {
         // Go over the contiguous subsequence of 'N's.
-        for(; idx <= right_end && Kmer<k>::is_placeholder(seq[idx]); idx++);
+        for(; idx <= right_end && DNA_Utility::is_placeholder(seq[idx]); idx++);
 
         // Go over the contiguous subsequence of non-'N's.
         if(idx <= right_end)
@@ -135,7 +136,7 @@ size_t CdBG<k>::search_valid_kmer(const char* const seq, const size_t left_end, 
             valid_start_idx = idx;
             base_count = 0;
 
-            for(; idx <= right_end + k - 1 && !Kmer<k>::is_placeholder(seq[idx]); ++idx)
+            for(; idx <= right_end + k - 1 && !DNA_Utility::is_placeholder(seq[idx]); ++idx)
                 if(++base_count == k)
                     return valid_start_idx;
         }

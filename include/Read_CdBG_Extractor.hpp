@@ -5,6 +5,7 @@
 
 
 #include "globals.hpp"
+#include "DNA_Utility.hpp"
 #include "Kmer_Hash_Table.hpp"
 #include "Directed_Vertex.hpp"
 #include "Maximal_Unitig_Scratch.hpp"
@@ -332,7 +333,7 @@ inline bool Read_CdBG_Extractor<k>::walk_unitig(const Kmer<k>& v_hat, const Stat
             break;
 
         // Still within the unitig.
-        if(!unitig.extend(v, Kmer<k>::map_char(b_ext)))
+        if(!unitig.extend(v, DNA_Utility::map_char(b_ext)))
             break;  // The unitig is a DCC (Detached Chordless Cycle).
 
         s_v = cuttlefish::opposite_side(s_v);

@@ -31,7 +31,7 @@ private:
 
     static constexpr const char* basic_field = "basic info";    // Category header for basic graph information.
     static constexpr const char* contigs_field = "contigs info";    // Category header for information about the contigs (maximal unitigs).
-    static constexpr const char* short_refs_field = "short refs";   // Category header for information about references shorter than length `k`.
+    static constexpr const char* short_seqs_field = "short seqs";   // Category header for information about sequences shorter than length `k`.
     static constexpr const char* dcc_field = "detached chordless cycles (DCC) info";  // Category header for information about the DCCs.
     static constexpr const char* params_field = "parameters info"; // Category header for the graph build parameters.
 
@@ -68,7 +68,7 @@ public:
     void add_unipaths_info(const CdBG<k>& cdbg);
 
     // Adds information about the references shorter than length k.
-    void add_short_refs_info(const std::vector<std::pair<std::string, size_t>>& short_refs);
+    void add_short_seqs_info(const std::vector<std::pair<std::string, std::size_t>>& short_seqs);
 
     // Writes the JSON object to its corresponding disk-file.
     void dump_info() const;

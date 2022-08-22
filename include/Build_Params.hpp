@@ -33,6 +33,7 @@ private:
     const bool strict_memory_;  // Whether strict memory limit restriction is specifiied.
     const std::string output_file_path_;    // Path to the output file.
     const std::optional<cuttlefish::Output_Format> output_format_;  // Output format (0: FASTA, 1: GFAv1, 2: GFAv2, 3: GFA-reduced).
+    const bool track_short_seqs_;   // Whether to track input sequences shorter than `k` bases.
     const std::string working_dir_path_;    // Path to the working directory (for temporary files).
     const bool path_cover_; // Whether to extract a maximal path cover of the de Bruijn graph.
     const bool save_mph_;   // Option to save the MPH over the vertex set of the de Bruijn graph.
@@ -86,6 +87,7 @@ public:
                     const bool strict_memory,
                     const std::string& output_file_path,
                     const std::optional<cuttlefish::Output_Format> output_format,
+                    const bool track_short_seqs,
                     const std::string& working_dir_path,
                     const bool path_cover,
                     const bool save_mph,
@@ -185,6 +187,13 @@ public:
     cuttlefish::Output_Format output_format() const
     {
         return output_format_.value_or(cuttlefish::_default::OP_FORMAT);
+    }
+
+
+    // Returns whether to track input sequences shorter than `k` bases.
+    bool track_short_seqs() const
+    {
+        return track_short_seqs_;
     }
 
 

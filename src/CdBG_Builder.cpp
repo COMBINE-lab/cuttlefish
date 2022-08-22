@@ -58,7 +58,9 @@ void CdBG<k>::classify_vertices()
             // Nothing to process for sequences with length shorter than `k`.
             if(seq_len < k)
             {
-                short_refs.emplace_back(std::make_pair(parser.seq_name(), seq_len));
+                if(params.track_short_seqs())
+                    short_seqs.emplace_back(parser.seq_name(), seq_len);
+
                 continue;
             }
 

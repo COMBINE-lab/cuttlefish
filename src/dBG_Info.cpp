@@ -60,9 +60,9 @@ void dBG_Info<k>::add_basic_info(const CdBG<k>& cdbg)
 
 
 template <uint16_t k>
-void dBG_Info<k>::add_short_refs_info(const std::vector<std::pair<std::string, size_t>>& short_refs)
+void dBG_Info<k>::add_short_seqs_info(const std::vector<std::pair<std::string, std::size_t>>& short_seqs)
 {
-    dBg_info[short_refs_field] = short_refs;
+    dBg_info[short_seqs_field] = short_seqs;
 }
 
 

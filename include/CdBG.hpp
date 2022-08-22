@@ -106,8 +106,8 @@ private:
     std::string overlap_file_prefix = "cuttlefish-overlap-output-";
     static constexpr size_t TEMP_FILE_PREFIX_LEN = 10;
 
-    // Hold information about references too short for processing, i.e. with length < `k`.
-    std::vector<std::pair<std::string, std::size_t>> short_refs;
+    // Information about sequences too short for processing, i.e. with length < `k`.
+    std::vector<std::pair<std::string, std::size_t>> short_seqs;
 
 
     /* Build methods */

@@ -61,7 +61,7 @@ std::size_t file_size(const std::string& file_path)
 bool file_prefix_exists(const std::string& path, const std::string& prefix)
 {
     for(const auto& entry: std::filesystem::directory_iterator(path))
-        if(is_prefix(entry.path(), prefix))
+        if(is_prefix(filename(entry.path()), prefix))
             return true;
 
     return false;

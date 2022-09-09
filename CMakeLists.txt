@@ -32,12 +32,12 @@ set(CLANG_VERSION_MIN "9.0")
 if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
     if(CMAKE_CXX_COMPILER_VERSION VERSION_LESS GCC_VERSION_MIN)
         message(FATAL_ERROR "${PROJECT_NAME} requires GCC version to be at least ${GCC_VERSION_MIN}."
-                            "Available version is ${CMAKE_CXX_COMPILER_VERSION}.")
+                            " Available version is ${CMAKE_CXX_COMPILER_VERSION}.")
     endif()
 elseif(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
     if(CMAKE_CXX_COMPILER_VERSION VERSION_LESS CLANG_VERSION_MIN)
         message(FATAL_ERROR "${PROJECT_NAME} requires Clang version to be at least ${CLANG_VERSION_MIN}."
-                            "Available version is ${CMAKE_CXX_COMPILER_VERSION}.")
+                            " Available version is ${CMAKE_CXX_COMPILER_VERSION}.")
     endif()
 endif()
 

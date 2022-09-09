@@ -26,7 +26,7 @@ Cuttlefish is a fast, parallel, and very lightweight memory tool to construct th
 
 Cuttlefish is a program to produce the compacted de Bruijn graph from sequencing reads or reference sequences.
 
-The papers describing the work are: [Cuttlefish (original)](https://academic.oup.com/bioinformatics/article/37/Supplement_1/i177/6319696) and [Cuttlefish 2](https://doi.org/10.1101/2021.12.14.472718) (pre-print).
+The papers describing the work are: [Cuttlefish (original)](https://academic.oup.com/bioinformatics/article/37/Supplement_1/i177/6319696) and [Cuttlefish 2](https://doi.org/10.1186/s13059-022-02743-6).
 
 ## Dependencies
 
@@ -334,36 +334,11 @@ If you use Cuttlefish or Cuttlefish 2 in your work, please include the following
 
 ### [Cuttlefish (original)](https://doi.org/10.1093/bioinformatics/btab309)
 
-```bibtex
-@article{10.1093/bioinformatics/btab309,
-  author = {Khan, Jamshed and Patro, Rob},
-  title = "{Cuttlefish: fast, parallel and low-memory compaction of de Bruijn graphs from large-scale genome collections}",
-  journal = {Bioinformatics},
-  volume = {37},
-  number = {Supplement\_1},
-  pages = {i177-i186},
-  year = {2021},
-  month = {07},
-  issn = {1367-4803},
-  doi = {10.1093/bioinformatics/btab309},
-  url = {https://doi.org/10.1093/bioinformatics/btab309},
-}
-```
+> Jamshed Khan, Rob Patro, Cuttlefish: fast, parallel and low-memory compaction of de Bruijn graphs from large-scale genome collections, Bioinformatics, Volume 37, Issue Supplement_1, July 2021, Pages i177–i186, <https://doi.org/10.1093/bioinformatics/btab309>
 
-### [Cuttlefish 2](https://doi.org/10.1101/2021.12.14.472718)
+### [Cuttlefish 2](https://doi.org/10.1186/s13059-022-02743-6)
 
-```bibtex
-@article{Khan2021.12.14.472718,
-  author = {Khan, Jamshed and Kokot, Marek and Deorowicz, Sebastian and Patro, Rob},
-  title = "{Scalable, ultra-fast, and low-memory construction of compacted de Bruijn graphs with Cuttlefish 2}",
-  elocation-id = {2021.12.14.472718},
-  year = {2022},
-  doi = {10.1101/2021.12.14.472718},
-  publisher = {Cold Spring Harbor Laboratory},
-  URL = {https://www.biorxiv.org/content/early/2022/06/19/2021.12.14.472718},
-  journal = {bioRxiv}
-}
-```
+> Khan, J., Kokot, M., Deorowicz, S. et al. Scalable, ultra-fast, and low-memory construction of compacted de Bruijn graphs with Cuttlefish 2. Genome Biol 23, 190 (2022). <https://doi.org/10.1186/s13059-022-02743-6>
 
 This work is supported by _NIH R01 HG009937_, and by _NSF CCF-1750472_, and _CNS-1763680_.
 

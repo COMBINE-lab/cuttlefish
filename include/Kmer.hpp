@@ -289,7 +289,7 @@ inline Kmer<k>::Kmer(const char* const label)
         kmer_data[data_idx] = Kmer_Utility::encode<32>((label + k) - (data_idx << 5) - 32);
 
     // Get the partially packed (highest index) word's binary representation.
-    if constexpr(k & 31)
+    if constexpr((k & 31) > 0)
         kmer_data[NUM_INTS - 1] = Kmer_Utility::encode<k & 31>(label);
 }
 

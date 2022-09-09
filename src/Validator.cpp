@@ -1,24 +1,20 @@
 
 #include "Validator.hpp"
-#include "spdlog/sinks/stdout_color_sinks.h"
+#include "DNA_Utility.hpp"
 
 #include <thread>
 
 
 template <uint16_t k>
-Validator<k>::Validator(const Validation_Params& params, cuttlefish::logger_t console):
+Validator<k>::Validator(const Validation_Params& params, logger_t console):
     params(params), console(console)
-{
-    Kmer<k>::set_k(params.k());
-}
+{}
 
 
 template <uint16_t k>
 Validator<k>::Validator(const Validation_Params& params):
     params(params), console(spdlog::stdout_color_mt("Validator"))
-{
-    Kmer<k>::set_k(params.k());
-}
+{}
 
 
 template <uint16_t k>
@@ -71,7 +67,7 @@ size_t Validator<k>::search_valid_kmer(const char* const seq, const size_t seq_l
     while(idx <= seq_len - k)
     {
         // Go over the contiguous subsequence of 'N's.
-        for(; idx <= seq_len - k && Kmer<k>::is_placeholder(seq[idx]); idx++);
+        for(; idx <= seq_len - k && DNA_Utility::is_placeholder(seq[idx]); idx++);
 
         // Go over the contiguous subsequence of non-'N's.
         if(idx <= seq_len - k)
@@ -79,7 +75,7 @@ size_t Validator<k>::search_valid_kmer(const char* const seq, const size_t seq_l
             valid_start_idx = idx;
             base_count = 0;
 
-            for(; idx < seq_len && !Kmer<k>::is_placeholder(seq[idx]); ++idx)
+            for(; idx < seq_len && !DNA_Utility::is_placeholder(seq[idx]); ++idx)
                 if(++base_count == k)
                     return valid_start_idx;
         }

@@ -8,9 +8,11 @@
 #include "Kmer.hpp"
 #include "Directed_Vertex.hpp"
 #include "globals.hpp"
-#include "Kmer_Hash_Table.hpp"
 
 #include <cstdint>
+
+
+template <uint16_t k, uint8_t BITS_PER_KEY> class Kmer_Hash_Table;
 
 
 // A class denoting an endpoint of a bidirected edge instance.

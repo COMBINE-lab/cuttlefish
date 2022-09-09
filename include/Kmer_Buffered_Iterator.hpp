@@ -4,10 +4,12 @@
 
 
 
-#include "globals.hpp"
 #include "Kmer_Container.hpp"
 #include "kmc_api/kmc_file.h"
 
+#include <cstdint>
+#include <cstddef>
+#include <memory>
 #include <thread>
 
 

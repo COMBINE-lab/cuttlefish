@@ -5,6 +5,7 @@
 
 
 #include "globals.hpp"
+#include "Kmer.hpp"
 
 
 // K-mer and its reverse complement, canonical form, and direction.

@@ -4,9 +4,13 @@
 
 
 
-#include "Build_Params.hpp"
-#include "kmer_Enumeration_Stats.hpp"
 #include "kmc_runner.h"
+
+#include <cstdint>
+#include <cstddef>
+#include <vector>
+#include <string>
+#include <iostream>
 
 
 template <uint16_t k> class kmer_Enumeration_Stats;

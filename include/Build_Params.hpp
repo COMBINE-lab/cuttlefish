@@ -10,10 +10,10 @@
 #include "File_Extensions.hpp"
 #include "Input_Defaults.hpp"
 
+#include <cstdint>
+#include <cstddef>
 #include <string>
 #include <vector>
-#include <thread>
-#include <iostream>
 #include <optional>
 
 
@@ -33,6 +33,7 @@ private:
     const bool strict_memory_;  // Whether strict memory limit restriction is specifiied.
     const std::string output_file_path_;    // Path to the output file.
     const std::optional<cuttlefish::Output_Format> output_format_;  // Output format (0: FASTA, 1: GFAv1, 2: GFAv2, 3: GFA-reduced).
+    const bool track_short_seqs_;   // Whether to track input sequences shorter than `k` bases.
     const std::string working_dir_path_;    // Path to the working directory (for temporary files).
     const bool path_cover_; // Whether to extract a maximal path cover of the de Bruijn graph.
     const bool save_mph_;   // Option to save the MPH over the vertex set of the de Bruijn graph.
@@ -72,27 +73,28 @@ private:
 public:
 
     // Constructs a parameters wrapper object with the self-explanatory parameters.
-    Build_Params(   const bool is_read_graph,
-                    const bool is_ref_graph,
+    Build_Params(   bool is_read_graph,
+                    bool is_ref_graph,
                     const std::optional<std::vector<std::string>>& seq_paths,
                     const std::optional<std::vector<std::string>>& list_paths,
                     const std::optional<std::vector<std::string>>& dir_paths,
-                    const uint16_t k,
-                    const std::optional<uint32_t> cutoff,
+                    uint16_t k,
+                    std::optional<uint32_t> cutoff,
                     const std::string& vertex_db_path,
                     const std::string& edge_db_path,
-                    const uint16_t thread_count,
-                    const std::optional<std::size_t> max_memory,
-                    const bool strict_memory,
+                    uint16_t thread_count,
+                    std::optional<std::size_t> max_memory,
+                    bool strict_memory,
                     const std::string& output_file_path,
-                    const std::optional<cuttlefish::Output_Format> output_format,
+                    std::optional<cuttlefish::Output_Format> output_format,
+                    bool track_short_seqs,
                     const std::string& working_dir_path,
-                    const bool path_cover,
-                    const bool save_mph,
-                    const bool save_buckets,
-                    const bool save_vertices
+                    bool path_cover,
+                    bool save_mph,
+                    bool save_buckets,
+                    bool save_vertices
 #ifdef CF_DEVELOP_MODE
-                    , const double gamma
+                    , double gamma
 #endif
                     );
 
@@ -185,6 +187,13 @@ public:
     cuttlefish::Output_Format output_format() const
     {
         return output_format_.value_or(cuttlefish::_default::OP_FORMAT);
+    }
+
+
+    // Returns whether to track input sequences shorter than `k` bases.
+    bool track_short_seqs() const
+    {
+        return track_short_seqs_;
     }
 
 

@@ -5,10 +5,9 @@
 
 
 #include "Maximal_Unitig_Scratch.hpp"
-#include "globals.hpp"
 
+#include <cstddef>
 #include <cstdint>
-#include <limits>
 
 
 // A class to track meta-information over maximal unipaths extracted by some worker thread.

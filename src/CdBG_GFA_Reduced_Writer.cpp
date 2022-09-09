@@ -1,13 +1,13 @@
 
 #include "CdBG.hpp"
+#include "DNA_Utility.hpp"
+#include "Job_Queue.hpp"
+#include "fmt/format.h"
 
 
 template <uint16_t k>
 void CdBG<k>::write_segment(const uint16_t thread_id, const char* const seq, const uint64_t segment_name, const size_t start_kmer_idx, const size_t end_kmer_idx, const cuttlefish::dir_t dir)
 {
-    std::chrono::high_resolution_clock::time_point t_start = std::chrono::high_resolution_clock::now();
-
-
     std::string& buffer = output_buffer[thread_id];
     const size_t segment_len = end_kmer_idx - start_kmer_idx + k;
 
@@ -22,19 +22,14 @@ void CdBG<k>::write_segment(const uint16_t thread_id, const char* const seq, con
     buffer += "\t";
     if(dir == cuttlefish::FWD)
         for(size_t offset = 0; offset < segment_len; ++offset)
-            buffer += Kmer<k>::upper(seq[start_kmer_idx + offset]);
+            buffer += DNA_Utility::upper(seq[start_kmer_idx + offset]);
     else
         for(size_t offset = 0; offset < segment_len; ++offset)
-            buffer += Kmer<k>::complement(seq[end_kmer_idx + k - 1 - offset]);
+            buffer += DNA_Utility::complement(seq[end_kmer_idx + k - 1 - offset]);
 
 
     // End the segment line.
     buffer += "\n";
-
-    std::chrono::high_resolution_clock::time_point t_end = std::chrono::high_resolution_clock::now();
-    double elapsed_seconds = std::chrono::duration_cast<std::chrono::duration<double>>(t_end - t_start).count();
-
-    seg_write_time[thread_id] += elapsed_seconds;
 
 
     // Mark buffer size increment.
@@ -45,9 +40,6 @@ void CdBG<k>::write_segment(const uint16_t thread_id, const char* const seq, con
 template <uint16_t k>
 void CdBG<k>::write_sequence_tiling(Job_Queue<std::string, Oriented_Unitig>& job_queue)
 {
-    std::chrono::high_resolution_clock::time_point t_start = std::chrono::high_resolution_clock::now();
-
-
     const uint16_t thread_count = params.thread_count();
     const std::string& seq_file_path = params.sequence_file_path();
 
@@ -62,10 +54,6 @@ void CdBG<k>::write_sequence_tiling(Job_Queue<std::string, Oriented_Unitig>& job
             if(!job_queue.jobs_remain())
             {
                 output.close();
-
-                std::chrono::high_resolution_clock::time_point t_end = std::chrono::high_resolution_clock::now();
-                double elapsed_seconds = std::chrono::duration_cast<std::chrono::duration<double>>(t_end - t_start).count();
-                path_concat_time += elapsed_seconds;
 
                 return;
             }

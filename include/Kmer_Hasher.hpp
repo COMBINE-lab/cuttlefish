@@ -4,7 +4,9 @@
 
 
 
-#include "globals.hpp"
+#include "Kmer.hpp"
+
+#include <cstdint>
 
 
 template <uint16_t k>

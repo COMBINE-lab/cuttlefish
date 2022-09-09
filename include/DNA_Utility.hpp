@@ -5,6 +5,8 @@
 
 
 #include "DNA.hpp"
+
+#include <cstdint>
 #include <cstddef>
 
 

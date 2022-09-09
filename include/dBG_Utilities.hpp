@@ -7,6 +7,8 @@
 #include "DNA_Utility.hpp"
 #include "globals.hpp"
 
+#include <algorithm>
+
 
 // =============================================================================
 namespace cuttlefish

@@ -60,6 +60,13 @@ void dBG_Info<k>::add_basic_info(const CdBG<k>& cdbg)
 
 
 template <uint16_t k>
+void dBG_Info<k>::add_short_seqs_info(const std::vector<std::pair<std::string, std::size_t>>& short_seqs)
+{
+    dBg_info[short_seqs_field] = short_seqs;
+}
+
+
+template <uint16_t k>
 void dBG_Info<k>::add_unipaths_info(const Unipaths_Meta_info<k>& unipaths_info)
 {
     dBg_info[contigs_field]["maximal unitig count"] = unipaths_info.unipath_count();

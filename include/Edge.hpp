@@ -7,9 +7,11 @@
 
 #include "globals.hpp"
 #include "Endpoint.hpp"
-#include "Kmer_Hash_Table.hpp"
 
 #include <cstdint>
+
+
+template <uint16_t k, uint8_t BITS_PER_KEY> class Kmer_Hash_Table;
 
 
 // Class for an instance of a bidirected edge.

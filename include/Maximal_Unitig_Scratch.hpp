@@ -7,9 +7,9 @@
 #include "Unitig_Scratch.hpp"
 #include "FASTA_Record.hpp"
 #include "Character_Buffer.hpp"
-#include "globals.hpp"
 
 #include <cstdint>
+#include <cstddef>
 #include <vector>
 
 

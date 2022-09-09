@@ -6,6 +6,8 @@
 
 #include "Output_Format.hpp"
 
+#include <cstdint>
+#include <cstddef>
 #include <thread>
 
 

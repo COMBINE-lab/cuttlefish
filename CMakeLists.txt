@@ -25,6 +25,22 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_C_EXTENSIONS OFF)
 
+# Fix minimum compiler versions.
+set(GCC_VERSION_MIN "9.1")
+set(CLANG_VERSION_MIN "9.0")
+
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    if(CMAKE_CXX_COMPILER_VERSION VERSION_LESS GCC_VERSION_MIN)
+        message(FATAL_ERROR "${PROJECT_NAME} requires GCC version to be at least ${GCC_VERSION_MIN}."
+                            " Available version is ${CMAKE_CXX_COMPILER_VERSION}.")
+    endif()
+elseif(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+    if(CMAKE_CXX_COMPILER_VERSION VERSION_LESS CLANG_VERSION_MIN)
+        message(FATAL_ERROR "${PROJECT_NAME} requires Clang version to be at least ${CLANG_VERSION_MIN}."
+                            " Available version is ${CMAKE_CXX_COMPILER_VERSION}.")
+    endif()
+endif()
+
 
 # Bundle the warning flags that we want to pass on to the compiler.
 # Disable unknown pragmas, b/c bbhash uses them extensively.
@@ -178,13 +194,13 @@ add_dependencies(kmc prj_kmc)
 # The `Release` configuration enables most compiler optimizations for speed and defines `NDEBUG`
 # (No Debug) which will remove all traces of the standard library assert calls.
 if(NOT CMAKE_BUILD_TYPE)
-    set(CMAKE_BUILD_TYPE Release)
+    set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
 endif()
 
-set(CMAKE_CXX_FLAGS_DEBUG "-g")
-set(CMAKE_CXX_FLAGS_RELEASE "-O3")
-set(CMAKE_C_FLAGS_DEBUG "-g")
-set(CMAKE_C_FLAGS_RELEASE "-O3")
+#set(CMAKE_CXX_FLAGS_DEBUG "-g")
+#set(CMAKE_CXX_FLAGS_RELEASE "-O3")
+#set(CMAKE_C_FLAGS_DEBUG "-g")
+#set(CMAKE_C_FLAGS_RELEASE "-O3")
 
 
 # Help `conda` build for OSX through circumventing some of its old SDK-based checks.

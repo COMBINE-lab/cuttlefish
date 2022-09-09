@@ -1,7 +1,7 @@
 
 #include "CdBG.hpp"
-
-#include <chrono>
+#include "DNA_Utility.hpp"
+#include "Annotated_Kmer.hpp"
 
 
 template <uint16_t k>
@@ -33,13 +33,13 @@ size_t CdBG<k>::output_maximal_unitigs_plain(const uint16_t thread_id, const cha
 
     // The subsequence contains only an isolated k-mer, i.e. there's no valid left or right
     // neighboring k-mer to this k-mer. So it's a maximal unitig by itself.
-    if((kmer_idx == 0 || Kmer<k>::is_placeholder(seq[kmer_idx - 1])) &&
-        (kmer_idx + k == seq_len || Kmer<k>::is_placeholder(seq[kmer_idx + k])))
+    if((kmer_idx == 0 || DNA_Utility::is_placeholder(seq[kmer_idx - 1])) &&
+        (kmer_idx + k == seq_len || DNA_Utility::is_placeholder(seq[kmer_idx + k])))
         output_plain_unitig(thread_id, seq, curr_kmer, curr_kmer);
     else    // At least one valid neighbor exists, either to the left or to the right, or on both sides.
     {
         // No valid right neighbor exists for the k-mer.
-        if(kmer_idx + k == seq_len || Kmer<k>::is_placeholder(seq[kmer_idx + k]))
+        if(kmer_idx + k == seq_len || DNA_Utility::is_placeholder(seq[kmer_idx + k]))
         {
             // A valid left neighbor exists as it's not an isolated k-mer.
             Annotated_Kmer<k> prev_kmer(Kmer<k>(seq, kmer_idx - 1), kmer_idx, *hash_table);
@@ -62,7 +62,7 @@ size_t CdBG<k>::output_maximal_unitigs_plain(const uint16_t thread_id, const cha
         Annotated_Kmer<k> prev_kmer;
 
         // No valid left neighbor exists for the k-mer.
-        if(kmer_idx == 0 || Kmer<k>::is_placeholder(seq[kmer_idx - 1]))
+        if(kmer_idx == 0 || DNA_Utility::is_placeholder(seq[kmer_idx - 1]))
         {
             // A maximal unitig starts at the beginning of a maximal valid subsequence.
             on_unipath = true;
@@ -100,7 +100,7 @@ size_t CdBG<k>::output_maximal_unitigs_plain(const uint16_t thread_id, const cha
 
 
             // No valid right neighbor exists for the k-mer.
-            if(kmer_idx + k == seq_len || Kmer<k>::is_placeholder(seq[kmer_idx + k]))
+            if(kmer_idx + k == seq_len || DNA_Utility::is_placeholder(seq[kmer_idx + k]))
             {
                 // A maximal unitig ends at the ending of a maximal valid subsequence.
                 if(on_unipath)
@@ -163,8 +163,6 @@ void CdBG<k>::output_plain_unitig(const uint16_t thread_id, const char* const se
 template <uint16_t k>
 void CdBG<k>::write_path(const uint16_t thread_id, const char* const seq, const uint64_t unitig_id, const size_t start_kmer_idx, const size_t end_kmer_idx, const cuttlefish::dir_t dir) 
 {
-    std::chrono::high_resolution_clock::time_point t_start = std::chrono::high_resolution_clock::now();
-
     std::string& buffer = output_buffer[thread_id];
     const size_t path_len = end_kmer_idx - start_kmer_idx + k;
     constexpr std::size_t header_len = 12;  // FASTA header len: '>' + <id> + '\n'
@@ -178,21 +176,15 @@ void CdBG<k>::write_path(const uint16_t thread_id, const char* const seq, const 
 
     if(dir == cuttlefish::FWD)
         for(size_t offset = 0; offset < path_len; ++offset)
-            buffer += Kmer<k>::upper(seq[start_kmer_idx + offset]);
+            buffer += DNA_Utility::upper(seq[start_kmer_idx + offset]);
     else    // dir == cuttlefish::BWD
         for(size_t offset = 0; offset < path_len; ++offset)
-            buffer += Kmer<k>::complement(seq[end_kmer_idx + k - 1 - offset]);
+            buffer += DNA_Utility::complement(seq[end_kmer_idx + k - 1 - offset]);
 
     // End the path.
     buffer += "\n";
 
 
-    std::chrono::high_resolution_clock::time_point t_end = std::chrono::high_resolution_clock::now();
-    double elapsed_seconds = std::chrono::duration_cast<std::chrono::duration<double>>(t_end - t_start).count();
-
-    seg_write_time[thread_id] += elapsed_seconds;
-
-    
     // Mark buffer size increment.
     check_output_buffer(thread_id);
 }

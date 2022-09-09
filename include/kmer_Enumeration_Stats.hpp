@@ -4,10 +4,10 @@
 
 
 
-#include <cstdint>
-#include <iostream>
-
 #include "kmc_runner.h"
+
+#include <cstdint>
+#include <cstddef>
 
 
 // A class to wrap summary statistics of k-mer enumeration by `kmer_Enumerator`.

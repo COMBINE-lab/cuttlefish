@@ -5,21 +5,27 @@
 
 
 #include "globals.hpp"
-#include "Kmer_Hash_Table.hpp"
-#include "Annotated_Kmer.hpp"
 #include "Oriented_Unitig.hpp"
 #include "Build_Params.hpp"
 #include "Data_Logistics.hpp"
-#include "kmer_Enumeration_Stats.hpp"
 #include "Unipaths_Meta_info.hpp"
 #include "dBG_Info.hpp"
-#include "Thread_Pool.hpp"
-#include "Job_Queue.hpp"
-#include "spdlog/async_logger.h"
+#include "spdlog/sinks/basic_file_sink.h"
 
+#include <cstdint>
+#include <cstddef>
 #include <memory>
 #include <string>
 #include <vector>
+#include <utility>
+
+
+template <uint16_t k, uint8_t BITS_PER_KEY> class Kmer_Hash_Table;
+template <uint16_t k> class Directed_Kmer;
+template <uint16_t k> class Annotated_Kmer;
+template <uint16_t k> class kmer_Enumeration_Stats;
+template <uint16_t k> class Thread_Pool;
+template <typename T_id_, typename T_info_> class Job_Queue;
 
 
 // De Bruijn graph class to support the compaction algorithm.
@@ -72,16 +78,18 @@ private:
     // `spdlog` thread pool for outputting GFA paths.
     std::shared_ptr<spdlog::details::thread_pool> tp_path;
 
+    typedef std::shared_ptr<spdlog::logger> logger_t;
+
     // The asynchronous output logger (for GFA segments and connections).
-    cuttlefish::logger_t output;
+    logger_t output;
 
     // Copies of the asynchronous logger `output` for each thread.
-    std::vector<cuttlefish::logger_t> output_;
+    std::vector<logger_t> output_;
 
     // `path_output_[t_id]` and `overlap_output_[t_id]` are the output loggers for the paths
     // and the overlaps between the links in the paths respectively, produced from the
     // underlying sequence, by the thread number `t_id`.
-    std::vector<cuttlefish::logger_t> path_output_, overlap_output_;
+    std::vector<logger_t> path_output_, overlap_output_;
 
     // After all the threads finish the parallel GFA outputting, `first_unitig[t_id]`,
     // `second_unitig[t_id]`, and `last_unitig[t_id]` contain the first unitig, the
@@ -98,14 +106,8 @@ private:
     std::string overlap_file_prefix = "cuttlefish-overlap-output-";
     static constexpr size_t TEMP_FILE_PREFIX_LEN = 10;
 
-    // Debug
-    std::vector<double> seg_write_time;
-    std::vector<double> link_write_time;
-    std::vector<double> buff_flush_time;
-    std::vector<double> path_write_time;
-    std::vector<double> path_flush_time;
-    double path_concat_time = 0;
-    double logger_flush_time = 0;
+    // Information about sequences too short for processing, i.e. with length < `k`.
+    std::vector<std::pair<std::string, std::size_t>> short_seqs;
 
 
     /* Build methods */
@@ -394,13 +396,13 @@ private:
     // to the logger `log` if necessary. The request is non-binding in the sense that
     // if the capacity of the buffer `buf` is smaller than `log_len`, then this method
     // does not ensure enough buffer space.
-    static void ensure_buffer_space(std::string& buf, size_t log_len, const cuttlefish::logger_t& log);
+    static void ensure_buffer_space(std::string& buf, size_t log_len, const logger_t& log);
 
     // Writes the string `str` to the logger `log`, and empties `str`.
-    static void flush_buffer(std::string& str, const cuttlefish::logger_t& log);
+    static void flush_buffer(std::string& str, const logger_t& log);
 
     // Puts the content of the string `str` to the logger `log`.
-    static void write(const std::string& str, const cuttlefish::logger_t& log);
+    static void write(const std::string& str, const logger_t& log);
 
     // Checks the output buffer for the thread number `thread_id`. If the buffer
     // size exceeds `BUFFER_THRESHOLD`, then the buffer content is put into the

@@ -1,14 +1,13 @@
 
 #include "Read_CdBG.hpp"
 #include "kmer_Enumerator.hpp"
+#include "Kmer_SPMC_Iterator.hpp"
+#include "kmer_Enumeration_Stats.hpp"
 #include "Read_CdBG_Constructor.hpp"
 #include "Read_CdBG_Extractor.hpp"
-#include "File_Extensions.hpp"
-#include "utility.hpp"
 #include "kmc_runner.h"
 
 #include <limits>
-#include <iomanip>
 
 
 template <uint16_t k>
@@ -112,7 +111,7 @@ void Read_CdBG<k>::construct()
     std::cout << "Computed the states of the automata. Time taken = " << std::chrono::duration_cast<std::chrono::duration<double>>(t_dfa - t_mphf).count() << " seconds.\n";
 
 
-    std::cout << "\nExtracting the maximal unitigs.\n";
+    std::cout << "\nExtracting " << (params.path_cover() ? "a maximal path cover" :  "the maximal unitigs") << ".\n";
     extract_maximal_unitigs();
 
 #ifdef CF_DEVELOP_MODE
@@ -122,7 +121,7 @@ void Read_CdBG<k>::construct()
         Kmer_Container<k>::remove(logistics.vertex_db_path());
 
     std::chrono::high_resolution_clock::time_point t_extract = std::chrono::high_resolution_clock::now();
-    std::cout << "Extracted the maximal unitigs. Time taken = " << std::chrono::duration_cast<std::chrono::duration<double>>(t_extract - t_dfa).count() << " seconds.\n";
+    std::cout << "Extracted the paths. Time taken = " << std::chrono::duration_cast<std::chrono::duration<double>>(t_extract - t_dfa).count() << " seconds.\n";
 
 #ifndef CF_DEVELOP_MODE
     const double max_disk = static_cast<double>(max_disk_usage(edge_stats, vertex_stats)) / (1024.0 * 1024.0 * 1024.0);

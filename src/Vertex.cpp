@@ -1,5 +1,7 @@
 
 #include "Vertex.hpp"
+#include "DNA.hpp"
+
 #include <cassert>
 
 

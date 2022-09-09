@@ -5,15 +5,21 @@
 
 
 #include "globals.hpp"
-#include "State.hpp"
-#include "Kmer_Container.hpp"
-#include "BBHash/BooPHF.h"
+#include "Kmer.hpp"
 #include "Kmer_Hasher.hpp"
-#include "compact_vector/compact_vector.hpp"
+#include "State.hpp"
 #include "Kmer_Hash_Entry_API.hpp"
 #include "Spin_Lock.hpp"
 #include "Sparse_Lock.hpp"
-#include "Build_Params.hpp"
+#include "BBHash/BooPHF.h"
+#include "compact_vector/compact_vector.hpp"
+
+#include <cstdint>
+#include <cstddef>
+#include <string>
+
+
+class Build_Params;
 
 
 template <uint16_t k, uint8_t BITS_PER_KEY>

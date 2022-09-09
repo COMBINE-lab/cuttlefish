@@ -10,10 +10,14 @@
 #include "Edge.hpp"
 #include "Endpoint.hpp"
 #include "Build_Params.hpp"
-#include "Thread_Pool.hpp"
-#include "Kmer_Container.hpp"
-#include "Kmer_SPMC_Iterator.hpp"
 #include "Progress_Tracker.hpp"
+
+#include <cstdint>
+#include <string>
+
+
+template <uint16_t k> class Kmer_SPMC_Iterator;
+template <uint16_t k> class Thread_Pool;
 
 
 // A class to construct compacted read de Bruijn graphs.

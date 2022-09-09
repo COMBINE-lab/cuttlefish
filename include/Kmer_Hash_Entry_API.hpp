@@ -8,6 +8,8 @@
 #include "State.hpp"
 #include "State_Read_Space.hpp"
 
+#include <cstdint>
+
 
 template <uint16_t k, uint8_t BITS_PER_KEY> class Kmer_Hash_Table;
 

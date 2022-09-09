@@ -2,9 +2,7 @@
 #include "Read_CdBG_Extractor.hpp"
 #include "Kmer_Container.hpp"
 #include "Kmer_SPMC_Iterator.hpp"
-#include "FASTA_Record.hpp"
 #include "Character_Buffer.hpp"
-#include "utility.hpp"
 #include "Thread_Pool.hpp"
 
 
@@ -38,7 +36,8 @@ void Read_CdBG_Extractor<k>::extract_maximal_unitigs(const std::string& vertex_d
 
     // Launch (multi-threaded) extraction of the maximal unitigs.
     const uint64_t thread_load_percentile = static_cast<uint64_t>(std::round((vertex_count() / 100.0) / params.thread_count()));
-    progress_tracker.setup(vertex_count(), thread_load_percentile, "Extracting maximal unitigs");
+    progress_tracker.setup(vertex_count() * 2, thread_load_percentile,
+                            params.path_cover() ? "Extracting maximal path cover" :  "Extracting maximal unitigs");
     distribute_unipaths_extraction(&vertex_parser, thread_pool);
 
     // Wait for the vertices to be depleted from the database.
@@ -56,7 +55,7 @@ void Read_CdBG_Extractor<k>::extract_maximal_unitigs(const std::string& vertex_d
 
     std::chrono::high_resolution_clock::time_point t_end = std::chrono::high_resolution_clock::now();
     double elapsed_seconds = std::chrono::duration_cast<std::chrono::duration<double>>(t_end - t_start).count();
-    std::cout << "Extracted the maximal unitigs. Time taken = " << elapsed_seconds << " seconds.\n";
+    std::cout << "Extracted the paths. Time taken = " << elapsed_seconds << " seconds.\n";
 }
 
 
@@ -97,12 +96,14 @@ void Read_CdBG_Extractor<k>::process_vertices(Kmer_SPMC_Iterator<k>* const verte
                 extracted_unipaths_info.add_maximal_unitig(maximal_unitig);
                 // output_buffer += maximal_unitig.fasta_rec();
                 maximal_unitig.add_fasta_rec_to_buffer(output_buffer);
-                
+
                 if(progress_tracker.track_work(progress += maximal_unitig.size()))
                     progress = 0;
             }
 
             vertex_count++;
+            if(progress_tracker.track_work(++progress))
+                progress = 0;
         }
 
 

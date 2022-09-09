@@ -1,14 +1,11 @@
 
 #include "Validator.hpp"
 #include "Kmer_Container.hpp"
-// #include "Kmer_Iterator.hpp"
-// #include "Kmer_Buffered_Iterator.hpp"
 #include "Kmer_SPMC_Iterator.hpp"
-#include "BBHash/BooPHF.h"
+#include "utility.hpp"
 #include "spdlog/sinks/stdout_color_sinks.h"
 
 #include <fstream>
-#include <sys/stat.h>
 
 
 template <uint16_t k>
@@ -22,8 +19,7 @@ void Validator<k>::build_mph_function()
     const Kmer_Container<k> kmer_container(kmc_db_path);
 
     // The serialized BBHash file (saved from some earlier execution) exists.
-    struct stat buffer;
-    if(stat(mph_file_path.c_str(), &buffer) == 0)
+    if(file_exists(mph_file_path))
     {
         console->info("Loading the MPH function from file {}\n", mph_file_path);
         

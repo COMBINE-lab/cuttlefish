@@ -4,11 +4,9 @@
 
 
 
-#include "Kmer.hpp"
-
 #include "boost/preprocessor/repetition/repeat.hpp"
 
-#include <memory>
+#include <cstdint>
 
 
 // The macro `INSTANCE_COUNT` must be set exactly to `(MAX_K + 1) / 2` for a required maximum k-value.
@@ -18,21 +16,12 @@
 #endif
 
 
-// Forward declarations of the type of the bitvector used and the type to access its entries (mutable).
-namespace compact
+// Forward declarations of the DNA code types.
+namespace DNA
 {
-    template<typename IDX, unsigned BITS, typename W, typename Allocator> class ts_vector;
+    enum Base: uint8_t;
 
-    namespace iterator_imp
-    {
-        template<typename IDX, unsigned BITS, typename W, bool TS, unsigned UB> class lhs_setter;
-    }
-}
-
-// Forward declaration of the output writer type.
-namespace spdlog
-{
-    class logger;
+    enum class Extended_Base: uint8_t;
 }
 
 
@@ -68,13 +57,7 @@ namespace cuttlefish
 
 
     constexpr uint8_t BITS_PER_REF_KMER = 5;
-    typedef compact::ts_vector<state_code_t, BITS_PER_REF_KMER, uint64_t, std::allocator<uint64_t>> ref_bitvector_t;
-    typedef compact::iterator_imp::lhs_setter<state_code_t, BITS_PER_REF_KMER, uint64_t, true, 64U> ref_bitvector_entry_t;
-
     constexpr uint8_t BITS_PER_READ_KMER = 6;
-
-
-    typedef std::shared_ptr<spdlog::logger> logger_t;
 }
 
 

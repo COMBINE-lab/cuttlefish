@@ -1,7 +1,8 @@
 
 #include "Build_Params.hpp"
-#include "Input_Defaults.hpp"
 #include "utility.hpp"
+
+#include <iostream>
 
 
 Build_Params::Build_Params( const bool is_read_graph,
@@ -18,6 +19,7 @@ Build_Params::Build_Params( const bool is_read_graph,
                             const bool strict_memory,
                             const std::string& output_file_path,
                             const std::optional<cuttlefish::Output_Format> output_format,
+                            const bool track_short_seqs,
                             const std::string& working_dir_path,
                             const bool path_cover,
                             const bool save_mph,
@@ -39,6 +41,7 @@ Build_Params::Build_Params( const bool is_read_graph,
         strict_memory_(strict_memory),
         output_file_path_(output_file_path),
         output_format_(output_format),
+        track_short_seqs_(track_short_seqs),
         working_dir_path_(working_dir_path.back() == '/' ? working_dir_path : working_dir_path + "/"),
         path_cover_(path_cover),
         save_mph_(save_mph),

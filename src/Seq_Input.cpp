@@ -1,7 +1,7 @@
 
 #include "Seq_Input.hpp"
-#include "ghc/filesystem.hpp"
 
+#include <filesystem>
 #include <fstream>
 #include <iostream>
 
@@ -71,7 +71,7 @@ const std::vector<std::string> Seq_Input::seqs() const
 
     // Collect sequences from the provided sequence directories.
     for(const std::string& dir_path: dir_paths_)
-        for(const auto& entry: ghc::filesystem::directory_iterator(dir_path))
+        for(const auto& entry: std::filesystem::directory_iterator(dir_path))
             seqs.emplace_back(entry.path());
 
 

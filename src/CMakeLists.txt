@@ -100,7 +100,7 @@ target_link_libraries(cfcore_static PRIVATE ${CMAKE_THREAD_LIBS_INIT})
 # when building on conda on OSX with clang, we apparently need to explicitly
 # link the filesystem library, see (https://github.com/bioconda/bioconda-recipes/pull/37269/files)
 if("$ENV{CF_INSTALL}" STREQUAL "conda" AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-    target_link_libraries(cfcore_static PRIVATE c++fs)
+    target_link_libraries(cfcore_static PRIVATE c++experimental)
 endif()
 
 # Link the executable to the required libraries.

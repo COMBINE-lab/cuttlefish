@@ -172,11 +172,11 @@ endif()
 message("Build system will fetch and install KMC3")
 ExternalProject_Add(prj_kmc
     DOWNLOAD_DIR        ${CMAKE_SOURCE_DIR}/external
-    DOWNLOAD_COMMAND    curl -k -L https://github.com/refresh-bio/KMC/archive/refs/tags/v3.2.1.tar.gz -o KMC-3.2.1.tar.gz &&
-                        tar -xzf KMC-3.2.1.tar.gz &&
-                        rm KMC-3.2.1.tar.gz
+    DOWNLOAD_COMMAND    curl -k -L https://github.com/refresh-bio/KMC/archive/50eb19013e4eafa8034037ac43b7119c544377ed.tar.gz -o KMC-latest.tar.gz &&
+                        tar -xzf KMC-latest.tar.gz &&
+                        rm KMC-latest.tar.gz
     PATCH_COMMAND       patch --strip 1 < ${CMAKE_SOURCE_DIR}/patches/kmc_patch.diff
-    SOURCE_DIR          ${CMAKE_SOURCE_DIR}/external/KMC-3.2.1
+    SOURCE_DIR          ${CMAKE_SOURCE_DIR}/external/KMC-50eb19013e4eafa8034037ac43b7119c544377ed
     BUILD_IN_SOURCE     TRUE
     INSTALL_DIR         ${CMAKE_SOURCE_DIR}/external/
     CONFIGURE_COMMAND   ""

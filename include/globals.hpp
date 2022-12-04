@@ -27,7 +27,7 @@ namespace DNA
 
 namespace cuttlefish
 {
-    constexpr uint16_t MAX_K = (2 * INSTANCE_COUNT - 1);
+    constexpr uint16_t MAX_K = (4 * INSTANCE_COUNT - 1);
 
 
     typedef bool dir_t;
@@ -63,24 +63,29 @@ namespace cuttlefish
 
 // Metaprogramming macro-loops for instantiating required template instances.
 
-// Given some `x`, explicitly instantiates the class `class_name` for the template parameter `k` with `2x + 1`;
-// i.e. it is an instantiator for odd k-values.
-#define INSTANTIATE(z, x, class_name) template class class_name<2 * x + 1>;
+// Given some `x`, explicitly instantiates the class `class_name` for the template parameter `k` with `4x + 1`
+// and `4x + 3`; i.e. it is an instantiator for odd k-values.
+#define INSTANTIATE(z, x, class_name)   template class class_name<4 * x + 1>;\
+                                        template class class_name<4 * x + 3>;
 
 // Enumerates all the explicit instantiations of the template class `class_name` using `instantiator`, for all
 // `x` in `[0, count)`. The `x`-value is used as appropriate by `instantiator`.
 #define ENUMERATE(count, instantiator, class_name) BOOST_PP_REPEAT(count, instantiator, class_name)
 
 // Given some `x`, explicitly instantiates two instances of the class `class_name`, with the template parameters
-// `k` = `2x + 1`, and `BITS_PER_KEY` with `BITS_PER_REF_KMER` and `BITS_PER_READ_KMER` for alternate instances;
-// i.e. it is an instantiator for odd k-values and all the different bits-per-key requirements.
-#define INSTANTIATE_PER_BIT(z, k, class_name)   template class class_name<2 * k + 1, cuttlefish::BITS_PER_REF_KMER>;\
-                                                template class class_name<2 * k + 1, cuttlefish::BITS_PER_READ_KMER>;
+// `k` = `4x + 1` and `4x + 3`, and `BITS_PER_KEY` with `BITS_PER_REF_KMER` and `BITS_PER_READ_KMER` for alternate
+// instances; i.e. it is an instantiator for odd k-values and all the different bits-per-key requirements.
+#define INSTANTIATE_PER_BIT(z, x, class_name)   template class class_name<4 * x + 1, cuttlefish::BITS_PER_REF_KMER>;\
+                                                template class class_name<4 * x + 1, cuttlefish::BITS_PER_READ_KMER>;\
+                                                template class class_name<4 * x + 3, cuttlefish::BITS_PER_REF_KMER>;\
+                                                template class class_name<4 * x + 3, cuttlefish::BITS_PER_READ_KMER>;
 
 // Given some `x`, explicitly instantiates two instances of the class `class_name`, using the template parameter `k`
-// with `2x + 1` and `2x + 2`, i.e. it is an instantiator for both odd and even k-values.
-#define INSTANTIATE_ALL(z, x, class_name)   template class class_name<2 * x + 1>;\
-                                            template class class_name<2 * x + 2>;
+// with `4x + 1`, `4x + 2`, `4x + 3`, and `4x + 4`, i.e. it is an instantiator for both odd and even k-values.
+#define INSTANTIATE_ALL(z, x, class_name)   template class class_name<4 * x + 1>;\
+                                            template class class_name<4 * x + 2>;\
+                                            template class class_name<4 * x + 3>;\
+                                            template class class_name<4 * x + 4>;
 
 
 // BOOST_PP_REPEAT reference: https://www.boost.org/doc/libs/1_55_0/libs/preprocessor/doc/ref/repeat.html

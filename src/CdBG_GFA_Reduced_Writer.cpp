@@ -67,7 +67,10 @@ void CdBG<k>::write_sequence_tiling(Job_Queue<std::string, Oriented_Unitig>& job
 
         // The sequence does not contain any unitig (possible if there's no valid k-mer in the sequence).
         if(!left_unitig.is_valid())
+        {
+            job_queue.finish_job();
             continue;
+        }
 
 
         // Write the path ID.

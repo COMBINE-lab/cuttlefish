@@ -1,8 +1,8 @@
 diff --git a/Makefile b/Makefile
-index bc07d35..2b351b9 100644
+index bc07d35..5d20bc9 100644
 --- a/Makefile
 +++ b/Makefile
-@@ -13,15 +13,11 @@ OUT_BIN_DIR = bin
+@@ -13,16 +13,12 @@ OUT_BIN_DIR = bin
  OUT_INCLUDE_DIR = include
  
  ifeq ($(UNAME_S),Darwin)
@@ -10,16 +10,18 @@ index bc07d35..2b351b9 100644
 -
 -	CFLAGS	= -Wall -O3 -m64 -static-libgcc -static-libstdc++ -pthread -std=c++14
 -	CLINK	= -lm -static-libgcc -static-libstdc++ -O3 -pthread -std=c++14
-+	CFLAGS	= -Wall -O3 -m64 -pthread -std=c++14
++	CFLAGS	= -Wall -O3 -m64 -pthread -std=c++14 -fPIC 
 +	CLINK	= -lm -lbz2 -lc++ -lz -O3 -pthread -std=c++14
  
  	PY_KMC_API_CFLAGS = -Wl,-undefined,dynamic_lookup -fPIC -Wall -shared -std=c++14 -O3
  else
 -	CC 	= g++
 -
- 	CFLAGS	= -Wall -O3 -m64 -static -Wl,--whole-archive -lpthread -Wl,--no-whole-archive -std=c++14
+-	CFLAGS	= -Wall -O3 -m64 -static -Wl,--whole-archive -lpthread -Wl,--no-whole-archive -std=c++14
++	CFLAGS	= -Wall -O3 -m64 -static -Wl,--whole-archive -lpthread -Wl,--no-whole-archive -std=c++14 -fPIC
  	CLINK	= -lm -static -O3 -Wl,--whole-archive -lpthread -Wl,--no-whole-archive -std=c++14
  
+ 	PY_KMC_API_CFLAGS = -fPIC -Wall -shared -std=c++14 -O3
 @@ -53,15 +49,15 @@ $(KMC_MAIN_DIR)/kmc_runner.o
  ifeq ($(UNAME_S),Darwin)
  	RADULS_OBJS =

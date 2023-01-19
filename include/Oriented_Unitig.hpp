@@ -25,8 +25,8 @@ private:
 
     uint64_t unitig_id;
     cuttlefish::dir_t dir;
-    size_t start_kmer_idx;
-    size_t end_kmer_idx;
+    size_t start_kmer_idx; // Position, on the ref, of the last kmer of the unitig occurrence
+    size_t end_kmer_idx;   // Position, on the ref, of the first kmer of the unitig occurrence
 
     constexpr static uint64_t INVALID_ID = std::numeric_limits<uint64_t>::max();
 

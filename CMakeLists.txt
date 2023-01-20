@@ -180,6 +180,7 @@ endif()
 
 
 # Prepare the `kmc` library — required by the Cuttlefish algorithm implementation.
+# NOTE: do something more intelligent below than the -j4
 message("Build system will fetch and install KMC3")
 ExternalProject_Add(prj_kmc
     DOWNLOAD_DIR        ${CMAKE_SOURCE_DIR}/external
@@ -191,7 +192,7 @@ ExternalProject_Add(prj_kmc
     BUILD_IN_SOURCE     TRUE
     INSTALL_DIR         ${CMAKE_SOURCE_DIR}/external/
     CONFIGURE_COMMAND   ""
-    BUILD_COMMAND       make -j CC=${CMAKE_CXX_COMPILER} kmc
+    BUILD_COMMAND       make -j4 CC=${CMAKE_CXX_COMPILER} simde && make -j4 CC=${CMAKE_CXX_COMPILER} kmc
     INSTALL_COMMAND     cp bin/libkmc_core.a ${EXT_LIB} &&
                         cp include/kmc_runner.h ${EXT_INCLUDE}
 )

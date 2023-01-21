@@ -67,6 +67,7 @@ int cf_build(int argc, char** argv)
         ("f,format", "output format (0: FASTA, 1: GFA 1.0, 2: GFA 2.0, 3: GFA-reduced)",
             cxxopts::value<std::optional<uint16_t>>(format_code))
         ("track-short-seqs", "track existence of sequences shorter than k bases")
+        ("poly-N-stretch", "includes information of polyN stretches in the tiling output")
         ;
 
     options.add_options("specialized")
@@ -106,6 +107,7 @@ int cf_build(int argc, char** argv)
         const auto format = format_code ?   std::optional<cuttlefish::Output_Format>(cuttlefish::Output_Format(format_code.value())) :
                                             std::optional<cuttlefish::Output_Format>();
         const auto track_short_seqs = result["track-short-seqs"].as<bool>();
+        const auto poly_n_stretch = result["poly-N-stretch"].as<bool>();
         const auto working_dir = result["work-dir"].as<std::string>();
         const auto path_cover = result["path-cover"].as<bool>();
         const auto save_mph = result["save-mph"].as<bool>();
@@ -118,7 +120,7 @@ int cf_build(int argc, char** argv)
         const Build_Params params(  is_read_graph, is_ref_graph,
                                     seqs, lists, dirs,
                                     k, cutoff, vertex_db, edge_db, thread_count, max_memory, strict_memory,
-                                    output_file, format, track_short_seqs, working_dir,
+                                    output_file, format, track_short_seqs, poly_n_stretch, working_dir,
                                     path_cover,
                                     save_mph, save_buckets, save_vertices
 #ifdef CF_DEVELOP_MODE

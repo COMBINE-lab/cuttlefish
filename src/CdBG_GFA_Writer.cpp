@@ -604,18 +604,21 @@ void CdBG<k>::append_edge_to_path(const uint16_t thread_id, const Oriented_Uniti
     (void)left_unitig;
 
     std::string& buffer = path_buffer[thread_id];
+    const bool poly_n_stretch = params.poly_n_stretch();
+    const int64_t pk = static_cast<int64_t>(params.k());
 
     // Encode polyN stretch
     // *.{first, last}_kmer_index stores the position of the kmer on the ref.
-    if( (left_unitig.end_kmer_idx + 1) != right_unitig.start_kmer_idx) {
+    if( poly_n_stretch and ((left_unitig.end_kmer_idx + 1) != right_unitig.start_kmer_idx)) {
+        const int64_t nuc_gap = static_cast<int64_t>(right_unitig.start_kmer_idx) - static_cast<int64_t>(left_unitig.end_kmer_idx);
         // If left_unitig starts at offset 0 and ends at offset k - 1, the smallest polyN stretch of len 1 starts
         // with index k, and right unitig must start at k+1.
-        if ((right_unitig.start_kmer_idx - left_unitig.end_kmer_idx) < (params.k() + 1)) {
+        if ( nuc_gap < (pk + 1)) {
             // Any difference in idxs < k+1 must be invalid.
             std::cerr << "ERROR: invalid polyN gap length\n";
             std::exit(EXIT_FAILURE);
         }
-        size_t polyn_gap = right_unitig.start_kmer_idx - left_unitig.end_kmer_idx - params.k();
+        size_t polyn_gap = static_cast<size_t>(nuc_gap - pk);
         buffer += " ";
         buffer += "N";
         buffer += fmt::format_int(polyn_gap).c_str();

@@ -8,7 +8,7 @@ cmake_minimum_required(VERSION 3.14)
 # Name the project, its version, and languages used in it.
 set(PROJECT_NAME cuttlefish)
 project(${PROJECT_NAME}
-        VERSION 2.1.1
+        VERSION 2.2.0
         LANGUAGES CXX C
         )
 

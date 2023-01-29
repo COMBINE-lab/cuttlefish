@@ -187,7 +187,7 @@ ExternalProject_Add(prj_kmc
     DOWNLOAD_COMMAND    curl -k -L https://github.com/refresh-bio/KMC/archive/refs/tags/v3.2.1.tar.gz -o KMC-3.2.1.tar.gz &&
                         tar -xzf KMC-3.2.1.tar.gz &&
                         rm KMC-3.2.1.tar.gz
-    PATCH_COMMAND       patch --strip 1 < ${CMAKE_SOURCE_DIR}/patches/kmc-v3.2.1_cuttlefish-dev.diff
+    PATCH_COMMAND       patch --strip 1 < ${CMAKE_SOURCE_DIR}/patches/kmc_patch.diff
     SOURCE_DIR          ${CMAKE_SOURCE_DIR}/external/KMC-3.2.1
     BUILD_IN_SOURCE     TRUE
     INSTALL_DIR         ${CMAKE_SOURCE_DIR}/external/

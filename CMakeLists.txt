@@ -82,14 +82,25 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         OUTPUT_VARIABLE L1_CACHE_LINE_SIZE
     )
 elseif(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
-    # OSX has `getconf`, but doesn't report `LEVEL1_DCACHE_LINESIZE`;
-    # so we instead use `sysctl` for the corresponding variable.
-    execute_process(
-        COMMAND sysctl machdep.cpu.cache.linesize
-        COMMAND awk "{print $2}"
-        COMMAND tr -d '\n'
-        OUTPUT_VARIABLE L1_CACHE_LINE_SIZE
-    )
+    if(CMAKE_HOST_SYSTEM_PROCESSOR STREQUAL "x86_64")
+        # OSX has `getconf`, but doesn't report `LEVEL1_DCACHE_LINESIZE`;
+        # so we instead use `sysctl` for the corresponding variable.
+        execute_process(
+            COMMAND sysctl machdep.cpu.cache.linesize
+            COMMAND awk "{print $2}"
+            COMMAND tr -d '\n'
+            OUTPUT_VARIABLE L1_CACHE_LINE_SIZE
+        )
+    elseif(CMAKE_HOST_SYSTEM_PROCESSOR STREQUAL "arm64")
+        execute_process(
+            COMMAND sysctl hw.cachelinesize
+            COMMAND awk "{print $2}"
+            COMMAND tr -d '\n'
+            OUTPUT_VARIABLE L1_CACHE_LINE_SIZE
+        )
+    else()
+        message(FATAL_ERROR "Unable to identify Apple Silicon processor architecture")
+    endif()
 
     # Later on, jemalloc will complain if the C compiler 
     # hasn't been properly set.
@@ -169,18 +180,19 @@ endif()
 
 
 # Prepare the `kmc` library — required by the Cuttlefish algorithm implementation.
+# NOTE: do something more intelligent below than the -j4
 message("Build system will fetch and install KMC3")
 ExternalProject_Add(prj_kmc
     DOWNLOAD_DIR        ${CMAKE_SOURCE_DIR}/external
     DOWNLOAD_COMMAND    curl -k -L https://github.com/refresh-bio/KMC/archive/refs/tags/v3.2.1.tar.gz -o KMC-3.2.1.tar.gz &&
                         tar -xzf KMC-3.2.1.tar.gz &&
                         rm KMC-3.2.1.tar.gz
-    PATCH_COMMAND       patch --strip 1 < ${CMAKE_SOURCE_DIR}/patches/kmc_patch.diff
+    PATCH_COMMAND       patch --strip 1 < ${CMAKE_SOURCE_DIR}/patches/kmc-v3.2.1_cuttlefish-dev.diff
     SOURCE_DIR          ${CMAKE_SOURCE_DIR}/external/KMC-3.2.1
     BUILD_IN_SOURCE     TRUE
     INSTALL_DIR         ${CMAKE_SOURCE_DIR}/external/
     CONFIGURE_COMMAND   ""
-    BUILD_COMMAND       make -j CC=${CMAKE_CXX_COMPILER} kmc
+    BUILD_COMMAND       make -j4 CC=${CMAKE_CXX_COMPILER} simde && make -j4 CC=${CMAKE_CXX_COMPILER} kmc
     INSTALL_COMMAND     cp bin/libkmc_core.a ${EXT_LIB} &&
                         cp include/kmc_runner.h ${EXT_INCLUDE}
 )

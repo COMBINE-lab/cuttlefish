@@ -42,6 +42,7 @@ void CdBG<k>::write_sequence_tiling(Job_Queue<std::string, Oriented_Unitig>& job
 {
     const uint16_t thread_count = params.thread_count();
     const std::string& seq_file_path = params.sequence_file_path();
+    const bool poly_n_stretch = params.poly_n_stretch();
 
     // Open the output file in append mode.
     std::ofstream output(seq_file_path.c_str(), std::ios_base::app);
@@ -73,12 +74,15 @@ void CdBG<k>::write_sequence_tiling(Job_Queue<std::string, Oriented_Unitig>& job
             continue;
         }
 
-
         // Write the path ID.
         output << path_id;
 
         // Write the path members.
         output << "\t";
+
+        if(poly_n_stretch and left_unitig.start_kmer_idx > 0) {
+            output << "N" << left_unitig.start_kmer_idx << " ";
+        }
         
         // The first vertex of the path (not inferrable from the path output files).
         output << left_unitig.unitig_id << (left_unitig.dir == cuttlefish::FWD ? "+" : "-");

@@ -80,9 +80,8 @@ void CdBG<k>::write_sequence_tiling(Job_Queue<std::string, Oriented_Unitig>& job
         // Write the path members.
         output << "\t";
 
-        if(poly_n_stretch and left_unitig.start_kmer_idx > 0) {
+        if(poly_n_stretch && left_unitig.start_kmer_idx > 0)
             output << "N" << left_unitig.start_kmer_idx << " ";
-        }
         
         // The first vertex of the path (not inferrable from the path output files).
         output << left_unitig.unitig_id << (left_unitig.dir == cuttlefish::FWD ? "+" : "-");

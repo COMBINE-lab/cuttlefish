@@ -6,6 +6,7 @@
 
 #include "Task_Params.hpp"
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <vector>
@@ -52,7 +53,7 @@ private:
     const Task_Type task_type;
 
     // Collection of the task statuses of each thread.
-    volatile Task_Status* const task_status;
+    std::atomic<Task_Status>* const task_status;
 
     // The collection of the threads in the pool.
     std::vector<std::thread> thread_pool;

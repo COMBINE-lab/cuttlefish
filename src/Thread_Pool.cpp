@@ -13,7 +13,7 @@ Thread_Pool<k>::Thread_Pool(const uint16_t thread_count, void* const dBG, const 
     thread_count(thread_count),
     dBG(dBG),
     task_type(task_type),
-    task_status(new volatile Task_Status[thread_count])
+    task_status(new std::atomic<Task_Status>[thread_count])
 {
     // Mark the status of the task for each thread as `pending`.
     for(uint16_t t_id = 0; t_id < thread_count; ++t_id)

@@ -8,6 +8,7 @@
 #include "Kmer_Container.hpp"
 #include "kmc_api/kmc_file.h"
 
+#include <atomic>
 #include <cstdint>
 #include <cstddef>
 #include <memory>
@@ -62,7 +63,7 @@ private:
         no_more,    // no k-mers will be provided anymore.
     };
 
-    volatile Task_Status* task_status{nullptr}; // Collection of the task statuses of the consumers.
+    std::atomic<Task_Status>* task_status{nullptr}; // Collection of the task statuses of the consumers.
 
 
     // Opens the k-mer database file with the path prefix `db_path`.
@@ -212,7 +213,7 @@ inline void Kmer_SPMC_Iterator<k>::launch_production()
 
     // Initialize the buffers and the parsing data structures.
 
-    task_status = new volatile Task_Status[consumer_count];
+    task_status = new std::atomic<Task_Status>[consumer_count];
 
     consumer.resize(consumer_count);
     for(size_t id = 0; id < consumer_count; ++id)

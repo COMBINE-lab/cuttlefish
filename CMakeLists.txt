@@ -113,10 +113,11 @@ endif()
 add_compile_definitions(L1_CACHE_LINE_SIZE=${L1_CACHE_LINE_SIZE})
 
 
-# Search the file system for the appropriate threads package for this platform, and then set
-# the `CMAKE_THREAD_LIBS_INIT` variable (and some other variables as well).
-find_package(Threads REQUIRED)  # The threads package is required for the BBHash library used in the project.
-set(THREADS_PREFER_PTHREAD_FLAG TRUE)   # The BBHash library uses `pthread`.
+# Determine the thread library of the system.
+include(FindThreads)
+if(NOT Threads_FOUND)
+    message(FATAL_ERROR "A supported threads library is required. Aborting.")
+endif()
 
 # Search and load setting for the `zlib` library. The library is required to seamlessly adapt
 # the `kseq` and the `kmc` libraries to gzip-compressed files.

@@ -94,8 +94,8 @@ target_link_libraries(cfcore_static PRIVATE ZLIB::ZLIB)
 # Link the cfcore_static library ti the `bzip2` library.
 target_link_libraries(cfcore_static PRIVATE BZip2::BZip2)
 
-# Link the cfcore_static library to the threads package in the platform.
-target_link_libraries(cfcore_static PRIVATE ${CMAKE_THREAD_LIBS_INIT})
+# Link the cfcore_static library to the threads library of the platform.
+target_link_libraries(cfcore_static PRIVATE Threads::Threads)
 
 # when building on conda on OSX with clang, we apparently need to explicitly
 # link the filesystem library, see (https://github.com/bioconda/bioconda-recipes/pull/37269/files)

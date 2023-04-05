@@ -193,7 +193,7 @@ ExternalProject_Add(prj_kmc
     BUILD_IN_SOURCE     TRUE
     INSTALL_DIR         ${CMAKE_SOURCE_DIR}/external/
     CONFIGURE_COMMAND   ""
-    BUILD_COMMAND       make -j4 CC=${CMAKE_CXX_COMPILER} simde && make -j4 CC=${CMAKE_CXX_COMPILER} kmc
+    BUILD_COMMAND       make -j CC=${CMAKE_CXX_COMPILER} simde && make -j CC=${CMAKE_CXX_COMPILER} kmc
     INSTALL_COMMAND     cp bin/libkmc_core.a ${EXT_LIB} &&
                         cp include/kmc_runner.h ${EXT_INCLUDE}
 )

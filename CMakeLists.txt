@@ -1,4 +1,5 @@
 
+# =============================================================================
 
 # Specify the minimum version of CMake to use.
 # CMake can have different behaviors (policies) based on its version used.
@@ -73,8 +74,8 @@ if(CF_DEVELOP_MODE)
 endif()
 
 
-# Here, we have some platform-specific considerations
-# of which we must take care.
+# Here, we have some platform-specific considerations of which we must take
+# care.
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     execute_process(
         COMMAND getconf LEVEL1_DCACHE_LINESIZE
@@ -102,8 +103,7 @@ elseif(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
         message(FATAL_ERROR "Unable to identify Apple Silicon processor architecture")
     endif()
 
-    # Later on, jemalloc will complain if the C compiler 
-    # hasn't been properly set.
+    # Later on, jemalloc will complain if the C compiler  hasn't been properly set.
     if(NOT CONDA_BUILD)
         set(CMAKE_C_COMPILER clang)
         set(CMAKE_CXX_COMPILER clang++)

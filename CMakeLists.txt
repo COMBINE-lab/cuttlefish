@@ -150,7 +150,7 @@ file(MAKE_DIRECTORY ${EXT_LIB} ${EXT_INCLUDE})
 # Prepare the `jemalloc` library. It provides scalable concurrency support and better avoidance
 # of fragmentation.
 set(MALLOC_LIB "")
-set(JEMALLOC_MIN_VERSION "5.2.1")
+set(JEMALLOC_MIN_VERSION "5.3.0")
 find_package(Jemalloc ${JEMALLOC_MIN_VERSION})
 if(JEMALLOC_FOUND)
     message("Found jemalloc (v${JEMALLOC_VERSION}) in the system")

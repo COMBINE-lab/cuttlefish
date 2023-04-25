@@ -18,6 +18,7 @@
 #include <string>
 #include <vector>
 #include <utility>
+#include <fstream>
 
 
 template <uint16_t k, uint8_t BITS_PER_KEY> class Kmer_Hash_Table;
@@ -54,6 +55,9 @@ private:
     // `output_buffer[t_id]` holds output content yet to be written to the disk from thread number `t_id`.
     std::vector<std::string> output_buffer;
 
+    std::vector<std::vector<uint32_t>> unitig_list; // `unitig_list[t_id]` holds the multiset of unitig IDs extracted by thread number `t_id`.
+    std::vector<uint32_t> unitig_set;   // The set of unitig IDs extracted from an input reference.
+
     // `path_buffer[t_id]` and `overlap_buffer[t_id]` (applicable for GFA1) holds path and overlap
     // output content yet to be written to the disk from the thread number `t_id`.
     std::vector<std::string> path_buffer, overlap_buffer;
@@ -85,6 +89,8 @@ private:
 
     // Copies of the asynchronous logger `output` for each thread.
     std::vector<logger_t> output_;
+
+    std::ofstream inv_color_stream; // Output stream for inverted colors.
 
     // `path_output_[t_id]` and `overlap_output_[t_id]` are the output loggers for the paths
     // and the overlaps between the links in the paths respectively, produced from the
@@ -416,6 +422,10 @@ private:
     
     // Flushes the output buffers (one for each thread).
     void flush_output_buffers();
+
+    // Flushes the inverted-color buffers, for the color `ref_id`, of the threads
+    // having deduplicated their joint collection.
+    void flush_deduped_unitig_set(uint32_t ref_id);
 
     // Flushes the path buffers (one for each thread).
     void flush_path_buffers();

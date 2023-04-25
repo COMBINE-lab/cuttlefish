@@ -9,6 +9,7 @@
 #include "spdlog/sinks/basic_file_sink.h"
 
 #include <iomanip>
+#include <algorithm>
 
 
 template <uint16_t k>
@@ -47,8 +48,8 @@ void CdBG<k>::output_maximal_unitigs_plain()
 
     // Clear the output file and initialize the output loggers.
     clear_output_file();
-    init_output_loggers(); 
-    
+    init_output_loggers();
+
     // Allocate output buffers for each thread.
     allocate_output_buffers();
 
@@ -62,9 +63,17 @@ void CdBG<k>::output_maximal_unitigs_plain()
     uint64_t ref_len = 0;
     uint64_t seq_count = 0;
 
+    // ID of the current reference being parsed.
+    auto ref_id = parser.ref_id();
+
     // Parse sequences one-by-one, and output each unique maximal unitig encountered through them.
     while(parser.read_next_seq())
     {
+        if(params.extract_inverted_colors() && parser.ref_id() != ref_id)
+            flush_deduped_unitig_set(ref_id);
+
+        ref_id = parser.ref_id();
+
         const char* const seq = parser.seq();
         const size_t seq_len = parser.seq_len();
         const size_t seq_buf_sz = parser.buff_sz();
@@ -86,6 +95,9 @@ void CdBG<k>::output_maximal_unitigs_plain()
         distribute_output_plain(seq, seq_len, thread_pool);
         thread_pool.wait_completion();
     }
+
+    if(params.extract_inverted_colors())
+        flush_deduped_unitig_set(ref_id);
 
     std::cout << "\nProcessed " << seq_count << " sequences. Total reference length: " << ref_len << " bases.\n";
     std::cout << "Maximum input sequence buffer size used: " << max_buf_sz / (1024 * 1024) << " MB.\n";
@@ -422,7 +434,11 @@ void CdBG<k>::clear_output_file() const
     const cuttlefish::Output_Format op_format = params.output_format();
 
     if(op_format == cuttlefish::fa || op_format == cuttlefish::gfa1 || op_format == cuttlefish::gfa2)
+    {
         clear_file(params.output_file_path());
+        if(params.extract_inverted_colors())
+            clear_file(params.inverted_colors_path());
+    }
     else if(op_format == cuttlefish::gfa_reduced)
     {
         const std::string seg_file_path(params.segment_file_path());
@@ -468,6 +484,10 @@ void CdBG<k>::init_output_loggers()
     output_.resize(thread_count);
     for(uint16_t t_id = 0; t_id < thread_count; ++t_id)
         output_[t_id] = output;
+
+
+    if(params.extract_inverted_colors())
+        inv_color_stream.open(params.inverted_colors_path());
 }
 
 
@@ -479,6 +499,9 @@ void CdBG<k>::allocate_output_buffers()
     output_buffer.resize(thread_count);
     for(uint16_t t_id = 0; t_id < thread_count; ++t_id)
         output_buffer[t_id].reserve(BUFFER_CAPACITY);
+
+    if(params.extract_inverted_colors())
+        unitig_list.resize(thread_count);
 }
 
 
@@ -594,6 +617,34 @@ void CdBG<k>::flush_output_buffers()
     for (uint16_t t_id = 0; t_id < thread_count; ++t_id)
         if(!output_buffer[t_id].empty())
             flush_buffer(output_buffer[t_id], output_[t_id]);
+
+    if(params.extract_inverted_colors())
+        inv_color_stream.close();
+}
+
+
+template <uint16_t k>
+void CdBG<k>::flush_deduped_unitig_set(const uint32_t ref_id)
+{
+    unitig_set.clear();
+    std::for_each(unitig_list.begin(), unitig_list.end(),
+                    [&](auto& v)
+                    {
+                        unitig_set.insert(unitig_set.end(), v.cbegin(), v.cend());
+                        v.clear();
+                    });
+
+    std::sort(unitig_set.begin(), unitig_set.end());
+    const auto last = std::unique(unitig_set.begin(), unitig_set.end());
+
+
+    inv_color_stream.write(reinterpret_cast<const char*>(&ref_id), sizeof(ref_id));
+    const uint32_t uniq_count = last - unitig_set.begin();
+    inv_color_stream.write(reinterpret_cast<const char*>(&uniq_count), sizeof(uniq_count));
+
+    inv_color_stream.write(reinterpret_cast<const char*>(unitig_set.data()), uniq_count * sizeof(typename decltype(unitig_set)::value_type));
+
+    std::cerr << "Flushed inverted colors for ref. ID " << ref_id << ".\n";
 }
 
 

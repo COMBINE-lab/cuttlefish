@@ -74,6 +74,7 @@ int cf_build(int argc, char** argv)
         ("save-mph", "save the minimal perfect hash (BBHash) over the vertex set")
         ("save-buckets", "save the DFA-states collection of the vertices")
         ("save-vertices", "save the vertex set of the graph")
+        ("extract-inverted-colors", "extract the inverted colors")
         ;
 
     options.add_options("debug")
@@ -113,6 +114,7 @@ int cf_build(int argc, char** argv)
         const auto save_mph = result["save-mph"].as<bool>();
         const auto save_buckets = result["save-buckets"].as<bool>();
         const auto save_vertices = result["save-vertices"].as<bool>();
+        const auto extract_inverted_colors = result["extract-inverted-colors"].as<bool>();
 #ifdef CF_DEVELOP_MODE
         const double gamma = result["gamma"].as<double>();
 #endif
@@ -122,7 +124,7 @@ int cf_build(int argc, char** argv)
                                     k, cutoff, vertex_db, edge_db, thread_count, max_memory, strict_memory,
                                     output_file, format, track_short_seqs, poly_n_stretch, working_dir,
                                     path_cover,
-                                    save_mph, save_buckets, save_vertices
+                                    save_mph, save_buckets, save_vertices, extract_inverted_colors
 #ifdef CF_DEVELOP_MODE
                                     , gamma
 #endif

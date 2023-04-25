@@ -144,6 +144,9 @@ void CdBG<k>::output_plain_unitig(const uint16_t thread_id, const char* const se
     Kmer_Hash_Entry_API<cuttlefish::BITS_PER_REF_KMER> hash_table_entry = hash_table->at(bucket_id);
     State& state = hash_table_entry.get_state();
 
+    if(params.extract_inverted_colors())
+        unitig_list[thread_id].push_back(bucket_id);
+
     if(state.is_outputted())
         return;
     

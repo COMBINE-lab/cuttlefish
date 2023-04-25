@@ -25,7 +25,8 @@ Build_Params::Build_Params( const bool is_read_graph,
                             const bool path_cover,
                             const bool save_mph,
                             const bool save_buckets,
-                            const bool save_vertices
+                            const bool save_vertices,
+                            const bool extract_inverted_colors
 #ifdef CF_DEVELOP_MODE
                             , const double gamma
 #endif
@@ -48,7 +49,8 @@ Build_Params::Build_Params( const bool is_read_graph,
         path_cover_(path_cover),
         save_mph_(save_mph),
         save_buckets_(save_buckets),
-        save_vertices_(save_vertices)
+        save_vertices_(save_vertices),
+        extract_inverted_colors_(extract_inverted_colors)
 #ifdef CF_DEVELOP_MODE
         , gamma_(gamma)
 #endif
@@ -132,7 +134,7 @@ bool Build_Params::is_valid() const
 
         
         // Cuttlefish 1 specific arguments can not be specified.
-        if(output_format_)
+        if(output_format_ || extract_inverted_colors_)
         {
             std::cout << "Cuttlefish 1 specific arguments specified while using Cuttlefish 2.\n";
             valid = false;
@@ -147,6 +149,12 @@ bool Build_Params::is_valid() const
             valid = false;
         }
 
+        // Extraction of inverted colors is supported with only plain-FASTA o/p for now.
+        if(extract_inverted_colors_ && output_format() != cuttlefish::fa)
+        {
+            std::cout << "Extraction of inverted colors is only supported with FASTA o/p format for now.\n";
+            valid = false;
+        }
 
         // Cuttlefish 2 specific arguments can not be specified.
         if(cutoff_ || path_cover_)

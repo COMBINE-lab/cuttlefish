@@ -19,6 +19,7 @@ namespace cuttlefish
         
         // For reference dBGs only:
 
+        constexpr char inv_colors_ext[] = ".cf_inv_col";
         constexpr char gfa1_ext[] = ".gfa1";
         constexpr char gfa2_ext[] = ".gfa2";
         constexpr char seg_ext[] = ".cf_seg";

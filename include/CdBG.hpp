@@ -55,8 +55,8 @@ private:
     // `output_buffer[t_id]` holds output content yet to be written to the disk from thread number `t_id`.
     std::vector<std::string> output_buffer;
 
-    std::vector<std::vector<uint32_t>> unitig_list; // `unitig_list[t_id]` holds the multiset of unitig IDs extracted by thread number `t_id`.
-    std::vector<uint32_t> unitig_set;   // The set of unitig IDs extracted from an input reference.
+    std::vector<std::vector<uint64_t>> unitig_list; // `unitig_list[t_id]` holds the multiset of unitig IDs extracted by thread number `t_id`.
+    std::vector<uint64_t> unitig_set;   // The set of unitig IDs extracted from an input reference.
 
     // `path_buffer[t_id]` and `overlap_buffer[t_id]` (applicable for GFA1) holds path and overlap
     // output content yet to be written to the disk from the thread number `t_id`.

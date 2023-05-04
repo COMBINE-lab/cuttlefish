@@ -638,8 +638,8 @@ void CdBG<k>::flush_deduped_unitig_set(const uint32_t ref_id)
     const auto last = std::unique(unitig_set.begin(), unitig_set.end());
 
 
-    inv_color_stream.write(reinterpret_cast<const char*>(&ref_id), sizeof(ref_id));
-    const uint32_t uniq_count = last - unitig_set.begin();
+    inv_color_stream.write(reinterpret_cast<const char*>(&ref_id), sizeof(uint64_t));
+    const std::size_t uniq_count = last - unitig_set.begin();
     inv_color_stream.write(reinterpret_cast<const char*>(&uniq_count), sizeof(uniq_count));
 
     inv_color_stream.write(reinterpret_cast<const char*>(unitig_set.data()), uniq_count * sizeof(typename decltype(unitig_set)::value_type));

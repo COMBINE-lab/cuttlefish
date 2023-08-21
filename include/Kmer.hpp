@@ -280,7 +280,7 @@ template <uint16_t k>
 __attribute__((optimize("unroll-loops")))
 inline Kmer<k>::Kmer(const char* const label)
 {
-    assert(std::strlen(label) == k);
+    assert(std::strlen(label) >= k);
 
     constexpr uint16_t packed_word_count = k / 32;
 

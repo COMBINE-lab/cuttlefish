@@ -159,11 +159,11 @@ else()
     message("Build system will fetch and install jemalloc")
     ExternalProject_Add(prj_jemalloc
         DOWNLOAD_DIR        ${CMAKE_SOURCE_DIR}/external
-        DOWNLOAD_COMMAND    curl -k -L https://github.com/jemalloc/jemalloc/archive/5.2.1.tar.gz -o jemalloc-5.2.1.tar.gz &&
-                            tar -xzf jemalloc-5.2.1.tar.gz &&
-                            rm jemalloc-5.2.1.tar.gz
+        DOWNLOAD_COMMAND    curl -k -L https://github.com/jemalloc/jemalloc/archive/${JEMALLOC_MIN_VERSION}.tar.gz -o jemalloc-${JEMALLOC_MIN_VERSION}.tar.gz &&
+                            tar -xzf jemalloc-${JEMALLOC_MIN_VERSION}.tar.gz &&
+                            rm jemalloc-${JEMALLOC_MIN_VERSION}.tar.gz
 
-        SOURCE_DIR          ${CMAKE_SOURCE_DIR}/external/jemalloc-5.2.1
+        SOURCE_DIR          ${CMAKE_SOURCE_DIR}/external/jemalloc-${JEMALLOC_MIN_VERSION}
         BUILD_IN_SOURCE     TRUE
         INSTALL_DIR         ${CMAKE_SOURCE_DIR}/external
         CONFIGURE_COMMAND   sh -c "CC=${CMAKE_C_COMPILER} ./autogen.sh --disable-debug --enable-static --prefix=<INSTALL_DIR> --silent"

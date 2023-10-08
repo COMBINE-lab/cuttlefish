@@ -92,9 +92,6 @@ target_link_libraries(cfcore_static PRIVATE kmc)
 # Link the cfcore_static library to the `zlib` library.
 target_link_libraries(cfcore_static PRIVATE ZLIB::ZLIB)
 
-# Link the cfcore_static library ti the `bzip2` library.
-target_link_libraries(cfcore_static PRIVATE BZip2::BZip2)
-
 # Link the cfcore_static library to the threads library of the platform.
 target_link_libraries(cfcore_static PRIVATE Threads::Threads)
 

@@ -126,13 +126,6 @@ if(NOT ZLIB_FOUND)
     message(FATAL_ERROR "zlib (https://zlib.net/) is required. Aborting.")
 endif()
 
-# Search and load setting for the `bzip2` library. It is required to seamlessly adapt the
-# `kmc` library to bzip-compressed files.
-include(FindBZip2)
-if(NOT BZIP2_FOUND)
-    message(FATAL_ERROR "bzip2 (https://sourceware.org/bzip2/) is required. Aborting.")
-endif()
-
 
 # Set path for modules required to search for existing packages in the system.
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_SOURCE_DIR}/cmake/Modules/")
@@ -182,18 +175,16 @@ endif()
 
 # Prepare the `kmc` library — required by the Cuttlefish algorithm implementation.
 # NOTE: do something more intelligent below than the -j4
+set(KMC_VERSION "v3.2.2")
 message("Build system will fetch and install KMC3")
 ExternalProject_Add(prj_kmc
     DOWNLOAD_DIR        ${CMAKE_SOURCE_DIR}/external
-    DOWNLOAD_COMMAND    curl -k -L https://github.com/refresh-bio/KMC/archive/refs/tags/v3.2.1.tar.gz -o KMC-3.2.1.tar.gz &&
-                        tar -xzf KMC-3.2.1.tar.gz &&
-                        rm KMC-3.2.1.tar.gz
-    PATCH_COMMAND       patch --strip 1 < ${CMAKE_SOURCE_DIR}/patches/kmc_patch.diff
-    SOURCE_DIR          ${CMAKE_SOURCE_DIR}/external/KMC-3.2.1
+    DOWNLOAD_COMMAND    git clone --recurse-submodules git@github.com:refresh-bio/KMC.git --branch ${KMC_VERSION}
+    SOURCE_DIR          ${CMAKE_SOURCE_DIR}/external/KMC
     BUILD_IN_SOURCE     TRUE
     INSTALL_DIR         ${CMAKE_SOURCE_DIR}/external/
     CONFIGURE_COMMAND   ""
-    BUILD_COMMAND       make -j CC=${CMAKE_CXX_COMPILER} simde && make -j CC=${CMAKE_CXX_COMPILER} kmc
+    BUILD_COMMAND       make -j kmc
     INSTALL_COMMAND     cp bin/libkmc_core.a ${EXT_LIB} &&
                         cp include/kmc_runner.h ${EXT_INCLUDE}
 )

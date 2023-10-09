@@ -1,0 +1,182 @@
+diff --git a/Makefile b/Makefile
+index 86a3042..b707ab2 100644
+--- a/Makefile
++++ b/Makefile
+@@ -41,23 +41,25 @@ STATIC_LFLAGS =
+ PY_FLAGS =
+ 
+ ifeq ($(D_OS),MACOS)
+-	CC = g++-11
++	# rely on the user's definition of 
++	# CXX if it doesn't exist
++	CXX ?= clang++
+ 
+ 	ifeq ($(D_ARCH),ARM64)
+ 		CPU_FLAGS = -march=armv8.4-a
+ 	else
+ 		CPU_FLAGS = -m64
+ 	endif
+-	STATIC_CFLAGS = -static-libgcc -static-libstdc++ -pthread
+-	STATIC_LFLAGS = -static-libgcc -static-libstdc++ -pthread	
++	STATIC_CFLAGS = -pthread #-static-libgcc -static-libstdc++ -pthread
++	STATIC_LFLAGS = -pthread #-static-libgcc -static-libstdc++ -pthread	
+ 	PY_FLAGS = -Wl,-undefined,dynamic_lookup -fPIC 
+ else
+-	CC 	= g++
++	CXX	?= clang++
+ 
+ 	ifeq ($(D_ARCH),ARM64)
+ 		CPU_FLAGS = -march=armv8-a
+ 		STATIC_CFLAGS =
+-		STATIC_LFLAGS = -static-libgcc -static-libstdc++ -pthread	
++		STATIC_LFLAGS = -pthread #-static-libgcc -static-libstdc++ -pthread	
+ 	else
+ 		CPU_FLAGS = -m64
+ 		STATIC_CFLAGS = -static -Wl,--whole-archive -lpthread -Wl,--no-whole-archive
+@@ -146,19 +148,19 @@ $(LIB_ZLIB):
+ 	cd 3rd_party/cloudflare; ./configure; make libz.a
+ 
+ $(KMC_CLI_OBJS) $(KMC_CORE_OBJS) $(KMC_DUMP_OBJS) $(KMC_API_OBJS) $(KFF_OBJS) $(KMC_TOOLS_OBJS): %.o: %.cpp
+-	$(CC) $(CFLAGS) -I 3rd_party/cloudflare -c $< -o $@
++	$(CXX) $(CFLAGS) -I 3rd_party/cloudflare -c $< -o $@
+ 
+ $(KMC_MAIN_DIR)/raduls_sse2.o: $(KMC_MAIN_DIR)/raduls_sse2.cpp
+-	$(CC) $(CFLAGS) -msse2 -c $< -o $@
++	$(CXX) $(CFLAGS) -msse2 -c $< -o $@
+ $(KMC_MAIN_DIR)/raduls_sse41.o: $(KMC_MAIN_DIR)/raduls_sse41.cpp
+-	$(CC) $(CFLAGS) -msse4.1 -c $< -o $@
++	$(CXX) $(CFLAGS) -msse4.1 -c $< -o $@
+ $(KMC_MAIN_DIR)/raduls_avx.o: $(KMC_MAIN_DIR)/raduls_avx.cpp
+-	$(CC) $(CFLAGS) -mavx -c $< -o $@
++	$(CXX) $(CFLAGS) -mavx -c $< -o $@
+ $(KMC_MAIN_DIR)/raduls_avx2.o: $(KMC_MAIN_DIR)/raduls_avx2.cpp
+-	$(CC) $(CFLAGS) -mavx2 -c $< -o $@
++	$(CXX) $(CFLAGS) -mavx2 -c $< -o $@
+ 
+ $(KMC_MAIN_DIR)/raduls_neon.o: $(KMC_MAIN_DIR)/raduls_neon.cpp
+-	$(CC) $(CFLAGS) -c $< -o $@
++	$(CXX) $(CFLAGS) -c $< -o $@
+ 
+ 
+ $(LIB_KMC_CORE): $(KMC_CORE_OBJS) $(RADULS_OBJS) $(KMC_API_OBJS) $(KFF_OBJS)
+@@ -169,22 +171,22 @@ $(LIB_KMC_CORE): $(KMC_CORE_OBJS) $(RADULS_OBJS) $(KMC_API_OBJS) $(KFF_OBJS)
+ 
+ kmc: $(KMC_CLI_OBJS) $(LIB_KMC_CORE) $(LIB_ZLIB)
+ 	-mkdir -p $(OUT_BIN_DIR)
+-	$(CC) $(CLINK) -o $(OUT_BIN_DIR)/$@ $^ $(LIB_ZLIB)
++	$(CXX) $(CLINK) -o $(OUT_BIN_DIR)/$@ $^ $(LIB_ZLIB)
+ 
+ kmc_dump: $(KMC_DUMP_OBJS) $(KMC_API_OBJS)
+ 	-mkdir -p $(OUT_BIN_DIR)
+-	$(CC) $(CLINK) -o $(OUT_BIN_DIR)/$@ $^
++	$(CXX) $(CLINK) -o $(OUT_BIN_DIR)/$@ $^
+ 
+ kmc_tools: $(KMC_TOOLS_OBJS) $(KMC_API_OBJS) $(KFF_OBJS) $(LIB_ZLIB)
+ 	-mkdir -p $(OUT_BIN_DIR)
+-	$(CC) $(CLINK) -I 3rd_party/cloudflare -o $(OUT_BIN_DIR)/$@ $^ $(LIB_ZLIB)
++	$(CXX) $(CLINK) -I 3rd_party/cloudflare -o $(OUT_BIN_DIR)/$@ $^ $(LIB_ZLIB)
+ 
+ $(PY_KMC_API_DIR)/%.o: $(KMC_API_DIR)/%.cpp
+-	$(CC) -c -fPIC -Wall -O3 $(CPU_FLAGS) -std=c++14 $^ -o $@
++	$(CXX) -c -fPIC -Wall -O3 $(CPU_FLAGS) -std=c++14 $^ -o $@
+ 
+ py_kmc_api: $(PY_KMC_API_OBJS) $(PY_KMC_API_OBJS)
+ 	-mkdir -p $(OUT_BIN_DIR)
+-	$(CC) $(PY_KMC_API_CFLAGS) $(PY_KMC_API_DIR)/py_kmc_api.cpp $(PY_KMC_API_OBJS) \
++	$(CXX) $(PY_KMC_API_CFLAGS) $(PY_KMC_API_DIR)/py_kmc_api.cpp $(PY_KMC_API_OBJS) \
+ 	-I $(KMC_API_DIR) \
+ 	-I $(PY_KMC_API_DIR)/libs/pybind11/include \
+ 	-I `python3 -c "import sysconfig;print(sysconfig.get_paths()['include'])"` \
+diff --git a/kmc_CLI/kmc.cpp b/kmc_CLI/kmc.cpp
+index 15e579e..f291c13 100644
+--- a/kmc_CLI/kmc.cpp
++++ b/kmc_CLI/kmc.cpp
+@@ -1,5 +1,6 @@
+ #define _CRT_SECURE_NO_WARNINGS
+ #include "../kmc_core/kmc_runner.h"
++#include <random>
+ #include <cstring>
+ #include <iostream>
+ #include <fstream>
+@@ -246,6 +247,9 @@ bool parse_parameters(int argc, char* argv[], Params& params)
+ 		stage2Params.SetOutputFileName(argv[i++]);
+ 	stage1Params.SetTmpPath(argv[i++]);
+ 
++  std::random_device rd;
++  std::mt19937 g(rd());
++
+ 	std::vector<std::string> input_file_names;	
+ 	if (input_file_name[0] != '@')
+ 		input_file_names.push_back(input_file_name);
+@@ -264,7 +268,7 @@ bool parse_parameters(int argc, char* argv[], Params& params)
+ 				input_file_names.push_back(s);
+ 
+ 		in.close();
+-		std::random_shuffle(input_file_names.begin(), input_file_names.end());
++		std::shuffle(input_file_names.begin(), input_file_names.end(), g);
+ 	}
+ 	stage1Params.SetInputFiles(input_file_names);
+ 
+diff --git a/./kmc_CLI/kmc.o b/kmc_CLI/kmc.o
+new file mode 100644
+index 0000000..b840566
+Binary files /dev/null and b/kmc_CLI/kmc.o differ
+diff --git a/kmc_api/kmer_defs.h b/kmc_api/kmer_defs.h
+index 027f410..8e67ec2 100644
+--- a/kmc_api/kmer_defs.h
++++ b/kmc_api/kmer_defs.h
+@@ -34,7 +34,7 @@
+ 
+ 
+ 	#include <stdio.h>
+-	#include <ext/algorithm>
++	#include <algorithm>
+ 	#include <iostream>
+ 
+ #else
+diff --git a/kmc_core/defs.h b/kmc_core/defs.h
+index 151332a..8c25157 100644
+--- a/kmc_core/defs.h
++++ b/kmc_core/defs.h
+@@ -109,8 +109,8 @@ using uint64 = uint64_t;
+ #include <string.h>
+ 
+ #include <stdio.h>
+-#include <ext/algorithm>
+-using __gnu_cxx::copy_n;
++#include <algorithm>
++//using __gnu_cxx::copy_n;
+ 
+ #endif
+ 
+diff --git a/kmc_core/queues.h b/kmc_core/queues.h
+index 99fccb9..009cf7d 100644
+--- a/kmc_core/queues.h
++++ b/kmc_core/queues.h
+@@ -11,6 +11,8 @@
+ #ifndef _QUEUES_H
+ #define _QUEUES_H
+ 
++#include <algorithm>
++#include <random>
+ #include "defs.h"
+ #include <stdio.h>
+ #include <tuple>
+@@ -571,6 +573,8 @@ public:
+ 	void init_random()
+ 	{
+ 		lock_guard<mutex> lck(mtx);
++    std::random_device rd;
++    std::mt19937 g(rd());
+ 		vector<pair<int32, int64>> bin_sizes;
+ 
+ 		for (auto& p : m)
+@@ -589,7 +593,7 @@ public:
+ 		for (uint32 i = no_sort_end; i < bin_sizes.size(); ++i)
+ 			random_bins.push_back(bin_sizes[i].first);
+ 
+-		random_shuffle(random_bins.begin(), random_bins.end());
++    std::shuffle(random_bins.begin(), random_bins.end(), g);
+ 
+ 		for (uint32 i = no_sort_start; i < no_sort_end; ++i)
+ 			random_bins.push_back(bin_sizes[i].first);

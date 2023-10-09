@@ -180,6 +180,7 @@ message("Build system will fetch and install KMC3")
 ExternalProject_Add(prj_kmc
     DOWNLOAD_DIR        ${CMAKE_SOURCE_DIR}/external
     DOWNLOAD_COMMAND    git clone --recurse-submodules git@github.com:refresh-bio/KMC.git --branch ${KMC_VERSION}
+    PATCH_COMMAND       patch --strip 1 < ${CMAKE_SOURCE_DIR}/patches/kmc_v3.2.2.patch
     SOURCE_DIR          ${CMAKE_SOURCE_DIR}/external/KMC
     BUILD_IN_SOURCE     TRUE
     INSTALL_DIR         ${CMAKE_SOURCE_DIR}/external/

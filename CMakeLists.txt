@@ -185,7 +185,7 @@ ExternalProject_Add(prj_kmc
     BUILD_IN_SOURCE     TRUE
     INSTALL_DIR         ${CMAKE_SOURCE_DIR}/external/
     CONFIGURE_COMMAND   ""
-    BUILD_COMMAND       make -j kmc
+    BUILD_COMMAND       make -j bin/libkmc_core.a
     INSTALL_COMMAND     cp bin/libkmc_core.a ${EXT_LIB} &&
                         cp include/kmc_runner.h ${EXT_INCLUDE}
 )

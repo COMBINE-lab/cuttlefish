@@ -243,8 +243,9 @@ The currently supported output formats are —
 
   The only GFA information missing _explictly_ in this format is the links (GFA 1) / edges and gaps (GFA 2), i.e. the `L`- or the `E`- and the `G`-tagged entries.
   These can be readily inferred from the sequence-tilings.
-  For example, a tiling <code><seq_id u<sub>0</sub> u<sub>1</sub> ... u<sub>n</sub>></code> corresponds to the edge and gap multi-set <code>{(u<sub>0</sub>, u<sub>1</sub>), (u<sub>1</sub> u<sub>2</sub>), ... , (u<sub>n-1</sub>, u<sub>n</sub>)}</code>.
-  Whether a pair <code>(u<sub>i</sub>, u<sub>i+1</sub>)</code> is an edge or a gap can be inferred by checking the suffix and the prefix (of length `k - 1`) of the unitigs <code>u<sub>i</sub></code> and <code>u<sub>i+1</sub></code>, respectively (in their correct orientations, based on their following `+`/`-` signs).
+  For example, a tiling \\(u_0 u_1 \dots u_n\\) corresponds to the edge and gap multi-set \\( \{ (u_0, u_1), (u_1, u_2), \dots , (u_{n-1}, u_n)\} \\).
+  Whether a pair \\( (u_i, u_{i+1}) \\) is an edge or a gap can be inferred by checking the suffix and the prefix (of length `k - 1`) of the unitigs 
+  \\( u_i \\) and \\( u_{i+1} \\), respectively (in their correct orientations, based on their following `+`/`-` signs).
   Note that, a gap is possible in a sequence-tiling only if the sequence contains characters outside of `A`, `C`, `G`, and `T`.
   
   For moderate to large sized genomes, this output format is preferrable to the GFA ones as the GFA formats can be quite verbose for this particular scenario, while the reduced representation provides effitively the same information, while taking much less space.

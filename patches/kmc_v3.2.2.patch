@@ -2,7 +2,7 @@ diff --git a/Makefile b/Makefile
 index 86a3042..b707ab2 100644
 --- a/Makefile
 +++ b/Makefile
-@@ -41,23 +41,25 @@ STATIC_LFLAGS =
+@@ -41,27 +41,29 @@
  PY_FLAGS =
  
  ifeq ($(D_OS),MACOS)
@@ -23,17 +23,23 @@ index 86a3042..b707ab2 100644
  	PY_FLAGS = -Wl,-undefined,dynamic_lookup -fPIC 
  else
 -	CC 	= g++
-+	CXX	?= clang++
++	CXX	?= c++
  
  	ifeq ($(D_ARCH),ARM64)
  		CPU_FLAGS = -march=armv8-a
  		STATIC_CFLAGS =
 -		STATIC_LFLAGS = -static-libgcc -static-libstdc++ -pthread	
-+		STATIC_LFLAGS = -pthread #-static-libgcc -static-libstdc++ -pthread	
++		STATIC_LFLAGS = -lrt -pthread #-static-libgcc -static-libstdc++ -pthread	
  	else
  		CPU_FLAGS = -m64
- 		STATIC_CFLAGS = -static -Wl,--whole-archive -lpthread -Wl,--no-whole-archive
-@@ -146,19 +148,19 @@ $(LIB_ZLIB):
+-		STATIC_CFLAGS = -static -Wl,--whole-archive -lpthread -Wl,--no-whole-archive
+-		STATIC_LFLAGS = -static -Wl,--whole-archive -lpthread -Wl,--no-whole-archive
++		STATIC_CFLAGS = -static -Wl,--whole-archive -lrt -lpthread -Wl,--no-whole-archive
++		STATIC_LFLAGS = -static -Wl,--whole-archive -lrt -lpthread -Wl,--no-whole-archive
+ 	endif
+ 	PY_FLAGS = -fPIC
+ endif
+@@ -146,19 +148,19 @@
  	cd 3rd_party/cloudflare; ./configure; make libz.a
  
  $(KMC_CLI_OBJS) $(KMC_CORE_OBJS) $(KMC_DUMP_OBJS) $(KMC_API_OBJS) $(KFF_OBJS) $(KMC_TOOLS_OBJS): %.o: %.cpp
@@ -59,7 +65,7 @@ index 86a3042..b707ab2 100644
  
  
  $(LIB_KMC_CORE): $(KMC_CORE_OBJS) $(RADULS_OBJS) $(KMC_API_OBJS) $(KFF_OBJS)
-@@ -169,22 +171,22 @@ $(LIB_KMC_CORE): $(KMC_CORE_OBJS) $(RADULS_OBJS) $(KMC_API_OBJS) $(KFF_OBJS)
+@@ -169,22 +171,22 @@
  
  kmc: $(KMC_CLI_OBJS) $(LIB_KMC_CORE) $(LIB_ZLIB)
  	-mkdir -p $(OUT_BIN_DIR)

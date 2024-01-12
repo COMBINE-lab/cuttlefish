@@ -185,7 +185,7 @@ ExternalProject_Add(prj_kmc
     BUILD_IN_SOURCE     TRUE
     INSTALL_DIR         ${CMAKE_SOURCE_DIR}/external/
     CONFIGURE_COMMAND   ""
-    BUILD_COMMAND       make -j bin/libkmc_core.a
+    BUILD_COMMAND       make -j ${KMC_SUBBUILD_THREADS} bin/libkmc_core.a
     INSTALL_COMMAND     cp bin/libkmc_core.a ${EXT_LIB} &&
                         cp include/kmc_runner.h ${EXT_INCLUDE}
 )
@@ -211,6 +211,13 @@ endif()
 # Help `conda` build for OSX through circumventing some of its old SDK-based checks.
 if(CONDA_BUILD)
     set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -D_LIBCPP_DISABLE_AVAILABILITY")
+    if (DEFINED ENV{NUM_JOBS})
+      set(KMC_SUBBUILD_THREADS $ENV{NUM_JOBS})
+    else()
+      set(KMC_SUBBUILD_THREADS 1)
+    endif()
+else()
+    cmake_host_system_information(RESULT KMC_SUBBUILD_THREADS QUERY NUMBER_OF_PHYSICAL_CORES)
 endif()
 
 

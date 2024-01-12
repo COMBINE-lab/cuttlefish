@@ -172,6 +172,19 @@ if(NOT JEMALLOC_FOUND)
     add_dependencies(jemalloc prj_jemalloc)
 endif()
 
+# Help `conda` build for OSX through circumventing some of its old SDK-based checks.
+if(CONDA_BUILD)
+    set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -D_LIBCPP_DISABLE_AVAILABILITY")
+    if (DEFINED ENV{NUM_JOBS})
+      set(KMC_SUBBUILD_THREADS $ENV{NUM_JOBS})
+    else()
+      set(KMC_SUBBUILD_THREADS 1)
+    endif()
+else()
+    cmake_host_system_information(RESULT KMC_SUBBUILD_THREADS QUERY NUMBER_OF_PHYSICAL_CORES)
+endif()
+
+message("Setting KMC_SUBBUILD_THREADS = ${KMC_SUBBUILD_THREADS}")
 
 # Prepare the `kmc` library — required by the Cuttlefish algorithm implementation.
 # NOTE: do something more intelligent below than the -j4
@@ -206,20 +219,6 @@ endif()
 #set(CMAKE_CXX_FLAGS_RELEASE "-O3")
 #set(CMAKE_C_FLAGS_DEBUG "-g")
 #set(CMAKE_C_FLAGS_RELEASE "-O3")
-
-
-# Help `conda` build for OSX through circumventing some of its old SDK-based checks.
-if(CONDA_BUILD)
-    set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -D_LIBCPP_DISABLE_AVAILABILITY")
-    if (DEFINED ENV{NUM_JOBS})
-      set(KMC_SUBBUILD_THREADS $ENV{NUM_JOBS})
-    else()
-      set(KMC_SUBBUILD_THREADS 1)
-    endif()
-else()
-    cmake_host_system_information(RESULT KMC_SUBBUILD_THREADS QUERY NUMBER_OF_PHYSICAL_CORES)
-endif()
-
 
 # Add subdirectory `src` to the build; CMake will open `src/CMakeLists.txt` for such.
 add_subdirectory(src)

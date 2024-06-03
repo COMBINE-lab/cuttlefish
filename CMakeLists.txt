@@ -184,17 +184,14 @@ endif()
 message("Build system will fetch and install KMC3")
 ExternalProject_Add(prj_kmc
     DOWNLOAD_DIR        ${CMAKE_SOURCE_DIR}/external
-    DOWNLOAD_COMMAND    curl -k -L https://github.com/refresh-bio/KMC/archive/refs/tags/v3.2.1.tar.gz -o KMC-3.2.1.tar.gz &&
-                        tar -xzf KMC-3.2.1.tar.gz &&
-                        rm KMC-3.2.1.tar.gz
-    PATCH_COMMAND       patch --strip 1 < ${CMAKE_SOURCE_DIR}/patches/kmc_patch.diff
-    SOURCE_DIR          ${CMAKE_SOURCE_DIR}/external/KMC-3.2.1
+    DOWNLOAD_COMMAND    curl -k -L https://github.com/ggraham/KMC/archive/refs/tags/v3.2.4e.tar.gz | tar -xz
+    SOURCE_DIR          ${CMAKE_SOURCE_DIR}/external/KMC-3.2.4e
     BUILD_IN_SOURCE     TRUE
     INSTALL_DIR         ${CMAKE_SOURCE_DIR}/external/
-    CONFIGURE_COMMAND   ""
-    BUILD_COMMAND       make -j4 CC=${CMAKE_CXX_COMPILER} simde && make -j4 CC=${CMAKE_CXX_COMPILER} kmc
-    INSTALL_COMMAND     cp bin/libkmc_core.a ${EXT_LIB} &&
-                        cp include/kmc_runner.h ${EXT_INCLUDE}
+    CONFIGURE_COMMAND   ./configure
+    BUILD_COMMAND       make -j4
+    INSTALL_COMMAND     cp libkmc_core.a ${EXT_LIB} &&
+                        cp src/kmc_core/kmc_runner.h ${EXT_INCLUDE}
 )
 
 add_library(kmc STATIC IMPORTED)

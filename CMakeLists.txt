@@ -184,14 +184,14 @@ endif()
 message("Build system will fetch and install KMC3")
 ExternalProject_Add(prj_kmc
     DOWNLOAD_DIR        ${CMAKE_SOURCE_DIR}/external
-    DOWNLOAD_COMMAND    curl -k -L https://github.com/ggraham/KMC/archive/refs/tags/v3.2.4b.tar.gz | tar -xz
-    SOURCE_DIR          ${CMAKE_SOURCE_DIR}/external/KMC-3.2.4b
+    DOWNLOAD_COMMAND    curl -k -L https://github.com/ggraham/KMC/archive/refs/tags/v3.2.4e.tar.gz | tar -xz
+    SOURCE_DIR          ${CMAKE_SOURCE_DIR}/external/KMC-3.2.4e
     BUILD_IN_SOURCE     TRUE
     INSTALL_DIR         ${CMAKE_SOURCE_DIR}/external/
-    CONFIGURE_COMMAND   ""
-    BUILD_COMMAND       make -j4 libkmc_core.a
-    INSTALL_COMMAND     cp bin/libkmc_core.a ${EXT_LIB} &&
-                        cp include/kmc_runner.h ${EXT_INCLUDE}
+    CONFIGURE_COMMAND   ./configure
+    BUILD_COMMAND       make -j4
+    INSTALL_COMMAND     cp libkmc_core.a ${EXT_LIB} &&
+                        cp src/kmc_core/kmc_runner.h ${EXT_INCLUDE}
 )
 
 add_library(kmc STATIC IMPORTED)

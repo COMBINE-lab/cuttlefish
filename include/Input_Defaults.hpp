@@ -8,6 +8,8 @@
 
 #include <cstdint>
 #include <cstddef>
+#include <string>
+#include <filesystem>
 #include <thread>
 
 
@@ -27,7 +29,7 @@ namespace cuttlefish
         constexpr double GAMMA = 0;
 #endif
         constexpr Output_Format OP_FORMAT = Output_Format::fa;
-        constexpr char WORK_DIR[] = ".";
+        const std::string WORK_DIR = std::filesystem::temp_directory_path();
     }
 }
 

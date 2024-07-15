@@ -31,7 +31,7 @@ void Virtual_Prefix_File::init(std::FILE*& fptr, const uint64_t prefix_count, co
 	total_kmers = kmer_count;
 
 	// Allocate the prefix-file buffer.
-	prefix_file_buf.reserve(buffer_elem_count);
+	prefix_file_buf.resize(buffer_elem_count);
 
 	// Read in some prefix-file data, and initialize the virtual indices into the prefix-file.
 	prefix_chunk_start_index = 0;

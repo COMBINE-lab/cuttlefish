@@ -180,7 +180,7 @@ if(CONDA_BUILD)
     else()
       set(KMC_SUBBUILD_THREADS 1)
     endif()
-else()
+elseif(NOT DEFINED KMC_SUBBUILD_THREADS)
     cmake_host_system_information(RESULT KMC_SUBBUILD_THREADS QUERY NUMBER_OF_PHYSICAL_CORES)
 endif()
 

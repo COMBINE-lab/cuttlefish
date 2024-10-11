@@ -1,7 +1,102 @@
-diff --git a/Makefile b/Makefile
-index 86a3042..b707ab2 100644
---- a/Makefile
-+++ b/Makefile
+diff -ruN a/kmc_api/kmer_defs.h b/kmc_api/kmer_defs.h
+--- a/kmc_api/kmer_defs.h	2024-10-11 16:28:55.596641489 -0400
++++ b/kmc_api/kmer_defs.h	2024-10-11 16:28:44.299962423 -0400
+@@ -34,7 +34,7 @@
+ 
+ 
+ 	#include <stdio.h>
+-	#include <ext/algorithm>
++	#include <algorithm>
+ 	#include <iostream>
+ 
+ #else
+diff -ruN a/kmc_CLI/kmc.cpp b/kmc_CLI/kmc.cpp
+--- a/kmc_CLI/kmc.cpp	2024-10-11 16:28:55.594641369 -0400
++++ b/kmc_CLI/kmc.cpp	2024-10-11 16:28:44.298962362 -0400
+@@ -1,5 +1,6 @@
+ #define _CRT_SECURE_NO_WARNINGS
+ #include "../kmc_core/kmc_runner.h"
++#include <random>
+ #include <cstring>
+ #include <iostream>
+ #include <fstream>
+@@ -246,6 +247,9 @@
+ 		stage2Params.SetOutputFileName(argv[i++]);
+ 	stage1Params.SetTmpPath(argv[i++]);
+ 
++  std::random_device rd;
++  std::mt19937 g(rd());
++
+ 	std::vector<std::string> input_file_names;	
+ 	if (input_file_name[0] != '@')
+ 		input_file_names.push_back(input_file_name);
+@@ -264,7 +268,7 @@
+ 				input_file_names.push_back(s);
+ 
+ 		in.close();
+-		std::random_shuffle(input_file_names.begin(), input_file_names.end());
++		std::shuffle(input_file_names.begin(), input_file_names.end(), g);
+ 	}
+ 	stage1Params.SetInputFiles(input_file_names);
+ 
+diff -ruN a/kmc_core/critical_error_handler.h b/kmc_core/critical_error_handler.h
+--- a/kmc_core/critical_error_handler.h	2024-10-11 16:28:55.597641549 -0400
++++ b/kmc_core/critical_error_handler.h	2024-10-11 16:31:23.784516280 -0400
+@@ -4,6 +4,7 @@
+ #include <mutex>
+ #include "thread_cancellation_exception.h" //TODO: moze ten wyjatek zdefiniowac tutaj?
+ #include <condition_variable>
++#include <stdexcept>
+ #include <iostream>
+ 
+ class CThrowingOnCancelConditionVariable
+diff -ruN a/kmc_core/defs.h b/kmc_core/defs.h
+--- a/kmc_core/defs.h	2024-10-11 16:28:55.597641549 -0400
++++ b/kmc_core/defs.h	2024-10-11 16:28:44.299962423 -0400
+@@ -109,8 +109,8 @@
+ #include <string.h>
+ 
+ #include <stdio.h>
+-#include <ext/algorithm>
+-using __gnu_cxx::copy_n;
++#include <algorithm>
++//using __gnu_cxx::copy_n;
+ 
+ #endif
+ 
+diff -ruN a/kmc_core/queues.h b/kmc_core/queues.h
+--- a/kmc_core/queues.h	2024-10-11 16:28:55.605642030 -0400
++++ b/kmc_core/queues.h	2024-10-11 16:28:44.300962483 -0400
+@@ -11,6 +11,8 @@
+ #ifndef _QUEUES_H
+ #define _QUEUES_H
+ 
++#include <algorithm>
++#include <random>
+ #include "defs.h"
+ #include <stdio.h>
+ #include <tuple>
+@@ -571,6 +573,8 @@
+ 	void init_random()
+ 	{
+ 		lock_guard<mutex> lck(mtx);
++    std::random_device rd;
++    std::mt19937 g(rd());
+ 		vector<pair<int32, int64>> bin_sizes;
+ 
+ 		for (auto& p : m)
+@@ -589,7 +593,7 @@
+ 		for (uint32 i = no_sort_end; i < bin_sizes.size(); ++i)
+ 			random_bins.push_back(bin_sizes[i].first);
+ 
+-		random_shuffle(random_bins.begin(), random_bins.end());
++    std::shuffle(random_bins.begin(), random_bins.end(), g);
+ 
+ 		for (uint32 i = no_sort_start; i < no_sort_end; ++i)
+ 			random_bins.push_back(bin_sizes[i].first);
+diff -ruN a/Makefile b/Makefile
+--- a/Makefile	2024-10-11 16:28:55.592641248 -0400
++++ b/Makefile	2024-10-11 16:28:44.298962362 -0400
 @@ -41,27 +41,29 @@
  PY_FLAGS =
  
@@ -93,96 +188,3 @@ index 86a3042..b707ab2 100644
  	-I $(KMC_API_DIR) \
  	-I $(PY_KMC_API_DIR)/libs/pybind11/include \
  	-I `python3 -c "import sysconfig;print(sysconfig.get_paths()['include'])"` \
-diff --git a/kmc_CLI/kmc.cpp b/kmc_CLI/kmc.cpp
-index 15e579e..f291c13 100644
---- a/kmc_CLI/kmc.cpp
-+++ b/kmc_CLI/kmc.cpp
-@@ -1,5 +1,6 @@
- #define _CRT_SECURE_NO_WARNINGS
- #include "../kmc_core/kmc_runner.h"
-+#include <random>
- #include <cstring>
- #include <iostream>
- #include <fstream>
-@@ -246,6 +247,9 @@ bool parse_parameters(int argc, char* argv[], Params& params)
- 		stage2Params.SetOutputFileName(argv[i++]);
- 	stage1Params.SetTmpPath(argv[i++]);
- 
-+  std::random_device rd;
-+  std::mt19937 g(rd());
-+
- 	std::vector<std::string> input_file_names;	
- 	if (input_file_name[0] != '@')
- 		input_file_names.push_back(input_file_name);
-@@ -264,7 +268,7 @@ bool parse_parameters(int argc, char* argv[], Params& params)
- 				input_file_names.push_back(s);
- 
- 		in.close();
--		std::random_shuffle(input_file_names.begin(), input_file_names.end());
-+		std::shuffle(input_file_names.begin(), input_file_names.end(), g);
- 	}
- 	stage1Params.SetInputFiles(input_file_names);
- 
-diff --git a/./kmc_CLI/kmc.o b/kmc_CLI/kmc.o
-new file mode 100644
-index 0000000..b840566
-Binary files /dev/null and b/kmc_CLI/kmc.o differ
-diff --git a/kmc_api/kmer_defs.h b/kmc_api/kmer_defs.h
-index 027f410..8e67ec2 100644
---- a/kmc_api/kmer_defs.h
-+++ b/kmc_api/kmer_defs.h
-@@ -34,7 +34,7 @@
- 
- 
- 	#include <stdio.h>
--	#include <ext/algorithm>
-+	#include <algorithm>
- 	#include <iostream>
- 
- #else
-diff --git a/kmc_core/defs.h b/kmc_core/defs.h
-index 151332a..8c25157 100644
---- a/kmc_core/defs.h
-+++ b/kmc_core/defs.h
-@@ -109,8 +109,8 @@ using uint64 = uint64_t;
- #include <string.h>
- 
- #include <stdio.h>
--#include <ext/algorithm>
--using __gnu_cxx::copy_n;
-+#include <algorithm>
-+//using __gnu_cxx::copy_n;
- 
- #endif
- 
-diff --git a/kmc_core/queues.h b/kmc_core/queues.h
-index 99fccb9..009cf7d 100644
---- a/kmc_core/queues.h
-+++ b/kmc_core/queues.h
-@@ -11,6 +11,8 @@
- #ifndef _QUEUES_H
- #define _QUEUES_H
- 
-+#include <algorithm>
-+#include <random>
- #include "defs.h"
- #include <stdio.h>
- #include <tuple>
-@@ -571,6 +573,8 @@ public:
- 	void init_random()
- 	{
- 		lock_guard<mutex> lck(mtx);
-+    std::random_device rd;
-+    std::mt19937 g(rd());
- 		vector<pair<int32, int64>> bin_sizes;
- 
- 		for (auto& p : m)
-@@ -589,7 +593,7 @@ public:
- 		for (uint32 i = no_sort_end; i < bin_sizes.size(); ++i)
- 			random_bins.push_back(bin_sizes[i].first);
- 
--		random_shuffle(random_bins.begin(), random_bins.end());
-+    std::shuffle(random_bins.begin(), random_bins.end(), g);
- 
- 		for (uint32 i = no_sort_start; i < no_sort_end; ++i)
- 			random_bins.push_back(bin_sizes[i].first);

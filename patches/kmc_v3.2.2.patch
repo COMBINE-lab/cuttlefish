@@ -135,15 +135,15 @@ diff -uraN KMC/kmc_api/kmer_defs.h KMC_fixed/kmc_api/kmer_defs.h
  #else
 diff -uraN KMC/kmc_core/critical_error_handler.h KMC_fixed/kmc_core/critical_error_handler.h
 --- KMC/kmc_core/critical_error_handler.h	2024-10-28 14:53:04.537517520 -0400
-+++ KMC_fixed/kmc_core/critical_error_handler.h	2024-10-28 14:49:53.572042913 -0400
-@@ -4,6 +4,7 @@
- #include <mutex>
++++ KMC_fixed/kmc_core/critical_error_handler.h	2024-11-14 16:00:28.559086220 -0500
+@@ -5,6 +5,7 @@
  #include "thread_cancellation_exception.h" //TODO: moze ten wyjatek zdefiniowac tutaj?
  #include <condition_variable>
-+#include <stdexcept>
  #include <iostream>
++#include <stdexcept>
  
  class CThrowingOnCancelConditionVariable
+ {
 diff -uraN KMC/kmc_core/defs.h KMC_fixed/kmc_core/defs.h
 --- KMC/kmc_core/defs.h	2024-10-28 14:53:04.537517520 -0400
 +++ KMC_fixed/kmc_core/defs.h	2024-10-28 14:49:53.576042943 -0400
@@ -176,9 +176,21 @@ diff -uraN KMC/kmc_core/kff_writer.h KMC_fixed/kmc_core/kff_writer.h
 -};
 \ No newline at end of file
 +};
+diff -uraN KMC/kmc_core/mem_disk_file.cpp KMC_fixed/kmc_core/mem_disk_file.cpp
+--- KMC/kmc_core/mem_disk_file.cpp	2024-10-28 14:53:04.549517613 -0400
++++ KMC_fixed/kmc_core/mem_disk_file.cpp	2024-11-14 15:58:20.398095990 -0500
+@@ -11,6 +11,8 @@
+ #include "mem_disk_file.h"
+ #include "critical_error_handler.h"
+ #include <sstream>
++#include <stdexcept>
++
+ using namespace std;
+ 
+ //----------------------------------------------------------------------------------
 diff -uraN KMC/kmc_core/queues.h KMC_fixed/kmc_core/queues.h
 --- KMC/kmc_core/queues.h	2024-10-28 14:53:04.549517613 -0400
-+++ KMC_fixed/kmc_core/queues.h	2024-10-28 14:49:53.576042943 -0400
++++ KMC_fixed/kmc_core/queues.h	2024-11-14 15:58:37.266226409 -0500
 @@ -11,6 +11,8 @@
  #ifndef _QUEUES_H
  #define _QUEUES_H
@@ -188,7 +200,15 @@ diff -uraN KMC/kmc_core/queues.h KMC_fixed/kmc_core/queues.h
  #include "defs.h"
  #include <stdio.h>
  #include <tuple>
-@@ -571,6 +573,8 @@
+@@ -25,6 +27,7 @@
+ #include <cassert>
+ #include <thread>
+ #include <mutex>
++#include <stdexcept>
+ 
+ using namespace std;
+ 
+@@ -571,6 +574,8 @@
  	void init_random()
  	{
  		lock_guard<mutex> lck(mtx);
@@ -197,7 +217,7 @@ diff -uraN KMC/kmc_core/queues.h KMC_fixed/kmc_core/queues.h
  		vector<pair<int32, int64>> bin_sizes;
  
  		for (auto& p : m)
-@@ -589,7 +593,7 @@
+@@ -589,7 +594,7 @@
  		for (uint32 i = no_sort_end; i < bin_sizes.size(); ++i)
  			random_bins.push_back(bin_sizes[i].first);
  

@@ -38,3 +38,4 @@ bin/
 # Miscellaneous
 .vscode/
 external/
+.cache/

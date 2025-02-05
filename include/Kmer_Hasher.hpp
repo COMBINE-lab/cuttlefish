@@ -9,14 +9,14 @@
 #include <cstdint>
 
 
-template <uint16_t k>
+template <uint16_t k, uint64_t seed = 0xAAAAAAAA55555555ULL>
 class Kmer_Hasher
 {
 public:
 
     // Adopted from the BBHash library.
     // Ref: https://github.com/rizkg/BBHash/blob/48a854a378bce4e2fe4d4cd63bfe5e4f8755dc6e/BooPHF.h#L393
-    uint64_t operator()(const Kmer<k>& key, uint64_t seed = 0xAAAAAAAA55555555ULL) const
+    uint64_t operator()(const Kmer<k>& key) const
     {
         return key.to_u64(seed);
         /*

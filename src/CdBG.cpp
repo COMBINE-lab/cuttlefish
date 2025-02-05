@@ -5,14 +5,28 @@
 #include "Kmer_Container.hpp"
 #include "kmer_Enumeration_Stats.hpp"
 
+#include <cstdlib>
+
 
 template <uint16_t k> 
 CdBG<k>::CdBG(const Build_Params& params):
+    CdBG(params, nullptr)
+{}
+
+
+template <uint16_t k>
+CdBG<k>::CdBG(const Build_Params& params, Kmer_Index<k>* const kmer_idx):
     params(params),
     logistics(this->params),
     hash_table(nullptr),
-    dbg_info(params.json_file_path())
-{}
+    dbg_info(params.json_file_path()),
+    kmer_idx(kmer_idx),
+    token(kmer_idx == nullptr ? nullptr : static_cast<typename Kmer_Index<k>::Producer_Token*>(std::malloc(params.thread_count() * sizeof(typename Kmer_Index<k>::Producer_Token))))
+{
+    if(kmer_idx != nullptr)
+        for(uint16_t t_id = 0; t_id < params.thread_count(); ++t_id)
+            token[t_id] = kmer_idx->get_token();
+}
 
 
 template <uint16_t k>
@@ -22,6 +36,8 @@ CdBG<k>::~CdBG()
         hash_table->clear();
 
     dbg_info.dump_info();
+
+    std::free(token);
 }
 
 
@@ -38,7 +54,22 @@ void CdBG<k>::construct()
 
     std::chrono::high_resolution_clock::time_point t_start = std::chrono::high_resolution_clock::now();
 
+#ifdef CF_DEVELOP_MODE
 
+    uint64_t vertex_count;
+
+    if(params.vertex_db_path().empty())
+    {
+        kmer_Enumeration_Stats<k> vertex_stats = enumerate_vertices();
+        vertex_count = vertex_stats.counted_kmer_count();
+    }
+    else
+        vertex_count = Kmer_Container<k>::size(params.vertex_db_path());
+
+    std::chrono::high_resolution_clock::time_point t_vertex = std::chrono::high_resolution_clock::now();
+    std::cout << "Enumerated the vertex set of the graph. Time taken = " << std::chrono::duration_cast<std::chrono::duration<double>>(t_vertex - t_start).count() << " seconds.\n";
+
+#else
     std::cout << "\nEnumerating the vertices of the de Bruijn graph.\n";
     kmer_Enumeration_Stats<k> vertex_stats = enumerate_vertices();
     vertex_stats.log_stats();
@@ -49,6 +80,7 @@ void CdBG<k>::construct()
 
     const uint64_t vertex_count = vertex_stats.counted_kmer_count();
     std::cout << "Number of vertices: " << vertex_count << ".\n";
+#endif
 
 
     std::cout << "\nConstructing the minimal perfect hash function (MPHF) over the vertex set.\n";
@@ -80,8 +112,10 @@ void CdBG<k>::construct()
     std::cout << "Extracted the maximal unitigs. Time taken = " << std::chrono::duration_cast<std::chrono::duration<double>>(t_extract - t_dfa).count() << " seconds.\n";
 
 
+#ifndef CF_DEVELOP_MODE
     const double max_disk = static_cast<double>(max_disk_usage(vertex_stats)) / (1024.0 * 1024.0 * 1024.0);
     std::cout << "\nMaximum temporary disk-usage: " << max_disk << "GB.\n";
+#endif
 }
 
 

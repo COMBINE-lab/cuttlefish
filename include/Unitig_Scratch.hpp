@@ -10,6 +10,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <vector>
+#include <algorithm>
 
 
 // =============================================================================
@@ -19,9 +20,6 @@ class Unitig_Scratch
 {
 private:
 
-    // 100K (soft limit) unitig vertices can be retained in memory, at most, before reallocations.
-    static constexpr std::size_t BUFF_SZ = 100 * 1024UL;
-
     Directed_Vertex<k> anchor;      // The anchor vertex of the unitig traversal.
     Directed_Vertex<k> endpoint_;   // The current end of the unitig through which farther extensions can be done.
                                     // (The side for the extension is to be handled by the client code, although can
@@ -29,9 +27,10 @@ private:
     Directed_Vertex<k> min_vertex_; // The lexicographically minimum vertex in the unitig.
     std::size_t vertex_idx;         // Index of the vertex in the path being traversed.
     std::size_t min_v_idx;          // Index of the lexicographically minimum vertex in the path.
-    
-    std::vector<char> label_;       // Literal label of the unitig.
+
+    std::string label_; // Literal label of the unitig.
     std::vector<uint64_t> hash_;    // Hashes of the constituent vertices of the unitig.
+    std::vector<Kmer<k>> V;         // Set of the vertices (in their canonical-form) in the unitig.
     bool is_cycle_;                 // Whether the unitig is cyclical or not.
 
 
@@ -40,40 +39,58 @@ private:
 
 public:
 
-    // Constructs an empty unitig scratch.
-    Unitig_Scratch();
-
     // Initializes the unitig scratch with the vertex `v`.
     void init(const Directed_Vertex<k>& v);
 
+    // Initializes the unitig scratch with the vertex `v` and some associated
+    // hash `h`.
+    void init(const Directed_Vertex<k>& v, uint64_t h);
+
     // Extends the unitig scratch with the vertex `v`, and its literal form
     // with the symbol `b`. Returns `true` iff adding `v` to the unitig does
-    // not render itself a cycle.
+    // not render itself a cycle. Note that the vertices are not kept around
+    // internally.
     bool extend(const Directed_Vertex<k>& v, char b);
+
+    // Extends the unitig scratch with the vertex `v`, some associated hash `h`,
+    // and its literal form with the symbol `b`. Returns `true` iff adding `v`
+    // to the unitig does not render itself a cycle. The vertices are kept
+    // around internally.
+    bool extend(const Directed_Vertex<k>& v, uint64_t h, char b);
+
+    // Marks the unitig as a cycle.
+    void mark_cycle() { is_cycle_ = true; }
 
     // Reverse complements the unitig.
     void reverse_complement();
 
+    // Swaps this unitig with `rhs`.
+    void swap(Unitig_Scratch& rhs);
+
     // Returns the literal label of the unitig.
-    const std::vector<char>& label() const;
+    const std::string& label() const { return label_; }
 
     // Returns the hash collection of the unitig vertices.
-    const std::vector<uint64_t>& hash() const;
+    const std::vector<uint64_t>& hash() const { return hash_; }
+
+    // Returns the vertices (in their canonical-form) in the unitig, in the
+    // order of the label.
+    const std::vector<Kmer<k>>& vertices() const { return V; }
 
     // Returns the current extension-end vertex of the unitig.
-    const Directed_Vertex<k>& endpoint() const;
+    const Directed_Vertex<k>& endpoint() const { return endpoint_; }
 
     // Returns the count of vertices in this unitig.
-    std::size_t size() const;
+    std::size_t size() const { return hash_.size(); }
 
     // Returns `true` iff unitig is a cycle.
-    bool is_cycle() const;
+    bool is_cycle() const { return is_cycle_; }
 
     // Returns the lexicographically minimum vertex in the unitig.
-    const Directed_Vertex<k>& min_vertex() const;
+    const Directed_Vertex<k>& min_vertex() const { return min_vertex_; }
 
     // Returns the index of the lexicographically minimum vertex in the unitig.
-    std::size_t min_vertex_idx() const;
+    std::size_t min_vertex_idx() const { return min_v_idx; }
 };
 
 
@@ -82,6 +99,7 @@ inline void Unitig_Scratch<k>::clear()
 {
     label_.clear();
     hash_.clear();
+    V.clear();
 }
 
 
@@ -100,6 +118,15 @@ inline void Unitig_Scratch<k>::init(const Directed_Vertex<k>& v)
 
 
 template <uint16_t k>
+inline void Unitig_Scratch<k>::init(const Directed_Vertex<k>& v, const uint64_t h)
+{
+    init(v);
+    V.push_back(v.canonical());
+    hash_.back() = h; // hash_.push_back(h);
+}
+
+
+template <uint16_t k>
 inline bool Unitig_Scratch<k>::extend(const Directed_Vertex<k>& v, const char b)
 {
     if(v.is_same_vertex(anchor))
@@ -111,14 +138,26 @@ inline bool Unitig_Scratch<k>::extend(const Directed_Vertex<k>& v, const char b)
 
     endpoint_ = v;
     vertex_idx++;
-    
+
     if(min_vertex_.canonical() > endpoint_.canonical())
         min_vertex_ = endpoint_,
         min_v_idx = vertex_idx;
 
-    label_.emplace_back(b);
+    label_.push_back(b);
     hash_.emplace_back(endpoint_.hash());
 
+    return true;
+}
+
+
+template <uint16_t k>
+inline bool Unitig_Scratch<k>::extend(const Directed_Vertex<k>& v, const uint64_t h, const char b)
+{
+    if(!extend(v, b))
+        return false;
+
+    V.push_back(v.canonical());
+    hash_.back() = h; // hash_.push_back(h);
     return true;
 }
 
@@ -127,56 +166,26 @@ template <uint16_t k>
 inline void Unitig_Scratch<k>::reverse_complement()
 {
     cuttlefish::reverse_complement(label_);
-    min_v_idx = (hash_.size() - 1 - min_v_idx);
+    std::reverse(hash_.begin(), hash_.end());
+    std::reverse(V.begin(), V.end());
+    min_v_idx = (size() - 1 - min_v_idx);
 }
 
 
 template <uint16_t k>
-inline const std::vector<char>& Unitig_Scratch<k>::label() const
+inline void Unitig_Scratch<k>::swap(Unitig_Scratch& rhs)
 {
-    return label_;
-}
+    std::swap(anchor, rhs.anchor);
+    std::swap(endpoint_, rhs.endpoint_);
+    std::swap(min_vertex_, rhs.min_vertex_);
+    std::swap(vertex_idx, rhs.vertex_idx);
+    std::swap(min_v_idx, rhs.min_v_idx);
 
+    label_.swap(rhs.label_);
+    hash_.swap(rhs.hash_);
+    V.swap(rhs.V);
 
-template <uint16_t k>
-inline const std::vector<uint64_t>& Unitig_Scratch<k>::hash() const
-{
-    return hash_;
-}
-
-
-template <uint16_t k>
-inline const Directed_Vertex<k>& Unitig_Scratch<k>::endpoint() const
-{
-    return endpoint_;
-}
-
-
-template <uint16_t k>
-inline std::size_t Unitig_Scratch<k>::size() const
-{
-    return hash_.size();
-}
-
-
-template <uint16_t k>
-inline bool Unitig_Scratch<k>::is_cycle() const
-{
-    return is_cycle_;
-}
-
-
-template <uint16_t k>
-inline const Directed_Vertex<k>& Unitig_Scratch<k>::min_vertex() const
-{
-    return min_vertex_;
-}
-
-
-template <uint16_t k>
-inline std::size_t Unitig_Scratch<k>::min_vertex_idx() const
-{
-    return min_v_idx;
+    std::swap(is_cycle_, rhs.is_cycle_);
 }
 
 

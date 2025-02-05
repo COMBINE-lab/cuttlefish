@@ -5,7 +5,10 @@
 #include <stdexcept>
 #include <fstream>
 #include <cstring>
+#include <cstdlib>
 #include <algorithm>
+#include <iostream>
+#include <cassert>
 
 #include "compact_iterator.hpp"
 
@@ -190,6 +193,25 @@ public:
   }
   inline void resize (size_t n) { resize(n, IDX()); }
 
+  inline void shrink_to_fit()
+  {
+    W* const new_mem = allocate(m_size);
+    std::copy(m_mem, m_mem + elements_to_words(m_size, bits()), new_mem);
+
+    deallocate(m_mem, m_capacity);
+
+    m_mem = new_mem;
+    m_capacity = m_size;
+  }
+
+  inline void swap(vector& rhs)
+  {
+    std::swap(m_allocator, rhs.m_allocator);
+    std::swap(m_mem, rhs.m_mem);
+    std::swap(m_size, rhs.m_size);
+    std::swap(m_capacity, rhs.m_capacity);
+  }
+
   inline iterator erase (const_iterator position) { return erase(position, position + 1); }
   iterator erase (const_iterator first, const_iterator last) {
     const auto length = last - first;
@@ -238,60 +260,141 @@ public:
   W* get() { return m_mem; }
   const W* get() const { return m_mem; }
   size_t bytes() const { return sizeof(W) * elements_to_words(m_capacity, bits()); }
+  size_t bytes_used() const { return sizeof(W) * elements_to_words(m_size, bits()); }
   inline unsigned bits() const { return static_cast<const Derived*>(this)->bits(); }
   static constexpr unsigned static_bits() { return BITS; }
   static constexpr unsigned used_bits() { return UB; }
   static constexpr bool thread_safe() { return TS; }
 
+  // Returns `count` number of values, packed together as a single unit of type `T_`,
+  // starting from the `from_idx`'th index in the vector. The `from_idx`'th index is
+  // packed as the LS-bits, and the `from_idx + count - 1` index forms the MS-bits.
+  template <typename T_>
+  T_ get_int(const std::size_t from_idx, const std::size_t count) const
+  {
+    assert(count * bits() <= bitsof<T_>::val);  // Must fit in `T_`.
+    assert(from_idx + count <= size()); // Must not overflow the vector.
+
+    std::size_t bit_idx = from_idx * bits();  // Index of the bit to start extraction from.
+    const std::size_t bit_count = count * bits(); // Count of bits to extract.
+    T_ val = 0; // Value to be extracted.
+    std::size_t bits_extracted = 0; // Count of bits extracted.
+
+    constexpr std::size_t bits_per_wrd = bitsof<W>::val;  // Bits per bitvector word.
+    std::size_t wrd_idx = bit_idx >> log2_bitsof<W>::val; // Current word index, i.e. bit_idx / bits_per_wrd.
+
+    std::size_t bits_trailing, bits_leading, bits_to_extract; // Counts of various types of bits, per word in the vector.
+    W wrd_blk;  // The block of bits to extract from each word.
+    while(bits_extracted < bit_count)
+    {
+      bits_trailing = bit_idx & (bits_per_wrd - 1); // i.e. bit_idx % bits_per_wrd
+      bits_to_extract = std::min(bit_count - bits_extracted, bits_per_wrd - bits_trailing);
+      bits_leading = bits_per_wrd - (bits_trailing + bits_to_extract);
+
+      // Casts required due to integral promotion.
+      wrd_blk = (W)(m_mem[wrd_idx] << bits_leading) >> (bits_leading + bits_trailing); // Clear not-required bits.
+      val |= ((T_)wrd_blk << bits_extracted);
+      bits_extracted += bits_to_extract;
+
+      wrd_idx++;
+      bit_idx += bits_to_extract;
+    }
+
+    return val;
+  }
+
+  // Returns `count` number of values, packed together as a single unit of type `T_`,
+  // starting from the `from_idx`'th index in the vector. The `from_idx`'th index is
+  // packed as the LS-bits, and the `from_idx + count - 1` index forms the MS-bits.
+  template <typename T_, uint8_t count>
+  T_ get_int(const std::size_t from_idx) const
+  {
+    assert(count * bits() <= bitsof<T_>::val);  // Must fit in `T_`.
+    assert(from_idx + count <= size()); // Must not overflow the vector.
+
+    std::size_t bit_idx = from_idx * bits();  // Index of the bit to start extraction from.
+    const std::size_t bit_count = count * bits(); // Count of bits to extract.
+    T_ val = 0; // Value to be extracted.
+    std::size_t bits_extracted = 0; // Count of bits extracted.
+
+    constexpr std::size_t bits_per_wrd = bitsof<W>::val;  // Bits per bitvector word.
+    std::size_t wrd_idx = bit_idx >> log2_bitsof<W>::val; // Current word index, i.e. bit_idx / bits_per_wrd.
+
+    std::size_t bits_trailing, bits_leading, bits_to_extract; // Counts of various types of bits, per word in the vector.
+    W wrd_blk;  // The block of bits to extract from each word.
+    while(bits_extracted < bit_count)
+    {
+      bits_trailing = bit_idx & (bits_per_wrd - 1); // i.e. bit_idx % bits_per_wrd
+      bits_to_extract = std::min(bit_count - bits_extracted, bits_per_wrd - bits_trailing);
+      bits_leading = bits_per_wrd - (bits_trailing + bits_to_extract);
+
+      // Casts required due to integral promotion.
+      wrd_blk = (W)(m_mem[wrd_idx] << bits_leading) >> (bits_leading + bits_trailing); // Clear not-required bits.
+      val |= ((T_)wrd_blk << bits_extracted);
+      bits_extracted += bits_to_extract;
+
+      wrd_idx++;
+      bit_idx += bits_to_extract;
+    }
+
+    return val;
+  }
+
   void clear_mem() {
     std::memset(get(), 0, bytes());
   }
 
-  void serialize(std::ofstream &of) const {
-    uint64_t static_flag = (static_bits() == bits()) ? 1 : 0;
-    of.write(reinterpret_cast<char *>(&static_flag), sizeof(static_flag));
-    if (static_flag != 0) {
-        uint64_t bits_per_element = static_bits();
-        of.write(reinterpret_cast<char *>(&bits_per_element), sizeof(bits_per_element));
-    } else {
-        uint64_t bits_per_element = bits();
-        of.write(reinterpret_cast<char *>(&bits_per_element), sizeof(bits_per_element));
+  void serialize(const std::string& file_path, const bool shrink = false) const
+  {
+    std::ofstream output(file_path);
+    serialize(output, shrink);
+
+    if(!output)
+    {
+      std::cerr << "Error writing bitvector to path " << file_path << ". Aborting.\n";
+      std::exit(EXIT_FAILURE);
     }
-    uint64_t w_size = m_size;
-    of.write(reinterpret_cast<char *>(&w_size), sizeof(w_size));
-    uint64_t w_capacity = m_capacity;
-    of.write(reinterpret_cast<char *>(&w_capacity), sizeof(w_capacity));
-    of.write(reinterpret_cast<char *>(m_mem), bytes());
-    //std::cerr << "wrote " << bytes() << " bytes of data at the end\n";
-}
 
-void deserialize(const std::string &fname) {
-    std::error_code error;
-    // load the vector by reading from file
-    std::ifstream ifile(fname, std::ios::binary);
-    uint64_t static_flag{0};
-    ifile.read(reinterpret_cast<char *>(&static_flag), sizeof(static_flag));
-
-    uint64_t bits_per_element;
-    ifile.read(reinterpret_cast<char *>(&bits_per_element), sizeof(bits_per_element));
-
-    //std::cerr<< "bits / element = " << bits_per_element << "\n";
-
-    uint64_t w_size{0};
-    ifile.read(reinterpret_cast<char *>(&w_size), sizeof(w_size));
-    m_size = w_size;
-    // std::cerr << "size = " << m_size << "\n";
-
-    uint64_t w_capacity{0};
-    ifile.read(reinterpret_cast<char *>(&w_capacity), sizeof(w_capacity));
-    m_capacity = w_capacity;
-    //std::cerr<< "capacity = " << m_capacity << "\n";
-
-    m_allocator.deallocate(m_mem, elements_to_words(m_capacity, bits()));
-    m_mem = m_allocator.allocate(elements_to_words(m_capacity, bits()));
-    if (m_mem == nullptr) throw std::bad_alloc();
-    ifile.read(reinterpret_cast<char *>(m_mem), sizeof(W) * elements_to_words(m_size, bits()));
+    output.close();
   }
+
+
+  void deserialize(const std::string &file_path)
+  {
+    std::ifstream input(file_path);
+    deserialize(input);
+
+    if(!input)
+    {
+      std::cerr << "Error reading bitvector from path " << file_path << ". Aborting.\n";
+      std::exit(EXIT_FAILURE);
+    }
+
+    input.close();
+  }
+
+  void serialize(std::ofstream& output, const bool shrink = false) const
+  {
+    output.write(reinterpret_cast<const char*>(&m_size), sizeof(m_size));
+
+    const std::size_t cap = (shrink ? m_size : m_capacity);
+    output.write(reinterpret_cast<const char*>(&cap), sizeof(cap));
+
+    output.write(reinterpret_cast<const char*>(m_mem), shrink ? bytes_used() : bytes());
+  }
+
+  void deserialize(std::ifstream& input)
+  {
+    // Deallocate currently occupied memory.
+    deallocate(m_mem, m_capacity);
+
+    input.read(reinterpret_cast<char*>(&m_size), sizeof(m_size));
+    input.read(reinterpret_cast<char*>(&m_capacity), sizeof(m_capacity));
+
+    m_mem = allocate(m_capacity);
+    input.read(reinterpret_cast<char*>(m_mem), bytes());
+  }
+
 
 protected:
   void enlarge(size_t given = 0) {
@@ -326,6 +429,10 @@ public:
   typedef size_t                                size_type;
   typedef W                                     word_type;
 
+  explicit vector_dyn(): super(),
+    m_bits(0)
+  {}
+
   vector_dyn(unsigned b, size_t s, Allocator allocator = Allocator())
     : super(b, s, allocator)
     , m_bits(b)
@@ -359,6 +466,51 @@ public:
       throw std::invalid_argument("Bit length of compacted vector differ");
     static_cast<super*>(this)->operator=(std::move(rhs));
     return *this;
+  }
+
+  void serialize(const std::string& file_path, const bool shrink = false) const
+  {
+    std::ofstream output(file_path);
+    serialize(output, shrink);
+
+    if(!output)
+    {
+      std::cerr << "Error writing bitvector to path " << file_path << ". Aborting.\n";
+      std::exit(EXIT_FAILURE);
+    }
+
+    output.close();
+  }
+
+  void deserialize(const std::string &file_path)
+  {
+    std::ifstream input(file_path);
+    deserialize(input);
+
+    if(!input)
+    {
+      std::cerr << "Error reading bitvector from path " << file_path << ". Aborting.\n";
+      std::exit(EXIT_FAILURE);
+    }
+
+    input.close();
+  }
+
+  void serialize(std::ofstream& output, const bool shrink = false) const
+  {
+    const unsigned bits_per_elem = bits();
+    output.write(reinterpret_cast<const char*>(&bits_per_elem), sizeof(bits_per_elem));
+
+    // Rest of the fields
+    super::serialize(output, shrink);
+  }
+
+  void deserialize(std::ifstream& input)
+  {
+    input.read(reinterpret_cast<char*>(const_cast<unsigned*>(&m_bits)), sizeof(m_bits));
+
+    // Rest of the fields.
+    super::deserialize(input);
   }
 };
 
@@ -415,6 +567,9 @@ public:
   typedef ptrdiff_t                             difference_type;
   typedef size_t                                size_type;
   typedef W                                     word_type;
+
+  explicit vector(): super()
+  {}
 
   vector(unsigned b, size_t s, Allocator allocator = Allocator())
     : super(b, s, allocator)
@@ -478,6 +633,9 @@ public:
   typedef ptrdiff_t                             difference_type;
   typedef size_t                                size_type;
   typedef W                                     word_type;
+
+  explicit ts_vector(): super()
+  {}
 
   ts_vector(unsigned b, size_t s, Allocator allocator = Allocator())
     : super(b, s, allocator)

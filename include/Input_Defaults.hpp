@@ -30,6 +30,14 @@ namespace cuttlefish
 #endif
         constexpr Output_Format OP_FORMAT = Output_Format::fa;
         const std::string WORK_DIR = std::filesystem::temp_directory_path();
+
+        constexpr uint16_t MIN_LEN = 12;    // TODO: placeholder for now.
+
+
+        constexpr std::size_t SUBGRAPH_COUNT = 8192;
+        constexpr std::size_t VERTEX_PART_COUNT = 64;
+        constexpr std::size_t LMTIG_BUCKET_COUNT = 1024;
+        constexpr std::size_t GMTIG_BUCKET_COUNT = 1024;
     }
 }
 

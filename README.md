@@ -345,7 +345,6 @@ This work is supported by _NIH R01 HG009937_, and by _NSF CCF-1750472_, and _CNS
 ## Licenses
 
 - The [BBHash](https://github.com/rizkg/BBHash) library is MIT licensed.
-- The [Boost C++ Metaprogramming](https://www.boost.org/doc/libs/1_31_0/libs/mpl/doc/index.html) library is Boost Software licensed.
 - The [compact_vector](https://github.com/gmarcais/compact_vector) library is MIT licensed.
 - The [cxxopts](https://github.com/jarro2783/cxxopts) library is MIT licensed.
 - The [fmt](https://github.com/fmtlib/fmt) library is MIT licensed.

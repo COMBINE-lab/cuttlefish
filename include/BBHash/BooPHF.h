@@ -17,6 +17,7 @@
 #include <string.h>
 #include <memory> // for make_shared
 #include <unistd.h>
+#include <fstream>
 #include <chrono>
 #include <thread>
 
@@ -63,6 +64,9 @@ namespace boomphf {
 			_buffsize = cr._buffsize;
 			_pos = cr._pos;
 			_is = cr._is;
+			if(_is != nullptr)
+				if(std::fseek(_is, _pos * sizeof(basetype), SEEK_SET))	// TODO: make PR to BBHash repo.
+					std::fprintf(stderr, "fseek failed on FILE* %p", static_cast<void*>(_is));
 			// _buffer = (basetype *) malloc(_buffsize*sizeof(basetype));
 			//  memcpy(_buffer,cr._buffer,_buffsize*sizeof(basetype) );
 			_inbuff = cr._inbuff;
@@ -512,13 +516,13 @@ we need this 2-functors scheme because HashFunctors won't work with unordered_ma
         public:
 
 
-		uint64_t h0(hash_pair_t  & s, const Item& key )
+		uint64_t h0(hash_pair_t  & s, const Item& key ) const
 		{
 			s[0] =  singleHasher (key, 0xAAAAAAAA55555555ULL);
 			return s[0];
 		}
 
-		uint64_t h1(hash_pair_t  & s, const Item& key )
+		uint64_t h1(hash_pair_t  & s, const Item& key ) const
 		{
 			s[1] =  singleHasher (key, 0x33333333CCCCCCCCULL);
 			return s[1];
@@ -526,7 +530,7 @@ we need this 2-functors scheme because HashFunctors won't work with unordered_ma
 
 
 		//return next hash an update state s
-		uint64_t next(hash_pair_t  & s ) {
+		uint64_t next(hash_pair_t  & s ) const {
 			#pragma GCC diagnostic push	
 			#if not defined __has_warning
 				#pragma GCC diagnostic ignored "-Wmaybe-uninitialized"
@@ -871,7 +875,7 @@ we need this 2-functors scheme because HashFunctors won't work with unordered_ma
 		~level() {
 		}
 
-		uint64_t get(uint64_t hash_raw)
+		uint64_t get(uint64_t hash_raw) const
 		{
 		//	uint64_t hashi =    hash_raw %  hash_domain; //
 			//uint64_t hashi = (uint64_t)(  ((__uint128_t) hash_raw * (__uint128_t) hash_domain) >> 64ULL);
@@ -909,13 +913,13 @@ we need this 2-functors scheme because HashFunctors won't work with unordered_ma
 
 	//forward declaration
 
-    template <typename elem_t, typename Hasher_t, typename Range, typename it_type>
+    template <typename elem_t, typename Hasher_t, bool from_kmer_db, typename Range, typename it_type>
 	void * thread_processLevel(void * args);
 
 
     /* Hasher_t returns a single hash when operator()(elem_t key) is called.
        if used with XorshiftHashFunctors, it must have the following operator: operator()(elem_t key, uint64_t seed) */
-    template <typename elem_t, typename Hasher_t>
+    template <typename elem_t, typename Hasher_t, bool from_kmer_db = true>
 	class mphf {
 
         /* this mechanisms gets P hashes out of Hasher_t */
@@ -924,8 +928,6 @@ we need this 2-functors scheme because HashFunctors won't work with unordered_ma
 		//typedef IndepHashFunctors<elem_t,Hasher_t> MultiHasher_t; //faster than xorshift
 
 	public:
-		// Debug
-		double data_copy_time = 0;
 
 		mphf() : _built(false)
 		{}
@@ -934,6 +936,16 @@ we need this 2-functors scheme because HashFunctors won't work with unordered_ma
 		~mphf()
 		{
 
+		}
+
+		mphf(const std::string& path): mphf()
+		{
+			load(path);
+		}
+
+		mphf(std::istream& path): mphf()
+		{
+			load(path);
 		}
 
 		
@@ -1021,7 +1033,7 @@ we need this 2-functors scheme because HashFunctors won't work with unordered_ma
 		}
 
 
-		uint64_t lookup(const elem_t& elem)
+		uint64_t lookup(const elem_t& elem) const
 		{
 			if(! _built) return ULLONG_MAX;
 			
@@ -1066,7 +1078,7 @@ we need this 2-functors scheme because HashFunctors won't work with unordered_ma
             return _nelem;
         }
 
-		uint64_t totalBitSize()
+		uint64_t totalBitSize() const
 		{
 
 			uint64_t totalsizeBitset = 0;
@@ -1101,7 +1113,7 @@ we need this 2-functors scheme because HashFunctors won't work with unordered_ma
 			{
 				//safely copy n items into buffer
 
-                if(i < 2)	// Use the Cuttlefish iterator to read keys from the input disk-database.
+                if(from_kmer_db && i < 2)	// Use the Cuttlefish iterator to read k-mer keys from the input disk-database.
 				{
 					// TODO: try to delay the `volatile` access, i.e. `tasks_expected` as much as possible.
 					while(inbuff < WORK_CHUNK_SZ && shared_it->tasks_expected(thread_id))
@@ -1111,7 +1123,7 @@ we need this 2-functors scheme because HashFunctors won't work with unordered_ma
 					if(!shared_it->tasks_expected(thread_id))
 						isRunning = false;
 				}
-				else	// Use the BBHash `bfile_iterator` to read keys from their temporary binary files.
+				else	// Use other iterator types or the BBHash `bfile_iterator` to read keys.
 				{
 					pthread_mutex_lock(&_mutex);
 
@@ -1317,6 +1329,19 @@ we need this 2-functors scheme because HashFunctors won't work with unordered_ma
 			_built = true;
 		}
 
+		void load(const std::string& path)
+		{
+			std::ifstream input(path.c_str());
+			load(input);
+			if(!input)
+			{
+				std::cerr << "Error reading BooPHF file at " << path << ". Aborting.\n";
+				std::exit(EXIT_FAILURE);
+			}
+
+			input.close();
+		}
+
 
 		private :
 
@@ -1402,7 +1427,7 @@ we need this 2-functors scheme because HashFunctors won't work with unordered_ma
 
 
 		//compute level and returns hash of last level reached
-		uint64_t getLevel(hash_pair_t & bbhash, elem_t val,int * res_level, int maxlevel = 100, int minlevel =0)
+		uint64_t getLevel(hash_pair_t & bbhash, elem_t val,int * res_level, int maxlevel = 100, int minlevel =0) const
 		//uint64_t getLevel(hash_pair_t & bbhash, elem_t val,int * res_level, int maxlevel = 100, int minlevel =0)
 
 		{
@@ -1517,7 +1542,7 @@ we need this 2-functors scheme because HashFunctors won't work with unordered_ma
 				t_arg.until_p = std::static_pointer_cast<void>(std::make_shared<disklevel_it_type>(data_iterator_level.end()));
 				
 				for(int ii=0;ii<_num_thread;ii++)
-					pthread_create (&tab_threads[ii], NULL,  thread_processLevel<elem_t, Hasher_t, Range, disklevel_it_type>, &t_arg); //&t_arg[ii]
+					pthread_create (&tab_threads[ii], NULL,  thread_processLevel<elem_t, Hasher_t, from_kmer_db, Range, disklevel_it_type>, &t_arg); //&t_arg[ii]
 			
 			
 				//must join here before the block is closed and file_binary is destroyed (and closes the file)
@@ -1555,7 +1580,7 @@ we need this 2-functors scheme because HashFunctors won't work with unordered_ma
 					{
 						thread_args[ii] = t_arg;
 						thread_args[ii].thread_id = ii;
-						pthread_create (&tab_threads[ii], NULL,  thread_processLevel<elem_t, Hasher_t, Range, decltype(input_range.begin())>, &thread_args[ii]); //&t_arg[ii]
+						pthread_create (&tab_threads[ii], NULL,  thread_processLevel<elem_t, Hasher_t, from_kmer_db, Range, decltype(input_range.begin())>, &thread_args[ii]); //&t_arg[ii]
 					}
 				}
 				//joining
@@ -1636,14 +1661,14 @@ we need this 2-functors scheme because HashFunctors won't work with unordered_ma
 ////////////////////////////////////////////////////////////////
 
 
-    template <typename elem_t, typename Hasher_t, typename Range, typename it_type>
+    template <typename elem_t, typename Hasher_t, bool from_kmer_db, typename Range, typename it_type>
 	void * thread_processLevel(void * args)
 	{
 		if(args ==NULL) return NULL;
 
 		thread_args<Range,it_type> *targ = (thread_args<Range,it_type>*) args;
 
-		mphf<elem_t, Hasher_t>  * obw = (mphf<elem_t, Hasher_t > *) targ->boophf;
+		mphf<elem_t, Hasher_t, from_kmer_db>  * obw = (mphf<elem_t, Hasher_t, from_kmer_db> *) targ->boophf;
 		int level = targ->level;
 		int thread_id = targ->thread_id;
 		std::vector<elem_t> buffer;
@@ -1652,15 +1677,15 @@ we need this 2-functors scheme because HashFunctors won't work with unordered_ma
 		
 		pthread_mutex_t * mutex =  & obw->_mutex;
 
-		std::unique_ptr<std::thread> producer{nullptr};	// The background key-stream producer thread.
+		std::unique_ptr<std::thread> producer{nullptr};	// The background k-mer stream producer thread.
 
 		pthread_mutex_lock(mutex); // from comment above: "//get starting iterator for this thread, must be protected (must not be currently used by other thread to copy elems in buff)"
         
 		std::shared_ptr<it_type> startit = std::static_pointer_cast<it_type>(targ->it_p);
         std::shared_ptr<it_type> until_p = std::static_pointer_cast<it_type>(targ->until_p);
 		
-		// Launch the producer thread uniquely, from one worker thread.
-		if(level < 2 && !startit->launched())
+		// Launch the k-mer producer thread uniquely, from one worker thread.
+		if(from_kmer_db && level < 2 && !startit->launched())
 		{
 			startit->launch_production();
 

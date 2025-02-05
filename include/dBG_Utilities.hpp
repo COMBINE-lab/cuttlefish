@@ -26,6 +26,9 @@ namespace cuttlefish
 }
 
 
+// TODO: consider lessening branches everywhere.
+
+
 inline bool cuttlefish::is_fuzzy_edge(const edge_encoding_t e)
 {
     return e == edge_encoding_t::N || e == edge_encoding_t::E;

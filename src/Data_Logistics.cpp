@@ -1,5 +1,7 @@
 
 #include "Data_Logistics.hpp"
+#include "Build_Params.hpp"
+#include "File_Extensions.hpp"
 #include "utility.hpp"
 
 
@@ -45,4 +47,52 @@ const std::string Data_Logistics::vertex_db_path() const
 const std::string Data_Logistics::output_file_path() const
 {
     return params.output_file_path();
+}
+
+
+const std::string Data_Logistics::atlas_path() const
+{
+    return params.working_dir_path() + filename(params.output_prefix()) + cuttlefish::file_ext::atlas_ext;
+}
+
+
+const std::string Data_Logistics::edge_matrix_path() const
+{
+    return params.output_prefix() + cuttlefish::file_ext::edge_matrix_ext;
+}
+
+
+const std::string Data_Logistics::lmtig_buckets_path() const
+{
+    return params.output_prefix() + cuttlefish::file_ext::lmtig_bucket_ext;
+}
+
+
+const std::string Data_Logistics::compressed_diagonal_path() const
+{
+    return params.output_prefix() + cuttlefish::file_ext::compressed_diagonal_ext;
+}
+
+
+const std::string Data_Logistics::color_rel_bucket_path() const
+{
+    return params.working_dir_path() + filename(params.output_prefix()) + cuttlefish::file_ext::color_rel_bucket_ext;
+}
+
+
+const std::string Data_Logistics::vertex_path_info_buckets_path() const
+{
+    return params.working_dir_path() + filename(params.output_prefix()) + cuttlefish::file_ext::vertex_p_inf_bucket_ext;
+}
+
+
+const std::string Data_Logistics::edge_path_info_buckets_path() const
+{
+    return params.output_prefix() + cuttlefish::file_ext::edge_p_inf_bucket_ext;
+}
+
+
+const std::string Data_Logistics::unitig_coord_buckets_path() const
+{
+    return params.working_dir_path() + filename(params.output_prefix()) + cuttlefish::file_ext::unitig_coord_bucket_ext;
 }

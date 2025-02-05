@@ -141,13 +141,31 @@ public:
 	// The prefixes corresponding to these suffixes are read into `pref_buf`, in the form
 	// <prefix, #corresponding_suffix>. Returns the number of suffixes read. `0` is returned if
 	// error(s) occurred during the read.
-	uint64_t read_raw_suffixes(uint8_t* suff_buf, std::vector<std::pair<uint64_t, uint64_t>>& pref_buf, size_t max_bytes_to_read);
+	uint64_t read_raw_suffixes(uint8_t* suff_buf, std::vector<std::pair<uint64_t, uint64_t>>& pref_buf, std::size_t max_bytes_to_read);
+
+	// Reads up-to `max_bytes_to_read` bytes worth of raw suffix records into the buffer `suff_buf`.
+	// The prefixes corresponding to these suffixes are read into `pref_buf`, in the form
+	// <prefix, #corresponding_suffix>. Returns the number of suffixes read. `0` is returned if
+	// error(s) occurred during the read. The k-mer content of each prefix (from the prefix-file
+	// of the k-mer database) is read into the buffer in its entirety, i.e. if some prefix `pref`
+	// has `f` corresponding k-mers, then all the suffixes of those k-mers are read into `suff_buf`
+	// at the same time: the suffixes are not read in partial chunks. If resizing `suff_buf` is
+	// required to read in the suffixes of some given prefix atomically, then `suff_buf` is resized
+	// as required and `max_bytes_to_read` is updated to the new size.
+	uint64_t read_raw_suffixes_atomic(uint8_t*& suff_buf, std::vector<std::pair<uint64_t, uint64_t>>& pref_buf, size_t& max_bytes_to_read);
 
 	// Parses a raw binary k-mer from the `buf_idx`'th byte onward of the buffer `suff_buf`, into
 	// the Cuttlefish k-mer object `kmer`. `prefix_it` points to a pair of the form <prefix, abundance>
 	// where "abundance" is the count of remaining k-mers to be parsed having this "prefix". The
 	// iterator is adjusted accordingly for the next parse operation from the buffers.
 	template <uint16_t k> void parse_kmer_buf(std::vector<std::pair<uint64_t, uint64_t>>::iterator& prefix_it, const uint8_t* suff_buf, size_t buf_idx, Kmer<k>& kmer) const;
+
+	// Parses raw binary k-mers from the `buf_idx`'th byte onward of the buffer `suff_buf`, into
+	// the collection `kmers` of Cuttlefish k-mer objects. All k-mers having the same prefix (from
+	// the prefix-file of the k-mer database) are parsed and collected into `kmers`. `prefix_it`
+	// points to a pair of the form <prefix, abundance> where "abundance" is the count of k-mers
+	// having this "prefix". The iterator is adjusted accordingly for the next parse operation.
+	template <uint16_t k> void parse_kmer_buf_atomic(std::vector<std::pair<uint64_t, uint64_t>>::iterator& prefix_it, const uint8_t* suff_buf, std::size_t buf_idx, std::vector<Kmer<k>>& kmers) const;
 	
 	// Returns the memory (in bytes) used by the prefix file buffer.
 	static constexpr std::size_t pref_buf_memory();
@@ -554,6 +572,71 @@ inline uint64_t CKMC_DB::read_raw_suffixes(uint8_t* const suff_buf, std::vector<
 }
 
 
+inline uint64_t CKMC_DB::read_raw_suffixes_atomic(uint8_t*& suff_buf, std::vector<std::pair<uint64_t, uint64_t>>& pref_buf, std::size_t& max_bytes_to_read)
+{
+	if(is_opened != opened_for_listing)
+		return 0;
+
+	const size_t max_suff_count = (suff_record_size() > 0 ?	max_bytes_to_read / suff_record_size() :
+															std::numeric_limits<std::size_t>::max());
+	uint64_t suff_read_count = 0;	// Count of suffixes to be read into the buffer `suff_buf`.
+	pref_buf.clear();
+	while(!end_of_file)
+	{
+		if(prefix_virt_buf[prefix_index] > total_kmers)
+			break;
+
+		// This conditional might be removable, by fixing the last entry of `prefix_file_buf` to `total_kmers` during its initialization.
+		// TODO: Check if setting `prefix_file_buf[last_data_index]` to `total_kmers` instead of `total_kmers + 1` (current scheme) breaks stuffs.
+		const uint64_t suff_id_next = (prefix_virt_buf[prefix_index + 1] > total_kmers ? total_kmers : prefix_virt_buf[prefix_index + 1]);
+		// const uint64_t suff_id_next = std::min(prefix_file_buf[prefix_index + 1], total_kmers);
+
+		// There are this many k-mers with the prefix `prefix_index`.
+		const uint64_t suff_to_read = suff_id_next - sufix_number;
+		if(suff_to_read > 0)
+		{
+			if(suff_read_count + suff_to_read <= max_suff_count)	// Atomic read of the same-prefix k-mers is possible.
+			{
+				sufix_number += suff_to_read;
+				pref_buf.emplace_back(prefix_index, suff_to_read);
+				suff_read_count += suff_to_read;
+
+				if(sufix_number == total_kmers)
+					end_of_file = true;
+			}
+			else	// Atomic read is impossible without resizing the buffer.
+			{
+				if(suff_read_count > 0)	// Do not resize the buffer if some k-mer content has already been read this time.
+					break;
+
+				// No k-mer has been read yet into the buffer: resizing only in this case yields the least increase in memory.
+				max_bytes_to_read = suff_to_read * suff_record_size();
+				delete[] suff_buf;
+				suff_buf = new uint8_t[max_bytes_to_read];
+
+				sufix_number += suff_to_read;
+				pref_buf.emplace_back(prefix_index, suff_to_read);
+				suff_read_count = suff_to_read;
+
+				if(sufix_number == total_kmers)
+					end_of_file = true;
+			}
+		}
+
+		prefix_index++;
+	}
+
+	const size_t bytes_to_read = suff_read_count * suff_record_size();
+	const size_t bytes_read = std::fread(suff_buf, 1, bytes_to_read, file_suf);
+	if(bytes_read != bytes_to_read)
+		return 0;
+
+	suf_file_left_to_read -= bytes_read;
+
+	return suff_read_count;
+}
+
+
 inline uint32_t CKMC_DB::suff_record_size() const
 {
 	return sufix_rec_size;
@@ -578,7 +661,7 @@ inline void CKMC_DB::parse_kmer_buf(std::vector<std::pair<uint64_t, uint64_t>>::
 	static constexpr uint16_t NUM_INTS = (k + 31) / 32;
 	uint64_t kmc_data[NUM_INTS]{};
 
-	// Check if we have exhausted the currrent prefix.
+	// Check if we have exhausted the current prefix.
 	if(prefix_it->second == 0)
 		++prefix_it;
 
@@ -617,6 +700,23 @@ inline void CKMC_DB::parse_kmer_buf(std::vector<std::pair<uint64_t, uint64_t>>::
 
 	// Parse KMC raw-binary k-mer data to Cuttlefish's k-mer format.
 	kmer.from_KMC_data(kmc_data);
+}
+
+
+template <uint16_t k>
+inline void CKMC_DB::parse_kmer_buf_atomic(std::vector<std::pair<uint64_t, uint64_t>>::iterator& prefix_it, const uint8_t* const suff_buf, std::size_t buf_idx, std::vector<Kmer<k>>& kmers) const
+{
+	Kmer<k> kmer;
+
+	while(prefix_it->second != 0)
+	{
+		parse_kmer_buf(prefix_it, suff_buf, buf_idx, kmer);
+		kmers.emplace_back(kmer);
+
+		buf_idx += suff_record_size();
+	}
+
+	prefix_it++;
 }
 
 

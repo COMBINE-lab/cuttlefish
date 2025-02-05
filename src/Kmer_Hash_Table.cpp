@@ -101,17 +101,7 @@ void Kmer_Hash_Table<k, BITS_PER_KEY>::build_mph_function(const uint16_t thread_
 template <uint16_t k, uint8_t BITS_PER_KEY>
 void Kmer_Hash_Table<k, BITS_PER_KEY>::load_mph_function(const std::string& file_path)
 {
-    std::ifstream input(file_path.c_str(), std::ifstream::in);
-    if(input.fail())
-    {
-        std::cerr << "Error opening file " << file_path << ". Aborting.\n";
-        std::exit(EXIT_FAILURE);
-    }
-
-    mph = new mphf_t();
-    mph->load(input);
-
-    input.close();
+    mph = new mphf_t(file_path);
 }
 
 
@@ -134,16 +124,7 @@ void Kmer_Hash_Table<k, BITS_PER_KEY>::save_mph_function(const std::string& file
 template <uint16_t k, uint8_t BITS_PER_KEY>
 void Kmer_Hash_Table<k, BITS_PER_KEY>::save_hash_buckets(const std::string& file_path) const
 {
-    std::ofstream output(file_path.c_str(), std::ofstream::out);
-    if(output.fail())
-    {
-        std::cerr << "Error writing to file " << file_path << ". Aborting.\n";
-        std::exit(EXIT_FAILURE);
-    }
-
-    hash_table.serialize(output);
-    
-    output.close();
+    hash_table.serialize(file_path);
 }
 
 
@@ -241,9 +222,8 @@ void Kmer_Hash_Table<k, BITS_PER_KEY>::clear()
 
     mph = NULL;
 
-    
-    // hash_table.clear();
-    hash_table.resize(0);
+
+    force_free(hash_table);
 }
 
 

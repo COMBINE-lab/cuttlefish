@@ -3,6 +3,7 @@
 
 #include <string>
 #include <vector>
+#include <cstdint>
 #include "Globals.h"
 /**
  * @brief Reference struct that store the FASTA and FASTQ infomation

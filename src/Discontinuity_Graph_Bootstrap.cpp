@@ -49,7 +49,8 @@ void Discontinuity_Graph_Bootstrap<k>::generate()
         const auto seq = parser.seq();
         const auto seq_len = parser.seq_len();
         Minimizer_Iterator<const char*, k - 1, true> min_it(seq, parser.seq_len(), l, minimizer_seed);
-        minimizer_t last_min, last_min_idx, min, min_idx;
+        minimizer_t last_min, min;
+        size_t last_min_idx, min_idx;
 
         Kmer<k> first_vertex;   // First discontinuity k-mer in the sequence.
         Kmer<k> last_vertex;    // Last discontinuity k-mer preceding the current k-mer.

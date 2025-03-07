@@ -268,11 +268,11 @@ void Subgraphs_Manager<k, Colored_>::process()
     std::cerr << "Total work in bucket removal:     " << sum_time(t_bucket_rm) << " (s).\n";
 
     std::cerr << "Maximum k-mer count in bucket: " <<
-        [&](){  std::size_t max_sz = 0;
+        [&](){  uint64_t max_sz = 0;
                 std::for_each(max_kmer_count.cbegin(), max_kmer_count.cend(), [&](const auto& v){ max_sz = std::max(max_sz, v.unwrap()); });
                 return max_sz; }() << ".\n";
     std::cerr << "Minimum k-mer count in bucket: " <<
-        [&](){  std::size_t min_sz = std::numeric_limits<uint64_t>::max();
+        [&](){  uint64_t min_sz = std::numeric_limits<uint64_t>::max();
                 std::for_each(min_kmer_count.cbegin(), min_kmer_count.cend(), [&](const auto& v){ min_sz = std::min(min_sz, v.unwrap()); });
                 return min_sz; }() << ".\n";
     const auto sum_g_sz = [&](){ std::size_t sz = 0;

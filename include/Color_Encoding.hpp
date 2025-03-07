@@ -2,11 +2,9 @@
 #ifndef COLOR_ENCODING_HPP
 #define COLOR_ENCODING_HPP
 
-
-
-#include <cstdint>
 #include <cassert>
-
+#include <cstddef>
+#include <cstdint>
 
 namespace cuttlefish
 {

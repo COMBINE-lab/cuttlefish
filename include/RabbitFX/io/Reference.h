@@ -1,9 +1,10 @@
 #ifndef __REFERENCE_H_
 #define __REFERENCE_H_
 
+#include "Globals.h"
+#include <cstdint>
 #include <string>
 #include <vector>
-#include "Globals.h"
 /**
  * @brief Reference struct that store the FASTA and FASTQ infomation
  */

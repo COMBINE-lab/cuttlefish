@@ -174,8 +174,8 @@ void Parser::consume_split_super_kmers(fq_chunk_pool_t& chunk_pool, fq_chunk_que
                 t_e = timer::now();
                 t.min_it_init_time += timer::duration(t_e - t_s);
 
-                minimizer_t last_min, last_min_idx;
-                minimizer_t min, min_idx;
+                minimizer_t last_min, min;
+                size_t last_min_idx, min_idx;
                 min_it.value_at(last_min, last_min_idx);
                 frag_len = k;
 

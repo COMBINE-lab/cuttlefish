@@ -1193,8 +1193,9 @@ void iterate_subgraphs(const std::string& bin_dir, const std::size_t bin_c)
 
 #include <memory>
 #include <functional>
+#if defined(USE_IGZIP)
 #include "rapidgzip/ParallelGzipReader.hpp"
-
+#endif
 
 int main(int argc, char** argv)
 {

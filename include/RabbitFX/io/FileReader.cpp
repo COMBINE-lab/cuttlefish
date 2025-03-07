@@ -1,7 +1,9 @@
 
 #include "FileReader.h"
 
+#if defined(USE_IGZIP)
 #include "rapidgzip/ParallelGzipReader.hpp"
+#endif
 
 
 namespace rabbit
@@ -11,9 +13,9 @@ FileReader::FileReader(const std::string &fileName_, bool isZipped, const std::s
     if(ends_with(fileName_, ".gz") || isZipped) {
 
         this->isZipped = true;
+        
+        #if defined(USE_IGZIP)
         par_deflate = (worker_count > 1);
-
-#if defined(USE_IGZIP)
         if(par_deflate)
         {
             auto file_reader = std::make_unique<StandardFileReader>(fileName_);

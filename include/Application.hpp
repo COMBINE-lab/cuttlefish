@@ -20,7 +20,12 @@ class Application
 private:
 
     // Pointer to an application instance of the next `Application` class in the top-down hierarchy (on `k`).
+#ifndef FIXED_K
     Application<k - 2, T_App>* const app_next_level;
+#else
+    Application<1, T_App>* const app_next_level;
+#endif
+
 
     // Pointer to a driver object that operates with the k-value `k`.
     T_App<k>* const app;
@@ -53,24 +58,13 @@ public:
 template <template<uint16_t> typename T_App>
 class Application<1, T_App>
 {
-private:
-
-    T_App<1>* const app;
-
-    Validator<1>* const validator;
-
-
 public:
 
-    Application(const Build_Params& params);
+    Application(const Build_Params&) {}
+    Application(const Validation_Params&) {}
 
-    Application(const Validation_Params& params);
-
-    ~Application();
-
-    void execute() const;
-
-    bool validate() const;
+    void execute() const {}
+    bool validate() const { return false; }
 };
 
 

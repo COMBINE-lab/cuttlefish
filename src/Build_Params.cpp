@@ -12,11 +12,18 @@ Build_Params::Build_Params( const bool is_read_graph,
                             const std::optional<std::vector<std::string>>& dir_paths,
                             const uint16_t k,
                             const std::optional<uint32_t> cutoff,
+                            const bool color,
+                            const std::size_t subgraph_count,
+                            const std::size_t vertex_part_count,
+                            const std::size_t lmtig_bucket_count,
+                            const std::size_t gmtig_bucket_count,
                             const std::string& vertex_db_path,
                             const std::string& edge_db_path,
                             const uint16_t thread_count,
                             const std::optional<std::size_t> max_memory,
                             const bool strict_memory,
+                            const bool idx,
+                            const uint16_t min_len,
                             const std::string& output_file_path,
                             const std::optional<cuttlefish::Output_Format> output_format,
                             const bool track_short_seqs,
@@ -30,29 +37,61 @@ Build_Params::Build_Params( const bool is_read_graph,
                             , const double gamma
 #endif
                     ):
-        is_read_graph_(is_read_graph),
-        is_ref_graph_(is_ref_graph),
-        seq_input_(seq_paths, list_paths, dir_paths),
-        k_(k),
-        cutoff_(cutoff),
-        vertex_db_path_(vertex_db_path),
-        edge_db_path_(edge_db_path),
-        thread_count_(thread_count),
-        max_memory_(max_memory),
-        strict_memory_(strict_memory),
-        output_file_path_(output_file_path),
-        output_format_(output_format),
-        track_short_seqs_(track_short_seqs),
+    is_read_graph_(is_read_graph),
+    is_ref_graph_(is_ref_graph),
+    seq_input_(seq_paths, list_paths, dir_paths),
+    k_(k),
+    cutoff_(cutoff),
+    color_(color),
+    subgraph_count_(subgraph_count),
+    vertex_part_count_(vertex_part_count),
+    lmtig_bucket_count_(lmtig_bucket_count),
+    gmtig_bucket_count_(gmtig_bucket_count),
+    vertex_db_path_(vertex_db_path),
+    edge_db_path_(edge_db_path),
+    thread_count_(thread_count),
+    max_memory_(max_memory),
+    strict_memory_(strict_memory),
+    idx_(idx),
+    min_len_(min_len),
+    output_file_path_(output_file_path),
+    output_format_(output_format),
+    track_short_seqs_(track_short_seqs),
         poly_n_stretch_(poly_n_stretch),
-        working_dir_path_(working_dir_path.back() == '/' ? working_dir_path : working_dir_path + "/"),
-        path_cover_(path_cover),
-        save_mph_(save_mph),
-        save_buckets_(save_buckets),
-        save_vertices_(save_vertices)
+    working_dir_path_(working_dir_path.back() == '/' ? working_dir_path : working_dir_path + "/"),
+    path_cover_(path_cover),
+    save_mph_(save_mph),
+    save_buckets_(save_buckets),
+    save_vertices_(save_vertices)
 #ifdef CF_DEVELOP_MODE
-        , gamma_(gamma)
+    , gamma_(gamma)
 #endif
-    {}
+{}
+
+
+const std::string Build_Params::output_file_ext() const
+{
+    if(is_read_graph() || is_ref_graph())
+        return cuttlefish::file_ext::unipaths_ext;
+
+    switch(output_format())
+    {
+    case cuttlefish::Output_Format::fa:
+        return cuttlefish::file_ext::unipaths_ext;
+
+    case cuttlefish::Output_Format::gfa1:
+        return cuttlefish::file_ext::gfa1_ext;
+
+    case cuttlefish::Output_Format::gfa2:
+        return cuttlefish::file_ext::gfa2_ext;
+
+    default:
+        break;
+    }
+
+
+    return "";
+}
 
 
 bool Build_Params::is_valid() const
@@ -67,10 +106,10 @@ bool Build_Params::is_valid() const
         valid = false;
     }
 
-    
+
     // Even `k` values are not consistent with the theory.
-    // Also, `k` needs to be in the range `[1, MAX_K]`.
-    if((k_ & static_cast<uint16_t>(1)) == 0 || (k_ > cuttlefish::MAX_K))
+    // Also, `k` needs to be in the range `(1, MAX_K]`.
+    if((k_ % 2) == 0 || k_ == 1 || k_ > cuttlefish::MAX_K)
     {
         std::cout << "The k-mer length (k) needs to be odd and within " << cuttlefish::MAX_K << ".\n";
         valid = false;
@@ -85,7 +124,15 @@ bool Build_Params::is_valid() const
         valid = false;
     }
 
-    
+
+    // l-minimizer length must be at most k-mer length, if indexing is requested.
+    if(idx_ && min_len_ >= k_)
+    {
+        std::cout << "l-minimizer length can be at most k-mer length.\n";
+        valid = false;
+    }
+
+
     // Output directory must exist.
     const std::string op_dir = dirname(output_file_path_);
     if(!dir_exists(op_dir))
@@ -130,7 +177,7 @@ bool Build_Params::is_valid() const
         if(is_ref_graph_ && cutoff() != 1)
             std::cout << "WARNING: cutoff frequency specified not to be 1 on reference sequences.\n";
 
-        
+
         // Cuttlefish 1 specific arguments can not be specified.
         if(output_format_)
         {
@@ -151,7 +198,7 @@ bool Build_Params::is_valid() const
         // Cuttlefish 2 specific arguments can not be specified.
         if(cutoff_ || path_cover_)
         {
-            std::cout << "Cuttelfish 2 specific arguments specified while using Cuttlefish 1.\n";
+            std::cout << "Cuttlefish 2 specific arguments specified while using Cuttlefish 1.\n";
             valid = false;
         }
     }
@@ -161,7 +208,7 @@ bool Build_Params::is_valid() const
 #ifndef CF_DEVELOP_MODE
     if(!vertex_db_path_.empty() || !edge_db_path_.empty())
     {
-        std::cout << "Paths to vertex- and edge-databases are supported only in debug mode.\n";
+        std::cout << "Paths to vertex- and edge-databases are supported only in develop mode.\n";
         valid = false;
     }
 #endif

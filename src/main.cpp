@@ -1,33 +1,26 @@
-#include "version.hpp"
 
 #include <algorithm>
 #include <string>
 #include <vector>
 #include <iostream>
-#include <optional>
 
 
 #ifdef __cplusplus
 extern "C" {
 #endif
-  int cf_build(int argc, char** argv);
-  int cf_validate(int argc, char** argv);
+    int cf_build(int argc, char** argv);
+    int cf_validate(int argc, char** argv);
+    int print_cf_version();
 #ifdef __cplusplus
 }
 #endif
 
 
-std::string executable_version()
-{
-    return "cuttlefish " VERSION;
-}
-
-
 void display_help_message()
 {
-    std::cout << executable_version() << "\n";
+    print_cf_version();
     std::cout << "Supported commands: `build`, `help`, `version`.\n";
-    
+
     std::cout << "Usage:\n";
     std::cout << "\tcuttlefish build [options]\n";
 }
@@ -39,6 +32,10 @@ int main(int argc, char** argv)
     std::cout << "Warning: Executing in Develop Mode.\n";
 #endif
 
+#ifndef NDEBUG
+    std::cout << "Warning: Executing in Debug Mode.\n";
+#endif
+
     if(argc < 2)
         display_help_message();
     else
@@ -48,12 +45,12 @@ int main(int argc, char** argv)
 
         if(command == "build")
             return cf_build(argc - 1, argv + 1);
-        else if(command == "validate")
-            return cf_validate(argc - 1, argv + 1);
+        // else if(command == "validate")
+        //     return cf_validate(argc - 1, argv + 1);
         else if(command == "help")
             display_help_message();
         else if(command == "version")
-            std::cout << executable_version() << "\n";
+            return print_cf_version();
         else
             display_help_message();
     }

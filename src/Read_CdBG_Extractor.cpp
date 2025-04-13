@@ -2,14 +2,22 @@
 #include "Read_CdBG_Extractor.hpp"
 #include "Kmer_Container.hpp"
 #include "Kmer_SPMC_Iterator.hpp"
+#include "Kmer_Index.hpp"
 #include "Character_Buffer.hpp"
 #include "Thread_Pool.hpp"
 
 
 template <uint16_t k>
 Read_CdBG_Extractor<k>::Read_CdBG_Extractor(const Build_Params& params, Kmer_Hash_Table<k, cuttlefish::BITS_PER_READ_KMER>& hash_table):
+    Read_CdBG_Extractor(params, hash_table, nullptr)
+{}
+
+
+template <uint16_t k>
+Read_CdBG_Extractor<k>::Read_CdBG_Extractor(const Build_Params& params, Kmer_Hash_Table<k, cuttlefish::BITS_PER_READ_KMER>& hash_table, Kmer_Index<k>* const kmer_idx):
     params(params),
-    hash_table(hash_table)
+    hash_table(hash_table),
+    kmer_idx(kmer_idx)
 {}
 
 
@@ -37,7 +45,8 @@ void Read_CdBG_Extractor<k>::extract_maximal_unitigs(const std::string& vertex_d
     // Launch (multi-threaded) extraction of the maximal unitigs.
     const uint64_t thread_load_percentile = static_cast<uint64_t>(std::round((vertex_count() / 100.0) / params.thread_count()));
     progress_tracker.setup(vertex_count() * 2, thread_load_percentile,
-                            params.path_cover() ? "Extracting maximal path cover" :  "Extracting maximal unitigs");
+                            kmer_idx == nullptr ?
+                            params.path_cover() ? "Extracting maximal path cover" :  "Extracting maximal unitigs" : "Extracting maximal unitigs and depositing to index");
     distribute_unipaths_extraction(&vertex_parser, thread_pool);
 
     // Wait for the vertices to be depleted from the database.
@@ -83,7 +92,14 @@ void Read_CdBG_Extractor<k>::process_vertices(Kmer_SPMC_Iterator<k>* const verte
     Unipaths_Meta_info<k> extracted_unipaths_info;  // Meta-information over the maximal unitigs extracted by this thread.
     uint64_t progress = 0;  // Number of vertices scanned by the thread; is reset at reaching 1% of its approximate workload.
 
-    Character_Buffer<BUFF_SZ, sink_t> output_buffer(output_sink.sink());  // The output buffer for maximal unitigs.
+    Character_Buffer<sink_t> output_buffer(output_sink.sink());  // The output buffer for maximal unitigs.
+
+    const char* unitig_seq; // Location of maximal unitigs within the output buffer.
+    std::size_t seq_len;    // Length of the literal sequences of the maximal unitigs.
+    const auto token = (kmer_idx == nullptr ? nullptr : // Unique sequence-producer token for this thread.
+                            static_cast<typename Kmer_Index<k>::Producer_Token*>(std::malloc(sizeof(typename Kmer_Index<k>::Producer_Token))));
+    if(kmer_idx != nullptr)
+        *token = kmer_idx->get_token();
 
 
     while(vertex_parser->tasks_expected(thread_id))
@@ -99,6 +115,16 @@ void Read_CdBG_Extractor<k>::process_vertices(Kmer_SPMC_Iterator<k>* const verte
 
                 if(progress_tracker.track_work(progress += maximal_unitig.size()))
                     progress = 0;
+
+                if(kmer_idx != nullptr)
+                {
+                    seq_len = maximal_unitig.size() + k - 1;
+                    unitig_seq = output_buffer.suffix(seq_len + 1); // The +1 length is to account for the ending line-break.
+                    // Note: depositing a sequence extracted from the output buffer is not UB—the design choice with the
+                    // buffer is to (optionally) flush *beforehand* of adding a sequence to it, not afterwards.
+
+                    kmer_idx->deposit(*token, unitig_seq, seq_len);
+                }
             }
 
             vertex_count++;

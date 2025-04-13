@@ -44,6 +44,9 @@ public:
 };
 
 
+// TODO: redesign solution with a more informed scheme and skipping redundant `std::string` copying
+// under the hood.
+// Ref: https://github.com/gabime/spdlog/issues/643
 template <>
 class Output_Sink<Async_Logger_Wrapper>
 {

@@ -24,6 +24,24 @@ struct bitsof {
   static constexpr size_t val = sizeof(T) * CHAR_BIT;
 };
 
+// Base-2 logarithm of number of bits in type T_.
+template <typename T_>
+struct log2_bitsof
+{
+  static constexpr std::size_t val =
+    []() constexpr
+    {
+      switch(bitsof<T_>::val)
+      {
+      case 8:   return 3;
+      case 16:  return 4;
+      case 32:  return 5;
+      case 64:  return 6;
+      default:  return 0;
+      }
+    }();
+};
+
 // Compact iterator definition. A 'iterator<int> p' would
 // behave identically to an 'int*', except that the underlying storage
 // is bit-packed. The actual number of bits used by each element is
@@ -103,7 +121,7 @@ struct gs {
     static constexpr size_t Wbits  = bitsof<W>::val;
     static constexpr W      ubmask = ~(W)0 >> (Wbits - UB);
     const W                 y      = x;
-    W                       mask   = ((~(W)0 >> (Wbits - BITS)) << o) & ubmask;
+    W                       mask   = ((W)(~(W)0 >> (Wbits - BITS)) << o) & ubmask;
     mask_store<W, TS>::store(p, mask, y << o);
     if(!divides(BITS, UB) && o + BITS > UB) {
       unsigned over = o + BITS - UB;
@@ -990,6 +1008,8 @@ public:
     : m_ptr(p), m_offset(o) { }
   const_iterator(const const_iterator& rhs)
     : m_ptr(rhs.m_ptr), m_offset(rhs.m_offset) { }
+  const_iterator& operator=(const const_iterator& rhs)
+  { m_ptr = rhs.m_ptr, m_offset = rhs.m_offset; return *this; }
   template<bool TS>
   const_iterator(const iterator<IDX, BITS, W, TS>& rhs)
     : m_ptr(rhs.m_ptr), m_offset(rhs.m_offset) { }

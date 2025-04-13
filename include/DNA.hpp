@@ -16,11 +16,12 @@ namespace DNA
     // TODO: consider having it as `enum class`.
     enum Base: uint8_t
     {
-        A = 0b00,   // 0
-        C = 0b01,   // 1
-        G = 0b10,   // 2
-        T = 0b11,   // 3
-        N = 0b100   // 4
+        A = 0b000,  // 0
+        C = 0b001,  // 1
+        G = 0b010,  // 2
+        T = 0b011,  // 3
+        N = 0b100,  // 4 (ambiguous due to branching)
+        E = 0b101   // 5 (empty)
     };
 
 

@@ -10,6 +10,7 @@
 #include "Data_Logistics.hpp"
 #include "Unipaths_Meta_info.hpp"
 #include "dBG_Info.hpp"
+#include "Kmer_Index.hpp"
 #include "spdlog/sinks/basic_file_sink.h"
 
 #include <cstdint>
@@ -44,6 +45,9 @@ private:
     std::vector<Unipaths_Meta_info<k>> unipaths_info_local; // Meta-information over the extracted maximal unitigs per thread.
 
     dBG_Info<k> dbg_info;   // Wrapper object for structural information of the graph.
+
+    Kmer_Index<k>* const kmer_idx;  // Index over the k-mers of the graph.
+    typename Kmer_Index<k>::Producer_Token* const token;    // `token[t_id]` contains a unique sequence-producer token for thread number `t_id`.
 
     static constexpr double bits_per_vertex = 8.71; // Expected number of bits required per vertex by Cuttlefish 2.
     static constexpr std::size_t parser_memory = 256 * 1024U * 1024U;   // An empirical estimation of the memory used by the sequence parser. 256 MB.
@@ -446,6 +450,11 @@ public:
     // Constructs a `CdBG` object with the parameters required for the construction of the
     // compacted representation of the underlying reference de Bruijn graph wrapped in `params`.
     CdBG(const Build_Params& params);
+
+    // Constructs a `CdBG` object that is to be used to index the k-mers of the underlying de
+    // Bruijn graph by `kmer_idx`, with the parameters required for the construction of the
+    // compacted representation of the reference de Bruijn graph wrapped in `params`.
+    CdBG(const Build_Params& params, Kmer_Index<k>* kmer_idx);
 
     // Destructs the compacted graph builder object, freeing its hash table and dumping the
     // graph information to disk.

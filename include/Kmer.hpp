@@ -8,7 +8,8 @@
 #include "Kmer_Utility.hpp"
 #include "utility.hpp"
 #include "kmc_api/kmc_file.h"
-#include "xxHash/xxh3.h"
+#include "wyhash/wyhash.h"
+// #include "xxHash/xxhash.h"
 
 #include <cstdint>
 #include <cstddef>
@@ -30,9 +31,6 @@ class Kmer
     // may access private information (the raw data) from edges, i.e. (k + 1)-mers.
     friend class Kmer<k - 1>;
 
-    // Minimizers can be represented using 32-bit integers.
-    typedef uint32_t minimizer_t;
-
 private:
 
     // Number of 64-bit integers required to compactly represent the underlying k-mer with 2-bits/base encoding.
@@ -40,6 +38,9 @@ private:
 
     // Bitmask used to clear the most significant DNA base character, i.e. the first base of the k-mer which is at the bits `2k-1 : 2k-2`.
     static constexpr const uint64_t CLEAR_MSN_MASK = ~(uint64_t(0b11) << (2 * ((k - 1) % 32)));
+
+    // Salt for `wyhash`.
+    static constexpr uint64_t wy_salt[4] = {4167021922371662411llu, 7320285940802167691llu, 14307255741305819987llu, 10859488101230029397llu};
 
     // The underlying k-mer represented with 2-bit encoding, as a collection of 64-bit integers.
     // A k-mer `n_{k - 1} ... n_1 n_0` is stored in the array `kmer_data` such that, `kmer_data[0]`
@@ -83,6 +84,10 @@ public:
     // `label[kmer_idx,...,kmer_idx + k - 1]`.
     Kmer(const std::string& label, std::size_t kmer_idx);
 
+    // Constructs a k-mer that has its encoding equivalent to the value `int_val`.
+    // k must be at most 32 for this construction.
+    Kmer(uint64_t int_val);
+
     // Constructs a k-mer from `kmer_api`, a k-mer object built from KMC.
     Kmer(const CKmerAPI& kmer_api);
 
@@ -92,6 +97,9 @@ public:
     // Copy assignment operator.
     Kmer<k>& operator=(const Kmer<k>& rhs);
 
+    // Returns the number of machine-words used to represent this k-mer.
+    constexpr static uint16_t num_words();
+
     // Returns a 64-bit hash value for the k-mer.
     uint64_t to_u64(uint64_t seed=0) const;
 
@@ -100,6 +108,11 @@ public:
 
     // Gets the k-mer from its KMC raw-binary representation.
     void from_KMC_data(const uint64_t* kmc_data);
+
+    // Gets the first k-mer from a super k-mer's binary representation
+    // `super_kmer` that has `word_count` words. The super k-mer is assumed to
+    // be MSB-aligned.
+    void from_super_kmer(const uint64_t* super_kmer, std::size_t word_count);
 
     // Gets the k-mer that is a prefix of the provided
     // (k + 1)-mer `k_plus_1_mer`.
@@ -140,6 +153,12 @@ public:
     // `n_{k - 1} ... n_1 n_0`, this is the base `n_0`.
     DNA::Base back() const;
 
+    // Returns the binary data of the k-mer.
+    const uint64_t* data() const;
+
+    // Returns the binary data of the k-mer.
+    uint64_t* data();
+
     // Returns `true` iff the k-mer is in the forward direction relative to
     // the other k-mer `kmer_hat`.
     bool in_forward(const Kmer<k>& kmer_hat) const;
@@ -161,6 +180,12 @@ public:
     // i.e. rolls the k-mer by one base. Also sets the passed
     // reverse complement `rev_compl` of the k-mer accordingly.
     void roll_to_next_kmer(DNA::Extended_Base edge, Kmer<k>& rev_compl);
+
+    // Transforms this k-mer by chopping off the last base and prepending the
+    // previous base `base` to the first, i.e.  rolls the k-mer by one base.
+    // Also sets the passed reverse complement `rev_compl` of the k-mer
+    // accordingly.
+    void roll_to_prev_kmer(DNA::Base base, Kmer<k>& rev_compl);
 
     // Transforms this k-mer by chopping off the first base and
     // appending the base coded with the edge encoding `edge` to
@@ -194,6 +219,9 @@ public:
     // Implicitly converts the k-mer to a `std::string`.
     operator std::string() const;
 
+    // (De)serializes the k-mer from / to the `cereal` archive `archive`.
+    template <typename  T_archive_> void serialize(T_archive_& archive);
+
     // Returns a randomly generated k-mer.
     static Kmer<k> random_kmer();
 
@@ -202,19 +230,9 @@ public:
     template <uint16_t K>
     friend std::ostream& operator<<(std::ostream& out, const Kmer<K>& kmer);
 
-    // Returns the lexicographic l-minimizer for the k-mer.
-    template <uint8_t l>
-    minimizer_t minimizer() const;
-
-    // Returns the l-minimizer for the k-mer where the vector `order`
-    // determines the minimizer-ordering of the l-mers, i.e. the order
-    // of the l-mer `i` is `order[i]`.
-    template <uint8_t l>
-    minimizer_t minimizer(const std::vector<uint32_t>& order) const;
-
-    // Accumulates the counts of the l-mers of the k-mer into `count`.
-    template <uint8_t l>
-    void count_lmers(std::vector<uint64_t>& count) const;
+    // Returns the equivalent integer value of this k-mer, which is only
+    // possible if k <= 32 holds.
+    uint64_t as_int() const;
 };
 
 
@@ -226,6 +244,7 @@ inline void Kmer<k>::left_shift()
 
 
 template <uint16_t k>
+__attribute__((optimize("unroll-loops")))
 inline void Kmer<k>::right_shift()
 {
     constexpr uint64_t mask_LSN = 0b11;
@@ -239,6 +258,7 @@ inline void Kmer<k>::right_shift()
 
 template <uint16_t k>
 template <uint16_t B>
+__attribute__((optimize("unroll-loops")))
 inline void Kmer<k>::left_shift()
 {
     static_assert(B < 32, "invalid bit-shift amount");
@@ -246,12 +266,20 @@ inline void Kmer<k>::left_shift()
     if constexpr(B != 0)
     {
         constexpr uint16_t num_bit_shift = 2 * B;
-        constexpr uint64_t mask_MSNs = ((static_cast<uint64_t>(1) << num_bit_shift) - 1) << (64 - num_bit_shift);
+        // constexpr uint64_t mask_MSNs = ((static_cast<uint64_t>(1) << num_bit_shift) - 1) << (64 - num_bit_shift);
 
-        for(uint16_t idx = NUM_INTS - 1; idx > 0; --idx)
-            kmer_data[idx] = (kmer_data[idx] << num_bit_shift) | ((kmer_data[idx - 1] & mask_MSNs) >> (64 - num_bit_shift));
+        if constexpr(k <= 32)
+            kmer_data[0] <<= num_bit_shift;
+        else
+        {
+            uint64_t temp[NUM_INTS];
+            for(uint16_t idx = NUM_INTS - 1; idx > 0; --idx)
+                temp[idx] = (kmer_data[idx] << num_bit_shift) | (kmer_data[idx - 1] >> (64 - num_bit_shift));
 
-        kmer_data[0] <<= num_bit_shift;
+            temp[0] = (kmer_data[0] << num_bit_shift);
+
+            std::memcpy(kmer_data, &temp, NUM_INTS * sizeof(uint64_t));
+        }
     }
 }
 
@@ -260,7 +288,8 @@ template <uint16_t k>
 inline uint64_t Kmer<k>::to_u64(const uint64_t seed) const
 {
     constexpr uint16_t NUM_BYTES = (k + 3) / 4;
-    return XXH3_64bits_withSeed(kmer_data, NUM_BYTES, seed);
+    // return XXH3_64bits_withSeed(kmer_data, NUM_BYTES, seed);
+    return wyhash(kmer_data, NUM_BYTES, seed, wy_salt);
 }
 
 
@@ -280,8 +309,6 @@ template <uint16_t k>
 __attribute__((optimize("unroll-loops")))
 inline Kmer<k>::Kmer(const char* const label)
 {
-    assert(std::strlen(label) >= k);
-
     constexpr uint16_t packed_word_count = k / 32;
 
     // Get the fully packed words' binary representations.
@@ -307,6 +334,15 @@ inline Kmer<k>::Kmer(const std::string& label, const std::size_t kmer_idx):
 
 
 template <uint16_t k>
+inline Kmer<k>::Kmer(const uint64_t int_val)
+{
+    static_assert(k <= 32, "k-mer conversions from 64-bit unsigned integers is only defined for k <= 32.");
+
+    kmer_data[0] = int_val;
+}
+
+
+template <uint16_t k>
 inline Kmer<k>::Kmer(const CKmerAPI& kmer_api)
 {
     from_CKmerAPI(kmer_api);
@@ -316,16 +352,28 @@ inline Kmer<k>::Kmer(const CKmerAPI& kmer_api)
 template <uint16_t k>
 inline Kmer<k>::Kmer(const Kmer<k>& rhs)
 {
-    std::memcpy(kmer_data, rhs.kmer_data, NUM_INTS * sizeof(uint64_t));
+    *this = rhs;
 }
 
 
 template <uint16_t k>
 inline Kmer<k>& Kmer<k>::operator=(const Kmer<k>& rhs)
 {
-    std::memcpy(kmer_data, rhs.kmer_data, NUM_INTS * sizeof(uint64_t));
+    static_assert(NUM_INTS <= 4);
+
+    if constexpr(k <= 32)
+        kmer_data[0] = rhs.kmer_data[0];
+    else
+        std::memcpy(kmer_data, rhs.kmer_data, NUM_INTS * sizeof(uint64_t));
 
     return *this;
+}
+
+
+template <uint16_t k>
+inline constexpr uint16_t Kmer<k>::num_words()
+{
+    return NUM_INTS;
 }
 
 
@@ -337,6 +385,7 @@ inline void Kmer<k>::from_CKmerAPI(const CKmerAPI& kmer_api)
 
 
 template <uint16_t k>
+__attribute__((optimize("unroll-loops")))
 inline void Kmer<k>::from_KMC_data(const uint64_t* const kmc_data)
 {
     // The endianness of the k-mer data array in the KMC database is in the opposite
@@ -367,6 +416,20 @@ inline void Kmer<k>::from_KMC_data(const uint64_t* const kmc_data)
         for (int32 i = NUM_INTS - 1; i >= 0; --i)
             kmer_data[NUM_INTS - 1 - i] = kmc_data[i];
             
+}
+
+
+template <uint16_t k>
+__attribute__((optimize("unroll-loops")))
+inline void Kmer<k>::from_super_kmer(const uint64_t* const super_kmer, const std::size_t word_count)
+{
+    constexpr uint16_t t = 32 - (k & 31);   // Trailing (little-endian) empty characters in KMC representation.
+
+    const auto word_off = word_count - NUM_INTS;    // Word offset of the first k-mer in the super k-mer encoding.
+    for(std::size_t i = 0; i < NUM_INTS - 1; ++i)
+        kmer_data[i] = (super_kmer[word_off + i] >> (2 * t)) | (super_kmer[word_off + (i + 1)] << (2 * (32 - t)));
+
+    kmer_data[NUM_INTS - 1] = super_kmer[word_off + NUM_INTS - 1] >> (2 * t);
 }
 
 
@@ -414,6 +477,7 @@ inline Kmer<k> Kmer<k>::reverse_complement() const
 
 
 template <uint16_t k>
+__attribute__((optimize("unroll-loops")))
 inline void Kmer<k>::as_reverse_complement(const Kmer<k>& other)
 {
     // Working with bytes instead of 64-bit words at a time.
@@ -434,19 +498,21 @@ inline void Kmer<k>::as_reverse_complement(const Kmer<k>& other)
     constexpr uint16_t rem_base_count = k % 4;
     if constexpr(rem_base_count == 0)
         return;
-    
+
     rev_compl[packed_byte_count] = 0;
     left_shift<rem_base_count>();
 
-    for(int i = 0; i < rem_base_count; ++i)
-        rev_compl[0] |= (DNA_Utility::complement(DNA::Base((data[packed_byte_count] & (0b11 << (2 * i))) >> (2 * i)))
-                                        << (2 * (rem_base_count - 1 - i)));
+    rev_compl[0] |= (Kmer_Utility::reverse_complement(data[packed_byte_count]) >> (2 * (4 - rem_base_count)));
 }
 
 
 template <uint16_t k>
+__attribute__((optimize("unroll-loops")))
 inline bool Kmer<k>::operator<(const Kmer<k>& rhs) const
 {
+    if constexpr(k <= 32)
+        return kmer_data[0] < rhs.kmer_data[0];
+
     for(int16_t idx = NUM_INTS - 1; idx >= 0; --idx)
         if(kmer_data[idx] != rhs.kmer_data[idx])
             return kmer_data[idx] < rhs.kmer_data[idx];
@@ -456,8 +522,12 @@ inline bool Kmer<k>::operator<(const Kmer<k>& rhs) const
 
 
 template <uint16_t k>
+__attribute__((optimize("unroll-loops")))
 inline bool Kmer<k>::operator>(const Kmer<k>& rhs) const
 {
+    if constexpr(k <= 32)
+        return kmer_data[0] > rhs.kmer_data[0];
+
     for(int16_t idx = NUM_INTS - 1; idx >= 0; --idx)
         if(kmer_data[idx] != rhs.kmer_data[idx])
             return kmer_data[idx] > rhs.kmer_data[idx];
@@ -469,6 +539,9 @@ inline bool Kmer<k>::operator>(const Kmer<k>& rhs) const
 template <uint16_t k>
 inline bool Kmer<k>::operator==(const Kmer<k>& rhs) const
 {
+    if constexpr(k <= 32)
+        return kmer_data[0] == rhs.kmer_data[0];
+
     return std::memcmp(kmer_data, rhs.kmer_data, NUM_INTS * sizeof(uint64_t)) == 0;
 }
 
@@ -476,7 +549,7 @@ inline bool Kmer<k>::operator==(const Kmer<k>& rhs) const
 template <uint16_t k>
 inline bool Kmer<k>::operator!=(const Kmer<k>& rhs) const
 {
-    return !operator==(rhs);
+    return !(*this == rhs);
 }
 
 
@@ -504,9 +577,23 @@ inline DNA::Base Kmer<k>::back() const
 
 
 template <uint16_t k>
+inline const uint64_t* Kmer<k>::data() const
+{
+    return kmer_data;
+}
+
+
+template <uint16_t k>
+inline uint64_t* Kmer<k>::data()
+{
+    return kmer_data;
+}
+
+
+template <uint16_t k>
 inline bool Kmer<k>::in_forward(const Kmer<k>& kmer_hat) const
 {
-    return operator==(kmer_hat);
+    return *this == kmer_hat;
 }
 
 
@@ -540,6 +627,21 @@ inline void Kmer<k>::roll_to_next_kmer(const DNA::Extended_Base edge, Kmer<k>& r
     const DNA::Base mapped_base = DNA_Utility::map_base(edge);
 
     roll_to_next_kmer(mapped_base, rev_compl);
+}
+
+
+template <uint16_t k>
+inline void Kmer<k>::roll_to_prev_kmer(const DNA::Base base, Kmer<k>& rev_compl)
+{
+    // Relative index of the most significant nucleotide in it's 64-bit word.
+    constexpr uint16_t rel_idx_MSN = 2 * ((k - 1) % 32);
+
+    right_shift();
+    kmer_data[NUM_INTS - 1] |= (static_cast<uint64_t>(base) << rel_idx_MSN);
+
+    rev_compl.kmer_data[NUM_INTS - 1] &= CLEAR_MSN_MASK;
+    rev_compl.left_shift();
+    rev_compl.kmer_data[0] |= static_cast<uint64_t>(DNA_Utility::complement(base));
 }
 
 
@@ -589,6 +691,7 @@ inline const Kmer<k>* Kmer<k>::canonical(const Kmer<k>& kmer, const Kmer<k>& rev
 
 
 template <uint16_t k>
+__attribute__((optimize("unroll-loops")))
 inline std::string Kmer<k>::string_label() const
 {
     Kmer<k> kmer(*this);
@@ -635,11 +738,14 @@ inline std::string Kmer<k>::string_label() const
 
 template <uint16_t k>
 template <typename T_container_>
+__attribute__((optimize("unroll-loops")))
 inline void Kmer<k>::get_label(T_container_& label) const
 {
     label.resize(k);
 
     constexpr uint16_t packed_word_count = k / 32;
+
+    // TODO: optimize away the base-wise iteration—can be quite costly. Consider per-byte `memcpy` from pre-built labels.
 
     // Get the fully packed words' representations.
     for(uint16_t data_idx = 0; data_idx < packed_word_count; ++data_idx)
@@ -665,6 +771,18 @@ inline Kmer<k>::operator std::string() const
 
 
 template <uint16_t k>
+template <typename T_archive_>
+inline void Kmer<k>::serialize(T_archive_& archive)
+{
+    if constexpr(k <= 32)
+        archive(kmer_data[0]);
+    else
+        for(std::size_t w_idx = 0; w_idx < NUM_INTS; ++w_idx)
+            archive(kmer_data[w_idx]);
+}
+
+
+template <uint16_t k>
 inline Kmer<k> Kmer<k>::random_kmer()
 {
     return Kmer<k>(get_random_string(k, "ACGT"));
@@ -681,78 +799,11 @@ std::ostream& operator<<(std::ostream& out, const Kmer<k>& kmer)
 
 
 template <uint16_t k>
-template <uint8_t l>
-inline typename Kmer<k>::minimizer_t Kmer<k>::minimizer() const
+inline uint64_t Kmer<k>::as_int() const
 {
-    // static_assert(l <= k);
+    static_assert(k <= 32, "k-mer conversions to 64-bit unsigned integers is only defined for k <= 32.");
 
-    // TODO: SIMD?
-
-    minimizer_t lmer = kmer_data[0] & ((1ULL << (2 * l)) - 1);
-    minimizer_t minmzr = lmer;
-
-    for(uint16_t idx = l; idx < k; ++idx)
-    {
-        const uint16_t word_idx = (idx >> 5);
-        const uint16_t base_idx = (idx & 31);
-        lmer =  (lmer >> 2) |
-                (((kmer_data[word_idx] & (0b11ULL << (2 * base_idx))) >> (2 * base_idx)) << (2 * (l - 1)));
-
-        if(minmzr > lmer)
-            minmzr = lmer;
-    }
-
-
-    return minmzr;
-}
-
-
-template <uint16_t k>
-template <uint8_t l>
-inline typename Kmer<k>::minimizer_t Kmer<k>::minimizer(const std::vector<uint32_t>& order) const
-{
-    // static_assert(l <= k);
-
-    // TODO: SIMD?
-
-    minimizer_t lmer = kmer_data[0] & ((1ULL << (2 * l)) - 1);
-    minimizer_t minmzr = lmer;
-
-    for(uint16_t idx = l; idx < k; ++idx)
-    {
-        const uint16_t word_idx = (idx >> 5);
-        const uint16_t base_idx = (idx & 31);
-        lmer =  (lmer >> 2) |
-                (((kmer_data[word_idx] & (0b11ULL << (2 * base_idx))) >> (2 * base_idx)) << (2 * (l - 1)));
-
-        if(order[minmzr] > order[lmer])
-            minmzr = lmer;
-    }
-
-
-    return minmzr;
-}
-
-
-template <uint16_t k>
-template <uint8_t l>
-inline void Kmer<k>::count_lmers(std::vector<uint64_t>& count) const
-{
-    // static_assert(l <= k);
-
-    std::size_t lmer = kmer_data[0] & ((1ULL << (2 * l)) - 1);
-    count[lmer]++;
-
-    for(uint16_t idx = l; idx < k; ++idx)
-    {
-        const uint16_t word_idx = (idx >> 5);
-        const uint16_t base_idx = (idx & 31);
-
-        lmer =  (lmer >> 2) |
-                (((kmer_data[word_idx] & (0b11ULL << (2 * base_idx))) >> (2 * base_idx)) << (2 * (l - 1)));
-
-        count[lmer]++;
-    }
+    return kmer_data[0];
 }
 
 

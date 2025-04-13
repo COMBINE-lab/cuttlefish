@@ -108,6 +108,7 @@ void dBG_Info<k>::add_build_params(const Build_Params& params)
     dBg_info[params_field]["input"] = concat_strings(params.sequence_input().seqs());
     dBg_info[params_field]["k"] = params.k();
     dBg_info[params_field]["output prefix"] = params.output_prefix();
+    // TODO: add frequency threshold.
 }
 
 

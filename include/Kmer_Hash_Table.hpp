@@ -67,8 +67,7 @@ private:
     const uint64_t kmer_count;
 
     // The MPH function.
-    // TODO: Initialize with `std::nullptr`.
-    mphf_t* mph = NULL;
+    const mphf_t* mph = nullptr;
 
     // The buckets collection (raw `State` representations) for the hash table structure.
     // Keys (`Kmer<k>`) are passed to the MPHF, and the resulting function-value is used as index into the buckets table.

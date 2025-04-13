@@ -377,6 +377,12 @@ void CdBG<k>::write_gfa_segment(const uint16_t thread_id, const char* const seq,
         for(size_t offset = 0; offset < segment_len; ++offset)
             buffer += DNA_Utility::complement(seq[end_kmer_idx + k - 1 - offset]);
 
+    if(kmer_idx != nullptr)
+    {
+        const char* const unitig_seq = buffer.data() + (buffer.size() - segment_len);
+        kmer_idx->deposit(token[thread_id], unitig_seq, segment_len);
+    }
+
 
     // Write some optional fields that are trivially inferrable here.
     if(gfa_v == cuttlefish::Output_Format::gfa1)  // No need of the length tag for GFA2 here.

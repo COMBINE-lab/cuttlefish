@@ -70,8 +70,6 @@ int cf_build(int argc, char** argv)
 
     options.add_options("cuttlefish_3")
         ("color", "whether to color the compacted graph or not")
-        ("subgraph-count", "number of subgraphs the original de Bruijn graph is broken into",
-            cxxopts::value<std::size_t>()->default_value(std::to_string(cuttlefish::_default::SUBGRAPH_COUNT)))
         ("vertex-part-count", "number of vertex-partitions in the discontinuity graph; needs to be a power of 2",
             cxxopts::value<std::size_t>()->default_value(std::to_string(cuttlefish::_default::VERTEX_PART_COUNT)))
         ("lmtig-bucket-count", "number of buckets storing literal locally-maximal unitigs",
@@ -118,7 +116,6 @@ int cf_build(int argc, char** argv)
         const auto is_ref_graph = result["ref"].as<bool>();
         const auto k = result["kmer-len"].as<uint16_t>();
         const auto color = result["color"].as<bool>();
-        const auto subgraph_count = result["subgraph-count"].as<std::size_t>();
         const auto vertex_part_count = result["vertex-part-count"].as<std::size_t>();
         const auto lmtig_bucket_count = result["lmtig-bucket-count"].as<std::size_t>();
         const auto gmtig_bucket_count = result["gmtig-bucket-count"].as<std::size_t>();

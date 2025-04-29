@@ -27,7 +27,6 @@ private:
     const uint16_t k_;   // The k parameter for the edge-centric de Bruijn graph to be compacted.
     const std::optional<uint32_t> cutoff_;  // Frequency cutoff for the (k + 1)-mers.
     const bool color_;  // Whether to color the compacted graph or not.
-    const std::size_t subgraph_count_;  // Number of subgraphs the original de Bruijn graph is broken into.
     const std::size_t vertex_part_count_;   // Number of vertex-partitions in the discontinuity graph; needs to be a power of 2.
     const std::size_t lmtig_bucket_count_;  // Number of buckets storing literal locally-maximal unitigs.
     const std::size_t gmtig_bucket_count_;  // Number of buckets storing literal globally-maximal unitigs.
@@ -67,7 +66,6 @@ public:
                     uint16_t k,
                     std::optional<uint32_t> cutoff,
                     bool color,
-                    std::size_t subgraph_count,
                     std::size_t vertex_part_count,
                     std::size_t lmtig_bucket_count,
                     std::size_t gmtig_bucket_count,
@@ -109,9 +107,6 @@ public:
 
     // Returns the frequency cutoff for the (k + 1)-mers (for short-reads set input).
     auto cutoff() const { return cutoff_.value_or(is_read_graph() ? cuttlefish::_default::CUTOFF_FREQ_READS : cuttlefish::_default::CUTOFF_FREQ_REFS); }
-
-    // Returns the number of subgraphs the original de Bruijn graph is broken into.
-    auto subgraph_count() const { return subgraph_count_; }
 
     // Returns the number of vertex-partitions in the discontinuity graph.
     auto vertex_part_count() const { return vertex_part_count_; }

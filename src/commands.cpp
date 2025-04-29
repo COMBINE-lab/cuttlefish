@@ -28,17 +28,17 @@ int cf_build(int argc, char** argv)
 {
     cxxopts::Options options("cuttlefish build", "Efficiently construct the compacted de Bruijn graph from sequencing reads or reference sequences");
 
-    std::optional<std::vector<std::string>> seqs;
-    std::optional<std::vector<std::string>> lists;
-    std::optional<std::vector<std::string>> dirs;
+    std::vector<std::string> seqs;
+    std::vector<std::string> lists;
+    std::vector<std::string> dirs;
     std::optional<uint32_t> cutoff;
     options.add_options("common")
         ("s,seq", "input files",
-            cxxopts::value<std::optional<std::vector<std::string>>>(seqs))
+            cxxopts::value<decltype(seqs)>(seqs))
         ("l,list", "input file lists",
-            cxxopts::value<std::optional<std::vector<std::string>>>(lists))
+            cxxopts::value<decltype(lists)>(lists))
         ("d,dir", "input file directories",
-            cxxopts::value<std::optional<std::vector<std::string>>>(dirs))
+            cxxopts::value<decltype(dirs)>(dirs))
         ("k,kmer-len", "k-mer length",
             cxxopts::value<uint16_t>()->default_value(std::to_string(cuttlefish::_default::K)))
         // ("t,threads", "number of threads to use",

@@ -48,9 +48,9 @@ public:
     // Constructs a parameters wrapper object with the self-explanatory parameters.
     Build_Params(   bool is_read_graph,
                     bool is_ref_graph,
-                    const std::optional<std::vector<std::string>>& seq_paths,
-                    const std::optional<std::vector<std::string>>& list_paths,
-                    const std::optional<std::vector<std::string>>& dir_paths,
+                    const std::vector<std::string>& seq_paths,
+                    const std::vector<std::string>& list_paths,
+                    const std::vector<std::string>& dir_paths,
                     uint16_t k,
                     std::optional<uint32_t> cutoff,
                     bool color,

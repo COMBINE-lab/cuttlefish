@@ -389,7 +389,7 @@ add_dependencies(rpmalloc prj_rapidgzip)
 # Prepare the `boost` library. It provides: support for preprocessor
 # metaprogramming and a scalable concurrent hashmap.
 set(BOOST_MIN_VERSION "1.85.0")
-find_package(Boost ${BOOST_MIN_VERSION})
+find_package(Boost ${BOOST_MIN_VERSION} CONFIG)
 if(BOOST_FOUND)
     message("Found boost (v${BOOST_VERSION}) in the system")
 else()

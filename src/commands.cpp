@@ -31,7 +31,6 @@ int cf_build(int argc, char** argv)
     std::optional<std::vector<std::string>> seqs;
     std::optional<std::vector<std::string>> lists;
     std::optional<std::vector<std::string>> dirs;
-    std::optional<std::size_t> max_memory;
     std::optional<uint32_t> cutoff;
     options.add_options("common")
         ("s,seq", "input files",
@@ -52,19 +51,14 @@ int cf_build(int argc, char** argv)
         ("w,work-dir", "working directory",
             cxxopts::value<std::string>()->default_value(cuttlefish::_default::WORK_DIR))
 /*
-        ("m,max-memory", "soft maximum memory limit in GB (default: " + std::to_string(cuttlefish::_default::MAX_MEMORY) + ")",
-            cxxopts::value<std::optional<std::size_t>>(max_memory))
-        ("unrestrict-memory", "do not impose memory usage restriction")
-        ;
-
     options.add_options("cuttlefish_2")
-        ("read", "construct a compacted read de Bruijn graph (for FASTQ input)")
-        ("ref", "construct a compacted reference de Bruijn graph (for FASTA input)")
         ("path-cover", "extract a maximal path cover of the de Bruijn graph")
         ;
 */
 
     // options.add_options("cuttlefish_3")
+        ("read", "construct a compacted read de Bruijn graph (for FASTQ input)")
+        ("ref", "construct a compacted reference de Bruijn graph (for FASTA input)")
         ("c,cutoff", "frequency cutoff for (k + 1)-mers (default: refs: " + std::to_string(cuttlefish::_default::CUTOFF_FREQ_REFS) + ", reads: " + std::to_string(cuttlefish::_default::CUTOFF_FREQ_READS) + ")",
             cxxopts::value<std::optional<uint32_t>>(cutoff))
         ("color", "whether to color the compacted graph or not")
@@ -87,22 +81,6 @@ int cf_build(int argc, char** argv)
         ("track-short-seqs", "track existence of sequences shorter than k bases")
         ("poly-N-stretch", "includes information of polyN stretches in the tiling output")
         ;
-
-    options.add_options("specialized")
-        ("save-mph", "save the minimal perfect hash (BBHash) over the vertex set")
-        ("save-buckets", "save the DFA-states collection of the vertices")
-        ("save-vertices", "save the vertex set of the graph")
-        ;
-
-    options.add_options("debug")
-        ("vertex-set", "set of vertices, i.e. k-mers (KMC database) prefix",
-            cxxopts::value<std::string>()->default_value(cuttlefish::_default::EMPTY))
-        ("edge-set", "set of edges, i.e. (k + 1)-mers (KMC database) prefix",
-            cxxopts::value<std::string>()->default_value(cuttlefish::_default::EMPTY))
-#ifdef CF_DEVELOP_MODE
-        ("gamma", "gamma for the BBHash MPHF",
-            cxxopts::value<double>()->default_value(std::to_string(cuttlefish::_default::GAMMA)))
-#endif
 */
         ;
 
@@ -122,39 +100,26 @@ int cf_build(int argc, char** argv)
         const auto vertex_part_count = cuttlefish::_default::VERTEX_PART_COUNT;     // result["vertex-part-count"].as<std::size_t>();
         const auto lmtig_bucket_count = cuttlefish::_default::LMTIG_BUCKET_COUNT;   // result["lmtig-bucket-count"].as<std::size_t>();
         const auto gmtig_bucket_count = cuttlefish::_default::GMTIG_BUCKET_COUNT;   // result["gmtig-bucket-count"].as<std::size_t>();
-        const auto vertex_db = result["vertex-set"].as<std::string>();
-        const auto edge_db = result["edge-set"].as<std::string>();
         // const auto thread_count = result["threads"].as<uint16_t>();
-        const auto strict_memory = !result["unrestrict-memory"].as<bool>();
-        const auto idx = result["idx"].as<bool>();
+        const auto idx = false; // result["idx"].as<bool>();
         const auto min_len = result["min-len"].as<uint16_t>();
         const auto output_file = result["output"].as<std::string>();
         const auto format = format_code ?   std::optional<cuttlefish::Output_Format>(cuttlefish::Output_Format(format_code.value())) :
                                             std::optional<cuttlefish::Output_Format>();
-        const auto track_short_seqs = result["track-short-seqs"].as<bool>();
-        const auto poly_n_stretch = result["poly-N-stretch"].as<bool>();
+        const auto track_short_seqs = false;    // result["track-short-seqs"].as<bool>();
+        const auto poly_n_stretch = false;  // result["poly-N-stretch"].as<bool>();
         const auto working_dir = result["work-dir"].as<std::string>();
-        const auto path_cover = result["path-cover"].as<bool>();
-        const auto save_mph = result["save-mph"].as<bool>();
-        const auto save_buckets = result["save-buckets"].as<bool>();
-        const auto save_vertices = result["save-vertices"].as<bool>();
-#ifdef CF_DEVELOP_MODE
-        const double gamma = result["gamma"].as<double>();
-#endif
+        const auto path_cover = false;  // result["path-cover"].as<bool>();
 
         const Build_Params params(  is_read_graph, is_ref_graph,
                                     seqs, lists, dirs,
                                     k, cutoff,
                                     color,
                                     vertex_part_count, lmtig_bucket_count, gmtig_bucket_count,
-                                    vertex_db, edge_db, parlay::num_workers(), max_memory, strict_memory,
+                                    parlay::num_workers(),
                                     idx, min_len,
                                     output_file, format, track_short_seqs, poly_n_stretch, working_dir,
-                                    path_cover,
-                                    save_mph, save_buckets, save_vertices
-#ifdef CF_DEVELOP_MODE
-                                    , gamma
-#endif
+                                    path_cover
                                 );
         if(!params.is_valid())
         {

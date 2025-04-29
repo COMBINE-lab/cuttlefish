@@ -4,7 +4,6 @@
 
 
 
-#include "globals.hpp"
 #include "Seq_Input.hpp"
 #include "Output_Format.hpp"
 #include "File_Extensions.hpp"
@@ -30,11 +29,7 @@ private:
     const std::size_t vertex_part_count_;   // Number of vertex-partitions in the discontinuity graph; needs to be a power of 2.
     const std::size_t lmtig_bucket_count_;  // Number of buckets storing literal locally-maximal unitigs.
     const std::size_t gmtig_bucket_count_;  // Number of buckets storing literal globally-maximal unitigs.
-    const std::string vertex_db_path_;  // Path to the KMC database containing the vertices (canonical k-mers).
-    const std::string edge_db_path_;    // Path to the KMC database containing the edges (canonical (k + 1)-mers).
     const uint16_t thread_count_;    // Number of threads to work with.
-    const std::optional<std::size_t> max_memory_;   // Soft maximum memory limit (in GB).
-    const bool strict_memory_;  // Whether strict memory limit restriction is specified.
     const bool idx_;    // Whether to construct a k-mer index of the de Bruijn graph.
     const uint16_t min_len_;    // Length of the l-minimizers used in the k-mer index.
     const std::string output_file_path_;    // Path to the output file.
@@ -43,17 +38,10 @@ private:
     const bool poly_n_stretch_; // Whether to include tiles in GFA-reduced output that track the polyN stretches in the input.
     const std::string working_dir_path_;    // Path to the working directory (for temporary files).
     const bool path_cover_; // Whether to extract a maximal path cover of the de Bruijn graph.
-    const bool save_mph_;   // Option to save the MPH over the vertex set of the de Bruijn graph.
-    const bool save_buckets_;   // Option to save the DFA-states collection of the vertices of the de Bruijn graph.
-    const bool save_vertices_;  // Option to save the vertex set of the de Bruijn graph (in KMC database format).
-#ifdef CF_DEVELOP_MODE
-    const double gamma_;    // The gamma parameter for the BBHash MPHF.
-#endif
 
 
     // Returns the extension of the output file, depending on the output format requested.
     const std::string output_file_ext() const;
-
 
 public:
 
@@ -69,11 +57,7 @@ public:
                     std::size_t vertex_part_count,
                     std::size_t lmtig_bucket_count,
                     std::size_t gmtig_bucket_count,
-                    const std::string& vertex_db_path,
-                    const std::string& edge_db_path,
                     uint16_t thread_count,
-                    std::optional<std::size_t> max_memory,
-                    bool strict_memory,
                     const bool idx,
                     const uint16_t l,
                     const std::string& output_file_path,
@@ -81,13 +65,7 @@ public:
                     bool track_short_seqs,
                     bool poly_n_stretch,
                     const std::string& working_dir_path,
-                    bool path_cover,
-                    bool save_mph,
-                    bool save_buckets,
-                    bool save_vertices
-#ifdef CF_DEVELOP_MODE
-                    , double gamma
-#endif
+                    bool path_cover
                     );
 
     // Returns the boolean flag to whether to build a compacted read de Bruijn graph or not.
@@ -117,20 +95,8 @@ public:
     // Returns the number of buckets storing literal globally-maximal unitigs.
     auto gmtig_bucket_count() const { return gmtig_bucket_count_; }
 
-    // Returns the path to the vertex database.
-    const auto& vertex_db_path() const { return vertex_db_path_; }
-
-    // Returns the path to the edge database.
-    const auto& edge_db_path() const { return edge_db_path_; }
-
     // Returns the number of threads to use.
     auto thread_count() const { return thread_count_; }
-
-    // Returns the soft maximum memory limit (in GB).
-    auto max_memory() const { return max_memory_.value_or(cuttlefish::_default::MAX_MEMORY); }
-
-    // Returns whether strict memory limit restriction is specified.
-    auto strict_memory() const { return strict_memory_; }
 
     // Returns whether to construct a k-mer index of the de Bruijn graph.
     auto idx() const { return idx_; }
@@ -165,28 +131,8 @@ public:
     // Returns whether to extract a maximal path cover of the de Bruijn graph.
     auto path_cover() const { return path_cover_; }
 
-    // Returns the path to the optional MPH file.
-    auto mph_file_path() const { return output_file_path_ + cuttlefish::file_ext::hash_ext; }
-
-    // Returns the path to the optional file storing the hash table buckets.
-    auto buckets_file_path() const { return output_file_path_ + cuttlefish::file_ext::buckets_ext; }
-
-    // Returns whether the option to save the MPH over the vertex set of the de Bruijn graph is specified ot not.
-    auto save_mph() const { return save_mph_; }
-
-    // Returns whether the option to save the DFA-states collection of the vertices of the de Bruijn graph.
-    auto save_buckets() const { return save_buckets_; }
-
-    // Returns whether the option to save the vertex set of the de Bruijn graph (in KMC database format) is specified or not.
-    auto save_vertices() const { return save_vertices_; }
-
     // Returns the path to the optional file storing meta-information about the graph and cuttlefish executions.
     auto json_file_path() const { return output_file_path_ + cuttlefish::file_ext::json_ext; }
-
-#ifdef CF_DEVELOP_MODE
-    // Returns the gamma parameter for the BBHash MPHF.
-    auto gamma() const { return gamma_; }
-#endif
 
     // Returns `true` iff the parameters selections are valid.
     bool is_valid() const;

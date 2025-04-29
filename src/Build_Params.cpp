@@ -1,5 +1,6 @@
 
 #include "Build_Params.hpp"
+#include "globals.hpp"
 #include "utility.hpp"
 
 #include <iostream>
@@ -16,11 +17,7 @@ Build_Params::Build_Params( const bool is_read_graph,
                             const std::size_t vertex_part_count,
                             const std::size_t lmtig_bucket_count,
                             const std::size_t gmtig_bucket_count,
-                            const std::string& vertex_db_path,
-                            const std::string& edge_db_path,
                             const uint16_t thread_count,
-                            const std::optional<std::size_t> max_memory,
-                            const bool strict_memory,
                             const bool idx,
                             const uint16_t min_len,
                             const std::string& output_file_path,
@@ -28,13 +25,7 @@ Build_Params::Build_Params( const bool is_read_graph,
                             const bool track_short_seqs,
                             const bool poly_n_stretch,
                             const std::string& working_dir_path,
-                            const bool path_cover,
-                            const bool save_mph,
-                            const bool save_buckets,
-                            const bool save_vertices
-#ifdef CF_DEVELOP_MODE
-                            , const double gamma
-#endif
+                            const bool path_cover
                     ):
     is_read_graph_(is_read_graph),
     is_ref_graph_(is_ref_graph),
@@ -45,25 +36,15 @@ Build_Params::Build_Params( const bool is_read_graph,
     vertex_part_count_(vertex_part_count),
     lmtig_bucket_count_(lmtig_bucket_count),
     gmtig_bucket_count_(gmtig_bucket_count),
-    vertex_db_path_(vertex_db_path),
-    edge_db_path_(edge_db_path),
     thread_count_(thread_count),
-    max_memory_(max_memory),
-    strict_memory_(strict_memory),
     idx_(idx),
     min_len_(min_len),
     output_file_path_(output_file_path),
     output_format_(output_format),
     track_short_seqs_(track_short_seqs),
-        poly_n_stretch_(poly_n_stretch),
+    poly_n_stretch_(poly_n_stretch),
     working_dir_path_(working_dir_path.back() == '/' ? working_dir_path : working_dir_path + "/"),
-    path_cover_(path_cover),
-    save_mph_(save_mph),
-    save_buckets_(save_buckets),
-    save_vertices_(save_vertices)
-#ifdef CF_DEVELOP_MODE
-    , gamma_(gamma)
-#endif
+    path_cover_(path_cover)
 {}
 
 
@@ -100,7 +81,7 @@ bool Build_Params::is_valid() const
     // Input data need to be non-empty.
     if(seq_input_.empty())
     {
-        std::cout << "No sequence input provided for compacted de Bruijn graph construction.\n";
+        std::cerr << "No sequence input provided for compacted de Bruijn graph construction.\n";
         valid = false;
     }
 
@@ -109,7 +90,7 @@ bool Build_Params::is_valid() const
     // Also, `k` needs to be in the range `(1, MAX_K]`.
     if((k_ % 2) == 0 || k_ == 1 || k_ > cuttlefish::MAX_K)
     {
-        std::cout << "The k-mer length (k) needs to be odd and within " << cuttlefish::MAX_K << ".\n";
+        std::cerr << "The k-mer length (k) needs to be odd and within " << cuttlefish::MAX_K << ".\n";
         valid = false;
     }
 
@@ -118,15 +99,15 @@ bool Build_Params::is_valid() const
     const auto num_threads = std::thread::hardware_concurrency();
     if(num_threads > 0 && thread_count_ > num_threads)
     {
-        std::cout << "At most " << num_threads << " concurrent threads are supported by the machine.\n";
+        std::cerr << "At most " << num_threads << " concurrent threads are supported by the machine.\n";
         valid = false;
     }
 
 
-    // l-minimizer length must be at most k-mer length, if indexing is requested.
-    if(idx_ && min_len_ >= k_)
+    // l-minimizer length must be at most k-mer length.
+    if(min_len_ >= k_)
     {
-        std::cout << "l-minimizer length can be at most k-mer length.\n";
+        std::cerr << "l-minimizer length can be at most k-mer length.\n";
         valid = false;
     }
 
@@ -135,7 +116,7 @@ bool Build_Params::is_valid() const
     const std::string op_dir = dirname(output_file_path_);
     if(!dir_exists(op_dir))
     {
-        std::cout << "Output directory " << op_dir << " does not exist.\n";
+        std::cerr << "Output directory " << op_dir << " does not exist.\n";
         valid = false;
     }
 
@@ -144,71 +125,40 @@ bool Build_Params::is_valid() const
     const std::string work_dir = dirname(working_dir_path_);
     if(!dir_exists(work_dir))
     {
-        std::cout << "Working directory " << work_dir << " does not exist.\n";
+        std::cerr << "Working directory " << work_dir << " does not exist.\n";
         valid = false;
     }
 
 
-    // Memory budget options should not be mixed with.
-    if(max_memory_  && !strict_memory_)
-        std::cout << "Both a memory bound and the option for unrestricted memory usage specified. Unrestricted memory mode will be used.\n";
-
-
-    if(is_read_graph_ || is_ref_graph_) // Validate Cuttlefish 2 specific arguments.
+    // Read and reference de Bruijn graph parameters can not be mixed with.
+    if(!(is_read_graph_ ^ is_ref_graph_))
     {
-        // Read and reference de Bruijn graph parameters can not be mixed with.
-        if(is_read_graph_ && is_ref_graph_)
-        {
-            std::cout << "Both read and reference de Bruijn graph specified. Please select only one for Cuttlefish 2, or none to use Cuttlefish 1.\n";
-            valid = false;
-        }
-
-
-        // A cutoff frequency of 0 is theoretically inconsistent.
-        if(cutoff() == 0)
-        {
-            std::cout << "Cutoff frequency specified to be 0, which is theoretically inconsistent. Please use 1 if you wish to retain all the k-mers without filtering.\n";
-            valid = false;
-        }
-
-        // Cutoff frequency _should be_ 1 for reference de Bruijn graphs.
-        if(is_ref_graph_ && cutoff() != 1)
-            std::cout << "WARNING: cutoff frequency specified not to be 1 on reference sequences.\n";
-
-
-        // Cuttlefish 1 specific arguments can not be specified.
-        if(output_format_)
-        {
-            std::cout << "Cuttlefish 1 specific arguments specified while using Cuttlefish 2.\n";
-            valid = false;
-        }
+        std::cerr << "Read / Reference de Bruijn graph must be noted. Please select exactly one.\n";
+        valid = false;
     }
-    else    // Validate Cuttlefish 1 specific arguments.
+
+    // A cutoff frequency of 0 is theoretically inconsistent.
+    if(cutoff() == 0)
     {
-        // Invalid output formats are to be discarded.
-        if(output_format() >= cuttlefish::num_op_formats)
-        {
-            std::cout << "Invalid output file format.\n";
-            valid = false;
-        }
+        std::cerr << "Cutoff frequency specified to be 0, which is theoretically inconsistent. Please use 1 if you wish to retain all the k-mers without filtering.\n";
+        valid = false;
+    }
+
+    // Cutoff frequency _should be_ 1 for reference de Bruijn graphs.
+    if(is_ref_graph_ && cutoff() != 1)
+        std::cerr << "WARNING: cutoff frequency specified not to be 1 on reference sequences.\n";
 
 
-        // Cuttlefish 2 specific arguments can not be specified.
-        if(cutoff_ || path_cover_)
-        {
-            std::cout << "Cuttlefish 2 specific arguments specified while using Cuttlefish 1.\n";
-            valid = false;
-        }
+    // Invalid output formats are to be discarded.
+    if(output_format() >= cuttlefish::num_op_formats)
+    {
+        std::cerr << "Invalid output file format.\n";
+        valid = false;
     }
 
 
     // Develop-mode options can not to be provided in regular use.
 #ifndef CF_DEVELOP_MODE
-    if(!vertex_db_path_.empty() || !edge_db_path_.empty())
-    {
-        std::cout << "Paths to vertex- and edge-databases are supported only in develop mode.\n";
-        valid = false;
-    }
 #endif
 
 

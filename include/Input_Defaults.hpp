@@ -19,7 +19,7 @@ namespace cuttlefish
     namespace _default
     {
         constexpr char EMPTY[] = "";
-        constexpr uint16_t K = 27;
+        constexpr uint16_t K = 31;
         constexpr uint32_t CUTOFF_FREQ_READS = 2;   // Typical practice
         constexpr uint32_t CUTOFF_FREQ_REFS = 1;    // Typical assumption
         const uint16_t THREAD_COUNT = (std::thread::hardware_concurrency() ?

@@ -6,7 +6,11 @@
 
 [![install with bioconda](https://img.shields.io/badge/install%20with-bioconda-brightgreen.svg?style=flat)](http://bioconda.github.io/recipes/cuttlefish/README.html)
 
-Cuttlefish is a fast, parallel, and very lightweight memory tool to construct the compacted de Bruijn graph from sequencing reads or reference sequences. It is highly scalable in terms of the size of the input data.
+Cuttlefish is a fast, parallel, and very lightweight memory tool to construct the compacted de Bruijn graph from sequencing reads or reference sequences.
+It is highly scalable in terms of the size of the input data.
+
+**Please refer to the [`master`](https://github.com/COMBINE-lab/cuttlefish/tree/master) branch for Cuttlefish and Cuttlefish 2.**
+**This branch is contains pre-release development of Cuttlefish 3.**
 
 ## Table of contents
 
@@ -15,28 +19,28 @@ Cuttlefish is a fast, parallel, and very lightweight memory tool to construct th
 - [Installation](#installation)
 - [Usage](#usage)
 - [Output formats](#output-formats)
-  - [''Colored'' output for Cuttlefish 1](#colored-output-for-cuttlefish-1)
-- [Example usage](#example-usage)
+  <!-- - [''Colored'' output for Cuttlefish 1](#colored-output-for-cuttlefish-1) -->
+<!-- - [Example usage](#example-usage)
 - [Larger _k_-mer sizes](#larger-k-mer-sizes)
-- [Differences between Cuttlefish 1 & 2](#differences-between-cuttlefish-1--2)
+- [Differences between Cuttlefish 1 & 2](#differences-between-cuttlefish-1--2) -->
 - [Citations & Acknowledgement](#citations--acknowledgement)
-- [Licenses](#licenses)
+<!-- - [Licenses](#licenses) -->
 
 ## Overview
 
-Cuttlefish is a program to produce the compacted de Bruijn graph from sequencing reads or reference sequences.
+Cuttlefish is a method to produce the (colored) compacted de Bruijn graph from reference sequences or sequencing reads.
 
-The papers describing the work are: [Cuttlefish (original)](https://academic.oup.com/bioinformatics/article/37/Supplement_1/i177/6319696) and [Cuttlefish 2](https://doi.org/10.1186/s13059-022-02743-6).
+The papers describing the work are: [Cuttlefish](https://academic.oup.com/bioinformatics/article/37/Supplement_1/i177/6319696), [Cuttlefish 2](https://doi.org/10.1186/s13059-022-02743-6), and [Cuttlefish 3](https://doi.org/10.1101/2025.02.02.636161).
 
 ## Dependencies
 
-Cuttlefish can be installed using Bioconda (check [Installation](#installation)).
-If installing _from source_, the following are required:
+Cuttlefish (original and 2) can be installed using Bioconda (check [Installation](#installation)).
+Cuttlefish 3 needs to be installed _from source_ for now, and the following are required:
 
 - [GCC](https://gcc.gnu.org/) **or** [Clang](https://clang.llvm.org) compilers for C++17 and C11
 - [CMake](https://cmake.org/) (version >= 3.14)
 - [zlib](https://zlib.net/)
-- [bzip2](https://www.sourceware.org/bzip2/)
+- [liblz4-dev](https://packages.debian.org/sid/liblz4-dev)
 
 These should already be available in your platform; and if not, then these can be easily installed from their sources.
 Besides, these should also be available via some package manager for your operating system:
@@ -44,28 +48,32 @@ Besides, these should also be available via some package manager for your operat
 - **Linux**
   
   ```bash
-  sudo apt-get install build-essential cmake zlib1g-dev libbz2-dev
+  sudo apt-get install build-essential cmake zlib1g-dev liblz4-dev
   ```
 
 - **MacOS**
   
   ```bash
   brew install --with-toolchain llvm
-  brew install cmake zlib bzip2
+  brew install cmake zlib lz4
   ```
+
+The following are required additional to the previous requirements:
+
+- [NASM 2.16.03](https://www.nasm.us/pub/nasm/releasebuilds/2.16.03/); [installation instructions](https://www.nasm.us/xdoc/2.09.04/html/nasmdoc1.html#section-1.3).
 
 ## Installation
 
-- From [Bioconda](https://bioconda.github.io/user/install.html):
+- From [Bioconda](https://bioconda.github.io/user/install.html) (only Cuttlefish and Cuttlefish 2):
 
   ```bash
   conda install -c bioconda cuttlefish
   ```
 
-  The Conda package supports _k_ values up-to 127.
-  To use larger _k_ values, please install Cuttlefish from the source.
+  <!-- The Conda package supports _k_ values up-to 127.
+  To use larger _k_ values, please install Cuttlefish from the source. -->
 
-- From source:
+- From source (only Cuttlefish 3):
 
   ```bash
   git clone https://github.com/COMBINE-lab/cuttlefish.git
@@ -76,61 +84,44 @@ Besides, these should also be available via some package manager for your operat
   cd ..
   ```
 
-  You may replace `8` in `make -j 8` with the preferred count of threads to use in the installation process.
+  Replace `8` in `make -j 8` with the preferred count of threads to use in the installation process.
 
   This installs Cuttlefish in a sub-directory named `bin`, inside the project root directory.
-  To specify a different installation directory, its path may be passed as the value of `-DCMAKE_INSTALL_PREFIX` with the `cmake` command, i.e. you may use `cmake -DCMAKE_INSTALL_PREFIX=<custom_path>/ ..` .
+  <!-- To specify a different installation directory, its path may be passed as the value of `-DCMAKE_INSTALL_PREFIX` with the `cmake` command, i.e. you may use `cmake -DCMAKE_INSTALL_PREFIX=<custom_path>/ ..` .
   Then the installed Cuttlefish executable will be found in `<custom_path>/bin/`.
-  Skipping `-DCMAKE_INSTALL_PREFIX` entirely will install Cuttlefish in `/usr/local/bin/`, for which `sudo` access might be required (i.e. `sudo make -j 8 install`).
+  Skipping `-DCMAKE_INSTALL_PREFIX` entirely will install Cuttlefish in `/usr/local/bin/`, for which `sudo` access might be required (i.e. `sudo make -j 8 install`). -->
 
-  This installation supports _k_ values up-to `63`.
-  To ensure support for larger values, please compile the source with the slight modification described in [Larger _k_-mer sizes](#larger-k-mer-sizes).
+  <!-- This installation supports _k_ values up-to `63`. -->
+  <!-- To ensure support for larger values, please compile the source with the slight modification described in [Larger _k_-mer sizes](#larger-k-mer-sizes). -->
 
 ## Usage
 
-`cuttlefish build --help` displays the following message (the default `threads` argument is machine-configuration specific):
+Please refer to the [`master`](https://github.com/COMBINE-lab/cuttlefish/tree/master) branch for the usage manual of Cuttlefish and Cuttlefish 2.
+The following is for Cuttlefish 3.
+
+`cuttlefish build --help` displays the following message (the default number of threads used is machine-configuration specific):
 
 ```txt
-Efficiently construct the compacted de Bruijn graph from sequencing reads or reference sequences
+Efficiently construct the (colored) compacted de Bruijn graph from reference sequences or sequencing reads.
 Usage:
   cuttlefish build [OPTION...]
 
  common options:
-  -s, --seq arg            input files
-  -l, --list arg           input file lists
-  -d, --dir arg            input file directories
-  -k, --kmer-len arg       k-mer length (default: 27)
-  -t, --threads arg        number of threads to use (default: 22)
-  -o, --output arg         output file
-  -w, --work-dir arg       working directory (default: .)
-  -m, --max-memory arg     soft maximum memory limit in GB (default: 3)
-      --unrestrict-memory  do not impose memory usage restriction
-  -h, --help               print usage
-
- cuttlefish_1 options:
-  -f, --format arg  output format (0: FASTA, 1: GFA 1.0, 2: GFA 2.0, 3:
-                    GFA-reduced)
-
- cuttlefish_2 options:
-      --read        construct a compacted read de Bruijn graph (for FASTQ
-                    input)
-      --ref         construct a compacted reference de Bruijn graph (for
-                    FASTA input)
-  -c, --cutoff arg  frequency cutoff for (k + 1)-mers (default: refs: 1,
-                    reads: 2)
-      --path-cover  extract a maximal path cover of the de Bruijn graph
-
- debug options:
-      --vertex-set arg  set of vertices, i.e. k-mers (KMC database) prefix
-                        (default: "")
-      --edge-set arg    set of edges, i.e. (k + 1)-mers (KMC database) prefix
-                        (default: "")
-
- specialized options:
-      --save-mph       save the minimal perfect hash (BBHash) over the vertex
-                       set
-      --save-buckets   save the DFA-states collection of the vertices
-      --save-vertices  save the vertex set of the graph
+  -s, --seq arg       input files
+  -l, --list arg      input file lists
+  -d, --dir arg       input file directories
+  -k, --kmer-len arg  k-mer length (default: 31)
+      --min-len arg   minimizer length (default: 12)
+  -o, --output arg    output file
+  -w, --work-dir arg  working directory (default: /tmp)
+      --read          construct a compacted read de Bruijn graph (for FASTQ
+                      input)
+      --ref           construct a compacted reference de Bruijn graph (for
+                      FASTA input)
+  -c, --cutoff arg    frequency cutoff for (k + 1)-mers (default: refs: 1,
+                      reads: 2)
+      --color         whether to color the compacted graph or not
+  -h, --help          print usage
 
 ```
 
@@ -138,7 +129,7 @@ It supports GNU style arguments, `--` for long options, and `-` for short option
 Long options `opt` taking a parameter can be written as `--opt=parameter` or as `--opt parameter`.
 Short options `o` taking a parameter is written as `-o parameter`.
 
-The common arguments (for Cuttlefish 1 and 2) are set as following.
+The arguments are set as following.
 
 - The input files can be passed in any of the following ways (and the options may be mixed together).
   - `-s <data files>`
@@ -150,56 +141,54 @@ The common arguments (for Cuttlefish 1 and 2) are set as following.
   In case of using sequencing reads as input, the files should be in the FASTQ format.
   For reference sequences, those should be in the FASTA format.
   The input files can also be gzipped.
-- The _k_-mer length `k` must be odd and within `127` (and `63` if installed from source; see [Larger _k_-mer sizes](#larger-k-mer-sizes) to increase the _k_-mer size capacity beyond these).
-The default value is `27`.
-- The number of threads `t` is set to a quarter of the number of concurrent threads supported, by default.
+- The _k_-mer length `k` must be odd and within `63`.
+The default value is `31`.
+<!-- - The number of threads `t` is set to a quarter of the number of concurrent threads supported, by default. -->
+- Cuttlefish generates the following output files:
+  <!-- - A FASTA / GFA1 / GFA2 file containing the maximal unitigs of the de Bruijn graph (with the extension `.fa` / `.gfa1` / `.gfa2`).
+  The GFA output formats are exclusive for Cuttlefish 1. -->
+  - A FASTA file, _color-coded_ if `--color` was passed, containing the maximal unitigs of the de Bruijn graph (with the extension `.fa`)
+  <!-- - A metadata file containing some structural characteristics of the de Bruijn graph and its compacted form (with the extension `.json`). -->
+  - Flat binary collection of color-lists.
+- The working directory `w` is used for temporary files created by the process.
+The `/tmp` directory is set as the default working directory.
+- `read` and `ref` are ''input type'' arguments, based on whether you are providing sequencing reads or reference sequences as input, respectively.
+- The frequency threshold `c` (of (k + 1)-mers) is set to `2` for read inputs, and `1` for reference inputs, by default.
+- `--color` is to passed if the output graph needs to be colored.
+- The number of threads to be used needs to be provided with the environment variable `PARLAY_NUM_THREADS`.
 The use of high-enough values is recommended.
-- Cuttlefish generates two output files:
-  - A FASTA / GFA1 / GFA2 file containing the maximal unitigs of the de Bruijn graph (with the extension `.fa` / `.gfa1` / `.gfa2`).
-  The GFA output formats are exclusive for Cuttlefish 1.
-  - A metadata file containing some structural characteristics of the de Bruijn graph and its compacted form (with the extension `.json`).
-- The working directory `w` is used for temporary files created by the process—it is not created by Cuttlefish, and must exist beforehand.
-The current directory is set as the default working directory.
-- A soft maximum memory-limit `m` (in GB) can be provided to trade-off the RAM usage for faster execution time;
-this will only be adhered to if the provided limit is at least the minimum required memory for Cuttlefish, determined internally.
-- Memory-usage restrictions can be lifted by using `unrestrict-memory`, trading off extra RAM usage for faster execution time.
 
-Cuttlefish 1 specific arguments are set as following.
-
-- The output formats (`f`) are —
+<!-- - The output formats (`f`) are —
   - `0`: only the maximal unitig (non-branching path) fragments, in FASTA;
   - `1`: the maximal unitigs, their connectivities, and the input sequence tilings, in GFA 1.0;
   - `2`: the maximal unitigs, their connectivities, and the input sequence tilings, in GFA 2.0; and
   - `3`: the maximal unitigs and the input sequence tilings, in GFA-reduced (see [I/O formats](#io-formats)).
-
-Cuttlefish 2 specific arguments are set as following.
-
-- `read` and `ref` are ''input type'' arguments, based on whether you are providing sequencing reads or reference sequences as input, respectively.
-- The frequency threshold `c` (of (k + 1)-mers) is set to `2` for read inputs, and `1` for reference inputs, by default.
-- `path-cover` is used to construct a maximal vertex-disjoint path cover of the de Bruijn graph, instead of its compacted variant.
+- `path-cover` is used to construct a maximal vertex-disjoint path cover of the de Bruijn graph, instead of its compacted variant. -->
 
 ### Note
 
-The edge- and / or the vertex-set generation step could produce a high number of temporary files in disk, up-to 2000.
+The external-memory execution of Cuttlefish will produce a high number of temporary files in disk.
 Failure to ensure the capability of opening this many files could produce error messages of the following form:
-> Error: Cannot open temporary file ./kmc_00000.bin
+> Error opening concurrent external-memory bucket at `<path>`. Aborting.
 
 The concurrently open file-handle limit for the user running the process can be raised with the following command:
 
   ```bash
-  ulimit -n 2048
+  ulimit -n 32768
   ```
 
 ## Output formats
 
-### Cuttlefish 2 output
+### Cuttlefish 3 output
 
 The currently supported output format is
 
-- The set of the maximal unitigs (non-branching paths) of the de Bruijn graph, in FASTA
+- The set of the maximal unitigs (non-branching paths) of the de Bruijn graph, in FASTA.
+- Flat binary collection of color-lists.
 
-Other output formats are currently in the development roadmap.
+Other output formats are currently in development.
 
+<!--
 ### Cuttlefish 1 output
 
 The currently supported output formats are —
@@ -249,12 +238,15 @@ The currently supported output formats are —
   
   For moderate to large sized genomes, this output format is preferrable to the GFA ones as the GFA formats can be quite verbose for this particular scenario, while the reduced representation provides effitively the same information, while taking much less space.
   For example, for the 7-human genome dataset (experimented with in the manuscripts) and using `k = 31`, the compacted graph takes 112 GB in GFA2, but only 29.3 GB in this reduced format.
+ -->
 
 ### Orientation of the output
 
 Cuttlefish works with the canonical representations of the _k_-mers, i.e. each _k_-mer and its reverse complement are treated as the same vertex in the original graph.
 The maximal unitig fragments (the ''segments'' in the GFA-terminology) are always output in their canonical forms—the orientations are guaranteed to be the same across identical executions.
+This guarantee may not hold for _cyclic maximal unitigs_ in a _colored_ graph.
 
+<!--
 ### ''Colored'' output for Cuttlefish 1
 
 In the [GFA](https://github.com/GFA-spec/GFA-spec) output formats for the compacted de Bruijn graph, the graph is represented as a list of the vertices (i.e. the maximal unitigs) and the adjacencies between them.
@@ -327,12 +319,13 @@ Whereas Cuttlefish 2 is applicable for both sequencing reads and reference seque
 - For reference sequences, Cuttlefish 1 supports outputting the compacted graph in the GFA formats, whereas Cuttlefish 2 does not support this _yet_.
 - Cuttlefish 2 can be used by passing either one of the following arguments to the `cuttlefish build` command: `--read` or `--ref`.
 Passing neither of these invokes Cuttlefish 1.
+ -->
 
 ## Citations & Acknowledgement
 
-If you use Cuttlefish or Cuttlefish 2 in your work, please include the following citations, as appropriate:
+If you use Cuttlefish, Cuttlefish 2, or Cuttlefish 3 in your work, please include the following citations, as appropriate:
 
-### [Cuttlefish (original)](https://doi.org/10.1093/bioinformatics/btab309)
+### [Cuttlefish](https://doi.org/10.1093/bioinformatics/btab309)
 
 > Jamshed Khan, Rob Patro, Cuttlefish: fast, parallel and low-memory compaction of de Bruijn graphs from large-scale genome collections, Bioinformatics, Volume 37, Issue Supplement_1, July 2021, Pages i177–i186, <https://doi.org/10.1093/bioinformatics/btab309>
 
@@ -340,8 +333,13 @@ If you use Cuttlefish or Cuttlefish 2 in your work, please include the following
 
 > Khan, J., Kokot, M., Deorowicz, S. et al. Scalable, ultra-fast, and low-memory construction of compacted de Bruijn graphs with Cuttlefish 2. Genome Biol 23, 190 (2022). <https://doi.org/10.1186/s13059-022-02743-6>
 
-This work is supported by _NIH R01 HG009937_, and by _NSF CCF-1750472_, and _CNS-1763680_.
+### [Cuttlefish 3](https://doi.org/10.1101/2025.02.02.636161)
 
+> Jamshed Khan, Laxman Dhulipala, and Rob Patro. 2025. Fast and Scalable Parallel External-Memory Construction of Colored Compacted de Bruijn Graphs with Cuttlefish 3. bioRxiv (2025). <https://doi.org/10.1101/2025.02.02.636161>
+
+This work is supported by _NIH R01 HG009937_, _NSF CCF-1750472_, and _CNS-1763680_.
+
+<!--
 ## Licenses
 
 - The [BBHash](https://github.com/rizkg/BBHash) library is MIT licensed.
@@ -353,3 +351,4 @@ This work is supported by _NIH R01 HG009937_, and by _NSF CCF-1750472_, and _CNS
 - The [spdlog](https://github.com/gabime/spdlog) library is MIT licensed.
 - The [xxHash](https://github.com/Cyan4973/xxHash) library is BSD licensed.
 - Cuttlefish itself is Revised BSD licensed.
+ -->

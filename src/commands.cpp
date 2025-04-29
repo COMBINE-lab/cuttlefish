@@ -26,7 +26,7 @@ extern "C" {
 // Driver function for the CdBG build.
 int cf_build(int argc, char** argv)
 {
-    cxxopts::Options options("cuttlefish build", "Efficiently construct the compacted de Bruijn graph from sequencing reads or reference sequences");
+    cxxopts::Options options("cuttlefish build", "Efficiently construct the (colored) compacted de Bruijn graph from reference sequences or sequencing reads.");
 
     std::vector<std::string> seqs;
     std::vector<std::string> lists;

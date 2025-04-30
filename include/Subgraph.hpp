@@ -189,6 +189,7 @@ private:
     uint64_t v_new_col_c;   // Number of vertices in the graph attempting introduction of new colors to the global color-table.
     uint64_t v_old_col_c;   // Number of vertices in the graph with existing colors from the global color-table.
     uint64_t color_rel_c;   // Number of color-relationships (i.e. (k-mer, source) pairs) sorted in color-extraction.
+    uint64_t color_unit_op_c;   // Number of color-units in the colors output from this graph.
 
     double t_collect_rels = 0;  // Time taken to collect color-relationships.
     double t_sort = 0;  // Time taken to semi-sort color-relationships.
@@ -228,7 +229,7 @@ private:
     // `y`.
     void semi_sort_color_rels(const color_rel_t* x, color_rel_t* y, std::size_t sz);
 
-    // Sorts the color-set (list) `color`.
+    // Deduplicates and sorts the color-set (list) `color`.
     void sort_color_set(std::vector<source_id_t>& color);
 
     // Collates the color-sets of vertices from the collected color-relationship
@@ -312,6 +313,9 @@ public:
     // Returns the number of color-relationships (i.e. (k-mer, source) pairs)
     // sorted in color-extraction.
     auto color_rel_sorted() const { return color_rel_c; }
+
+    // Returns the number of color-units in the colors output from this graph.
+    auto color_unit_op() const { return color_unit_op_c; }
 
     // Returns the time taken to collect color-relationships.
     auto collect_rels_time() const { return t_collect_rels; }

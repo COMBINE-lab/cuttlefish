@@ -140,6 +140,7 @@ void Subgraphs_Manager<k, Colored_>::process()
     std::vector<Padded<uint64_t>> new_colored_vertex(parlay::num_workers(), 0); // Number of vertices attempting addition to the global color-table per worker.
     std::vector<Padded<uint64_t>> old_colored_vertex(parlay::num_workers(), 0); // Number of vertices with existing colors from the global color-table per worker.
     std::vector<Padded<uint64_t>> color_rel_sorted(parlay::num_workers(), 0);   // Number of color-relationships sorted in color-extraction per worker.
+    std::vector<Padded<uint64_t>> color_unit_op(parlay::num_workers(), 0);   // Number of color-units output per worker.
 
     std::vector<Padded<double[4]>> color_time(parlay::num_workers());   // Time taken in various steps of coloring.
     std::for_each(color_time.begin(), color_time.end(), [&](auto& c){ std::memset(c.unwrap(), 0, 4 * sizeof(double)); });
@@ -182,6 +183,7 @@ void Subgraphs_Manager<k, Colored_>::process()
         auto& v_new_col_c = new_colored_vertex[parlay::worker_id()].unwrap();
         auto& v_old_col_c = old_colored_vertex[parlay::worker_id()].unwrap();
         auto& color_rel_c = color_rel_sorted[parlay::worker_id()].unwrap();
+        auto& color_unit_op_c = color_unit_op[parlay::worker_id()].unwrap();
         auto& t_color = color_time[parlay::worker_id()].unwrap();
 
         max_kmer_c = std::max(max_kmer_c, sub_dBG.kmer_count());
@@ -200,6 +202,7 @@ void Subgraphs_Manager<k, Colored_>::process()
         v_new_col_c += sub_dBG.new_colored_vertex();
         v_old_col_c += sub_dBG.old_colored_vertex();
         color_rel_c += sub_dBG.color_rel_sorted();
+        color_unit_op_c += sub_dBG.color_unit_op();
 
         t_color[0] += sub_dBG.collect_rels_time();
         t_color[1] += sub_dBG.sort_time();
@@ -329,6 +332,10 @@ void Subgraphs_Manager<k, Colored_>::process()
         std::cerr << "Number of (k-mer, source) pairs sorted: " <<
             [&](){  std::size_t c = 0;
                     std::for_each(color_rel_sorted.cbegin(), color_rel_sorted.cend(), [&](const auto& v){ c += v.unwrap(); });
+                    return c; }() << ".\n";
+        std::cerr << "Number of color-units in output: " <<
+            [&](){  std::size_t c = 0;
+                    std::for_each(color_unit_op.cbegin(), color_unit_op.cend(), [&](const auto& v){ c += v.unwrap(); });
                     return c; }() << ".\n";
 
         double t[4] = {0, 0, 0, 0};

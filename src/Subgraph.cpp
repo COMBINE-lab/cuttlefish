@@ -34,6 +34,7 @@ Subgraph<k, Colored_>::Subgraph(const Super_Kmer_Bucket<Colored_>& B, Discontinu
     , v_new_col_c(0)
     , v_old_col_c(0)
     , color_rel_c(0)
+    , color_unit_op_c(0)
     , op_buf(op_buf)
 {
     M.clear();
@@ -450,6 +451,7 @@ if constexpr(Colored_)
             {
                 sort_color_set(src);
                 assert(std::is_sorted(src.cbegin(), src.cend()));
+                color_unit_op_c += src.size();
 
                 bvb.clear();
                 builder.process(src.data(), src.size(), bvb);

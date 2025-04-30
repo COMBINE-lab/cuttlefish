@@ -266,7 +266,7 @@ set(MALLOC_LIB "")
 set(JEMALLOC_MIN_VERSION "5.3.0")
 find_package(Jemalloc ${JEMALLOC_MIN_VERSION})
 if(JEMALLOC_FOUND)
-    message("Found jemalloc (v${JEMALLOC_VERSION}) in the system")
+    message("Found jemalloc (v${JEMALLOC_VERSION}) in the system at ${JEMALLOC_LIBRARIES}")
     set(MALLOC_LIB ${JEMALLOC_LIBRARIES})
 else()
     message("Build system will fetch and install jemalloc")
@@ -297,10 +297,6 @@ endif()
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(LZ4 REQUIRED liblz4)
 
-
-# Prepare the `lz4` library. It provides extremely fast compression.
-find_package(PkgConfig REQUIRED)
-pkg_check_modules(LZ4 REQUIRED liblz4)
 
 # Help `conda` build for OSX through circumventing some of its old SDK-based checks.
 if(CONDA_BUILD)
@@ -391,7 +387,7 @@ add_dependencies(rpmalloc prj_rapidgzip)
 set(BOOST_MIN_VERSION "1.85.0")
 find_package(Boost ${BOOST_MIN_VERSION} CONFIG)
 if(BOOST_FOUND)
-    message("Found boost (v${BOOST_VERSION}) in the system")
+    message("Found boost (v${BOOST_VERSION}) in the system at ${BOOST_LIBRARIES}")
 else()
     message("Build system will fetch and install required Boost libraries")
     ExternalProject_Add(prj_boost

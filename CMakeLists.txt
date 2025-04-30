@@ -131,11 +131,8 @@ endif()
 # Add the required preprocessor definitions (`#define`s) to pass on.
 add_compile_definitions(PROJECT_VERSION=${CMAKE_PROJECT_VERSION})
 add_compile_definitions(FMT_HEADER_ONLY)    # For `spdlog`.
-add_compile_definitions(WITH_ISAL)  # For `rapidgzip`.
-add_compile_definitions(WITH_RPMALLOC)  # For `rapidzip`.
-add_compile_definitions(USE_IGZIP)  # TODO: temporary for `rabbitfx`.
 add_compile_definitions(CMAKE_EXPORT_COMPILE_COMMANDS)  # For better `clangd` scanning.
-add_compile_definitions(USE_PARLAY) # For `parlayhash`.
+# add_compile_definitions(USE_PARLAY) # For `parlayhash`.
 
 if(INSTANCE_COUNT)
     add_compile_definitions(INSTANCE_COUNT=${INSTANCE_COUNT})
@@ -152,10 +149,6 @@ endif()
 if(CF_DEVELOP_MODE)
     add_compile_definitions(CF_DEVELOP_MODE)
 endif()
-
-# if(IGZIP_PREFIX)
-#     add_compile_definitions(USE_IGZIP)
-# endif()
 
 if(PART_PROFILE)
     add_compile_definitions(PART_PROFILE)
@@ -336,9 +329,6 @@ add_dependencies(kmc prj_kmc)
 ]]
 
 
-# Add / install ISA-L.
-
-
 # Prepare the `parlay` library—a parallel algorithms programming toolkit.
 message("Build system will fetch and install parlaylib")
 ExternalProject_Add(prj_parlaylib
@@ -354,6 +344,7 @@ ExternalProject_Add(prj_parlaylib
 
 
 # Prepare the `rapidgzip` library—gzip decompressor with multi-cores, and its dependencies.
+#[[
 set(RAPIDGZIP_VERSION "rapidgzip-v0.13.2")
 message("Build system will fetch and install rapidgzip")
 ExternalProject_Add(prj_rapidgzip
@@ -380,6 +371,36 @@ add_dependencies(isal_inflate prj_rapidgzip)
 add_library(rpmalloc STATIC IMPORTED)
 set_target_properties(rpmalloc PROPERTIES IMPORTED_LOCATION ${EXT_LIB}/librpmalloc.a)
 add_dependencies(rpmalloc prj_rapidgzip)
+]]
+
+
+# Prepare the ISA-L fast deflate library.
+set(ISAL_MIN_VERSION "2.31.1")
+pkg_check_modules(ISAL IMPORTED_TARGET libisal>=${ISAL_MIN_VERSION})
+if(ISAL_FOUND)
+    message("Found isa-l (v${ISAL_VERSION}) in the system at ${ISAL_LIBRARY_DIRS}")
+    add_library(isal ALIAS PkgConfig::ISAL)
+else()
+    find_program(nasm NAMES nasm REQUIRED)
+
+    message("Build system will fetch and install ISA-L")
+    ExternalProject_Add(prj_isal
+        GIT_REPOSITORY      https://github.com/intel/isa-l
+        GIT_TAG             v${ISAL_MIN_VERSION}
+        SOURCE_DIR          ${CMAKE_SOURCE_DIR}/external/isa-l
+        BUILD_IN_SOURCE     TRUE
+        INSTALL_DIR         ${CMAKE_SOURCE_DIR}/external
+
+        CONFIGURE_COMMAND   ""
+        BUILD_COMMAND       make -f Makefile.unx -j
+        INSTALL_COMMAND     cp -rf include ${EXT_INCLUDE}/isa-l && cp bin/libisal.so ${EXT_LIB}/
+    )
+
+    set(ISAL_LIB ${EXT_LIB}/libisal.so)
+    add_library(isal STATIC IMPORTED)
+    set_target_properties(isal PROPERTIES IMPORTED_LOCATION ${ISAL_LIB})
+    add_dependencies(isal prj_isal)
+endif()
 
 
 # Prepare the `boost` library. It provides: support for preprocessor

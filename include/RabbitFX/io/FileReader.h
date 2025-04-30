@@ -9,9 +9,7 @@
 #include <cassert>
 #include "Reference.h"
 
-#if defined(USE_IGZIP)
-#include "igzip_lib.h"
-#endif
+#include "isa-l/igzip_lib.h"
 
 #include <zlib.h>  //support gziped files, functional but inefficient
 
@@ -52,6 +50,7 @@
 #endif
 
 
+/*
 // Forward declarations for `rapidgzip`. Multi-defn errors arise from `rapidgzip` if its headers are included here.
 namespace rapidgzip
 {
@@ -60,6 +59,7 @@ struct ChunkData;
 template<typename T_ChunkData> class ParallelGzipReader;
 
 }
+*/
 
 namespace rabbit{
 	class FileReader{
@@ -71,9 +71,7 @@ namespace rabbit{
 
 		FileReader(int fd, bool isZipped = false);
 
-#if	defined(USE_IGZIP)
 		int64 igzip_read(FILE* zipFile, byte *memory_, size_t size_);
-#endif
 
 		int64 Read(byte *memory_, uint64 size_);
 
@@ -97,13 +95,13 @@ namespace rabbit{
 		//igzip usage
 		unsigned char *mIgInbuf = NULL;
 
-#if defined(USE_IGZIP)	
 		isal_gzip_header mIgzipHeader;
 		inflate_state mStream;
 
+/*
 		bool par_deflate;
 		std::unique_ptr<rapidgzip::ParallelGzipReader<rapidgzip::ChunkData>> par_gzip_reader;
-#endif	
+*/
 		bool isZipped = false;
 		bool eof = false;
 	};

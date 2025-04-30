@@ -98,19 +98,26 @@ add_executable(test test.cpp)
 
 
 # Define dependencies between the targets.
-add_dependencies(rabbitfx prj_rapidgzip)
-add_dependencies(cfcore_static prj_parlaylib prj_boost)
+if(NOT ISAL_FOUND)
+   add_dependencies(rabbitfx prj_isal)
+endif()
+
+add_dependencies(cfcore_static prj_parlaylib prj_cereal)
+
+if(NOT BOOST_FOUND)
+    add_dependencies(cfcore_static prj_boost)
+endif()
 
 
 # Set the include directories for the targets.
 
-set(RAPIDGZIP_INCLUDE ${EXT_INCLUDE}/rapidgzip ${EXT_INCLUDE}/rapidgzip/core ${EXT_INCLUDE}/rapidgzip/indexed_bzip2 ${EXT_INCLUDE}/rapidgzip/rapidgzip
-                      ${EXT_INCLUDE}/rapidgzip/isa-l/ ${EXT_INCLUDE}/rapidgzip/rpmalloc)
+# set(RAPIDGZIP_INCLUDE ${EXT_INCLUDE}/rapidgzip ${EXT_INCLUDE}/rapidgzip/core ${EXT_INCLUDE}/rapidgzip/indexed_bzip2 ${EXT_INCLUDE}/rapidgzip/rapidgzip
+#                       ${EXT_INCLUDE}/rapidgzip/isa-l/ ${EXT_INCLUDE}/rapidgzip/rpmalloc)
 
 target_include_directories(cfcore_static PRIVATE ${INCLUDE_DIR} ${EXT_INCLUDE})
-target_include_directories(rabbitfx PUBLIC ${RAPIDGZIP_INCLUDE})
+target_include_directories(rabbitfx PUBLIC ${EXT_INCLUDE})
 target_include_directories(${PROJECT_NAME} PRIVATE ${INCLUDE_DIR})
-target_include_directories(test PRIVATE ${INCLUDE_DIR} ${EXT_INCLUDE} ${RAPIDGZIP_INCLUDE})
+target_include_directories(test PRIVATE ${INCLUDE_DIR} ${EXT_INCLUDE})
 
 
 # Set the compile flags for the targets.
@@ -155,10 +162,10 @@ endif()
 target_link_libraries(rabbitfx PRIVATE ZLIB::ZLIB)
 
 # Link to intel storage acceleration library's decompression core.
-target_link_libraries(rabbitfx PRIVATE isal_inflate)
+target_link_libraries(rabbitfx PRIVATE isal)
 
 # Link to `rpmalloc` for `rapidgzip`'s memory allocation impl.
-target_link_libraries(rabbitfx PRIVATE rpmalloc)
+# target_link_libraries(rabbitfx PRIVATE rpmalloc)
 
 # Link the executable to the core library.
 target_link_libraries(${PROJECT_NAME} PRIVATE cfcore_static)

@@ -46,21 +46,23 @@ These should already be available in your platform; and if not, then these can b
 Besides, these should also be available via some package manager for your operating system:
 
 - **Linux**
-  
   ```bash
   sudo apt-get install build-essential cmake zlib1g-dev liblz4-dev
   ```
-
 - **MacOS**
-  
   ```bash
   brew install --with-toolchain llvm
   brew install cmake zlib lz4
   ```
-
 The following are required additional to the previous requirements:
-
-- [NASM 2.16.03](https://www.nasm.us/pub/nasm/releasebuilds/2.16.03/); [installation instructions](https://www.nasm.us/xdoc/2.09.04/html/nasmdoc1.html#section-1.3).
+- [NASM 2.16.03](https://www.nasm.us/pub/nasm/releasebuilds/2.16.03/).
+  - To install `NASAM`, try these [instructions](https://www.nasm.us/xdoc/2.09.04/html/nasmdoc1.html#section-1.3), or execute one of the following (based on Linux / MacOS platform)
+  ```bash
+  sudo apt install libisal-dev
+  ```
+  ```bash
+  brew install isa-l
+  ```
 
 ## Installation
 

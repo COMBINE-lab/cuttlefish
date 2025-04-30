@@ -1,7 +1,7 @@
 
 #include "FileReader.h"
 
-#include "rapidgzip/ParallelGzipReader.hpp"
+// #include "rapidgzip/ParallelGzipReader.hpp"
 
 
 namespace rabbit
@@ -11,9 +11,10 @@ FileReader::FileReader(const std::string &fileName_, bool isZipped, const std::s
     if(ends_with(fileName_, ".gz") || isZipped) {
 
         this->isZipped = true;
-        par_deflate = (worker_count > 1);
+        // par_deflate = (worker_count > 1);
+        (void)worker_count;
 
-#if defined(USE_IGZIP)
+/*
         if(par_deflate)
         {
             auto file_reader = std::make_unique<StandardFileReader>(fileName_);
@@ -22,6 +23,7 @@ FileReader::FileReader(const std::string &fileName_, bool isZipped, const std::s
 
             return;
         }
+*/
 
         // printf("using igzip!!\n");
         mFile = fopen(fileName_.c_str(), "rb");
@@ -46,13 +48,13 @@ FileReader::FileReader(const std::string &fileName_, bool isZipped, const std::s
             }
             exit(-1);
         }
-#else
+/*
         mZipFile = gzopen(fileName_.c_str(), "r");
         if (mZipFile == NULL) {
             throw RioException(("Can not open file to read: "+fileName_).c_str());  
         }
         gzrewind(mZipFile);
-#endif			
+*/
     }else {
         // mFile = FOPEN(fileName_.c_str(), "rb");
         if (fileName_ != "") {
@@ -71,7 +73,7 @@ FileReader::FileReader(const std::string &fileName_, bool isZipped, const std::s
 /*
 FileReader::FileReader(int fd, bool isZipped){
     if (isZipped) {
-#if defined(USE_IGZIP)
+#if true
         mFile = fdopen(fd, "r");
         if (mFile == NULL)
         {
@@ -116,8 +118,7 @@ FileReader::FileReader(int fd, bool isZipped){
 */
 
 
-#if	defined(USE_IGZIP)
-__attribute__((no_sanitize("memory")))
+// __attribute__((no_sanitize("memory")))
 int64 FileReader::igzip_read(FILE* zipFile, byte *memory_, size_t size_){
     uint64_t offset = 0;
     int ret = 0;
@@ -171,12 +172,11 @@ int64 FileReader::igzip_read(FILE* zipFile, byte *memory_, size_t size_){
     assert(offset <= size_);
     return offset;
 }
-#endif
 
 
 int64 FileReader::Read(byte *memory_, uint64 size_) {
     if (isZipped) {
-#if defined(USE_IGZIP)			
+/*
         if(par_deflate)
         {
             const auto r = par_gzip_reader->read(reinterpret_cast<char*>(memory_), size_);
@@ -185,11 +185,12 @@ int64 FileReader::Read(byte *memory_, uint64 size_) {
 
             return r;
         }
+*/
 
         int64 n = igzip_read(mFile, memory_, size_);
-#else
+/*
         int64 n = gzread(mZipFile, memory_, size_);
-#endif
+*/
         if (n == -1) std::cerr << "Error to read gzip file" << std::endl;
         return n;
     } else {
@@ -213,14 +214,15 @@ FileReader::~FileReader(){
 
 bool FileReader::FinishRead(){
     if(isZipped){
-#if defined(USE_IGZIP)			
+/*
         if(par_deflate)
             return Eof();
+*/
 
         return feof(mFile) && (mStream.avail_in == 0);
-#else
+/*
         return gzeof(mZipFile);
-#endif			
+*/
     }else{
         return feof(mFile);
     }

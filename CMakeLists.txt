@@ -393,10 +393,10 @@ else()
 
         CONFIGURE_COMMAND   ""
         BUILD_COMMAND       make -f Makefile.unx -j
-        INSTALL_COMMAND     cp -rf include ${EXT_INCLUDE}/isa-l && cp bin/libisal.so ${EXT_LIB}/
+        INSTALL_COMMAND     cp -rf include ${EXT_INCLUDE}/isa-l && cp bin/isa-l.a ${EXT_LIB}/
     )
 
-    set(ISAL_LIB ${EXT_LIB}/libisal.so)
+    set(ISAL_LIB ${EXT_LIB}/isa-l.a)
     add_library(isal STATIC IMPORTED)
     set_target_properties(isal PROPERTIES IMPORTED_LOCATION ${ISAL_LIB})
     add_dependencies(isal prj_isal)

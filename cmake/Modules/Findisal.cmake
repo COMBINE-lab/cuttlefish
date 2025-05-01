@@ -19,7 +19,7 @@ find_path(ISAL_INCLUDE_DIR
   PATH_SUFFIXES include)
 
 find_library(ISAL_LIBRARY
-  NAME isal
+  NAME isa-l
   HINTS ${ISAL_ROOT}
   PATH_SUFFIXES ${CMAKE_INSTALL_LIBDIR})
 

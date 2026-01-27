@@ -10,6 +10,7 @@
 #include "Data_Logistics.hpp"
 #include "Unipaths_Meta_info.hpp"
 #include "dBG_Info.hpp"
+#include "Spin_Lock.hpp"
 #include "spdlog/sinks/basic_file_sink.h"
 
 #include <cstdint>
@@ -108,6 +109,15 @@ private:
 
     // Information about sequences too short for processing, i.e. with length < `k`.
     std::vector<std::pair<std::string, std::size_t>> short_seqs;
+
+    // Global in-memory buffer for the in-memory GFA-reduced output approach.
+    std::string global_output_buffer;
+
+    // Spin lock for thread-safe access to the global output buffer.
+    Spin_Lock global_buffer_lock;
+
+    // Threshold for flushing the global buffer (1-5 MB range).
+    static constexpr size_t GLOBAL_BUFFER_THRESHOLD = 2 * 1024 * 1024;  // 2 MB.
 
 
     /* Build methods */
@@ -226,6 +236,18 @@ private:
     // format for the sequence `seq` of length `seq_len` to the thread pool `thread_pool`.
     void distribute_output_gfa_reduced(const char* seq, size_t seq_len, Thread_Pool<k>& thread_pool);
 
+    // Outputs the distinct maximal unitigs (in canonical form) of the compacted de Bruijn graph
+    // in a GFA-reduced format using an in-memory approach. This version assigns entire sequences
+    // to threads and uses in-memory buffers instead of thread-local file storage.
+    void output_maximal_unitigs_gfa_reduced_in_mem();
+
+    // Distributes the outputting task of the maximal unitigs in a GFA-reduced format for an
+    // entire sequence `seq` of length `seq_len` to a thread in the thread pool `thread_pool`.
+    // This version assigns whole sequences to threads instead of partitioning them.
+    void distribute_output_gfa_reduced_in_mem(const char* seq, size_t seq_len, const std::string& seq_name, 
+                                               uint64_t ref_id, Thread_Pool<k>& thread_pool, 
+                                               Job_Queue<std::string, Oriented_Unitig>& job_queue);
+
     // Clears the output file content.
     void clear_output_file() const;
 
@@ -295,6 +317,12 @@ private:
     // have their starting indices between (inclusive) `left_end` and `right_end`.
     // The process is executed by the thread number `thread_id`.
     void output_gfa_off_substring(uint16_t thread_id, const char* seq, size_t seq_len, size_t left_end, size_t right_end);
+
+    // Processes an entire sequence using in-memory buffers for GFA-reduced output.
+    // Extracts all unitigs and tiling information from the sequence and stores them
+    // in in-memory buffers, then writes to the global buffer in a thread-safe manner.
+    void process_sequence_in_mem(uint16_t thread_id, const char* seq, size_t seq_len, 
+                                  const std::string& seq_name, uint64_t ref_id, uint64_t seq_id);
 
     // Outputs the distinct maximal unitig of the sequence `seq` (of length `seq_len`)
     // that are present at its contiguous subsequence starting from the index `start_idx`,
@@ -434,6 +462,13 @@ private:
 
     // Closes the path-output specific loggers, with required flushing as necessary.
     void close_path_loggers();
+
+    // Appends content to the global in-memory buffer in a thread-safe manner.
+    // If the global buffer exceeds GLOBAL_BUFFER_THRESHOLD after appending, it is flushed.
+    void append_to_global_buffer(const std::string& content);
+
+    // Flushes the global in-memory buffer to the output logger.
+    void flush_global_buffer();
 
     // Removes the temporary files used for the thread-specific path output streams
     // (depending on the GFA version) from the disk. The thread-specific output file

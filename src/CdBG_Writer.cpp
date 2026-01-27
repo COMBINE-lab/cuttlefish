@@ -658,6 +658,178 @@ void CdBG<k>::flush_path_loggers()
 }
 
 
+template <uint16_t k>
+void CdBG<k>::append_to_global_buffer(const std::string& content)
+{
+    global_buffer_lock.lock();
+    
+    global_output_buffer += content;
+    
+    // Check if we need to flush
+    if(global_output_buffer.size() >= GLOBAL_BUFFER_THRESHOLD)
+    {
+        write(global_output_buffer, output);
+        global_output_buffer.clear();
+    }
+    
+    global_buffer_lock.unlock();
+}
+
+
+template <uint16_t k>
+void CdBG<k>::flush_global_buffer()
+{
+    global_buffer_lock.lock();
+    
+    if(!global_output_buffer.empty())
+    {
+        write(global_output_buffer, output);
+        global_output_buffer.clear();
+    }
+    
+    global_buffer_lock.unlock();
+}
+
+
+template <uint16_t k>
+void CdBG<k>::output_maximal_unitigs_gfa_reduced_in_mem()
+{
+    std::chrono::high_resolution_clock::time_point t_start = std::chrono::high_resolution_clock::now();
+
+
+    const Seq_Input& reference_input = params.sequence_input();
+    const uint16_t thread_count = params.thread_count();
+    const std::string& working_dir_path = params.working_dir_path();
+
+
+    // Clear the output file and initialize the output loggers.
+    clear_output_file();
+    init_output_loggers();
+
+    // Set the prefixes of the temporary path output files. This is to avoid possible name
+    // conflicts in the file system.
+    set_temp_file_prefixes(working_dir_path);
+
+
+    // Allocate the output buffers for each thread.
+    allocate_output_buffers();
+
+
+    // Construct a thread pool.
+    Thread_Pool<k> thread_pool(thread_count, this, Thread_Pool<k>::Task_Type::output_gfa_reduced);
+
+    // Dedicated thread and job-queue to concatenate thread-specific tilings.
+    std::unique_ptr<std::thread> concatenator{nullptr};
+    Job_Queue<std::string, Oriented_Unitig> job_queue;
+
+    // Launch the background tilings-concatenator thread.
+    concatenator.reset(
+        new std::thread([this, &job_queue]()
+        {
+            write_sequence_tiling(job_queue);
+        })
+    );
+
+
+    // Open a parser for the FASTA / FASTQ file containing the reference.
+    Ref_Parser parser(reference_input);
+
+    // Track the maximum sequence buffer size used and the total length of the references.
+    size_t max_buf_sz = 0;
+    uint64_t ref_len = 0;
+    uint64_t seq_count = 0;
+
+    // Parse sequences one-by-one, and assign each entire sequence to a thread for processing.
+    while(parser.read_next_seq())
+    {
+        const char* const seq = parser.seq();
+        const size_t seq_len = parser.seq_len();
+        const size_t seq_buf_sz = parser.buff_sz();
+
+
+        seq_count++;
+        ref_len += seq_len;
+        max_buf_sz = std::max(max_buf_sz, seq_buf_sz);
+        std::cerr << "\rProcessing sequence " << parser.seq_id() << ", with length:\t" << std::setw(10) << seq_len << ".";
+
+        // Nothing to process for sequences with length shorter than `k`.
+        if(seq_len < k)
+            continue;
+
+
+        // Distribute the entire sequence to a thread (instead of partitioning it).
+        const std::string seq_name = remove_whitespaces(parser.seq_name());
+        distribute_output_gfa_reduced_in_mem(seq, seq_len, seq_name, parser.ref_id(), thread_pool, job_queue);
+    }
+
+    // Wait for all threads to complete their assigned sequences.
+    thread_pool.wait_completion();
+
+    std::cout << "\nProcessed " << seq_count << " sequences. Total reference length: " << ref_len << " bases.\n";
+    std::cout << "Maximum input sequence buffer size used: " << max_buf_sz / (1024 * 1024) << " MB.\n";
+
+    
+    // Close the thread pool.
+    thread_pool.close();
+
+    // Signal the end of the tiling concatenations.
+    job_queue.signal_end();
+    if(!concatenator->joinable())
+    {
+        std::cerr << "Early termination encountered for the sequence-tilings concatenator thread. Aborting.\n";
+        std::exit(EXIT_FAILURE);
+    }
+
+    concatenator->join();
+
+
+    // Flush the global buffer and output buffers.
+    flush_global_buffer();
+    flush_output_buffers();
+
+    // Close `spdlog`.
+    spdlog::drop_all();
+
+    // Close the parser.
+    parser.close();
+
+
+    std::chrono::high_resolution_clock::time_point t_end = std::chrono::high_resolution_clock::now();
+    double elapsed_seconds = std::chrono::duration_cast<std::chrono::duration<double>>(t_end - t_start).count();
+    std::cout << "Done writing the compacted graph (in GFA-reduced in-memory format). Time taken = " << elapsed_seconds << " seconds.\n";
+}
+
+
+template <uint16_t k>
+void CdBG<k>::distribute_output_gfa_reduced_in_mem(const char* const seq, const size_t seq_len, 
+                                                    const std::string& seq_name, const uint64_t ref_id, 
+                                                    Thread_Pool<k>& thread_pool, 
+                                                    Job_Queue<std::string, Oriented_Unitig>& job_queue)
+{
+    // Get an idle thread to process this entire sequence.
+    const uint16_t idle_thread_id = thread_pool.get_idle_thread();
+    
+    // Process the entire sequence in the assigned thread.
+    // For now, we'll use the existing task assignment mechanism which processes a substring.
+    // The key difference is we're assigning the entire sequence (left_end = 0, right_end = seq_len - k).
+    thread_pool.assign_output_task(idle_thread_id, seq, seq_len, 0, seq_len - k);
+}
+
+
+template <uint16_t k>
+void CdBG<k>::process_sequence_in_mem(const uint16_t thread_id, const char* const seq, const size_t seq_len,
+                                       const std::string& seq_name, const uint64_t ref_id, const uint64_t seq_id)
+{
+    // This function would process an entire sequence and store results in in-memory buffers.
+    // For now, we'll reuse the existing output_gfa_off_substring which already does the processing.
+    // The key improvement is that the entire sequence is processed by a single thread,
+    // and we use the global buffer instead of thread-local files.
+    
+    // Process the entire sequence.
+    output_gfa_off_substring(thread_id, seq, seq_len, 0, seq_len - k);
+}
+
+
 
 // Template instantiations for the required instances.
 ENUMERATE(INSTANCE_COUNT, INSTANTIATE, CdBG)

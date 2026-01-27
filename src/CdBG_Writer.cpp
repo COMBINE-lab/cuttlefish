@@ -763,13 +763,8 @@ void CdBG<k>::output_maximal_unitigs_gfa_reduced_in_mem(bool retain_input_order)
     // Allocate path buffers for accumulating tilings (reuses existing mechanism but without file I/O).
     allocate_path_buffers();
 
-    // Initialize the unitig tracking vectors (will be reset per-thread as needed).
-    first_unitig.resize(thread_count);
-    second_unitig.resize(thread_count);
-    last_unitig.resize(thread_count);
-    std::fill(first_unitig.begin(), first_unitig.end(), Oriented_Unitig());
-    std::fill(second_unitig.begin(), second_unitig.end(), Oriented_Unitig());
-    std::fill(last_unitig.begin(), last_unitig.end(), Oriented_Unitig());
+    // Initialize the unitig tracking vectors using the existing function
+    reset_extreme_unitigs();
 
 
     // Construct a thread pool.

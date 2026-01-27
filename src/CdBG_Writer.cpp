@@ -9,6 +9,7 @@
 #include "spdlog/sinks/basic_file_sink.h"
 #include "fmt/format.h"
 
+#include <algorithm>
 #include <iomanip>
 #include <mutex>
 #include <fstream>
@@ -766,6 +767,9 @@ void CdBG<k>::output_maximal_unitigs_gfa_reduced_in_mem()
     first_unitig.resize(thread_count);
     second_unitig.resize(thread_count);
     last_unitig.resize(thread_count);
+    std::fill(first_unitig.begin(), first_unitig.end(), Oriented_Unitig());
+    std::fill(second_unitig.begin(), second_unitig.end(), Oriented_Unitig());
+    std::fill(last_unitig.begin(), last_unitig.end(), Oriented_Unitig());
 
 
     // Construct a thread pool.

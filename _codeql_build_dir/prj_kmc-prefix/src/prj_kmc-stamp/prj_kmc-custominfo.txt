@@ -1,0 +1,9 @@
+# This is a generated file and its contents are an internal implementation detail.
+# The download step will be re-executed if anything in this file changes.
+# No other meaning or use of this file is supported.
+
+method=custom
+command=git;clone;--recurse-submodules;https://github.com/refresh-bio/KMC.git;--branch;v3.2.2
+source_dir=/home/runner/work/cuttlefish/cuttlefish/external/KMC
+work_dir=/home/runner/work/cuttlefish/cuttlefish/external
+

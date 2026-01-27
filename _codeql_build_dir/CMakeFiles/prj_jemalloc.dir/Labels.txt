@@ -1,0 +1,13 @@
+# Target labels
+ prj_jemalloc
+# Source files and their labels
+/home/runner/work/cuttlefish/cuttlefish/_codeql_build_dir/CMakeFiles/prj_jemalloc
+/home/runner/work/cuttlefish/cuttlefish/_codeql_build_dir/CMakeFiles/prj_jemalloc.rule
+/home/runner/work/cuttlefish/cuttlefish/_codeql_build_dir/CMakeFiles/prj_jemalloc-complete.rule
+/home/runner/work/cuttlefish/cuttlefish/_codeql_build_dir/prj_jemalloc-prefix/src/prj_jemalloc-stamp/prj_jemalloc-build.rule
+/home/runner/work/cuttlefish/cuttlefish/_codeql_build_dir/prj_jemalloc-prefix/src/prj_jemalloc-stamp/prj_jemalloc-configure.rule
+/home/runner/work/cuttlefish/cuttlefish/_codeql_build_dir/prj_jemalloc-prefix/src/prj_jemalloc-stamp/prj_jemalloc-download.rule
+/home/runner/work/cuttlefish/cuttlefish/_codeql_build_dir/prj_jemalloc-prefix/src/prj_jemalloc-stamp/prj_jemalloc-install.rule
+/home/runner/work/cuttlefish/cuttlefish/_codeql_build_dir/prj_jemalloc-prefix/src/prj_jemalloc-stamp/prj_jemalloc-mkdir.rule
+/home/runner/work/cuttlefish/cuttlefish/_codeql_build_dir/prj_jemalloc-prefix/src/prj_jemalloc-stamp/prj_jemalloc-patch.rule
+/home/runner/work/cuttlefish/cuttlefish/_codeql_build_dir/prj_jemalloc-prefix/src/prj_jemalloc-stamp/prj_jemalloc-update.rule

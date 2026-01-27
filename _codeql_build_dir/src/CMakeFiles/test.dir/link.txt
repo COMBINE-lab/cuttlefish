@@ -1,0 +1,1 @@
+/home/runner/work/cuttlefish/.codeql-scratch/dbs/cpp/working/autobuild/bin/c++ -O3 -DNDEBUG -Wl,--dependency-file=CMakeFiles/test.dir/link.d CMakeFiles/test.dir/test.cpp.o -o test  libcfcore_static.a /home/runner/work/cuttlefish/cuttlefish/external/lib//libjemalloc.a -ldl /home/runner/work/cuttlefish/cuttlefish/external/lib//libkmc_core.a /usr/lib/x86_64-linux-gnu/libz.so

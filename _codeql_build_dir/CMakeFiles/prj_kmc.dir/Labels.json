@@ -1,0 +1,43 @@
+{
+	"sources" : 
+	[
+		{
+			"file" : "/home/runner/work/cuttlefish/cuttlefish/_codeql_build_dir/CMakeFiles/prj_kmc"
+		},
+		{
+			"file" : "/home/runner/work/cuttlefish/cuttlefish/_codeql_build_dir/CMakeFiles/prj_kmc.rule"
+		},
+		{
+			"file" : "/home/runner/work/cuttlefish/cuttlefish/_codeql_build_dir/CMakeFiles/prj_kmc-complete.rule"
+		},
+		{
+			"file" : "/home/runner/work/cuttlefish/cuttlefish/_codeql_build_dir/prj_kmc-prefix/src/prj_kmc-stamp/prj_kmc-build.rule"
+		},
+		{
+			"file" : "/home/runner/work/cuttlefish/cuttlefish/_codeql_build_dir/prj_kmc-prefix/src/prj_kmc-stamp/prj_kmc-configure.rule"
+		},
+		{
+			"file" : "/home/runner/work/cuttlefish/cuttlefish/_codeql_build_dir/prj_kmc-prefix/src/prj_kmc-stamp/prj_kmc-download.rule"
+		},
+		{
+			"file" : "/home/runner/work/cuttlefish/cuttlefish/_codeql_build_dir/prj_kmc-prefix/src/prj_kmc-stamp/prj_kmc-install.rule"
+		},
+		{
+			"file" : "/home/runner/work/cuttlefish/cuttlefish/_codeql_build_dir/prj_kmc-prefix/src/prj_kmc-stamp/prj_kmc-mkdir.rule"
+		},
+		{
+			"file" : "/home/runner/work/cuttlefish/cuttlefish/_codeql_build_dir/prj_kmc-prefix/src/prj_kmc-stamp/prj_kmc-patch.rule"
+		},
+		{
+			"file" : "/home/runner/work/cuttlefish/cuttlefish/_codeql_build_dir/prj_kmc-prefix/src/prj_kmc-stamp/prj_kmc-update.rule"
+		}
+	],
+	"target" : 
+	{
+		"labels" : 
+		[
+			"prj_kmc"
+		],
+		"name" : "prj_kmc"
+	}
+}

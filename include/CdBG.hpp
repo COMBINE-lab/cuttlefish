@@ -318,12 +318,6 @@ private:
     // The process is executed by the thread number `thread_id`.
     void output_gfa_off_substring(uint16_t thread_id, const char* seq, size_t seq_len, size_t left_end, size_t right_end);
 
-    // Processes an entire sequence using in-memory buffers for GFA-reduced output.
-    // Extracts all unitigs and tiling information from the sequence and stores them
-    // in in-memory buffers, then writes to the global buffer in a thread-safe manner.
-    void process_sequence_in_mem(uint16_t thread_id, const char* seq, size_t seq_len, 
-                                  const std::string& seq_name, uint64_t ref_id, uint64_t seq_id);
-
     // Outputs the distinct maximal unitig of the sequence `seq` (of length `seq_len`)
     // that are present at its contiguous subsequence starting from the index `start_idx`,
     // going up-to either the ending of the maximal unitig containing the index `right_end`,

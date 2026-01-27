@@ -277,6 +277,14 @@ void CdBG<k>::distribute_output_gfa(const char* const seq, const size_t seq_len,
 
 
 template <uint16_t k>
+void CdBG<k>::distribute_output_gfa_reduced(const char* const seq, const size_t seq_len, Thread_Pool<k>& thread_pool)
+{
+    // For GFA-reduced format, use the same distribution strategy as regular GFA
+    distribute_output_gfa(seq, seq_len, thread_pool);
+}
+
+
+template <uint16_t k>
 void CdBG<k>::output_maximal_unitigs_gfa_reduced()
 {
     std::chrono::high_resolution_clock::time_point t_start = std::chrono::high_resolution_clock::now();
@@ -711,8 +719,9 @@ void CdBG<k>::output_maximal_unitigs_gfa_reduced_in_mem()
     set_temp_file_prefixes(working_dir_path);
 
 
-    // Allocate the output buffers for each thread.
+    // Allocate the output buffers and path buffers for each thread.
     allocate_output_buffers();
+    allocate_path_buffers();
 
 
     // Construct a thread pool.
@@ -757,13 +766,38 @@ void CdBG<k>::output_maximal_unitigs_gfa_reduced_in_mem()
             continue;
 
 
+        // Reset the path output streams for each sequence.
+        reset_path_loggers(job_queue.next_job_to_post());
+
+        // Reset the first, the second, and the last unitigs seen for each thread.
+        reset_extreme_unitigs();
+
+
         // Distribute the entire sequence to a thread (instead of partitioning it).
         const std::string seq_name = remove_whitespaces(parser.seq_name());
         distribute_output_gfa_reduced_in_mem(seq, seq_len, seq_name, parser.ref_id(), thread_pool, job_queue);
-    }
+        
+        // Wait for the sequence processing to complete.
+        thread_pool.wait_completion();
 
-    // Wait for all threads to complete their assigned sequences.
-    thread_pool.wait_completion();
+        // Handle connections and paths similar to the original implementation
+        write_inter_thread_connections();
+
+        flush_path_buffers();
+
+        // Force-flush all the path loggers.
+        close_path_loggers();
+
+        // Post a tiling-concatenation job.
+        const std::string path_name =   std::string("Reference:") + std::to_string(parser.ref_id()) +
+                                        std::string("_Sequence:") + seq_name;
+
+        // Search the very first GFA edge in the sequence.
+        Oriented_Unitig left_unitig, right_unitig;
+        search_first_connection(left_unitig, right_unitig);
+
+        job_queue.post_job(path_name, left_unitig);
+    }
 
     std::cout << "\nProcessed " << seq_count << " sequences. Total reference length: " << ref_len << " bases.\n";
     std::cout << "Maximum input sequence buffer size used: " << max_buf_sz / (1024 * 1024) << " MB.\n";
@@ -813,20 +847,6 @@ void CdBG<k>::distribute_output_gfa_reduced_in_mem(const char* const seq, const 
     // For now, we'll use the existing task assignment mechanism which processes a substring.
     // The key difference is we're assigning the entire sequence (left_end = 0, right_end = seq_len - k).
     thread_pool.assign_output_task(idle_thread_id, seq, seq_len, 0, seq_len - k);
-}
-
-
-template <uint16_t k>
-void CdBG<k>::process_sequence_in_mem(const uint16_t thread_id, const char* const seq, const size_t seq_len,
-                                       const std::string& seq_name, const uint64_t ref_id, const uint64_t seq_id)
-{
-    // This function would process an entire sequence and store results in in-memory buffers.
-    // For now, we'll reuse the existing output_gfa_off_substring which already does the processing.
-    // The key improvement is that the entire sequence is processed by a single thread,
-    // and we use the global buffer instead of thread-local files.
-    
-    // Process the entire sequence.
-    output_gfa_off_substring(thread_id, seq, seq_len, 0, seq_len - k);
 }
 
 

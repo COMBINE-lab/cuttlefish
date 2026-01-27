@@ -788,6 +788,10 @@ void CdBG<k>::output_maximal_unitigs_gfa_reduced_in_mem()
             continue;
 
 
+        // Reset the extreme unitigs for each sequence.
+        // Note: first call will allocate the vectors, subsequent calls will just reset them.
+        reset_extreme_unitigs();
+
         // Clear the path buffers for all threads before processing this sequence.
         for(uint16_t t_id = 0; t_id < thread_count; ++t_id)
             path_buffer[t_id].clear();

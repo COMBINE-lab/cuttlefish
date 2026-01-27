@@ -37,6 +37,7 @@ private:
     const bool poly_n_stretch_; // Whether to include tiles in GFA-reduced output that track the polyN stretches in the input.
     const std::string working_dir_path_;    // Path to the working directory (for temporary files).
     const bool path_cover_; // Whether to extract a maximal path cover of the de Bruijn graph.
+    const bool collate_output_in_mem_;  // Whether to use in-memory collation for GFA-reduced output (avoids intermediate files).
     const bool save_mph_;   // Option to save the MPH over the vertex set of the de Bruijn graph.
     const bool save_buckets_;   // Option to save the DFA-states collection of the vertices of the de Bruijn graph.
     const bool save_vertices_;  // Option to save the vertex set of the de Bruijn graph (in KMC database format).
@@ -92,6 +93,7 @@ public:
                     bool poly_n_stretch,
                     const std::string& working_dir_path,
                     bool path_cover,
+                    bool collate_output_in_mem,
                     bool save_mph,
                     bool save_buckets,
                     bool save_vertices
@@ -230,6 +232,13 @@ public:
     bool path_cover() const
     {
         return path_cover_;
+    }
+
+
+    // Returns whether to use in-memory collation for GFA-reduced output.
+    bool collate_output_in_mem() const
+    {
+        return collate_output_in_mem_;
     }
 
 

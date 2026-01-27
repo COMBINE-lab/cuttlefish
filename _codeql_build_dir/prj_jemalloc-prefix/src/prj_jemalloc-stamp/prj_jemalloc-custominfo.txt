@@ -1,9 +1,0 @@
-# This is a generated file and its contents are an internal implementation detail.
-# The download step will be re-executed if anything in this file changes.
-# No other meaning or use of this file is supported.
-
-method=custom
-command=curl;-k;-L;https://github.com/jemalloc/jemalloc/archive/5.3.0.tar.gz;-o;jemalloc-5.3.0.tar.gz;&&;tar;-xzf;jemalloc-5.3.0.tar.gz;&&;rm;jemalloc-5.3.0.tar.gz
-source_dir=/home/runner/work/cuttlefish/cuttlefish/external/jemalloc-5.3.0
-work_dir=/home/runner/work/cuttlefish/cuttlefish/external
-

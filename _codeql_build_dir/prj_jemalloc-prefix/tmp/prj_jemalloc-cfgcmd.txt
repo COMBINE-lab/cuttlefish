@@ -1,1 +1,0 @@
-cmd='sh;-c;CC=/home/runner/work/cuttlefish/.codeql-scratch/dbs/cpp/working/autobuild/bin/cc ./autogen.sh --disable-debug --enable-static --prefix=<INSTALL_DIR> --silent'

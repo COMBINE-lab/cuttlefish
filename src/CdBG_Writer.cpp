@@ -791,6 +791,9 @@ void CdBG<k>::output_maximal_unitigs_gfa_reduced_in_mem(bool retain_input_order)
         std::string seq_name;
         uint64_t ref_id;
         bool written;  // Track if tiling has been written (for unordered mode)
+        // For retain_input_order mode, we need to preserve the data
+        Oriented_Unitig first;
+        std::string path_content;
     };
     std::vector<SequenceJob> pending_jobs;
     
@@ -806,7 +809,7 @@ void CdBG<k>::output_maximal_unitigs_gfa_reduced_in_mem(bool retain_input_order)
         std::string complete_tiling = path_name + "\t";
         
         // Add the first vertex if valid
-        const Oriented_Unitig& first = first_unitig[job.thread_id];
+        const Oriented_Unitig& first = retain_input_order ? job.first : first_unitig[job.thread_id];
         if(first.is_valid())
         {
             // Add polyN stretch before first unitig if needed
@@ -821,7 +824,7 @@ void CdBG<k>::output_maximal_unitigs_gfa_reduced_in_mem(bool retain_input_order)
             complete_tiling += (first.dir == cuttlefish::FWD ? "+" : "-");
             
             // Add the rest of the path from path_buffer
-            complete_tiling += path_buffer[job.thread_id];
+            complete_tiling += retain_input_order ? job.path_content : path_buffer[job.thread_id];
         }
         
         complete_tiling += "\n";
@@ -862,6 +865,15 @@ void CdBG<k>::output_maximal_unitigs_gfa_reduced_in_mem(bool retain_input_order)
             }
         }
         
+        // If retaining input order and this thread previously completed a job, save its data
+        if(retain_input_order && thread_to_job[thread_id] != SIZE_MAX)
+        {
+            size_t prev_job_idx = thread_to_job[thread_id];
+            // Copy the data from thread's buffers to the job structure before resetting
+            pending_jobs[prev_job_idx].first = first_unitig[thread_id];
+            pending_jobs[prev_job_idx].path_content = path_buffer[thread_id];
+        }
+        
         // Reset buffers only for this specific thread
         path_buffer[thread_id].clear();
         first_unitig[thread_id] = Oriented_Unitig();
@@ -873,7 +885,7 @@ void CdBG<k>::output_maximal_unitigs_gfa_reduced_in_mem(bool retain_input_order)
         
         // Store job metadata
         const std::string seq_name = remove_whitespaces(parser.seq_name());
-        pending_jobs.push_back({thread_id, seq_name, parser.ref_id(), false});
+        pending_jobs.push_back({thread_id, seq_name, parser.ref_id(), false, Oriented_Unitig(), ""});
         
         // Track that this thread is now working on this job
         thread_to_job[thread_id] = pending_jobs.size() - 1;
@@ -884,6 +896,20 @@ void CdBG<k>::output_maximal_unitigs_gfa_reduced_in_mem(bool retain_input_order)
 
     std::cout << "\nProcessed " << seq_count << " sequences. Total reference length: " << ref_len << " bases.\n";
     std::cout << "Maximum input sequence buffer size used: " << max_buf_sz / (1024 * 1024) << " MB.\n";
+
+    // If retaining input order, save data from all threads' final jobs
+    if(retain_input_order)
+    {
+        for(uint16_t t_id = 0; t_id < thread_count; ++t_id)
+        {
+            if(thread_to_job[t_id] != SIZE_MAX)
+            {
+                size_t job_idx = thread_to_job[t_id];
+                pending_jobs[job_idx].first = first_unitig[t_id];
+                pending_jobs[job_idx].path_content = path_buffer[t_id];
+            }
+        }
+    }
 
     // Write tilings based on the ordering mode
     if(retain_input_order)

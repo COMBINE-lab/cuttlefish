@@ -638,6 +638,10 @@ void CdBG<k>::append_edge_to_path(const uint16_t thread_id, const Oriented_Uniti
 template <uint16_t k>
 void CdBG<k>::check_path_buffer(const uint16_t thread_id)
 {
+    // In in-memory mode, we don't flush to file loggers - we accumulate the entire sequence in memory
+    if(in_memory_mode)
+        return;
+    
     if(path_buffer[thread_id].size() >= BUFFER_THRESHOLD)
         flush_buffer(path_buffer[thread_id], path_output_[thread_id]);
 

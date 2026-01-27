@@ -7,9 +7,11 @@
 #include "spdlog/spdlog.h"
 #include "spdlog/async.h"
 #include "spdlog/sinks/basic_file_sink.h"
+#include "fmt/format.h"
 
 #include <iomanip>
 #include <mutex>
+#include <fstream>
 
 
 template <uint16_t k>
@@ -697,6 +699,41 @@ void CdBG<k>::flush_global_buffer()
 
 
 template <uint16_t k>
+void CdBG<k>::append_to_global_sequence_buffer(const std::string& content)
+{
+    std::lock_guard<Spin_Lock> guard(global_sequence_lock);
+    
+    global_sequence_buffer += content;
+    
+    // Check if we need to flush to the sequence file
+    if(global_sequence_buffer.size() >= GLOBAL_BUFFER_THRESHOLD)
+    {
+        const std::string& seq_file_path = params.sequence_file_path();
+        std::ofstream output(seq_file_path.c_str(), std::ios_base::app);
+        output << global_sequence_buffer;
+        output.close();
+        global_sequence_buffer.clear();
+    }
+}
+
+
+template <uint16_t k>
+void CdBG<k>::flush_global_sequence_buffer()
+{
+    std::lock_guard<Spin_Lock> guard(global_sequence_lock);
+    
+    if(!global_sequence_buffer.empty())
+    {
+        const std::string& seq_file_path = params.sequence_file_path();
+        std::ofstream output(seq_file_path.c_str(), std::ios_base::app);
+        output << global_sequence_buffer;
+        output.close();
+        global_sequence_buffer.clear();
+    }
+}
+
+
+template <uint16_t k>
 void CdBG<k>::output_maximal_unitigs_gfa_reduced_in_mem()
 {
     std::chrono::high_resolution_clock::time_point t_start = std::chrono::high_resolution_clock::now();
@@ -704,37 +741,24 @@ void CdBG<k>::output_maximal_unitigs_gfa_reduced_in_mem()
 
     const Seq_Input& reference_input = params.sequence_input();
     const uint16_t thread_count = params.thread_count();
-    const std::string& working_dir_path = params.working_dir_path();
 
 
     // Clear the output file and initialize the output loggers.
     clear_output_file();
     init_output_loggers();
 
-    // Set the prefixes of the temporary path output files. This is to avoid possible name
-    // conflicts in the file system.
-    set_temp_file_prefixes(working_dir_path);
+    // Enable in-memory mode to prevent flushing path buffers to file loggers.
+    in_memory_mode = true;
 
-
-    // Allocate the output buffers and path buffers for each thread.
+    // Allocate the output buffers for each thread (for segments).
     allocate_output_buffers();
+    
+    // Allocate path buffers for accumulating tilings (reuses existing mechanism but without file I/O).
     allocate_path_buffers();
 
 
     // Construct a thread pool.
     Thread_Pool<k> thread_pool(thread_count, this, Thread_Pool<k>::Task_Type::output_gfa_reduced);
-
-    // Dedicated thread and job-queue to concatenate thread-specific tilings.
-    std::unique_ptr<std::thread> concatenator{nullptr};
-    Job_Queue<std::string, Oriented_Unitig> job_queue;
-
-    // Launch the background tilings-concatenator thread.
-    concatenator.reset(
-        new std::thread([this, &job_queue]()
-        {
-            write_sequence_tiling(job_queue);
-        })
-    );
 
 
     // Open a parser for the FASTA / FASTQ file containing the reference.
@@ -744,6 +768,7 @@ void CdBG<k>::output_maximal_unitigs_gfa_reduced_in_mem()
     size_t max_buf_sz = 0;
     uint64_t ref_len = 0;
     uint64_t seq_count = 0;
+    const bool poly_n_stretch = params.poly_n_stretch();
 
     // Parse sequences one-by-one, and assign each entire sequence to a thread for processing.
     while(parser.read_next_seq())
@@ -763,37 +788,52 @@ void CdBG<k>::output_maximal_unitigs_gfa_reduced_in_mem()
             continue;
 
 
-        // Reset the path output streams for each sequence.
-        reset_path_loggers(job_queue.next_job_to_post());
-
-        // Reset the first, the second, and the last unitigs seen for each thread.
-        reset_extreme_unitigs();
+        // Clear the path buffers for all threads before processing this sequence.
+        for(uint16_t t_id = 0; t_id < thread_count; ++t_id)
+            path_buffer[t_id].clear();
 
 
-        // Distribute the entire sequence to a thread (instead of partitioning it).
-        const std::string seq_name = remove_whitespaces(parser.seq_name());
-        distribute_output_gfa_reduced_in_mem(seq, seq_len, seq_name, parser.ref_id(), thread_pool, job_queue);
+        // Get an idle thread to process this entire sequence.
+        const uint16_t thread_id = thread_pool.get_idle_thread();
+        
+        // Assign the entire sequence to the thread for processing.
+        thread_pool.assign_output_task(thread_id, seq, seq_len, 0, seq_len - k);
         
         // Wait for the sequence processing to complete.
         thread_pool.wait_completion();
 
-        // Handle connections and paths similar to the original implementation
-        write_inter_thread_connections();
 
-        flush_path_buffers();
-
-        // Force-flush all the path loggers.
-        close_path_loggers();
-
-        // Post a tiling-concatenation job.
+        // Build the complete sequence tiling from the thread's buffer.
+        const std::string seq_name = remove_whitespaces(parser.seq_name());
         const std::string path_name =   std::string("Reference:") + std::to_string(parser.ref_id()) +
                                         std::string("_Sequence:") + seq_name;
 
-        // Search the very first GFA edge in the sequence.
-        Oriented_Unitig left_unitig, right_unitig;
-        search_first_connection(left_unitig, right_unitig);
-
-        job_queue.post_job(path_name, left_unitig);
+        // Build the complete tiling: path_name \t first_vertex path_buffer_content \n
+        std::string complete_tiling = path_name + "\t";
+        
+        // Add the first vertex if valid
+        const Oriented_Unitig& first = first_unitig[thread_id];
+        if(first.is_valid())
+        {
+            // Add polyN stretch before first unitig if needed
+            if(poly_n_stretch && first.start_kmer_idx > 0)
+            {
+                complete_tiling += "N";
+                complete_tiling += fmt::format_int(first.start_kmer_idx).c_str();
+                complete_tiling += " ";
+            }
+            
+            complete_tiling += fmt::format_int(first.unitig_id).c_str();
+            complete_tiling += (first.dir == cuttlefish::FWD ? "+" : "-");
+            
+            // Add the rest of the path from path_buffer
+            complete_tiling += path_buffer[thread_id];
+        }
+        
+        complete_tiling += "\n";
+        
+        // Write to the global sequence buffer in a thread-safe manner.
+        append_to_global_sequence_buffer(complete_tiling);
     }
 
     std::cout << "\nProcessed " << seq_count << " sequences. Total reference length: " << ref_len << " bases.\n";
@@ -803,20 +843,14 @@ void CdBG<k>::output_maximal_unitigs_gfa_reduced_in_mem()
     // Close the thread pool.
     thread_pool.close();
 
-    // Signal the end of the tiling concatenations.
-    job_queue.signal_end();
-    if(!concatenator->joinable())
-    {
-        std::cerr << "Early termination encountered for the sequence-tilings concatenator thread. Aborting.\n";
-        std::exit(EXIT_FAILURE);
-    }
 
-    concatenator->join();
-
-
-    // Flush the global buffer and output buffers.
+    // Flush the global buffers.
     flush_global_buffer();
+    flush_global_sequence_buffer();
     flush_output_buffers();
+
+    // Reset in-memory mode flag.
+    in_memory_mode = false;
 
     // Close `spdlog`.
     spdlog::drop_all();

@@ -110,14 +110,23 @@ private:
     // Information about sequences too short for processing, i.e. with length < `k`.
     std::vector<std::pair<std::string, std::size_t>> short_seqs;
 
-    // Global in-memory buffer for the in-memory GFA-reduced output approach.
+    // Global in-memory buffer for the in-memory GFA-reduced output approach (for segments).
     std::string global_output_buffer;
+
+    // Global in-memory buffer for sequence tilings (paths).
+    std::string global_sequence_buffer;
 
     // Spin lock for thread-safe access to the global output buffer.
     Spin_Lock global_buffer_lock;
 
+    // Spin lock for thread-safe access to the global sequence buffer.
+    Spin_Lock global_sequence_lock;
+
     // Threshold for flushing the global buffer (1-5 MB range).
     static constexpr size_t GLOBAL_BUFFER_THRESHOLD = 2 * 1024 * 1024;  // 2 MB.
+
+    // Flag indicating whether we're using in-memory mode (no file loggers for paths).
+    bool in_memory_mode;
 
 
     /* Build methods */
@@ -463,6 +472,13 @@ private:
 
     // Flushes the global in-memory buffer to the output logger.
     void flush_global_buffer();
+
+    // Appends sequence tiling content to the global sequence buffer in a thread-safe manner.
+    // If the global sequence buffer exceeds GLOBAL_BUFFER_THRESHOLD after appending, it is flushed.
+    void append_to_global_sequence_buffer(const std::string& content);
+
+    // Flushes the global sequence buffer to the sequence output file.
+    void flush_global_sequence_buffer();
 
     // Removes the temporary files used for the thread-specific path output streams
     // (depending on the GFA version) from the disk. The thread-specific output file

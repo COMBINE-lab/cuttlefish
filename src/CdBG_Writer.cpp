@@ -9,6 +9,7 @@
 #include "spdlog/sinks/basic_file_sink.h"
 
 #include <iomanip>
+#include <mutex>
 
 
 template <uint16_t k>
@@ -669,7 +670,7 @@ void CdBG<k>::flush_path_loggers()
 template <uint16_t k>
 void CdBG<k>::append_to_global_buffer(const std::string& content)
 {
-    global_buffer_lock.lock();
+    std::lock_guard<Spin_Lock> guard(global_buffer_lock);
     
     global_output_buffer += content;
     
@@ -679,23 +680,19 @@ void CdBG<k>::append_to_global_buffer(const std::string& content)
         write(global_output_buffer, output);
         global_output_buffer.clear();
     }
-    
-    global_buffer_lock.unlock();
 }
 
 
 template <uint16_t k>
 void CdBG<k>::flush_global_buffer()
 {
-    global_buffer_lock.lock();
+    std::lock_guard<Spin_Lock> guard(global_buffer_lock);
     
     if(!global_output_buffer.empty())
     {
         write(global_output_buffer, output);
         global_output_buffer.clear();
     }
-    
-    global_buffer_lock.unlock();
 }
 
 
@@ -840,12 +837,17 @@ void CdBG<k>::distribute_output_gfa_reduced_in_mem(const char* const seq, const 
                                                     Thread_Pool<k>& thread_pool, 
                                                     Job_Queue<std::string, Oriented_Unitig>& job_queue)
 {
+    // Note: seq_name, ref_id, and job_queue are currently unused but kept in the signature
+    // for consistency with the calling code and potential future enhancements.
+    (void)seq_name;
+    (void)ref_id;
+    (void)job_queue;
+
     // Get an idle thread to process this entire sequence.
     const uint16_t idle_thread_id = thread_pool.get_idle_thread();
     
-    // Process the entire sequence in the assigned thread.
-    // For now, we'll use the existing task assignment mechanism which processes a substring.
-    // The key difference is we're assigning the entire sequence (left_end = 0, right_end = seq_len - k).
+    // Assign the entire sequence to the thread for processing.
+    // Unlike partitioning approaches, we process the complete sequence (left_end = 0, right_end = seq_len - k).
     thread_pool.assign_output_task(idle_thread_id, seq, seq_len, 0, seq_len - k);
 }
 

@@ -741,7 +741,7 @@ void CdBG<k>::flush_global_sequence_buffer()
 
 
 template <uint16_t k>
-void CdBG<k>::output_maximal_unitigs_gfa_reduced_in_mem()
+void CdBG<k>::output_maximal_unitigs_gfa_reduced_in_mem(bool retain_input_order)
 {
     std::chrono::high_resolution_clock::time_point t_start = std::chrono::high_resolution_clock::now();
 
@@ -785,59 +785,20 @@ void CdBG<k>::output_maximal_unitigs_gfa_reduced_in_mem()
     uint64_t seq_count = 0;
     const bool poly_n_stretch = params.poly_n_stretch();
 
-    // Structure to hold sequence metadata for building tilings after processing
+    // Structure to hold sequence metadata for building tilings
     struct SequenceJob {
         uint16_t thread_id;
         std::string seq_name;
         uint64_t ref_id;
+        bool written;  // Track if tiling has been written (for unordered mode)
     };
     std::vector<SequenceJob> pending_jobs;
-    size_t next_to_write = 0;
+    
+    // Track which thread last completed (for unordered writing)
+    std::vector<size_t> thread_to_job(thread_count, SIZE_MAX);  // Maps thread_id to job index
 
-    // Parse sequences one-by-one, and assign each entire sequence to a thread for processing.
-    while(parser.read_next_seq())
-    {
-        const char* const seq = parser.seq();
-        const size_t seq_len = parser.seq_len();
-        const size_t seq_buf_sz = parser.buff_sz();
-
-
-        seq_count++;
-        ref_len += seq_len;
-        max_buf_sz = std::max(max_buf_sz, seq_buf_sz);
-        std::cerr << "\rProcessing sequence " << parser.seq_id() << ", with length:\t" << std::setw(10) << seq_len << ".";
-
-        // Nothing to process for sequences with length shorter than `k`.
-        if(seq_len < k)
-            continue;
-
-
-        // Get an idle thread to process this entire sequence.
-        const uint16_t thread_id = thread_pool.get_idle_thread();
-        
-        // Reset buffers only for this specific thread
-        path_buffer[thread_id].clear();
-        first_unitig[thread_id] = Oriented_Unitig();
-        second_unitig[thread_id] = Oriented_Unitig();
-        last_unitig[thread_id] = Oriented_Unitig();
-        
-        // Assign the entire sequence to the thread for processing.
-        thread_pool.assign_output_task(thread_id, seq, seq_len, 0, seq_len - k);
-        
-        // Store job metadata for later tiling construction
-        const std::string seq_name = remove_whitespaces(parser.seq_name());
-        pending_jobs.push_back({thread_id, seq_name, parser.ref_id()});
-    }
-
-    // Wait for all sequences to complete processing
-    thread_pool.wait_completion();
-
-    std::cout << "\nProcessed " << seq_count << " sequences. Total reference length: " << ref_len << " bases.\n";
-    std::cout << "Maximum input sequence buffer size used: " << max_buf_sz / (1024 * 1024) << " MB.\n";
-
-    // Now build and write all tilings in order
-    for(const auto& job : pending_jobs)
-    {
+    // Helper lambda to build and write a tiling for a completed job
+    auto write_tiling = [&](SequenceJob& job) {
         const std::string path_name =   std::string("Reference:") + std::to_string(job.ref_id) +
                                         std::string("_Sequence:") + job.seq_name;
 
@@ -865,8 +826,83 @@ void CdBG<k>::output_maximal_unitigs_gfa_reduced_in_mem()
         
         complete_tiling += "\n";
         
-        // Write to the global sequence buffer (no locking needed here since we're sequential now)
+        // Write to the global sequence buffer in a thread-safe manner
         append_to_global_sequence_buffer(complete_tiling);
+        job.written = true;
+    };
+
+    // Parse sequences one-by-one, and assign each entire sequence to a thread for processing.
+    while(parser.read_next_seq())
+    {
+        const char* const seq = parser.seq();
+        const size_t seq_len = parser.seq_len();
+        const size_t seq_buf_sz = parser.buff_sz();
+
+
+        seq_count++;
+        ref_len += seq_len;
+        max_buf_sz = std::max(max_buf_sz, seq_buf_sz);
+        std::cerr << "\rProcessing sequence " << parser.seq_id() << ", with length:\t" << std::setw(10) << seq_len << ".";
+
+        // Nothing to process for sequences with length shorter than `k`.
+        if(seq_len < k)
+            continue;
+
+
+        // Get an idle thread to process this entire sequence.
+        const uint16_t thread_id = thread_pool.get_idle_thread();
+        
+        // If not retaining input order and this thread previously completed a job, write it now
+        if(!retain_input_order && thread_to_job[thread_id] != SIZE_MAX)
+        {
+            size_t prev_job_idx = thread_to_job[thread_id];
+            if(!pending_jobs[prev_job_idx].written)
+            {
+                write_tiling(pending_jobs[prev_job_idx]);
+            }
+        }
+        
+        // Reset buffers only for this specific thread
+        path_buffer[thread_id].clear();
+        first_unitig[thread_id] = Oriented_Unitig();
+        second_unitig[thread_id] = Oriented_Unitig();
+        last_unitig[thread_id] = Oriented_Unitig();
+        
+        // Assign the entire sequence to the thread for processing.
+        thread_pool.assign_output_task(thread_id, seq, seq_len, 0, seq_len - k);
+        
+        // Store job metadata
+        const std::string seq_name = remove_whitespaces(parser.seq_name());
+        pending_jobs.push_back({thread_id, seq_name, parser.ref_id(), false});
+        
+        // Track that this thread is now working on this job
+        thread_to_job[thread_id] = pending_jobs.size() - 1;
+    }
+
+    // Wait for all sequences to complete processing
+    thread_pool.wait_completion();
+
+    std::cout << "\nProcessed " << seq_count << " sequences. Total reference length: " << ref_len << " bases.\n";
+    std::cout << "Maximum input sequence buffer size used: " << max_buf_sz / (1024 * 1024) << " MB.\n";
+
+    // Write tilings based on the ordering mode
+    if(retain_input_order)
+    {
+        // Write all tilings in input order
+        for(auto& job : pending_jobs)
+        {
+            if(!job.written)
+                write_tiling(job);
+        }
+    }
+    else
+    {
+        // Write any remaining tilings that haven't been written yet
+        for(auto& job : pending_jobs)
+        {
+            if(!job.written)
+                write_tiling(job);
+        }
     }
 
     

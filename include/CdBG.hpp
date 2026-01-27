@@ -248,7 +248,8 @@ private:
     // Outputs the distinct maximal unitigs (in canonical form) of the compacted de Bruijn graph
     // in a GFA-reduced format using an in-memory approach. This version assigns entire sequences
     // to threads and uses in-memory buffers instead of thread-local file storage.
-    void output_maximal_unitigs_gfa_reduced_in_mem();
+    // If retain_input_order is true, tilings are written in input order; if false, in completion order.
+    void output_maximal_unitigs_gfa_reduced_in_mem(bool retain_input_order = true);
 
     // Distributes the outputting task of the maximal unitigs in a GFA-reduced format for an
     // entire sequence `seq` of length `seq_len` to a thread in the thread pool `thread_pool`.

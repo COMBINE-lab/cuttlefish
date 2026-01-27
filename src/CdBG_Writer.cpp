@@ -875,15 +875,16 @@ void CdBG<k>::output_maximal_unitigs_gfa_reduced_in_mem(bool retain_input_order)
         second_unitig[thread_id] = Oriented_Unitig();
         last_unitig[thread_id] = Oriented_Unitig();
         
-        // Assign the entire sequence to the thread for processing.
-        thread_pool.assign_output_task(thread_id, seq, seq_len, 0, seq_len - k);
-        
-        // Store job metadata
+        // Store job metadata BEFORE assigning the task
         const std::string seq_name = remove_whitespaces(parser.seq_name());
         pending_jobs.push_back({thread_id, seq_name, parser.ref_id(), false, Oriented_Unitig(), ""});
         
-        // Track that this thread is now working on this job
+        // Track that this thread is now working on this job BEFORE assigning
         thread_to_job[thread_id] = pending_jobs.size() - 1;
+        
+        // Assign the entire sequence to the thread for processing.
+        // This must be LAST to avoid race conditions.
+        thread_pool.assign_output_task(thread_id, seq, seq_len, 0, seq_len - k);
     }
 
     // Wait for all sequences to complete processing

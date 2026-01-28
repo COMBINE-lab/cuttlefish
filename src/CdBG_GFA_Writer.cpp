@@ -138,6 +138,10 @@ void CdBG<k>::reset_extreme_unitigs()
     std::fill(first_unitig.begin(), first_unitig.end(), Oriented_Unitig());
     std::fill(second_unitig.begin(), second_unitig.end(), Oriented_Unitig());
     std::fill(last_unitig.begin(), last_unitig.end(), Oriented_Unitig());
+
+    // Initialize sequence metadata vectors for in-memory mode
+    sequence_name.resize(thread_count);
+    sequence_ref_id.resize(thread_count);
 }
 
 
@@ -155,6 +159,41 @@ void CdBG<k>::output_gfa_off_substring(const uint16_t thread_id, const char* con
 
         // Process a maximal valid contiguous subsequence, and advance to the index following it.
         kmer_idx = output_maximal_unitigs_gfa(thread_id, seq, seq_len, right_end, kmer_idx);
+    }
+
+    // If we're in in-memory mode, build and write the tiling immediately after processing the sequence.
+    if(in_memory_mode)
+    {
+        const bool poly_n_stretch = params.poly_n_stretch();
+        const std::string path_name = std::string("Reference:") + std::to_string(sequence_ref_id[thread_id]) +
+                                      std::string("_Sequence:") + sequence_name[thread_id];
+
+        // Build the complete tiling: path_name \t first_vertex path_buffer_content \n
+        std::string complete_tiling = path_name + "\t";
+        
+        // Add the first vertex if valid
+        const Oriented_Unitig& first = first_unitig[thread_id];
+        if(first.is_valid())
+        {
+            // Add polyN stretch before first unitig if needed
+            if(poly_n_stretch && first.start_kmer_idx > 0)
+            {
+                complete_tiling += "N";
+                complete_tiling += fmt::format_int(first.start_kmer_idx).c_str();
+                complete_tiling += " ";
+            }
+            
+            complete_tiling += fmt::format_int(first.unitig_id).c_str();
+            complete_tiling += (first.dir == cuttlefish::FWD ? "+" : "-");
+            
+            // Add the rest of the path from path_buffer
+            complete_tiling += path_buffer[thread_id];
+        }
+        
+        complete_tiling += "\n";
+        
+        // Write to the global sequence buffer in a thread-safe manner.
+        append_to_global_sequence_buffer(complete_tiling);
     }
 }
 

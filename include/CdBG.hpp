@@ -98,6 +98,12 @@ private:
     // thread number `t_id`.
     std::vector<Oriented_Unitig> first_unitig, second_unitig, last_unitig;
 
+    // Per-thread sequence metadata for in-memory mode tiling construction.
+    // `sequence_name[t_id]` and `sequence_ref_id[t_id]` store the name and reference ID
+    // of the sequence currently being processed by thread `t_id`.
+    std::vector<std::string> sequence_name;
+    std::vector<uint64_t> sequence_ref_id;
+
     // The GFA header lines.
     const static std::string GFA1_HEADER, GFA2_HEADER;
     

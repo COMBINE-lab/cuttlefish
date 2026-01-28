@@ -760,6 +760,9 @@ void CdBG<k>::output_maximal_unitigs_gfa_reduced_in_mem()
     // Construct a thread pool.
     Thread_Pool<k> thread_pool(thread_count, this, Thread_Pool<k>::Task_Type::output_gfa_reduced);
 
+    // Initialize the extreme unitigs vectors after thread pool creation.
+    reset_extreme_unitigs();
+
 
     // Open a parser for the FASTA / FASTQ file containing the reference.
     Ref_Parser parser(reference_input);
@@ -770,7 +773,17 @@ void CdBG<k>::output_maximal_unitigs_gfa_reduced_in_mem()
     uint64_t seq_count = 0;
     const bool poly_n_stretch = params.poly_n_stretch();
 
+    // Structure to store sequence metadata for deferred tiling construction.
+    struct SequenceJob
+    {
+        uint16_t thread_id;
+        std::string seq_name;
+        uint64_t ref_id;
+    };
+    std::vector<SequenceJob> sequence_jobs;
+
     // Parse sequences one-by-one, and assign each entire sequence to a thread for processing.
+    // Threads process sequences in parallel.
     while(parser.read_next_seq())
     {
         const char* const seq = parser.seq();
@@ -788,29 +801,44 @@ void CdBG<k>::output_maximal_unitigs_gfa_reduced_in_mem()
             continue;
 
 
-        // Reset the extreme unitigs for each sequence.
-        // Note: first call will allocate the vectors, subsequent calls will just reset them.
-        reset_extreme_unitigs();
-
-        // Clear the path buffers for all threads before processing this sequence.
-        for(uint16_t t_id = 0; t_id < thread_count; ++t_id)
-            path_buffer[t_id].clear();
-
-
         // Get an idle thread to process this entire sequence.
         const uint16_t thread_id = thread_pool.get_idle_thread();
         
+        // Clear only this thread's path buffer (not all threads).
+        path_buffer[thread_id].clear();
+        
+        // Reset extreme unitigs for this specific thread only.
+        first_unitig[thread_id] = Oriented_Unitig();
+        second_unitig[thread_id] = Oriented_Unitig();
+        last_unitig[thread_id] = Oriented_Unitig();
+        
+        // Store metadata for this sequence to build tiling later.
+        SequenceJob job;
+        job.thread_id = thread_id;
+        job.seq_name = remove_whitespaces(parser.seq_name());
+        job.ref_id = parser.ref_id();
+        sequence_jobs.push_back(job);
+        
         // Assign the entire sequence to the thread for processing.
+        // The thread will process in parallel with other threads working on different sequences.
         thread_pool.assign_output_task(thread_id, seq, seq_len, 0, seq_len - k);
         
-        // Wait for the sequence processing to complete.
-        thread_pool.wait_completion();
+        // NOTE: We do NOT wait for completion here - threads work in parallel.
+    }
 
+    // Now wait for all threads to complete their work.
+    thread_pool.wait_completion();
 
-        // Build the complete sequence tiling from the thread's buffer.
-        const std::string seq_name = remove_whitespaces(parser.seq_name());
-        const std::string path_name =   std::string("Reference:") + std::to_string(parser.ref_id()) +
-                                        std::string("_Sequence:") + seq_name;
+    std::cout << "\nProcessed " << seq_count << " sequences. Total reference length: " << ref_len << " bases.\n";
+    std::cout << "Maximum input sequence buffer size used: " << max_buf_sz / (1024 * 1024) << " MB.\n";
+
+    // Now build and write all tilings from the sequence jobs.
+    // This can be done in any order since tilings are independent once unitigs are identified.
+    for(const auto& job : sequence_jobs)
+    {
+        const uint16_t thread_id = job.thread_id;
+        const std::string path_name = std::string("Reference:") + std::to_string(job.ref_id) +
+                                      std::string("_Sequence:") + job.seq_name;
 
         // Build the complete tiling: path_name \t first_vertex path_buffer_content \n
         std::string complete_tiling = path_name + "\t";
@@ -839,9 +867,6 @@ void CdBG<k>::output_maximal_unitigs_gfa_reduced_in_mem()
         // Write to the global sequence buffer in a thread-safe manner.
         append_to_global_sequence_buffer(complete_tiling);
     }
-
-    std::cout << "\nProcessed " << seq_count << " sequences. Total reference length: " << ref_len << " bases.\n";
-    std::cout << "Maximum input sequence buffer size used: " << max_buf_sz / (1024 * 1024) << " MB.\n";
 
     
     // Close the thread pool.

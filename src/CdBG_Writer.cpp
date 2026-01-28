@@ -600,7 +600,18 @@ template <uint16_t k>
 void CdBG<k>::check_output_buffer(const uint16_t thread_id)
 {
     if(output_buffer[thread_id].size() >= BUFFER_THRESHOLD)
-        flush_buffer(output_buffer[thread_id], output_[thread_id]);
+    {
+        if(in_memory_mode)
+        {
+            // In memory mode, flush to global buffer instead of file
+            append_to_global_buffer(output_buffer[thread_id]);
+            output_buffer[thread_id].clear();
+        }
+        else
+        {
+            flush_buffer(output_buffer[thread_id], output_[thread_id]);
+        }
+    }
 }
 
 
@@ -610,8 +621,21 @@ void CdBG<k>::flush_output_buffers()
     const uint16_t thread_count = params.thread_count();
 
     for (uint16_t t_id = 0; t_id < thread_count; ++t_id)
+    {
         if(!output_buffer[t_id].empty())
-            flush_buffer(output_buffer[t_id], output_[t_id]);
+        {
+            if(in_memory_mode)
+            {
+                // In memory mode, flush to global buffer instead of file
+                append_to_global_buffer(output_buffer[t_id]);
+                output_buffer[t_id].clear();
+            }
+            else
+            {
+                flush_buffer(output_buffer[t_id], output_[t_id]);
+            }
+        }
+    }
 }
 
 
@@ -937,11 +961,18 @@ void CdBG<k>::output_maximal_unitigs_gfa_reduced_in_mem(bool retain_input_order)
     flush_global_sequence_buffer();
     flush_output_buffers();
 
-    // Reset in-memory mode flag.
+    // Flush and close the output logger properly for async logging
+    if(output)
+        output->flush();
+    
+    // Reset in-memory mode flag before closing loggers
     in_memory_mode = false;
 
-    // Close `spdlog`.
+    // Close `spdlog` - this will force-flush async loggers
     spdlog::drop_all();
+    
+    // Reset thread pools to ensure all async operations complete
+    tp_output.reset();
 
     // Close the parser.
     parser.close();

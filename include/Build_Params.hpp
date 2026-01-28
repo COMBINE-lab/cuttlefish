@@ -41,6 +41,7 @@ private:
     const bool save_buckets_;   // Option to save the DFA-states collection of the vertices of the de Bruijn graph.
     const bool save_vertices_;  // Option to save the vertex set of the de Bruijn graph (in KMC database format).
     const bool collate_output_in_mem_;  // Whether to use in-memory collation for GFA-reduced output (instead of file-based).
+    const bool retain_input_order_; // Whether to output tilings in input order (only valid with collate_output_in_mem and format 3).
 #ifdef CF_DEVELOP_MODE
     const double gamma_;    // The gamma parameter for the BBHash MPHF.
 #endif
@@ -96,7 +97,8 @@ public:
                     bool save_mph,
                     bool save_buckets,
                     bool save_vertices,
-                    bool collate_output_in_mem
+                    bool collate_output_in_mem,
+                    bool retain_input_order
 #ifdef CF_DEVELOP_MODE
                     , double gamma
 #endif
@@ -273,6 +275,13 @@ public:
     bool collate_output_in_mem() const
     {
         return collate_output_in_mem_;
+    }
+
+
+    // Returns whether to output tilings in input order (only valid with collate_output_in_mem and format 3).
+    bool retain_input_order() const
+    {
+        return retain_input_order_;
     }
 
 

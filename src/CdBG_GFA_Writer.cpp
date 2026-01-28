@@ -215,15 +215,15 @@ void CdBG<k>::output_gfa_off_substring(const uint16_t thread_id, const char* con
                 // Copy the tiling string (not reference) so it's safe even if map is modified.
                 const std::string tiling = completed_tilings[next_num];
                 
-                // Erase from buffer and increment counter before writing.
+                // Erase from buffer and increment counter.
                 // This must happen while holding the lock.
                 completed_tilings.erase(next_num);
                 next_sequence_to_write.fetch_add(1);
                 
-                // Unlock before writing to avoid holding lock during I/O.
-                tiling_buffer_lock.unlock();
+                // Keep lock held during write to ensure correct ordering.
+                // If we unlock here, another thread could write the next tiling
+                // before this thread writes the current one, causing inversions.
                 append_to_global_sequence_buffer(tiling);
-                tiling_buffer_lock.lock();
             }
             
             tiling_buffer_lock.unlock();

@@ -143,6 +143,7 @@ void CdBG<k>::reset_extreme_unitigs()
     sequence_name.resize(thread_count);
     sequence_ref_id.resize(thread_count);
     sequence_number.resize(thread_count);
+    thread_sequence_buffer.resize(thread_count);
 }
 
 

@@ -814,6 +814,11 @@ void CdBG<k>::output_maximal_unitigs_gfa_reduced_in_mem()
         // Get an idle thread to process this entire sequence.
         const uint16_t thread_id = thread_pool.get_idle_thread();
         
+        // Copy the sequence data to the thread's buffer to avoid race conditions.
+        // The parser reuses its internal buffer for each sequence, so we need a stable copy.
+        thread_sequence_buffer[thread_id].assign(seq, seq_len);
+        const char* const thread_seq = thread_sequence_buffer[thread_id].c_str();
+        
         // Clear only this thread's path buffer (not all threads).
         path_buffer[thread_id].clear();
         
@@ -828,12 +833,18 @@ void CdBG<k>::output_maximal_unitigs_gfa_reduced_in_mem()
         sequence_number[thread_id] = seq_count - 1;  // 0-indexed sequence number for ordering.
         
         // Assign the entire sequence to the thread for processing.
-        thread_pool.assign_output_task(thread_id, seq, seq_len, 0, seq_len - k);
+        // Use the copied sequence data, not the parser's buffer.
+        thread_pool.assign_output_task(thread_id, thread_seq, seq_len, 0, seq_len - k);
         
-        // Wait for this sequence to complete before moving to the next one.
-        // This is necessary because the parser's sequence buffer gets reused for each sequence.
-        thread_pool.wait_completion();
+        // Note: We do NOT wait for completion here. The get_idle_thread() call above will
+        // block until a thread becomes available, naturally throttling the loop.
+        // Threads work in parallel on different sequences.
+        // The parser's buffer is safe because get_idle_thread() won't return until
+        // the previous sequence assigned to this thread is complete (thread is idle).
     }
+    
+    // Wait for all remaining threads to complete their work.
+    thread_pool.wait_completion();
 
     std::cout << "\nProcessed " << seq_count << " sequences. Total reference length: " << ref_len << " bases.\n";
     std::cout << "Maximum input sequence buffer size used: " << max_buf_sz / (1024 * 1024) << " MB.\n";

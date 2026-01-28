@@ -107,6 +107,11 @@ private:
     std::vector<std::string> sequence_name;
     std::vector<uint64_t> sequence_ref_id;
     std::vector<uint64_t> sequence_number;
+    
+    // Per-thread sequence buffer to store a copy of the sequence data.
+    // This is necessary for parallel processing to avoid race conditions with the parser's
+    // internal buffer which gets reused for each sequence.
+    std::vector<std::string> thread_sequence_buffer;
 
     // The GFA header lines.
     const static std::string GFA1_HEADER, GFA2_HEADER;

@@ -763,12 +763,12 @@ void CdBG<k>::output_maximal_unitigs_gfa_reduced_in_mem(bool retain_input_order)
     // Allocate path buffers for accumulating tilings (reuses existing mechanism but without file I/O).
     allocate_path_buffers();
 
-    // Initialize the unitig tracking vectors using the existing function
-    reset_extreme_unitigs();
-
-
     // Construct a thread pool.
     Thread_Pool<k> thread_pool(thread_count, this, Thread_Pool<k>::Task_Type::output_gfa_reduced);
+
+    // Initialize the unitig tracking vectors AFTER creating the thread pool
+    // to ensure correct thread_count is used
+    reset_extreme_unitigs();
 
 
     // Open a parser for the FASTA / FASTQ file containing the reference.

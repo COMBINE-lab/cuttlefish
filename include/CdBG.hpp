@@ -10,6 +10,7 @@
 #include "Data_Logistics.hpp"
 #include "Unipaths_Meta_info.hpp"
 #include "dBG_Info.hpp"
+#include "Spin_Lock.hpp"
 #include "spdlog/sinks/basic_file_sink.h"
 
 #include <cstdint>
@@ -18,6 +19,8 @@
 #include <string>
 #include <vector>
 #include <utility>
+#include <atomic>
+#include <map>
 
 
 template <uint16_t k, uint8_t BITS_PER_KEY> class Kmer_Hash_Table;
@@ -97,6 +100,19 @@ private:
     // thread number `t_id`.
     std::vector<Oriented_Unitig> first_unitig, second_unitig, last_unitig;
 
+    // Per-thread sequence metadata for in-memory mode tiling construction.
+    // `sequence_name[t_id]` and `sequence_ref_id[t_id]` store the name and reference ID
+    // of the sequence currently being processed by thread `t_id`.
+    // `sequence_number[t_id]` stores the input order number for retain_input_order mode.
+    std::vector<std::string> sequence_name;
+    std::vector<uint64_t> sequence_ref_id;
+    std::vector<uint64_t> sequence_number;
+    
+    // Per-thread sequence buffer to store a copy of the sequence data.
+    // This is necessary for parallel processing to avoid race conditions with the parser's
+    // internal buffer which gets reused for each sequence.
+    std::vector<std::string> thread_sequence_buffer;
+
     // The GFA header lines.
     const static std::string GFA1_HEADER, GFA2_HEADER;
     
@@ -108,6 +124,29 @@ private:
 
     // Information about sequences too short for processing, i.e. with length < `k`.
     std::vector<std::pair<std::string, std::size_t>> short_seqs;
+
+    // Global in-memory buffer for the in-memory GFA-reduced output approach (for segments).
+    std::string global_output_buffer;
+
+    // Global in-memory buffer for sequence tilings (paths).
+    std::string global_sequence_buffer;
+
+    // Spin lock for thread-safe access to the global output buffer.
+    Spin_Lock global_buffer_lock;
+
+    // Spin lock for thread-safe access to the global sequence buffer.
+    Spin_Lock global_sequence_lock;
+
+    // Threshold for flushing the global buffer (1-5 MB range).
+    static constexpr size_t GLOBAL_BUFFER_THRESHOLD = 2 * 1024 * 1024;  // 2 MB.
+
+    // Flag indicating whether we're using in-memory mode (no file loggers for paths).
+    bool in_memory_mode;
+
+    // For ordered tiling output: track next sequence number to write and buffer completed tilings.
+    std::atomic<uint64_t> next_sequence_to_write;
+    std::map<uint64_t, std::string> completed_tilings;
+    Spin_Lock tiling_buffer_lock;
 
 
     /* Build methods */
@@ -225,6 +264,20 @@ private:
     // Distributes the outputting task of the maximal unitigs in a GFA-reduced
     // format for the sequence `seq` of length `seq_len` to the thread pool `thread_pool`.
     void distribute_output_gfa_reduced(const char* seq, size_t seq_len, Thread_Pool<k>& thread_pool);
+
+    // Outputs the distinct maximal unitigs (in canonical form) of the compacted de Bruijn graph
+    // in a GFA-reduced format using an in-memory approach. This version assigns entire sequences
+    // to threads and uses in-memory buffers instead of thread-local file storage.
+    // When retain_input_order is true, tilings are buffered and output in input order.
+    // When false (default), tilings are output immediately when threads complete.
+    void output_maximal_unitigs_gfa_reduced_in_mem();
+
+    // Distributes the outputting task of the maximal unitigs in a GFA-reduced format for an
+    // entire sequence `seq` of length `seq_len` to a thread in the thread pool `thread_pool`.
+    // This version assigns whole sequences to threads instead of partitioning them.
+    void distribute_output_gfa_reduced_in_mem(const char* seq, size_t seq_len, const std::string& seq_name, 
+                                               uint64_t ref_id, Thread_Pool<k>& thread_pool, 
+                                               Job_Queue<std::string, Oriented_Unitig>& job_queue);
 
     // Clears the output file content.
     void clear_output_file() const;
@@ -434,6 +487,20 @@ private:
 
     // Closes the path-output specific loggers, with required flushing as necessary.
     void close_path_loggers();
+
+    // Appends content to the global in-memory buffer in a thread-safe manner.
+    // If the global buffer exceeds GLOBAL_BUFFER_THRESHOLD after appending, it is flushed.
+    void append_to_global_buffer(const std::string& content);
+
+    // Flushes the global in-memory buffer to the output logger.
+    void flush_global_buffer();
+
+    // Appends sequence tiling content to the global sequence buffer in a thread-safe manner.
+    // If the global sequence buffer exceeds GLOBAL_BUFFER_THRESHOLD after appending, it is flushed.
+    void append_to_global_sequence_buffer(const std::string& content);
+
+    // Flushes the global sequence buffer to the sequence output file.
+    void flush_global_sequence_buffer();
 
     // Removes the temporary files used for the thread-specific path output streams
     // (depending on the GFA version) from the disk. The thread-specific output file

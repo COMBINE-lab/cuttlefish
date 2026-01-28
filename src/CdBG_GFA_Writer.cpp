@@ -138,6 +138,12 @@ void CdBG<k>::reset_extreme_unitigs()
     std::fill(first_unitig.begin(), first_unitig.end(), Oriented_Unitig());
     std::fill(second_unitig.begin(), second_unitig.end(), Oriented_Unitig());
     std::fill(last_unitig.begin(), last_unitig.end(), Oriented_Unitig());
+
+    // Initialize sequence metadata vectors for in-memory mode
+    sequence_name.resize(thread_count);
+    sequence_ref_id.resize(thread_count);
+    sequence_number.resize(thread_count);
+    thread_sequence_buffer.resize(thread_count);
 }
 
 
@@ -155,6 +161,84 @@ void CdBG<k>::output_gfa_off_substring(const uint16_t thread_id, const char* con
 
         // Process a maximal valid contiguous subsequence, and advance to the index following it.
         kmer_idx = output_maximal_unitigs_gfa(thread_id, seq, seq_len, right_end, kmer_idx);
+    }
+
+    // If we're in in-memory mode, build and write the tiling immediately after processing the sequence.
+    if(in_memory_mode)
+    {
+        const bool poly_n_stretch = params.poly_n_stretch();
+        const std::string path_name = std::string("Reference:") + std::to_string(sequence_ref_id[thread_id]) +
+                                      std::string("_Sequence:") + sequence_name[thread_id];
+
+        // Build the complete tiling: path_name \t first_vertex path_buffer_content \n
+        std::string complete_tiling = path_name + "\t";
+        
+        // Add the first vertex if valid
+        const Oriented_Unitig& first = first_unitig[thread_id];
+        if(first.is_valid())
+        {
+            // Add polyN stretch before first unitig if needed
+            if(poly_n_stretch && first.start_kmer_idx > 0)
+            {
+                complete_tiling += "N";
+                complete_tiling += fmt::format_int(first.start_kmer_idx).c_str();
+                complete_tiling += " ";
+            }
+            
+            complete_tiling += fmt::format_int(first.unitig_id).c_str();
+            complete_tiling += (first.dir == cuttlefish::FWD ? "+" : "-");
+            
+            // Add the rest of the path from path_buffer
+            complete_tiling += path_buffer[thread_id];
+        }
+        
+        complete_tiling += "\n";
+        
+        // Write or buffer the tiling based on retain_input_order setting.
+        if(params.retain_input_order())
+        {
+            // Buffer the tiling and write in order.
+            const uint64_t seq_num = sequence_number[thread_id];
+            
+            // Hold lock for BOTH buffering AND flushing to avoid race conditions.
+            // If we unlock between buffering and flushing, another thread might
+            // flush some tilings, leaving others orphaned in the buffer.
+            tiling_buffer_lock.lock();
+            
+            // Buffer this tiling.
+            completed_tilings[seq_num] = complete_tiling;
+            
+            // Try to write all consecutive completed tilings starting from next_to_write.
+            while(completed_tilings.find(next_sequence_to_write.load()) != completed_tilings.end())
+            {
+                const uint64_t next_num = next_sequence_to_write.load();
+                // Copy the tiling string (not reference) so it's safe even if map is modified.
+                const std::string tiling = completed_tilings[next_num];
+                
+                // Erase from buffer before unlocking.
+                // This prevents other threads from finding this sequence number.
+                completed_tilings.erase(next_num);
+                
+                // Unlock before I/O to avoid holding lock during potentially slow operation.
+                // Other threads can add to completed_tilings while we write.
+                tiling_buffer_lock.unlock();
+                append_to_global_sequence_buffer(tiling);
+                tiling_buffer_lock.lock();
+                
+                // Increment AFTER write completes. This acts as a "commit" that allows
+                // the next thread to find and process the next sequence number.
+                // Order is preserved because only the thread that erased a sequence can
+                // increment next_sequence_to_write, and this happens after the write.
+                next_sequence_to_write.fetch_add(1);
+            }
+            
+            tiling_buffer_lock.unlock();
+        }
+        else
+        {
+            // Default behavior: write immediately (completion order).
+            append_to_global_sequence_buffer(complete_tiling);
+        }
     }
 }
 
@@ -638,6 +722,10 @@ void CdBG<k>::append_edge_to_path(const uint16_t thread_id, const Oriented_Uniti
 template <uint16_t k>
 void CdBG<k>::check_path_buffer(const uint16_t thread_id)
 {
+    // In in-memory mode, we don't flush to file loggers - we accumulate the entire sequence in memory
+    if(in_memory_mode)
+        return;
+    
     if(path_buffer[thread_id].size() >= BUFFER_THRESHOLD)
         flush_buffer(path_buffer[thread_id], path_output_[thread_id]);
 

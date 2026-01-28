@@ -7,8 +7,11 @@
 #include "spdlog/spdlog.h"
 #include "spdlog/async.h"
 #include "spdlog/sinks/basic_file_sink.h"
+#include "fmt/format.h"
 
 #include <iomanip>
+#include <mutex>
+#include <fstream>
 
 
 template <uint16_t k>
@@ -22,7 +25,12 @@ void CdBG<k>::output_maximal_unitigs()
     else if(output_format == cuttlefish::gfa1 || output_format == cuttlefish::gfa2)
         output_maximal_unitigs_gfa();
     else if(output_format == cuttlefish::gfa_reduced)
-        output_maximal_unitigs_gfa_reduced();
+    {
+        if(params.collate_output_in_mem())
+            output_maximal_unitigs_gfa_reduced_in_mem();
+        else
+            output_maximal_unitigs_gfa_reduced();
+    }
 
     
     for(uint16_t t_id = 0; t_id < params.thread_count(); ++t_id)
@@ -277,8 +285,23 @@ void CdBG<k>::distribute_output_gfa(const char* const seq, const size_t seq_len,
 
 
 template <uint16_t k>
+void CdBG<k>::distribute_output_gfa_reduced(const char* const seq, const size_t seq_len, Thread_Pool<k>& thread_pool)
+{
+    // For GFA-reduced format, use the same distribution strategy as regular GFA
+    distribute_output_gfa(seq, seq_len, thread_pool);
+}
+
+
+template <uint16_t k>
 void CdBG<k>::output_maximal_unitigs_gfa_reduced()
 {
+    // Use in-memory collation if the flag is set
+    if(params.collate_output_in_mem())
+    {
+        output_maximal_unitigs_gfa_reduced_in_mem();
+        return;
+    }
+
     std::chrono::high_resolution_clock::time_point t_start = std::chrono::high_resolution_clock::now();
 
 
@@ -655,6 +678,223 @@ void CdBG<k>::flush_path_loggers()
         if(gfa_v == cuttlefish::gfa1)
             overlap_output_[t_id]->flush();
     }
+}
+
+
+template <uint16_t k>
+void CdBG<k>::append_to_global_buffer(const std::string& content)
+{
+    std::lock_guard<Spin_Lock> guard(global_buffer_lock);
+    
+    global_output_buffer += content;
+    
+    // Check if we need to flush
+    if(global_output_buffer.size() >= GLOBAL_BUFFER_THRESHOLD)
+    {
+        write(global_output_buffer, output);
+        global_output_buffer.clear();
+    }
+}
+
+
+template <uint16_t k>
+void CdBG<k>::flush_global_buffer()
+{
+    std::lock_guard<Spin_Lock> guard(global_buffer_lock);
+    
+    if(!global_output_buffer.empty())
+    {
+        write(global_output_buffer, output);
+        global_output_buffer.clear();
+    }
+}
+
+
+template <uint16_t k>
+void CdBG<k>::append_to_global_sequence_buffer(const std::string& content)
+{
+    std::lock_guard<Spin_Lock> guard(global_sequence_lock);
+    
+    global_sequence_buffer += content;
+    
+    // Check if we need to flush to the sequence file
+    if(global_sequence_buffer.size() >= GLOBAL_BUFFER_THRESHOLD)
+    {
+        const std::string& seq_file_path = params.sequence_file_path();
+        std::ofstream output(seq_file_path.c_str(), std::ios_base::app);
+        output << global_sequence_buffer;
+        output.close();
+        global_sequence_buffer.clear();
+    }
+}
+
+
+template <uint16_t k>
+void CdBG<k>::flush_global_sequence_buffer()
+{
+    std::lock_guard<Spin_Lock> guard(global_sequence_lock);
+    
+    if(!global_sequence_buffer.empty())
+    {
+        const std::string& seq_file_path = params.sequence_file_path();
+        std::ofstream output(seq_file_path.c_str(), std::ios_base::app);
+        output << global_sequence_buffer;
+        output.close();
+        global_sequence_buffer.clear();
+    }
+}
+
+
+template <uint16_t k>
+void CdBG<k>::output_maximal_unitigs_gfa_reduced_in_mem()
+{
+    std::chrono::high_resolution_clock::time_point t_start = std::chrono::high_resolution_clock::now();
+
+
+    const Seq_Input& reference_input = params.sequence_input();
+    const uint16_t thread_count = params.thread_count();
+
+
+    // Clear the output file and initialize the output loggers.
+    clear_output_file();
+    init_output_loggers();
+
+    // Enable in-memory mode to prevent flushing path buffers to file loggers.
+    in_memory_mode = true;
+
+    // Initialize ordering-related variables if retain_input_order is true.
+    if(params.retain_input_order())
+    {
+        next_sequence_to_write.store(0);
+        completed_tilings.clear();
+    }
+
+    // Allocate the output buffers for each thread (for segments).
+    allocate_output_buffers();
+    
+    // Allocate path buffers for accumulating tilings (reuses existing mechanism but without file I/O).
+    allocate_path_buffers();
+
+
+    // Construct a thread pool.
+    Thread_Pool<k> thread_pool(thread_count, this, Thread_Pool<k>::Task_Type::output_gfa_reduced);
+
+    // Initialize the extreme unitigs vectors after thread pool creation.
+    reset_extreme_unitigs();
+
+
+    // Open a parser for the FASTA / FASTQ file containing the reference.
+    Ref_Parser parser(reference_input);
+
+    // Track the maximum sequence buffer size used and the total length of the references.
+    size_t max_buf_sz = 0;
+    uint64_t ref_len = 0;
+    uint64_t seq_count = 0;
+    uint64_t processed_seq_count = 0;  // Count of sequences actually processed (not skipped).
+
+    // Parse sequences one-by-one, and assign each entire sequence to a thread for processing.
+    // Threads process sequences in parallel and write their tilings immediately upon completion.
+    while(parser.read_next_seq())
+    {
+        const char* const seq = parser.seq();
+        const size_t seq_len = parser.seq_len();
+        const size_t seq_buf_sz = parser.buff_sz();
+
+
+        seq_count++;
+        ref_len += seq_len;
+        max_buf_sz = std::max(max_buf_sz, seq_buf_sz);
+        std::cerr << "\rProcessing sequence " << parser.seq_id() << ", with length:\t" << std::setw(10) << seq_len << ".";
+
+        // Nothing to process for sequences with length shorter than `k`.
+        if(seq_len < k)
+            continue;
+
+
+        // Get an idle thread to process this entire sequence.
+        const uint16_t thread_id = thread_pool.get_idle_thread();
+        
+        // Copy the sequence data to the thread's buffer to avoid race conditions.
+        // The parser reuses its internal buffer for each sequence, so we need a stable copy.
+        thread_sequence_buffer[thread_id].assign(seq, seq_len);
+        const char* const thread_seq = thread_sequence_buffer[thread_id].c_str();
+        
+        // Clear only this thread's path buffer (not all threads).
+        path_buffer[thread_id].clear();
+        
+        // Reset extreme unitigs for this specific thread only.
+        first_unitig[thread_id] = Oriented_Unitig();
+        second_unitig[thread_id] = Oriented_Unitig();
+        last_unitig[thread_id] = Oriented_Unitig();
+        
+        // Store metadata for this sequence so the thread can build the tiling when it finishes.
+        sequence_name[thread_id] = remove_whitespaces(parser.seq_name());
+        sequence_ref_id[thread_id] = parser.ref_id();
+        sequence_number[thread_id] = processed_seq_count;  // 0-indexed sequence number for ordering (only processed sequences).
+        
+        processed_seq_count++;  // Increment after assignment.
+        
+        // Assign the entire sequence to the thread for processing.
+        // Use the copied sequence data, not the parser's buffer.
+        thread_pool.assign_output_task(thread_id, thread_seq, seq_len, 0, seq_len - k);
+        
+        // Note: We do NOT wait for completion here. The get_idle_thread() call above will
+        // block until a thread becomes available, naturally throttling the loop.
+        // Threads work in parallel on different sequences.
+        // The parser's buffer is safe because get_idle_thread() won't return until
+        // the previous sequence assigned to this thread is complete (thread is idle).
+    }
+    
+    // Wait for all remaining threads to complete their work.
+    thread_pool.wait_completion();
+
+    std::cout << "\nProcessed " << seq_count << " sequences. Total reference length: " << ref_len << " bases.\n";
+    std::cout << "Maximum input sequence buffer size used: " << max_buf_sz / (1024 * 1024) << " MB.\n";
+
+    
+    // Close the thread pool.
+    thread_pool.close();
+
+
+    // Flush the global buffers.
+    flush_global_buffer();
+    flush_global_sequence_buffer();
+    flush_output_buffers();
+
+    // Reset in-memory mode flag.
+    in_memory_mode = false;
+
+    // Close `spdlog`.
+    spdlog::drop_all();
+
+    // Close the parser.
+    parser.close();
+
+
+    std::chrono::high_resolution_clock::time_point t_end = std::chrono::high_resolution_clock::now();
+    double elapsed_seconds = std::chrono::duration_cast<std::chrono::duration<double>>(t_end - t_start).count();
+    std::cout << "Done writing the compacted graph (in GFA-reduced in-memory format). Time taken = " << elapsed_seconds << " seconds.\n";
+}
+
+
+template <uint16_t k>
+void CdBG<k>::distribute_output_gfa_reduced_in_mem(const char* const seq, const size_t seq_len, 
+                                                    const std::string& seq_name, const uint64_t ref_id, 
+                                                    Thread_Pool<k>& thread_pool, 
+                                                    Job_Queue<std::string, Oriented_Unitig>& job_queue)
+{
+    // Note: seq_name, ref_id, and job_queue are currently unused but kept in the signature
+    // for consistency with the calling code and potential future enhancements.
+    (void)seq_name;
+    (void)ref_id;
+    (void)job_queue;
+
+    // Get an idle thread to process this entire sequence.
+    const uint16_t idle_thread_id = thread_pool.get_idle_thread();
+    
+    // Assign the entire sequence to the thread for processing.
+    // Unlike partitioning approaches, we process the complete sequence (left_end = 0, right_end = seq_len - k).
+    thread_pool.assign_output_task(idle_thread_id, seq, seq_len, 0, seq_len - k);
 }
 
 

@@ -25,7 +25,12 @@ void CdBG<k>::output_maximal_unitigs()
     else if(output_format == cuttlefish::gfa1 || output_format == cuttlefish::gfa2)
         output_maximal_unitigs_gfa();
     else if(output_format == cuttlefish::gfa_reduced)
-        output_maximal_unitigs_gfa_reduced();
+    {
+        if(params.collate_output_in_mem())
+            output_maximal_unitigs_gfa_reduced_in_mem();
+        else
+            output_maximal_unitigs_gfa_reduced();
+    }
 
     
     for(uint16_t t_id = 0; t_id < params.thread_count(); ++t_id)

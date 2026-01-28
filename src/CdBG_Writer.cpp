@@ -290,6 +290,13 @@ void CdBG<k>::distribute_output_gfa_reduced(const char* const seq, const size_t 
 template <uint16_t k>
 void CdBG<k>::output_maximal_unitigs_gfa_reduced()
 {
+    // Use in-memory collation if the flag is set
+    if(params.collate_output_in_mem())
+    {
+        output_maximal_unitigs_gfa_reduced_in_mem();
+        return;
+    }
+
     std::chrono::high_resolution_clock::time_point t_start = std::chrono::high_resolution_clock::now();
 
 
@@ -736,6 +743,7 @@ void CdBG<k>::flush_global_sequence_buffer()
 template <uint16_t k>
 void CdBG<k>::output_maximal_unitigs_gfa_reduced_in_mem()
 {
+    std::cout << "\n*** DEBUG: Entering output_maximal_unitigs_gfa_reduced_in_mem() ***\n" << std::flush;
     std::chrono::high_resolution_clock::time_point t_start = std::chrono::high_resolution_clock::now();
 
 
@@ -749,6 +757,13 @@ void CdBG<k>::output_maximal_unitigs_gfa_reduced_in_mem()
 
     // Enable in-memory mode to prevent flushing path buffers to file loggers.
     in_memory_mode = true;
+
+    // Initialize ordering-related variables if retain_input_order is true.
+    if(params.retain_input_order())
+    {
+        next_sequence_to_write.store(0);
+        completed_tilings.clear();
+    }
 
     // Allocate the output buffers for each thread (for segments).
     allocate_output_buffers();
@@ -805,6 +820,7 @@ void CdBG<k>::output_maximal_unitigs_gfa_reduced_in_mem()
         // Store metadata for this sequence so the thread can build the tiling when it finishes.
         sequence_name[thread_id] = remove_whitespaces(parser.seq_name());
         sequence_ref_id[thread_id] = parser.ref_id();
+        sequence_number[thread_id] = seq_count - 1;  // 0-indexed sequence number for ordering.
         
         // Assign the entire sequence to the thread for processing.
         // The thread will process in parallel with other threads working on different sequences.

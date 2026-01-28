@@ -12,7 +12,8 @@ CdBG<k>::CdBG(const Build_Params& params):
     logistics(this->params),
     hash_table(nullptr),
     dbg_info(params.json_file_path()),
-    in_memory_mode(false)
+    in_memory_mode(false),
+    next_sequence_to_write(0)
 {}
 
 

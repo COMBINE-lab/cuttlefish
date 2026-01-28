@@ -19,6 +19,8 @@
 #include <string>
 #include <vector>
 #include <utility>
+#include <atomic>
+#include <map>
 
 
 template <uint16_t k, uint8_t BITS_PER_KEY> class Kmer_Hash_Table;
@@ -101,8 +103,10 @@ private:
     // Per-thread sequence metadata for in-memory mode tiling construction.
     // `sequence_name[t_id]` and `sequence_ref_id[t_id]` store the name and reference ID
     // of the sequence currently being processed by thread `t_id`.
+    // `sequence_number[t_id]` stores the input order number for retain_input_order mode.
     std::vector<std::string> sequence_name;
     std::vector<uint64_t> sequence_ref_id;
+    std::vector<uint64_t> sequence_number;
 
     // The GFA header lines.
     const static std::string GFA1_HEADER, GFA2_HEADER;
@@ -133,6 +137,11 @@ private:
 
     // Flag indicating whether we're using in-memory mode (no file loggers for paths).
     bool in_memory_mode;
+
+    // For ordered tiling output: track next sequence number to write and buffer completed tilings.
+    std::atomic<uint64_t> next_sequence_to_write;
+    std::map<uint64_t, std::string> completed_tilings;
+    Spin_Lock tiling_buffer_lock;
 
 
     /* Build methods */
@@ -254,6 +263,8 @@ private:
     // Outputs the distinct maximal unitigs (in canonical form) of the compacted de Bruijn graph
     // in a GFA-reduced format using an in-memory approach. This version assigns entire sequences
     // to threads and uses in-memory buffers instead of thread-local file storage.
+    // When retain_input_order is true, tilings are buffered and output in input order.
+    // When false (default), tilings are output immediately when threads complete.
     void output_maximal_unitigs_gfa_reduced_in_mem();
 
     // Distributes the outputting task of the maximal unitigs in a GFA-reduced format for an

@@ -142,6 +142,7 @@ void CdBG<k>::reset_extreme_unitigs()
     // Initialize sequence metadata vectors for in-memory mode
     sequence_name.resize(thread_count);
     sequence_ref_id.resize(thread_count);
+    sequence_number.resize(thread_count);
 }
 
 
@@ -192,8 +193,42 @@ void CdBG<k>::output_gfa_off_substring(const uint16_t thread_id, const char* con
         
         complete_tiling += "\n";
         
-        // Write to the global sequence buffer in a thread-safe manner.
-        append_to_global_sequence_buffer(complete_tiling);
+        // Write or buffer the tiling based on retain_input_order setting.
+        if(params.retain_input_order())
+        {
+            // Buffer the tiling and write in order.
+            const uint64_t seq_num = sequence_number[thread_id];
+            
+            {
+                // Lock to modify the buffer map.
+                tiling_buffer_lock.lock();
+                completed_tilings[seq_num] = complete_tiling;
+                tiling_buffer_lock.unlock();
+            }
+            
+            // Try to write all consecutive completed tilings starting from next_to_write.
+            tiling_buffer_lock.lock();
+            while(completed_tilings.find(next_sequence_to_write.load()) != completed_tilings.end())
+            {
+                const uint64_t next_num = next_sequence_to_write.load();
+                const std::string& tiling = completed_tilings[next_num];
+                
+                // Unlock before writing to avoid holding lock during I/O.
+                tiling_buffer_lock.unlock();
+                append_to_global_sequence_buffer(tiling);
+                tiling_buffer_lock.lock();
+                
+                // Remove from buffer and increment counter.
+                completed_tilings.erase(next_num);
+                next_sequence_to_write.fetch_add(1);
+            }
+            tiling_buffer_lock.unlock();
+        }
+        else
+        {
+            // Default behavior: write immediately (completion order).
+            append_to_global_sequence_buffer(complete_tiling);
+        }
     }
 }
 

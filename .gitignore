@@ -42,3 +42,13 @@ external/
 # CodeQL
 _codeql_build_dir/
 _codeql_detected_source_root
+
+# Test output files
+step2_*.cf_seg
+step2_*.cf_seq
+step2_*.json
+test_run_*.cf_seg
+test_run_*.cf_seq
+test_run_*.json
+test*_sorted.cf_seq
+test*_sorted.cf_seg

@@ -40,6 +40,7 @@ private:
     const bool save_mph_;   // Option to save the MPH over the vertex set of the de Bruijn graph.
     const bool save_buckets_;   // Option to save the DFA-states collection of the vertices of the de Bruijn graph.
     const bool save_vertices_;  // Option to save the vertex set of the de Bruijn graph (in KMC database format).
+    const bool collate_output_in_mem_;  // Whether to use in-memory collation for GFA-reduced output (instead of file-based).
 #ifdef CF_DEVELOP_MODE
     const double gamma_;    // The gamma parameter for the BBHash MPHF.
 #endif
@@ -94,7 +95,8 @@ public:
                     bool path_cover,
                     bool save_mph,
                     bool save_buckets,
-                    bool save_vertices
+                    bool save_vertices,
+                    bool collate_output_in_mem
 #ifdef CF_DEVELOP_MODE
                     , double gamma
 #endif
@@ -264,6 +266,13 @@ public:
     bool save_vertices() const
     {
         return save_vertices_;
+    }
+
+
+    // Returns whether to use in-memory collation for GFA-reduced output (instead of file-based).
+    bool collate_output_in_mem() const
+    {
+        return collate_output_in_mem_;
     }
 
 

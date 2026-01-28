@@ -25,7 +25,8 @@ Build_Params::Build_Params( const bool is_read_graph,
                             const bool path_cover,
                             const bool save_mph,
                             const bool save_buckets,
-                            const bool save_vertices
+                            const bool save_vertices,
+                            const bool collate_output_in_mem
 #ifdef CF_DEVELOP_MODE
                             , const double gamma
 #endif
@@ -48,7 +49,8 @@ Build_Params::Build_Params( const bool is_read_graph,
         path_cover_(path_cover),
         save_mph_(save_mph),
         save_buckets_(save_buckets),
-        save_vertices_(save_vertices)
+        save_vertices_(save_vertices),
+        collate_output_in_mem_(collate_output_in_mem)
 #ifdef CF_DEVELOP_MODE
         , gamma_(gamma)
 #endif
@@ -144,6 +146,14 @@ bool Build_Params::is_valid() const
         if(output_format() >= cuttlefish::num_op_formats)
         {
             std::cout << "Invalid output file format.\n";
+            valid = false;
+        }
+
+
+        // The --collate-output-in-mem flag is only valid with GFA-reduced format (format 3).
+        if(collate_output_in_mem_ && output_format() != cuttlefish::Output_Format::gfa_reduced)
+        {
+            std::cout << "The --collate-output-in-mem flag is only valid with GFA-reduced format (--format 3).\n";
             valid = false;
         }
 

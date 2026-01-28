@@ -68,6 +68,7 @@ int cf_build(int argc, char** argv)
             cxxopts::value<std::optional<uint16_t>>(format_code))
         ("track-short-seqs", "track existence of sequences shorter than k bases")
         ("poly-N-stretch", "includes information of polyN stretches in the tiling output")
+        ("collate-output-in-mem", "use in-memory collation for GFA-reduced output (only valid with --format 3)")
         ;
 
     options.add_options("specialized")
@@ -108,6 +109,7 @@ int cf_build(int argc, char** argv)
                                             std::optional<cuttlefish::Output_Format>();
         const auto track_short_seqs = result["track-short-seqs"].as<bool>();
         const auto poly_n_stretch = result["poly-N-stretch"].as<bool>();
+        const auto collate_output_in_mem = result["collate-output-in-mem"].as<bool>();
         const auto working_dir = result["work-dir"].as<std::string>();
         const auto path_cover = result["path-cover"].as<bool>();
         const auto save_mph = result["save-mph"].as<bool>();
@@ -122,7 +124,8 @@ int cf_build(int argc, char** argv)
                                     k, cutoff, vertex_db, edge_db, thread_count, max_memory, strict_memory,
                                     output_file, format, track_short_seqs, poly_n_stretch, working_dir,
                                     path_cover,
-                                    save_mph, save_buckets, save_vertices
+                                    save_mph, save_buckets, save_vertices,
+                                    collate_output_in_mem
 #ifdef CF_DEVELOP_MODE
                                     , gamma
 #endif

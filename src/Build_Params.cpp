@@ -23,7 +23,6 @@ Build_Params::Build_Params( const bool is_read_graph,
                             const bool poly_n_stretch,
                             const std::string& working_dir_path,
                             const bool path_cover,
-                            const bool collate_output_in_mem,
                             const bool save_mph,
                             const bool save_buckets,
                             const bool save_vertices
@@ -47,7 +46,6 @@ Build_Params::Build_Params( const bool is_read_graph,
         poly_n_stretch_(poly_n_stretch),
         working_dir_path_(working_dir_path.back() == '/' ? working_dir_path : working_dir_path + "/"),
         path_cover_(path_cover),
-        collate_output_in_mem_(collate_output_in_mem),
         save_mph_(save_mph),
         save_buckets_(save_buckets),
         save_vertices_(save_vertices)
@@ -146,14 +144,6 @@ bool Build_Params::is_valid() const
         if(output_format() >= cuttlefish::num_op_formats)
         {
             std::cout << "Invalid output file format.\n";
-            valid = false;
-        }
-
-
-        // The collate-output-in-mem flag should only be used with GFA-reduced format.
-        if(collate_output_in_mem_ && output_format() != cuttlefish::Output_Format::gfa_reduced)
-        {
-            std::cout << "The --collate-output-in-mem flag is only supported with GFA-reduced format (--format 3).\n";
             valid = false;
         }
 

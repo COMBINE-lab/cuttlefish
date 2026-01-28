@@ -9,7 +9,6 @@
 #include "spdlog/sinks/basic_file_sink.h"
 #include "fmt/format.h"
 
-#include <algorithm>
 #include <iomanip>
 #include <mutex>
 #include <fstream>
@@ -26,13 +25,7 @@ void CdBG<k>::output_maximal_unitigs()
     else if(output_format == cuttlefish::gfa1 || output_format == cuttlefish::gfa2)
         output_maximal_unitigs_gfa();
     else if(output_format == cuttlefish::gfa_reduced)
-    {
-        // Use in-memory collation if the flag is set, otherwise use file-based approach
-        if(params.collate_output_in_mem())
-            output_maximal_unitigs_gfa_reduced_in_mem();
-        else
-            output_maximal_unitigs_gfa_reduced();
-    }
+        output_maximal_unitigs_gfa_reduced();
 
     
     for(uint16_t t_id = 0; t_id < params.thread_count(); ++t_id)
@@ -600,18 +593,7 @@ template <uint16_t k>
 void CdBG<k>::check_output_buffer(const uint16_t thread_id)
 {
     if(output_buffer[thread_id].size() >= BUFFER_THRESHOLD)
-    {
-        if(in_memory_mode)
-        {
-            // In memory mode, flush to global buffer instead of file
-            append_to_global_buffer(output_buffer[thread_id]);
-            output_buffer[thread_id].clear();
-        }
-        else
-        {
-            flush_buffer(output_buffer[thread_id], output_[thread_id]);
-        }
-    }
+        flush_buffer(output_buffer[thread_id], output_[thread_id]);
 }
 
 
@@ -621,21 +603,8 @@ void CdBG<k>::flush_output_buffers()
     const uint16_t thread_count = params.thread_count();
 
     for (uint16_t t_id = 0; t_id < thread_count; ++t_id)
-    {
         if(!output_buffer[t_id].empty())
-        {
-            if(in_memory_mode)
-            {
-                // In memory mode, flush to global buffer instead of file
-                append_to_global_buffer(output_buffer[t_id]);
-                output_buffer[t_id].clear();
-            }
-            else
-            {
-                flush_buffer(output_buffer[t_id], output_[t_id]);
-            }
-        }
-    }
+            flush_buffer(output_buffer[t_id], output_[t_id]);
 }
 
 
@@ -765,7 +734,7 @@ void CdBG<k>::flush_global_sequence_buffer()
 
 
 template <uint16_t k>
-void CdBG<k>::output_maximal_unitigs_gfa_reduced_in_mem(bool retain_input_order)
+void CdBG<k>::output_maximal_unitigs_gfa_reduced_in_mem()
 {
     std::chrono::high_resolution_clock::time_point t_start = std::chrono::high_resolution_clock::now();
 
@@ -787,12 +756,9 @@ void CdBG<k>::output_maximal_unitigs_gfa_reduced_in_mem(bool retain_input_order)
     // Allocate path buffers for accumulating tilings (reuses existing mechanism but without file I/O).
     allocate_path_buffers();
 
+
     // Construct a thread pool.
     Thread_Pool<k> thread_pool(thread_count, this, Thread_Pool<k>::Task_Type::output_gfa_reduced);
-
-    // Initialize the unitig tracking vectors AFTER creating the thread pool
-    // to ensure correct thread_count is used
-    reset_extreme_unitigs();
 
 
     // Open a parser for the FASTA / FASTQ file containing the reference.
@@ -803,55 +769,6 @@ void CdBG<k>::output_maximal_unitigs_gfa_reduced_in_mem(bool retain_input_order)
     uint64_t ref_len = 0;
     uint64_t seq_count = 0;
     const bool poly_n_stretch = params.poly_n_stretch();
-
-    // Structure to hold sequence metadata for building tilings
-    struct SequenceJob {
-        uint16_t thread_id;
-        std::string seq_name;
-        uint64_t ref_id;
-        bool written;  // Track if tiling has been written (for unordered mode)
-        // For retain_input_order mode, we need to preserve the data
-        Oriented_Unitig first;
-        std::string path_content;
-    };
-    std::vector<SequenceJob> pending_jobs;
-    
-    // Track which thread last completed (for unordered writing)
-    std::vector<size_t> thread_to_job(thread_count, SIZE_MAX);  // Maps thread_id to job index
-
-    // Helper lambda to build and write a tiling for a completed job
-    auto write_tiling = [&](SequenceJob& job) {
-        const std::string path_name =   std::string("Reference:") + std::to_string(job.ref_id) +
-                                        std::string("_Sequence:") + job.seq_name;
-
-        // Build the complete tiling: path_name \t first_vertex path_buffer_content \n
-        std::string complete_tiling = path_name + "\t";
-        
-        // Add the first vertex if valid
-        const Oriented_Unitig& first = retain_input_order ? job.first : first_unitig[job.thread_id];
-        if(first.is_valid())
-        {
-            // Add polyN stretch before first unitig if needed
-            if(poly_n_stretch && first.start_kmer_idx > 0)
-            {
-                complete_tiling += "N";
-                complete_tiling += fmt::format_int(first.start_kmer_idx).c_str();
-                complete_tiling += " ";
-            }
-            
-            complete_tiling += fmt::format_int(first.unitig_id).c_str();
-            complete_tiling += (first.dir == cuttlefish::FWD ? "+" : "-");
-            
-            // Add the rest of the path from path_buffer
-            complete_tiling += retain_input_order ? job.path_content : path_buffer[job.thread_id];
-        }
-        
-        complete_tiling += "\n";
-        
-        // Write to the global sequence buffer in a thread-safe manner
-        append_to_global_sequence_buffer(complete_tiling);
-        job.written = true;
-    };
 
     // Parse sequences one-by-one, and assign each entire sequence to a thread for processing.
     while(parser.read_next_seq())
@@ -871,85 +788,60 @@ void CdBG<k>::output_maximal_unitigs_gfa_reduced_in_mem(bool retain_input_order)
             continue;
 
 
+        // Reset the extreme unitigs for each sequence.
+        // Note: first call will allocate the vectors, subsequent calls will just reset them.
+        reset_extreme_unitigs();
+
+        // Clear the path buffers for all threads before processing this sequence.
+        for(uint16_t t_id = 0; t_id < thread_count; ++t_id)
+            path_buffer[t_id].clear();
+
+
         // Get an idle thread to process this entire sequence.
         const uint16_t thread_id = thread_pool.get_idle_thread();
         
-        // If not retaining input order and this thread previously completed a job, write it now
-        if(!retain_input_order && thread_to_job[thread_id] != SIZE_MAX)
-        {
-            size_t prev_job_idx = thread_to_job[thread_id];
-            if(!pending_jobs[prev_job_idx].written)
-            {
-                write_tiling(pending_jobs[prev_job_idx]);
-            }
-        }
-        
-        // If retaining input order and this thread previously completed a job, save its data
-        if(retain_input_order && thread_to_job[thread_id] != SIZE_MAX)
-        {
-            size_t prev_job_idx = thread_to_job[thread_id];
-            // Copy the data from thread's buffers to the job structure before resetting
-            pending_jobs[prev_job_idx].first = first_unitig[thread_id];
-            pending_jobs[prev_job_idx].path_content = path_buffer[thread_id];
-        }
-        
-        // Reset buffers only for this specific thread
-        path_buffer[thread_id].clear();
-        first_unitig[thread_id] = Oriented_Unitig();
-        second_unitig[thread_id] = Oriented_Unitig();
-        last_unitig[thread_id] = Oriented_Unitig();
-        
-        // Store job metadata BEFORE assigning the task
-        const std::string seq_name = remove_whitespaces(parser.seq_name());
-        pending_jobs.push_back({thread_id, seq_name, parser.ref_id(), false, Oriented_Unitig(), ""});
-        
-        // Track that this thread is now working on this job BEFORE assigning
-        thread_to_job[thread_id] = pending_jobs.size() - 1;
-        
         // Assign the entire sequence to the thread for processing.
-        // This must be LAST to avoid race conditions.
         thread_pool.assign_output_task(thread_id, seq, seq_len, 0, seq_len - k);
-    }
+        
+        // Wait for the sequence processing to complete.
+        thread_pool.wait_completion();
 
-    // Wait for all sequences to complete processing
-    thread_pool.wait_completion();
+
+        // Build the complete sequence tiling from the thread's buffer.
+        const std::string seq_name = remove_whitespaces(parser.seq_name());
+        const std::string path_name =   std::string("Reference:") + std::to_string(parser.ref_id()) +
+                                        std::string("_Sequence:") + seq_name;
+
+        // Build the complete tiling: path_name \t first_vertex path_buffer_content \n
+        std::string complete_tiling = path_name + "\t";
+        
+        // Add the first vertex if valid
+        const Oriented_Unitig& first = first_unitig[thread_id];
+        if(first.is_valid())
+        {
+            // Add polyN stretch before first unitig if needed
+            if(poly_n_stretch && first.start_kmer_idx > 0)
+            {
+                complete_tiling += "N";
+                complete_tiling += fmt::format_int(first.start_kmer_idx).c_str();
+                complete_tiling += " ";
+            }
+            
+            complete_tiling += fmt::format_int(first.unitig_id).c_str();
+            complete_tiling += (first.dir == cuttlefish::FWD ? "+" : "-");
+            
+            // Add the rest of the path from path_buffer
+            complete_tiling += path_buffer[thread_id];
+        }
+        
+        complete_tiling += "\n";
+        
+        // Write to the global sequence buffer in a thread-safe manner.
+        append_to_global_sequence_buffer(complete_tiling);
+    }
 
     std::cout << "\nProcessed " << seq_count << " sequences. Total reference length: " << ref_len << " bases.\n";
     std::cout << "Maximum input sequence buffer size used: " << max_buf_sz / (1024 * 1024) << " MB.\n";
-
-    // If retaining input order, save data from all threads' final jobs
-    if(retain_input_order)
-    {
-        for(uint16_t t_id = 0; t_id < thread_count; ++t_id)
-        {
-            if(thread_to_job[t_id] != SIZE_MAX)
-            {
-                size_t job_idx = thread_to_job[t_id];
-                pending_jobs[job_idx].first = first_unitig[t_id];
-                pending_jobs[job_idx].path_content = path_buffer[t_id];
-            }
-        }
-    }
-
-    // Write tilings based on the ordering mode
-    if(retain_input_order)
-    {
-        // Write all tilings in input order
-        for(auto& job : pending_jobs)
-        {
-            if(!job.written)
-                write_tiling(job);
-        }
-    }
-    else
-    {
-        // Write any remaining tilings that haven't been written yet
-        for(auto& job : pending_jobs)
-        {
-            if(!job.written)
-                write_tiling(job);
-        }
-    }
 
     
     // Close the thread pool.
@@ -961,18 +853,11 @@ void CdBG<k>::output_maximal_unitigs_gfa_reduced_in_mem(bool retain_input_order)
     flush_global_sequence_buffer();
     flush_output_buffers();
 
-    // Flush and close the output logger properly for async logging
-    if(output)
-        output->flush();
-    
-    // Reset in-memory mode flag before closing loggers
+    // Reset in-memory mode flag.
     in_memory_mode = false;
 
-    // Close `spdlog` - this will force-flush async loggers
+    // Close `spdlog`.
     spdlog::drop_all();
-    
-    // Reset thread pools to ensure all async operations complete
-    tp_output.reset();
 
     // Close the parser.
     parser.close();

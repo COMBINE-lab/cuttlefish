@@ -748,7 +748,6 @@ void CdBG<k>::flush_global_sequence_buffer()
 template <uint16_t k>
 void CdBG<k>::output_maximal_unitigs_gfa_reduced_in_mem()
 {
-    std::cout << "\n*** DEBUG: Entering output_maximal_unitigs_gfa_reduced_in_mem() ***\n" << std::flush;
     std::chrono::high_resolution_clock::time_point t_start = std::chrono::high_resolution_clock::now();
 
 

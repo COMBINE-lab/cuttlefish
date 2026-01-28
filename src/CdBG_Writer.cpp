@@ -791,6 +791,7 @@ void CdBG<k>::output_maximal_unitigs_gfa_reduced_in_mem()
     size_t max_buf_sz = 0;
     uint64_t ref_len = 0;
     uint64_t seq_count = 0;
+    uint64_t processed_seq_count = 0;  // Count of sequences actually processed (not skipped).
 
     // Parse sequences one-by-one, and assign each entire sequence to a thread for processing.
     // Threads process sequences in parallel and write their tilings immediately upon completion.
@@ -830,7 +831,9 @@ void CdBG<k>::output_maximal_unitigs_gfa_reduced_in_mem()
         // Store metadata for this sequence so the thread can build the tiling when it finishes.
         sequence_name[thread_id] = remove_whitespaces(parser.seq_name());
         sequence_ref_id[thread_id] = parser.ref_id();
-        sequence_number[thread_id] = seq_count - 1;  // 0-indexed sequence number for ordering.
+        sequence_number[thread_id] = processed_seq_count;  // 0-indexed sequence number for ordering (only processed sequences).
+        
+        processed_seq_count++;  // Increment after assignment.
         
         // Assign the entire sequence to the thread for processing.
         // Use the copied sequence data, not the parser's buffer.

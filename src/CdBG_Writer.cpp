@@ -828,16 +828,12 @@ void CdBG<k>::output_maximal_unitigs_gfa_reduced_in_mem()
         sequence_number[thread_id] = seq_count - 1;  // 0-indexed sequence number for ordering.
         
         // Assign the entire sequence to the thread for processing.
-        // The thread will process in parallel with other threads working on different sequences.
-        // When the thread completes, it will immediately build and write the tiling.
         thread_pool.assign_output_task(thread_id, seq, seq_len, 0, seq_len - k);
         
-        // NOTE: We do NOT wait for completion here - threads work in parallel.
+        // Wait for this sequence to complete before moving to the next one.
+        // This is necessary because the parser's sequence buffer gets reused for each sequence.
+        thread_pool.wait_completion();
     }
-
-    // Now wait for all threads to complete their work.
-    // Each thread has already written its tiling when it finished processing its sequence.
-    thread_pool.wait_completion();
 
     std::cout << "\nProcessed " << seq_count << " sequences. Total reference length: " << ref_len << " bases.\n";
     std::cout << "Maximum input sequence buffer size used: " << max_buf_sz / (1024 * 1024) << " MB.\n";

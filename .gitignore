@@ -52,3 +52,5 @@ test_run_*.cf_seq
 test_run_*.json
 test*_sorted.cf_seq
 test*_sorted.cf_seg
+txps_large.fa.gz
+txps_large_*

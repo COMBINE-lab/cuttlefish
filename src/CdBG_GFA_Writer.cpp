@@ -200,15 +200,15 @@ void CdBG<k>::output_gfa_off_substring(const uint16_t thread_id, const char* con
             // Buffer the tiling and write in order.
             const uint64_t seq_num = sequence_number[thread_id];
             
-            {
-                // Lock to modify the buffer map.
-                tiling_buffer_lock.lock();
-                completed_tilings[seq_num] = complete_tiling;
-                tiling_buffer_lock.unlock();
-            }
+            // Hold lock for BOTH buffering AND flushing to avoid race conditions.
+            // If we unlock between buffering and flushing, another thread might
+            // flush some tilings, leaving others orphaned in the buffer.
+            tiling_buffer_lock.lock();
+            
+            // Buffer this tiling.
+            completed_tilings[seq_num] = complete_tiling;
             
             // Try to write all consecutive completed tilings starting from next_to_write.
-            tiling_buffer_lock.lock();
             while(completed_tilings.find(next_sequence_to_write.load()) != completed_tilings.end())
             {
                 const uint64_t next_num = next_sequence_to_write.load();
@@ -225,6 +225,7 @@ void CdBG<k>::output_gfa_off_substring(const uint16_t thread_id, const char* con
                 append_to_global_sequence_buffer(tiling);
                 tiling_buffer_lock.lock();
             }
+            
             tiling_buffer_lock.unlock();
         }
         else

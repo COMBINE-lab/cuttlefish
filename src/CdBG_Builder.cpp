@@ -43,6 +43,9 @@ void CdBG<k>::classify_vertices()
         uint64_t ref_len = 0;
         uint64_t seq_count = 0;
 
+        auto last_msg_time = std::chrono::steady_clock::now();
+        using namespace std::chrono_literals;
+        const auto print_duration = 2s;
         // Parse sequences one-by-one, and continue partial classification of the k-mers through them.
         while(parser.read_next_seq())
         {
@@ -53,7 +56,12 @@ void CdBG<k>::classify_vertices()
             seq_count++;
             ref_len += seq_len;
             max_buf_sz = std::max(max_buf_sz, seq_buf_sz);
-            std::cerr << "\rProcessing sequence " << parser.seq_id() << ", with length:\t" << std::setw(10) << seq_len << ".";
+
+            auto curr_time = std::chrono::steady_clock::now();
+            if ((curr_time - last_msg_time) > print_duration) {
+                std::cerr << "\rProcessing sequence " << parser.seq_id() << ", with length:\t" << std::setw(10) << seq_len << ".";
+                last_msg_time = curr_time;
+            }
 
             // Nothing to process for sequences with length shorter than `k`.
             if(seq_len < k)

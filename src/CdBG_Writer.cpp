@@ -70,6 +70,9 @@ void CdBG<k>::output_maximal_unitigs_plain()
     uint64_t ref_len = 0;
     uint64_t seq_count = 0;
 
+    auto last_msg_time = std::chrono::steady_clock::now();
+    using namespace std::chrono_literals;
+    const auto print_duration = 2s;
     // Parse sequences one-by-one, and output each unique maximal unitig encountered through them.
     while(parser.read_next_seq())
     {
@@ -80,7 +83,12 @@ void CdBG<k>::output_maximal_unitigs_plain()
         seq_count++;
         ref_len += seq_len;
         max_buf_sz = std::max(max_buf_sz, seq_buf_sz);
-        std::cerr << "\rProcessing sequence " << parser.seq_id() << ", with length:\t" << std::setw(10) << seq_len << ".";
+
+        auto curr_time = std::chrono::steady_clock::now();
+        if ((curr_time - last_msg_time) > print_duration) {
+            std::cerr << "\rProcessing sequence " << parser.seq_id() << ", with length:\t" << std::setw(10) << seq_len << ".";
+            last_msg_time = curr_time;
+        }
 
         // Nothing to process for sequences with length shorter than `k`.
         if(seq_len < k)
@@ -180,6 +188,9 @@ void CdBG<k>::output_maximal_unitigs_gfa()
     uint64_t ref_len = 0;
     uint64_t seq_count = 0;
 
+    auto last_msg_time = std::chrono::steady_clock::now();
+    using namespace std::chrono_literals;
+    const auto print_duration = 2s;
     // Parse sequences one-by-one, and output each unique maximal unitig encountered through them.
     while(parser.read_next_seq())
     {
@@ -191,7 +202,12 @@ void CdBG<k>::output_maximal_unitigs_gfa()
         seq_count++;
         ref_len += seq_len;
         max_buf_sz = std::max(max_buf_sz, seq_buf_sz);
-        std::cerr << "\rProcessing sequence " << parser.seq_id() << ", with length:\t" << std::setw(10) << seq_len << ".";
+        
+        auto curr_time = std::chrono::steady_clock::now();
+        if ((curr_time - last_msg_time) > print_duration) {
+            std::cerr << "\rProcessing sequence " << parser.seq_id() << ", with length:\t" << std::setw(10) << seq_len << ".";
+            last_msg_time = curr_time;
+        }
 
         // Nothing to process for sequences with length shorter than `k`.
         if(seq_len < k)
@@ -348,6 +364,9 @@ void CdBG<k>::output_maximal_unitigs_gfa_reduced()
     uint64_t ref_len = 0;
     uint64_t seq_count = 0;
 
+    auto last_msg_time = std::chrono::steady_clock::now();
+    using namespace std::chrono_literals;
+    const auto print_duration = 2s;
     // Parse sequences one-by-one, and output each unique maximal unitig encountered through them.
     while(parser.read_next_seq())
     {
@@ -359,7 +378,12 @@ void CdBG<k>::output_maximal_unitigs_gfa_reduced()
         seq_count++;
         ref_len += seq_len;
         max_buf_sz = std::max(max_buf_sz, seq_buf_sz);
-        std::cerr << "\rProcessing sequence " << parser.seq_id() << ", with length:\t" << std::setw(10) << seq_len << ".";
+        
+        auto curr_time = std::chrono::steady_clock::now();
+        if ((curr_time - last_msg_time) > print_duration) {
+            std::cerr << "\rProcessing sequence " << parser.seq_id() << ", with length:\t" << std::setw(10) << seq_len << ".";
+            last_msg_time = curr_time;
+        }
 
         // Nothing to process for sequences with length shorter than `k`.
         if(seq_len < k)
@@ -792,6 +816,10 @@ void CdBG<k>::output_maximal_unitigs_gfa_reduced_in_mem()
     uint64_t seq_count = 0;
     uint64_t processed_seq_count = 0;  // Count of sequences actually processed (not skipped).
 
+    auto last_msg_time = std::chrono::steady_clock::now();
+    using namespace std::chrono_literals;
+    const auto print_duration = 2s;
+ 
     // Parse sequences one-by-one, and assign each entire sequence to a thread for processing.
     // Threads process sequences in parallel and write their tilings immediately upon completion.
     while(parser.read_next_seq())
@@ -804,7 +832,12 @@ void CdBG<k>::output_maximal_unitigs_gfa_reduced_in_mem()
         seq_count++;
         ref_len += seq_len;
         max_buf_sz = std::max(max_buf_sz, seq_buf_sz);
-        std::cerr << "\rProcessing sequence " << parser.seq_id() << ", with length:\t" << std::setw(10) << seq_len << ".";
+
+        auto curr_time = std::chrono::steady_clock::now();
+        if ((curr_time - last_msg_time) > print_duration) {
+            std::cerr << "\rProcessing sequence " << parser.seq_id() << ", with length:\t" << std::setw(10) << seq_len << ".";
+            last_msg_time = curr_time;
+        }
 
         // Nothing to process for sequences with length shorter than `k`.
         if(seq_len < k)

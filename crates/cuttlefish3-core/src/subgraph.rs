@@ -58,6 +58,19 @@ pub struct LocalUnitig<const K: usize> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LocalUnitigColorRun {
+    pub offset: u32,
+    pub color_hash: u64,
+    pub sources: Vec<u32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ColoredLocalUnitig<const K: usize> {
+    pub unitig: LocalUnitig<K>,
+    pub colors: Vec<LocalUnitigColorRun>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct UnitigWalk<const K: usize> {
     label: Vec<u8>,
     vertices: Vec<Kmer<K>>,
@@ -320,6 +333,75 @@ impl<const K: usize> LocalSubgraph<K> {
 
     pub fn contract_compact(&mut self) -> Result<Vec<LocalUnitig<K>>, LocalSubgraphError> {
         self.contract_internal(false)
+    }
+
+    pub fn contract_colored(
+        &mut self,
+        entries: &[BucketManifestEntry],
+    ) -> Result<Vec<ColoredLocalUnitig<K>>, LocalSubgraphError> {
+        if !self.colored {
+            return Err(LocalSubgraphError::MalformedRecord);
+        }
+        let mut unitigs = self.contract_internal(true)?;
+        for unitig in &mut unitigs {
+            unitig.vertices = canonical_vertices_from_label::<K>(&unitig.label)?;
+        }
+
+        let mut representatives = HashMap::<u64, Kmer<K>, FastBuildHasher>::default();
+        let mut unitig_hash_runs = Vec::with_capacity(unitigs.len());
+        for unitig in &unitigs {
+            let mut runs = Vec::<(u32, u64)>::new();
+            for (offset, &vertex) in unitig.vertices.iter().enumerate() {
+                let color_hash = self
+                    .vertices
+                    .get(&vertex)
+                    .ok_or(LocalSubgraphError::MissingVertex)?
+                    .color_hash();
+                if runs
+                    .last()
+                    .is_none_or(|&(_, previous)| previous != color_hash)
+                {
+                    runs.push((offset as u32, color_hash));
+                    representatives.entry(color_hash).or_insert(vertex);
+                }
+            }
+            unitig_hash_runs.push(runs);
+        }
+
+        let mut wanted = HashMap::<Kmer<K>, u64, FastBuildHasher>::default();
+        for (&hash, &vertex) in &representatives {
+            wanted.insert(vertex, hash);
+        }
+        let mut source_sets = HashMap::<u64, Vec<u32>, FastBuildHasher>::default();
+        for entry in entries {
+            let mut reader = BucketReader::open(&entry.path)?;
+            let mut record = BucketPackedRecord::default();
+            reader.try_for_each_packed_record(&mut record, |record| {
+                collect_wanted_color_relations::<K>(record, &wanted, &mut source_sets)
+            })?;
+        }
+
+        unitigs
+            .into_iter()
+            .zip(unitig_hash_runs)
+            .map(|(unitig, runs)| {
+                let colors = runs
+                    .into_iter()
+                    .map(|(offset, color_hash)| {
+                        let sources = source_sets
+                            .get(&color_hash)
+                            .cloned()
+                            .ok_or(LocalSubgraphError::MissingVertex)?;
+                        Ok(LocalUnitigColorRun {
+                            offset,
+                            color_hash,
+                            sources,
+                        })
+                    })
+                    .collect::<Result<Vec<_>, LocalSubgraphError>>()?;
+                Ok(ColoredLocalUnitig { unitig, colors })
+            })
+            .collect()
     }
 
     fn contract_internal(
@@ -720,6 +802,52 @@ impl<const K: usize> LocalSubgraph<K> {
     }
 }
 
+fn canonical_vertices_from_label<const K: usize>(
+    label: &[u8],
+) -> Result<Vec<Kmer<K>>, LocalSubgraphError> {
+    if label.len() < K {
+        return Err(LocalSubgraphError::MalformedRecord);
+    }
+    let mut vertices = Vec::with_capacity(label.len() - K + 1);
+    let mut vertex = Kmer::<K>::from_ascii(&label[..K])?;
+    vertices.push(vertex.canonical());
+    for &base in &label[K..] {
+        vertex = vertex.roll_forward(Base::from_ascii(base));
+        vertices.push(vertex.canonical());
+    }
+    Ok(vertices)
+}
+
+fn collect_wanted_color_relations<const K: usize>(
+    record: &BucketPackedRecord,
+    wanted: &HashMap<Kmer<K>, u64, FastBuildHasher>,
+    source_sets: &mut HashMap<u64, Vec<u32>, FastBuildHasher>,
+) -> Result<(), LocalSubgraphError> {
+    let source = record
+        .source_id
+        .ok_or(LocalSubgraphError::MalformedRecord)?;
+    if record.len < K || record.len > record.words.len() * 32 {
+        return Err(LocalSubgraphError::MalformedRecord);
+    }
+    let mut bits = 0u128;
+    for idx in 0..K {
+        bits = (bits << 2) | packed_base(&record.words, idx).bits() as u128;
+    }
+    let mut vertex = Kmer::<K>::from_bits(bits);
+    for offset in 0..=record.len - K {
+        if let Some(&color_hash) = wanted.get(&vertex.canonical()) {
+            let sources = source_sets.entry(color_hash).or_default();
+            if sources.last().copied() != Some(source) {
+                sources.push(source);
+            }
+        }
+        if offset < record.len - K {
+            vertex = vertex.roll_forward(packed_base(&record.words, offset + K));
+        }
+    }
+    Ok(())
+}
+
 #[inline]
 fn packed_base(words: &[u64], idx: usize) -> Base {
     let word_idx = idx / 32;
@@ -790,6 +918,11 @@ impl std::error::Error for LocalSubgraphError {}
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::GraphInput;
+    use crate::buckets::{BucketEmitter, read_manifest};
+    use crate::params::BuildParams;
+    use crate::partition::WeakSuperKmer;
+    use std::fs;
 
     #[test]
     fn builds_state_from_record_label() {
@@ -841,5 +974,43 @@ mod tests {
             canonical_cycle_label::<5>(b"GTTTAACGGTTT".to_vec()),
             expected
         );
+    }
+
+    #[test]
+    fn colored_contraction_extracts_source_sets_at_color_transitions() {
+        let dir = std::env::temp_dir().join(format!(
+            "cf3-colored-local-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let mut params = BuildParams::new(GraphInput::References, "colored-local".into());
+        params.k = 3;
+        params.minimizer_len = 2;
+        params.color = true;
+        let mut emitter = BucketEmitter::create_in_dir(&params, 1, dir.clone()).unwrap();
+        for source_id in [1, 2] {
+            emitter
+                .add(
+                    &WeakSuperKmer {
+                        graph_id: 0,
+                        offset: 0,
+                        len: 5,
+                        source_id: Some(source_id),
+                        left_discontinuous: false,
+                        right_discontinuous: false,
+                    },
+                    b"AACGT",
+                )
+                .unwrap();
+        }
+        emitter.finish().unwrap();
+        let entries = read_manifest(&dir).unwrap();
+        let mut subgraph = LocalSubgraph::<3>::from_manifest_entries(&entries, 1).unwrap();
+        let unitigs = subgraph.contract_colored(&entries).unwrap();
+        assert_eq!(unitigs.len(), 1);
+        assert_eq!(unitigs[0].colors.len(), 1);
+        assert_eq!(unitigs[0].colors[0].offset, 0);
+        assert_eq!(unitigs[0].colors[0].sources, [1, 2]);
+        fs::remove_dir_all(dir).unwrap();
     }
 }

@@ -195,6 +195,11 @@ impl ColorCoordinate {
         Self(worker | (index << Self::INDEX_SHIFT))
     }
 
+    pub fn from_u40(value: u64) -> Self {
+        assert!(value < (1u64 << 40));
+        Self(value)
+    }
+
     #[inline]
     pub fn is_in_process(self) -> bool {
         self.0 & Self::IN_PROCESS != 0
@@ -210,6 +215,18 @@ impl ColorCoordinate {
     pub fn as_u40(self) -> u64 {
         assert!(self.0 < (1u64 << 40));
         self.0
+    }
+
+    #[inline]
+    pub fn worker(self) -> usize {
+        assert!(!self.is_in_process());
+        (self.0 & 0xff) as usize
+    }
+
+    #[inline]
+    pub fn index(self) -> u32 {
+        assert!(!self.is_in_process());
+        (self.0 >> Self::INDEX_SHIFT) as u32
     }
 }
 

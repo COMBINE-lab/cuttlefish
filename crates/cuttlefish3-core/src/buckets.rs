@@ -865,7 +865,15 @@ impl SharedBucketSink {
         self.record_flush_stats(finish_flush_stats, finish_started.elapsed());
         let bytes_written = items.iter().map(|(_, meta)| meta.bytes_written).sum();
 
-        let workers = self.workers.min(items.len().max(1));
+        // Colored finalization temporarily holds an input and counting-sorted
+        // output bucket. Limit concurrent buckets until source collation moves
+        // into the atlas flush path.
+        let workers = if self.colored {
+            self.workers.min(4)
+        } else {
+            self.workers
+        }
+        .min(items.len().max(1));
         let mut manifest = if workers <= 1 {
             let mut manifest = Vec::with_capacity(items.len());
             for item in &items {
@@ -922,6 +930,9 @@ impl SharedBucketSink {
             .clone()
             .ok_or_else(|| BucketError::MalformedHeader(self.bucket_dir.clone()))?;
         BucketFile::finish_closed(&path, meta.total_records)?;
+        if self.colored {
+            collate_colored_bucket_by_source(&path, self.label_words, meta.total_records)?;
+        }
         Ok((*graph_id, meta.total_records, path))
     }
 
@@ -935,6 +946,66 @@ impl SharedBucketSink {
             Ordering::Relaxed,
         );
     }
+}
+
+fn collate_colored_bucket_by_source(
+    path: &Path,
+    label_words: usize,
+    records: u64,
+) -> Result<(), BucketError> {
+    let bytes = fs::read(path).map_err(|source| BucketError::Io {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    let record_len = record_size(true, label_words);
+    let payload = bytes
+        .get(HEADER_LEN as usize..)
+        .ok_or_else(|| BucketError::MalformedHeader(path.to_path_buf()))?;
+    if payload.len() != records as usize * record_len {
+        return Err(BucketError::MalformedRecord);
+    }
+
+    let mut source_counts = Vec::<usize>::new();
+    for record in payload.chunks_exact(record_len) {
+        let attr = u32::from_le_bytes(record[..4].try_into().expect("colored attribute"));
+        let source = (attr >> 10) as usize;
+        if source >= source_counts.len() {
+            source_counts.resize(source + 1, 0);
+        }
+        source_counts[source] += 1;
+    }
+
+    let mut offsets = source_counts;
+    let mut prefix = 0usize;
+    for offset in &mut offsets {
+        let count = *offset;
+        *offset = prefix;
+        prefix += count;
+    }
+
+    let mut sorted = vec![0u8; payload.len()];
+    for record in payload.chunks_exact(record_len) {
+        let attr = u32::from_le_bytes(record[..4].try_into().expect("colored attribute"));
+        let source = (attr >> 10) as usize;
+        let offset = offsets[source] * record_len;
+        sorted[offset..offset + record_len].copy_from_slice(record);
+        offsets[source] += 1;
+    }
+
+    let mut file = OpenOptions::new()
+        .write(true)
+        .open(path)
+        .map_err(|source| BucketError::Io {
+            path: path.to_path_buf(),
+            source,
+        })?;
+    file.seek(SeekFrom::Start(HEADER_LEN))
+        .and_then(|_| file.write_all(&sorted))
+        .and_then(|_| file.flush())
+        .map_err(|source| BucketError::Io {
+            path: path.to_path_buf(),
+            source,
+        })
 }
 
 impl SharedBucketAtlas {
@@ -1611,3 +1682,45 @@ impl std::fmt::Display for BucketError {
 }
 
 impl std::error::Error for BucketError {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn colored_bucket_collation_orders_records_by_source() {
+        let dir = std::env::temp_dir().join(format!(
+            "cf3-colored-bucket-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        let mut bucket = BucketFile::create(&dir, 31, 15, 1, 0, true, 2).unwrap();
+        let mut bytes = Vec::new();
+        for source in [3, 1, 3, 2, 1] {
+            append_record_valid(
+                &mut bytes,
+                pack_colored_attr(31, source, false, false),
+                0,
+                &[b'A'; 31],
+                2,
+                true,
+            )
+            .unwrap();
+        }
+        bucket.write_records(&bytes, 5).unwrap();
+        bucket.finish().unwrap();
+        drop(bucket);
+
+        let path = dir.join("00000.wsk");
+        collate_colored_bucket_by_source(&path, 2, 5).unwrap();
+        let mut reader = BucketReader::open(&path).unwrap();
+        let mut sources = Vec::new();
+        let mut record = BucketPackedRecord::default();
+        while reader.next_packed_record_into(&mut record).unwrap() {
+            sources.push(record.source_id.unwrap());
+        }
+        assert_eq!(sources, [1, 1, 2, 3, 3]);
+        fs::remove_dir_all(dir).unwrap();
+    }
+}

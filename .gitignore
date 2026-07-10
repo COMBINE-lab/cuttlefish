@@ -36,6 +36,9 @@ build/
 build-cpp-*/
 bin/
 target/
+data/ecoli-refseq-150/ncbi_dataset.zip
+data/ecoli-refseq-150/package/
+data/ecoli-refseq-150/genomes.list
 
 # Miscellaneous
 .vscode/

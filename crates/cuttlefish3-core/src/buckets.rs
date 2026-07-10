@@ -1,0 +1,1613 @@
+use crate::dna::{Base, ascii_base_bits, valid_ascii_base_bits};
+use crate::params::BuildParams;
+use crate::partition::WeakSuperKmer;
+use std::collections::BTreeMap;
+use std::fs::{self, File, OpenOptions};
+use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
+use std::path::{Path, PathBuf};
+use std::sync::{
+    Arc, Mutex,
+    atomic::{AtomicU64, AtomicUsize, Ordering},
+};
+use std::time::{Duration, Instant};
+
+const MAGIC: &[u8; 8] = b"CF3WSK1\0";
+const RECORD_COUNT_OFFSET: u64 = 34;
+const HEADER_LEN: u64 = 42;
+const MAX_SOURCE_ID: u32 = 0x1f_ffff;
+const MAX_OPEN_BUCKET_WRITERS: usize = 512;
+const MAX_PENDING_BUCKET_BYTES: usize = 1024 * 1024;
+// Pending bytes are private to every partition worker. The shared atlas performs
+// the actual 64 KiB coalescing, so a 128 MiB allowance here multiplied memory by
+// the thread count without reducing physical bucket flushes.
+const MAX_TOTAL_PENDING_BYTES: usize = 16 * 1024 * 1024;
+const ATLAS_GRAPH_COUNT: usize = 128;
+const SUBGRAPH_CHUNK_BYTES: usize = 64 * 1024;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BucketEmitStats {
+    pub bucket_dir: PathBuf,
+    pub bucket_files: usize,
+    pub bytes_written: u64,
+}
+
+pub struct BucketEmitter {
+    bucket_dir: PathBuf,
+    k: u16,
+    minimizer_len: u16,
+    graph_count: usize,
+    colored: bool,
+    label_words: usize,
+    files: BTreeMap<usize, BucketFileMeta>,
+    writers: BTreeMap<usize, BucketFile>,
+    pending: Vec<PendingBucket>,
+    pending_bytes: usize,
+}
+
+pub struct SharedBucketSink {
+    bucket_dir: PathBuf,
+    k: u16,
+    minimizer_len: u16,
+    graph_count: usize,
+    colored: bool,
+    label_words: usize,
+    workers: usize,
+    atlases: Vec<Mutex<SharedBucketAtlas>>,
+    flush_calls: AtomicU64,
+    flush_nanos: AtomicU64,
+}
+
+pub struct SharedBucketEmitter {
+    sink: Arc<SharedBucketSink>,
+    pending: Vec<PendingBucket>,
+    pending_bytes: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct BucketFileMeta {
+    path: PathBuf,
+    records: u64,
+    bytes_written: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+struct PendingBucket {
+    records: u64,
+    bytes: Vec<u8>,
+}
+
+#[derive(Default)]
+struct SharedBucketFileMeta {
+    buffer: Vec<u8>,
+    buffer_records: u64,
+    total_records: u64,
+    written_records: u64,
+    bytes_written: u64,
+    path: Option<PathBuf>,
+}
+
+struct SharedBucketAtlas {
+    first_graph_id: usize,
+    files: Vec<SharedBucketFileMeta>,
+    buffered_bytes: usize,
+}
+
+#[derive(Default)]
+struct SharedBucketFlushStats {
+    calls: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BucketManifestEntry {
+    pub graph_id: usize,
+    pub records: u64,
+    pub path: PathBuf,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BucketHeader {
+    pub k: u16,
+    pub minimizer_len: u16,
+    pub graph_count: usize,
+    pub graph_id: usize,
+    pub colored: bool,
+    pub label_words: usize,
+    pub records: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct BucketRecord {
+    pub graph_id: usize,
+    pub len: usize,
+    pub source_id: Option<u32>,
+    pub left_discontinuous: bool,
+    pub right_discontinuous: bool,
+    pub label: Vec<u8>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct BucketPackedRecord {
+    pub graph_id: usize,
+    pub len: usize,
+    pub source_id: Option<u32>,
+    pub left_discontinuous: bool,
+    pub right_discontinuous: bool,
+    pub words: Vec<u64>,
+}
+
+pub struct BucketReader {
+    path: PathBuf,
+    file: BufReader<File>,
+    header: BucketHeader,
+    records_read: u64,
+}
+
+impl BucketReader {
+    pub fn open(path: impl AsRef<Path>) -> Result<Self, BucketError> {
+        let path = path.as_ref().to_path_buf();
+        let file = File::open(&path).map_err(|source| BucketError::Io {
+            path: path.clone(),
+            source,
+        })?;
+        let mut file = BufReader::with_capacity(1024 * 1024, file);
+        let header = read_header(&mut file, &path)?;
+
+        Ok(Self {
+            path,
+            file,
+            header,
+            records_read: 0,
+        })
+    }
+
+    #[inline]
+    pub fn header(&self) -> &BucketHeader {
+        &self.header
+    }
+
+    pub fn next_record(&mut self) -> Result<Option<BucketRecord>, BucketError> {
+        let mut record = BucketRecord::default();
+        if self.next_record_into(&mut record)? {
+            Ok(Some(record))
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub fn next_record_into(&mut self, record: &mut BucketRecord) -> Result<bool, BucketError> {
+        let mut packed = BucketPackedRecord::default();
+        if !self.next_packed_record_into(&mut packed)? {
+            return Ok(false);
+        }
+
+        record.graph_id = packed.graph_id;
+        record.len = packed.len;
+        record.source_id = packed.source_id;
+        record.left_discontinuous = packed.left_discontinuous;
+        record.right_discontinuous = packed.right_discontinuous;
+        decode_label_into(&packed.words, packed.len, &mut record.label)?;
+        Ok(true)
+    }
+
+    pub fn next_packed_record_into(
+        &mut self,
+        record: &mut BucketPackedRecord,
+    ) -> Result<bool, BucketError> {
+        if self.records_read == self.header.records {
+            return Ok(false);
+        }
+
+        let mut fixed = [0u8; 8];
+        let fixed_len = if self.header.colored { 8 } else { 4 };
+        self.file
+            .read_exact(&mut fixed[..fixed_len])
+            .map_err(|source| BucketError::Io {
+                path: self.path.clone(),
+                source,
+            })?;
+        let (packed_attr, record_graph_id) = if self.header.colored {
+            (
+                u32::from_le_bytes(fixed[0..4].try_into().unwrap()),
+                u16::from_le_bytes(fixed[4..6].try_into().unwrap()) as usize,
+            )
+        } else {
+            (
+                u16::from_le_bytes(fixed[0..2].try_into().unwrap()) as u32,
+                u16::from_le_bytes(fixed[2..4].try_into().unwrap()) as usize,
+            )
+        };
+        if record_graph_id != self.header.graph_id {
+            return Err(BucketError::RecordGraphMismatch {
+                expected: self.header.graph_id,
+                got: record_graph_id,
+            });
+        }
+
+        record.words.clear();
+        record.words.resize(self.header.label_words, 0);
+        for word in &mut record.words {
+            *word = read_u64(&mut self.file, &self.path)?;
+        }
+
+        let len = (packed_attr & 0xff) as usize;
+        let source_id = self
+            .header
+            .colored
+            .then_some((packed_attr >> 10) & MAX_SOURCE_ID);
+        record.graph_id = record_graph_id;
+        record.len = len;
+        record.source_id = source_id;
+        record.left_discontinuous = (packed_attr & (1 << 8)) != 0;
+        record.right_discontinuous = (packed_attr & (1 << 9)) != 0;
+
+        self.records_read += 1;
+        Ok(true)
+    }
+
+    pub fn try_for_each_packed_record<E, F>(
+        &mut self,
+        record: &mut BucketPackedRecord,
+        mut f: F,
+    ) -> Result<(), E>
+    where
+        E: From<BucketError>,
+        F: FnMut(&BucketPackedRecord) -> Result<(), E>,
+    {
+        let remaining = self.header.records.saturating_sub(self.records_read);
+        if remaining == 0 {
+            return Ok(());
+        }
+        let record_size = record_size(self.header.colored, self.header.label_words);
+        let payload_bytes = remaining
+            .checked_mul(record_size as u64)
+            .ok_or(BucketError::TooManyRecords)?;
+        let mut payload = vec![0u8; payload_bytes as usize];
+        self.file
+            .read_exact(&mut payload)
+            .map_err(|source| BucketError::Io {
+                path: self.path.clone(),
+                source,
+            })?;
+
+        for chunk in payload.chunks_exact(record_size) {
+            let (packed_attr, record_graph_id, words_start) = if self.header.colored {
+                (
+                    u32::from_le_bytes(chunk[0..4].try_into().unwrap()),
+                    u16::from_le_bytes(chunk[4..6].try_into().unwrap()) as usize,
+                    8,
+                )
+            } else {
+                (
+                    u16::from_le_bytes(chunk[0..2].try_into().unwrap()) as u32,
+                    u16::from_le_bytes(chunk[2..4].try_into().unwrap()) as usize,
+                    4,
+                )
+            };
+            if record_graph_id != self.header.graph_id {
+                return Err(BucketError::RecordGraphMismatch {
+                    expected: self.header.graph_id,
+                    got: record_graph_id,
+                }
+                .into());
+            }
+
+            record.words.clear();
+            record.words.reserve(self.header.label_words);
+            for word_idx in 0..self.header.label_words {
+                let start = words_start + word_idx * 8;
+                record.words.push(u64::from_le_bytes(
+                    chunk[start..start + 8].try_into().unwrap(),
+                ));
+            }
+
+            let len = (packed_attr & 0xff) as usize;
+            let source_id = self
+                .header
+                .colored
+                .then_some((packed_attr >> 10) & MAX_SOURCE_ID);
+            record.graph_id = record_graph_id;
+            record.len = len;
+            record.source_id = source_id;
+            record.left_discontinuous = (packed_attr & (1 << 8)) != 0;
+            record.right_discontinuous = (packed_attr & (1 << 9)) != 0;
+
+            self.records_read += 1;
+            f(record)?;
+        }
+        Ok(())
+    }
+
+    pub fn records(self) -> BucketRecords {
+        BucketRecords { reader: self }
+    }
+}
+
+pub struct BucketRecords {
+    reader: BucketReader,
+}
+
+impl Iterator for BucketRecords {
+    type Item = Result<BucketRecord, BucketError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.reader.next_record().transpose()
+    }
+}
+
+pub fn read_manifest(
+    bucket_dir: impl AsRef<Path>,
+) -> Result<Vec<BucketManifestEntry>, BucketError> {
+    let bucket_dir = bucket_dir.as_ref();
+    let path = bucket_dir.join("manifest.tsv");
+    let file = File::open(&path).map_err(|source| BucketError::Io {
+        path: path.clone(),
+        source,
+    })?;
+    let mut out = Vec::new();
+
+    for (line_no, line) in BufReader::new(file).lines().enumerate() {
+        let line = line.map_err(|source| BucketError::Io {
+            path: path.clone(),
+            source,
+        })?;
+        if line_no == 0 {
+            if line != "graph_id\trecords\tpath" {
+                return Err(BucketError::MalformedManifest(path.clone()));
+            }
+            continue;
+        }
+        if line.trim().is_empty() {
+            continue;
+        }
+
+        let mut fields = line.splitn(3, '\t');
+        let graph_id = fields
+            .next()
+            .ok_or_else(|| BucketError::MalformedManifest(path.clone()))?
+            .parse()
+            .map_err(|_| BucketError::MalformedManifest(path.clone()))?;
+        let records = fields
+            .next()
+            .ok_or_else(|| BucketError::MalformedManifest(path.clone()))?
+            .parse()
+            .map_err(|_| BucketError::MalformedManifest(path.clone()))?;
+        let bucket_path = fields
+            .next()
+            .ok_or_else(|| BucketError::MalformedManifest(path.clone()))?;
+        out.push(BucketManifestEntry {
+            graph_id,
+            records,
+            path: PathBuf::from(bucket_path),
+        });
+    }
+
+    Ok(out)
+}
+
+pub fn coalesce_bucket_manifest(
+    bucket_dir: &Path,
+    entries: &[BucketManifestEntry],
+) -> Result<BucketEmitStats, BucketError> {
+    coalesce_bucket_manifest_with_threads(bucket_dir, entries, 1)
+}
+
+pub fn coalesce_bucket_manifest_with_threads(
+    bucket_dir: &Path,
+    entries: &[BucketManifestEntry],
+    threads: usize,
+) -> Result<BucketEmitStats, BucketError> {
+    let mut by_graph = BTreeMap::<usize, Vec<BucketManifestEntry>>::new();
+    for entry in entries {
+        by_graph
+            .entry(entry.graph_id)
+            .or_default()
+            .push(entry.clone());
+    }
+
+    let groups = by_graph.into_iter().collect::<Vec<_>>();
+    let workers = threads.max(1).min(groups.len().max(1));
+    let mut manifest = if workers == 1 {
+        let mut manifest = Vec::with_capacity(groups.len());
+        for group in &groups {
+            manifest.push(coalesce_bucket_group(bucket_dir, group)?);
+        }
+        manifest
+    } else {
+        let next_group = AtomicUsize::new(0);
+        let mut manifest = std::thread::scope(|scope| {
+            let mut handles = Vec::new();
+            for _ in 0..workers {
+                let next_group = &next_group;
+                let groups = &groups;
+                handles.push(scope.spawn(move || {
+                    let mut local = Vec::new();
+                    loop {
+                        let group_idx = next_group.fetch_add(1, Ordering::Relaxed);
+                        let Some(group) = groups.get(group_idx) else {
+                            break;
+                        };
+                        local.push(coalesce_bucket_group(bucket_dir, group)?);
+                    }
+                    Ok::<_, BucketError>(local)
+                }));
+            }
+
+            let mut manifest = Vec::with_capacity(groups.len());
+            for handle in handles {
+                manifest.extend(handle.join().map_err(|_| BucketError::WorkerPanic)??);
+            }
+            Ok::<_, BucketError>(manifest)
+        })?;
+        manifest.sort_by_key(|(graph_id, _, path, _)| (*graph_id, path.clone()));
+        manifest
+    };
+    let total_bytes = manifest.iter().map(|(_, _, _, bytes)| *bytes).sum();
+    let public_manifest = manifest
+        .drain(..)
+        .map(|(graph_id, records, path, _)| (graph_id, records, path))
+        .collect::<Vec<_>>();
+
+    write_manifest(bucket_dir, &public_manifest)?;
+
+    Ok(BucketEmitStats {
+        bucket_dir: bucket_dir.to_path_buf(),
+        bucket_files: public_manifest.len(),
+        bytes_written: total_bytes,
+    })
+}
+
+fn coalesce_bucket_group(
+    bucket_dir: &Path,
+    group: &(usize, Vec<BucketManifestEntry>),
+) -> Result<(usize, u64, PathBuf, u64), BucketError> {
+    let (graph_id, graph_entries) = group;
+    let first_header = read_bucket_header(&graph_entries[0].path)?;
+    let mut writer = BucketFile::create(
+        bucket_dir,
+        first_header.k,
+        first_header.minimizer_len,
+        first_header.graph_count,
+        *graph_id,
+        first_header.colored,
+        first_header.label_words,
+    )?;
+
+    for entry in graph_entries {
+        let copied_records =
+            copy_bucket_payload(&entry.path, &first_header, *graph_id, &mut writer)?;
+        if copied_records != entry.records {
+            return Err(BucketError::MalformedHeader(entry.path.clone()));
+        }
+    }
+
+    writer.finish()?;
+    Ok((
+        *graph_id,
+        writer.records,
+        writer.path.clone(),
+        writer.bytes_written,
+    ))
+}
+
+fn read_bucket_header(path: &Path) -> Result<BucketHeader, BucketError> {
+    let mut file = File::open(path).map_err(|source| BucketError::Io {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    read_header(&mut file, path)
+}
+
+fn copy_bucket_payload(
+    path: &Path,
+    expected: &BucketHeader,
+    graph_id: usize,
+    writer: &mut BucketFile,
+) -> Result<u64, BucketError> {
+    let mut file = File::open(path).map_err(|source| BucketError::Io {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    let header = read_header(&mut file, path)?;
+    if header.k != expected.k
+        || header.minimizer_len != expected.minimizer_len
+        || header.graph_count != expected.graph_count
+        || header.graph_id != graph_id
+        || header.colored != expected.colored
+        || header.label_words != expected.label_words
+    {
+        return Err(BucketError::MalformedHeader(path.to_path_buf()));
+    }
+
+    let payload_bytes = header
+        .records
+        .checked_mul(record_size(header.colored, header.label_words) as u64)
+        .ok_or(BucketError::TooManyRecords)?;
+    let actual_len = file
+        .metadata()
+        .map_err(|source| BucketError::Io {
+            path: path.to_path_buf(),
+            source,
+        })?
+        .len();
+    if actual_len != HEADER_LEN + payload_bytes {
+        return Err(BucketError::MalformedHeader(path.to_path_buf()));
+    }
+
+    file.seek(SeekFrom::Start(HEADER_LEN))
+        .map_err(|source| BucketError::Io {
+            path: path.to_path_buf(),
+            source,
+        })?;
+    let copied =
+        std::io::copy(&mut file.take(payload_bytes), &mut writer.file).map_err(|source| {
+            BucketError::Io {
+                path: path.to_path_buf(),
+                source,
+            }
+        })?;
+    if copied != payload_bytes {
+        return Err(BucketError::MalformedHeader(path.to_path_buf()));
+    }
+    writer.records = writer
+        .records
+        .checked_add(header.records)
+        .ok_or(BucketError::TooManyRecords)?;
+    writer.bytes_written += copied;
+    Ok(header.records)
+}
+
+impl BucketEmitter {
+    pub fn create(params: &BuildParams, graph_count: usize) -> Result<Self, BucketError> {
+        Self::create_in_dir(params, graph_count, bucket_dir(params))
+    }
+
+    pub fn create_in_dir(
+        params: &BuildParams,
+        graph_count: usize,
+        bucket_dir: PathBuf,
+    ) -> Result<Self, BucketError> {
+        if graph_count > u64::MAX as usize {
+            return Err(BucketError::GraphCountTooLarge(graph_count));
+        }
+
+        if bucket_dir.exists() {
+            fs::remove_dir_all(&bucket_dir).map_err(|source| BucketError::Io {
+                path: bucket_dir.clone(),
+                source,
+            })?;
+        }
+        fs::create_dir_all(&bucket_dir).map_err(|source| BucketError::Io {
+            path: bucket_dir.clone(),
+            source,
+        })?;
+
+        Ok(Self {
+            bucket_dir,
+            k: params.k,
+            minimizer_len: params.minimizer_len,
+            graph_count,
+            colored: params.color,
+            label_words: label_word_count(params.k, params.minimizer_len),
+            files: BTreeMap::new(),
+            writers: BTreeMap::new(),
+            pending: vec![PendingBucket::default(); graph_count],
+            pending_bytes: 0,
+        })
+    }
+
+    pub fn add(&mut self, superkmer: &WeakSuperKmer, seq: &[u8]) -> Result<(), BucketError> {
+        if superkmer.graph_id >= self.graph_count {
+            return Err(BucketError::InvalidGraphId(superkmer.graph_id));
+        }
+        if seq.len() > u8::MAX as usize {
+            return Err(BucketError::LabelTooLong(seq.len()));
+        }
+
+        let attr = if self.colored {
+            let source_id = superkmer.source_id.ok_or(BucketError::MissingSourceId)?;
+            if source_id > MAX_SOURCE_ID {
+                return Err(BucketError::SourceIdTooLarge(source_id));
+            }
+            pack_colored_attr(
+                seq.len(),
+                source_id,
+                superkmer.left_discontinuous,
+                superkmer.right_discontinuous,
+            )
+        } else {
+            pack_uncolored_attr(
+                seq.len(),
+                superkmer.left_discontinuous,
+                superkmer.right_discontinuous,
+            )
+        };
+        let graph_id = superkmer.graph_id;
+        let record_len = record_size(self.colored, self.label_words);
+        let pending = &mut self.pending[graph_id];
+        pending.records = pending
+            .records
+            .checked_add(1)
+            .ok_or(BucketError::TooManyRecords)?;
+        append_record(
+            &mut pending.bytes,
+            attr,
+            graph_id,
+            seq,
+            self.label_words,
+            self.colored,
+        )?;
+        self.pending_bytes += record_len;
+
+        if self.pending[graph_id].bytes.len() >= MAX_PENDING_BUCKET_BYTES {
+            self.flush_pending_bucket(graph_id)?;
+        } else if self.pending_bytes >= MAX_TOTAL_PENDING_BYTES {
+            self.flush_largest_pending_bucket()?;
+        }
+        Ok(())
+    }
+
+    fn flush_largest_pending_bucket(&mut self) -> Result<(), BucketError> {
+        let Some((graph_id, _)) = self
+            .pending
+            .iter()
+            .enumerate()
+            .max_by_key(|(_, pending)| pending.bytes.len())
+        else {
+            return Ok(());
+        };
+        self.flush_pending_bucket(graph_id)
+    }
+
+    fn flush_pending_bucket(&mut self, graph_id: usize) -> Result<(), BucketError> {
+        if self.pending[graph_id].bytes.is_empty() {
+            return Ok(());
+        }
+        let pending = std::mem::take(&mut self.pending[graph_id]);
+        self.pending_bytes -= pending.bytes.len();
+
+        let (records, bytes_written) = {
+            let writer = self.ensure_writer(graph_id)?;
+            writer.write_records(&pending.bytes, pending.records)?
+        };
+        let meta = self.files.get_mut(&graph_id).unwrap();
+        meta.records = records;
+        meta.bytes_written = bytes_written;
+        Ok(())
+    }
+
+    fn ensure_writer(&mut self, graph_id: usize) -> Result<&mut BucketFile, BucketError> {
+        if !self.writers.contains_key(&graph_id) {
+            self.evict_writer_if_needed(graph_id)?;
+            let writer = match self.files.get(&graph_id) {
+                Some(meta) => {
+                    BucketFile::open_existing(&meta.path, meta.records, meta.bytes_written)?
+                }
+                None => {
+                    let writer = BucketFile::create(
+                        &self.bucket_dir,
+                        self.k,
+                        self.minimizer_len,
+                        self.graph_count,
+                        graph_id,
+                        self.colored,
+                        self.label_words,
+                    )?;
+                    self.files.insert(
+                        graph_id,
+                        BucketFileMeta {
+                            path: writer.path.clone(),
+                            records: writer.records,
+                            bytes_written: writer.bytes_written,
+                        },
+                    );
+                    writer
+                }
+            };
+            self.writers.insert(graph_id, writer);
+        }
+
+        Ok(self.writers.get_mut(&graph_id).unwrap())
+    }
+
+    fn evict_writer_if_needed(&mut self, requested_graph_id: usize) -> Result<(), BucketError> {
+        if self.writers.len() < MAX_OPEN_BUCKET_WRITERS {
+            return Ok(());
+        }
+
+        let evict_graph_id = self
+            .writers
+            .keys()
+            .copied()
+            .find(|&graph_id| graph_id != requested_graph_id)
+            .unwrap_or(requested_graph_id);
+        if let Some(mut writer) = self.writers.remove(&evict_graph_id) {
+            writer.flush()?;
+        }
+        Ok(())
+    }
+
+    pub fn finish(mut self) -> Result<BucketEmitStats, BucketError> {
+        let mut manifest = Vec::new();
+        for graph_id in 0..self.pending.len() {
+            if !self.pending[graph_id].bytes.is_empty() {
+                self.flush_pending_bucket(graph_id)?;
+            }
+        }
+
+        for (graph_id, meta) in &self.files {
+            if let Some(writer) = self.writers.get_mut(graph_id) {
+                writer.finish()?;
+            } else {
+                BucketFile::finish_closed(&meta.path, meta.records)?;
+            }
+            manifest.push((*graph_id, meta.records, meta.path.clone()));
+        }
+
+        write_manifest(&self.bucket_dir, &manifest)?;
+
+        Ok(BucketEmitStats {
+            bucket_dir: self.bucket_dir,
+            bucket_files: manifest.len(),
+            bytes_written: self.files.values().map(|meta| meta.bytes_written).sum(),
+        })
+    }
+}
+
+impl SharedBucketSink {
+    pub fn create(params: &BuildParams, graph_count: usize) -> Result<Arc<Self>, BucketError> {
+        let bucket_dir = bucket_dir(params);
+        if bucket_dir.exists() {
+            fs::remove_dir_all(&bucket_dir).map_err(|source| BucketError::Io {
+                path: bucket_dir.clone(),
+                source,
+            })?;
+        }
+        fs::create_dir_all(&bucket_dir).map_err(|source| BucketError::Io {
+            path: bucket_dir.clone(),
+            source,
+        })?;
+
+        Ok(Arc::new(Self {
+            bucket_dir,
+            k: params.k,
+            minimizer_len: params.minimizer_len,
+            graph_count,
+            colored: params.color,
+            label_words: label_word_count(params.k, params.minimizer_len),
+            workers: params.threads.max(1),
+            atlases: (0..graph_count.div_ceil(ATLAS_GRAPH_COUNT))
+                .map(|atlas_id| {
+                    let first_graph_id = atlas_id * ATLAS_GRAPH_COUNT;
+                    let file_count = (graph_count - first_graph_id).min(ATLAS_GRAPH_COUNT);
+                    Mutex::new(SharedBucketAtlas {
+                        first_graph_id,
+                        files: (0..file_count)
+                            .map(|_| SharedBucketFileMeta::default())
+                            .collect(),
+                        buffered_bytes: 0,
+                    })
+                })
+                .collect(),
+            flush_calls: AtomicU64::new(0),
+            flush_nanos: AtomicU64::new(0),
+        }))
+    }
+
+    pub fn emitter(self: &Arc<Self>) -> SharedBucketEmitter {
+        SharedBucketEmitter {
+            sink: Arc::clone(self),
+            pending: vec![PendingBucket::default(); self.graph_count],
+            pending_bytes: 0,
+        }
+    }
+
+    fn append_bucket(&self, graph_id: usize, pending: PendingBucket) -> Result<(), BucketError> {
+        if pending.bytes.is_empty() {
+            return Ok(());
+        }
+        let started = Instant::now();
+        let atlas_id = graph_id / ATLAS_GRAPH_COUNT;
+        let local_graph_id = graph_id % ATLAS_GRAPH_COUNT;
+        let mut atlas = self.atlases[atlas_id]
+            .lock()
+            .map_err(|_| BucketError::WorkerPanic)?;
+        atlas.append_bucket(local_graph_id, pending)?;
+        if atlas.files[local_graph_id].buffer.len() < SUBGRAPH_CHUNK_BYTES {
+            return Ok(());
+        }
+
+        let mut flush_stats = SharedBucketFlushStats::default();
+        atlas.flush_subgraph(
+            local_graph_id,
+            &self.bucket_dir,
+            self.k,
+            self.minimizer_len,
+            self.graph_count,
+            self.colored,
+            self.label_words,
+            &mut flush_stats,
+        )?;
+        self.record_flush_stats(flush_stats, started.elapsed());
+        Ok(())
+    }
+
+    pub fn flush_stats(&self) -> (u64, Duration) {
+        (
+            self.flush_calls.load(Ordering::Relaxed),
+            Duration::from_nanos(self.flush_nanos.load(Ordering::Relaxed)),
+        )
+    }
+
+    pub fn finish(&self) -> Result<BucketEmitStats, BucketError> {
+        let mut items = Vec::new();
+        let mut finish_flush_stats = SharedBucketFlushStats::default();
+        let finish_started = Instant::now();
+        for atlas in &self.atlases {
+            let mut atlas = atlas.lock().map_err(|_| BucketError::WorkerPanic)?;
+            atlas.flush_all(
+                &self.bucket_dir,
+                self.k,
+                self.minimizer_len,
+                self.graph_count,
+                self.colored,
+                self.label_words,
+                &mut finish_flush_stats,
+            )?;
+            let first_graph_id = atlas.first_graph_id;
+            for (local_graph_id, meta) in atlas.files.iter_mut().enumerate() {
+                let meta = std::mem::take(meta);
+                if meta.total_records == 0 {
+                    continue;
+                }
+                items.push((first_graph_id + local_graph_id, meta));
+            }
+        }
+        self.record_flush_stats(finish_flush_stats, finish_started.elapsed());
+        let bytes_written = items.iter().map(|(_, meta)| meta.bytes_written).sum();
+
+        let workers = self.workers.min(items.len().max(1));
+        let mut manifest = if workers <= 1 {
+            let mut manifest = Vec::with_capacity(items.len());
+            for item in &items {
+                manifest.push(self.finish_shared_bucket(item)?);
+            }
+            manifest
+        } else {
+            let next_item = AtomicUsize::new(0);
+            let mut worker_results = std::thread::scope(|scope| {
+                let mut handles = Vec::new();
+                for _ in 0..workers {
+                    let next_item = &next_item;
+                    let items = &items;
+                    handles.push(scope.spawn(move || {
+                        let mut local = Vec::new();
+                        loop {
+                            let item_idx = next_item.fetch_add(1, Ordering::Relaxed);
+                            let Some(item) = items.get(item_idx) else {
+                                break;
+                            };
+                            local.push(self.finish_shared_bucket(item)?);
+                        }
+                        Ok::<_, BucketError>(local)
+                    }));
+                }
+
+                let mut merged = Vec::with_capacity(items.len());
+                for handle in handles {
+                    let local = handle.join().map_err(|_| BucketError::WorkerPanic)??;
+                    merged.extend(local);
+                }
+                Ok::<_, BucketError>(merged)
+            })?;
+            worker_results.sort_unstable_by_key(|(graph_id, _, _)| *graph_id);
+            worker_results
+        };
+        if workers <= 1 {
+            manifest.sort_unstable_by_key(|(graph_id, _, _)| *graph_id);
+        }
+        write_manifest(&self.bucket_dir, &manifest)?;
+        Ok(BucketEmitStats {
+            bucket_dir: self.bucket_dir.clone(),
+            bucket_files: manifest.len(),
+            bytes_written,
+        })
+    }
+
+    fn finish_shared_bucket(
+        &self,
+        (graph_id, meta): &(usize, SharedBucketFileMeta),
+    ) -> Result<(usize, u64, PathBuf), BucketError> {
+        let path = meta
+            .path
+            .clone()
+            .ok_or_else(|| BucketError::MalformedHeader(self.bucket_dir.clone()))?;
+        BucketFile::finish_closed(&path, meta.total_records)?;
+        Ok((*graph_id, meta.total_records, path))
+    }
+
+    fn record_flush_stats(&self, stats: SharedBucketFlushStats, elapsed: Duration) {
+        if stats.calls == 0 {
+            return;
+        }
+        self.flush_calls.fetch_add(stats.calls, Ordering::Relaxed);
+        self.flush_nanos.fetch_add(
+            u64::try_from(elapsed.as_nanos()).unwrap_or(u64::MAX),
+            Ordering::Relaxed,
+        );
+    }
+}
+
+impl SharedBucketAtlas {
+    fn append_bucket(
+        &mut self,
+        local_graph_id: usize,
+        pending: PendingBucket,
+    ) -> Result<(), BucketError> {
+        let file = &mut self.files[local_graph_id];
+        file.total_records = file
+            .total_records
+            .checked_add(pending.records)
+            .ok_or(BucketError::TooManyRecords)?;
+        file.buffer_records = file
+            .buffer_records
+            .checked_add(pending.records)
+            .ok_or(BucketError::TooManyRecords)?;
+        self.buffered_bytes += pending.bytes.len();
+        file.buffer.extend_from_slice(&pending.bytes);
+        Ok(())
+    }
+
+    fn flush_all(
+        &mut self,
+        bucket_dir: &Path,
+        k: u16,
+        minimizer_len: u16,
+        graph_count: usize,
+        colored: bool,
+        label_words: usize,
+        stats: &mut SharedBucketFlushStats,
+    ) -> Result<(), BucketError> {
+        for local_graph_id in 0..self.files.len() {
+            self.flush_subgraph(
+                local_graph_id,
+                bucket_dir,
+                k,
+                minimizer_len,
+                graph_count,
+                colored,
+                label_words,
+                stats,
+            )?;
+        }
+        Ok(())
+    }
+
+    fn flush_subgraph(
+        &mut self,
+        local_graph_id: usize,
+        bucket_dir: &Path,
+        k: u16,
+        minimizer_len: u16,
+        graph_count: usize,
+        colored: bool,
+        label_words: usize,
+        stats: &mut SharedBucketFlushStats,
+    ) -> Result<(), BucketError> {
+        let file = &mut self.files[local_graph_id];
+        if file.buffer.is_empty() {
+            return Ok(());
+        }
+
+        let graph_id = self.first_graph_id + local_graph_id;
+        let mut writer = match file.path.as_deref() {
+            Some(path) => {
+                BucketFile::open_existing(path, file.written_records, file.bytes_written)?
+            }
+            None => BucketFile::create(
+                bucket_dir,
+                k,
+                minimizer_len,
+                graph_count,
+                graph_id,
+                colored,
+                label_words,
+            )?,
+        };
+        let flushed_bytes = file.buffer.len();
+        let (records, bytes_written) = writer.write_records(&file.buffer, file.buffer_records)?;
+        file.written_records = records;
+        file.bytes_written = bytes_written;
+        if file.path.is_none() {
+            file.path = Some(writer.path.clone());
+        }
+        file.buffer.clear();
+        file.buffer_records = 0;
+        self.buffered_bytes -= flushed_bytes;
+        stats.calls += 1;
+        Ok(())
+    }
+}
+
+impl SharedBucketEmitter {
+    pub fn add(&mut self, superkmer: &WeakSuperKmer, seq: &[u8]) -> Result<(), BucketError> {
+        self.add_impl(superkmer, seq, true)
+    }
+
+    pub fn add_valid(&mut self, superkmer: &WeakSuperKmer, seq: &[u8]) -> Result<(), BucketError> {
+        debug_assert!(seq.iter().all(|&base| ascii_base_bits(base).is_some()));
+        self.add_impl(superkmer, seq, false)
+    }
+
+    fn add_impl(
+        &mut self,
+        superkmer: &WeakSuperKmer,
+        seq: &[u8],
+        check_bases: bool,
+    ) -> Result<(), BucketError> {
+        if superkmer.graph_id >= self.sink.graph_count {
+            return Err(BucketError::InvalidGraphId(superkmer.graph_id));
+        }
+        if seq.len() > u8::MAX as usize {
+            return Err(BucketError::LabelTooLong(seq.len()));
+        }
+
+        let attr = if self.sink.colored {
+            let source_id = superkmer.source_id.ok_or(BucketError::MissingSourceId)?;
+            if source_id > MAX_SOURCE_ID {
+                return Err(BucketError::SourceIdTooLarge(source_id));
+            }
+            pack_colored_attr(
+                seq.len(),
+                source_id,
+                superkmer.left_discontinuous,
+                superkmer.right_discontinuous,
+            )
+        } else {
+            pack_uncolored_attr(
+                seq.len(),
+                superkmer.left_discontinuous,
+                superkmer.right_discontinuous,
+            )
+        };
+        let graph_id = superkmer.graph_id;
+        let record_len = record_size(self.sink.colored, self.sink.label_words);
+        let pending = &mut self.pending[graph_id];
+        pending.records = pending
+            .records
+            .checked_add(1)
+            .ok_or(BucketError::TooManyRecords)?;
+        if !self.sink.colored && !check_bases {
+            append_uncolored_record_valid(
+                &mut pending.bytes,
+                attr as u16,
+                graph_id as u16,
+                seq,
+                self.sink.label_words,
+            )?;
+        } else if check_bases {
+            append_record(
+                &mut pending.bytes,
+                attr,
+                graph_id,
+                seq,
+                self.sink.label_words,
+                self.sink.colored,
+            )?;
+        } else {
+            append_record_valid(
+                &mut pending.bytes,
+                attr,
+                graph_id,
+                seq,
+                self.sink.label_words,
+                self.sink.colored,
+            )?;
+        }
+        self.pending_bytes += record_len;
+
+        if self.pending[graph_id].bytes.len() >= MAX_PENDING_BUCKET_BYTES {
+            self.flush_pending_bucket(graph_id)?;
+        } else if self.pending_bytes >= MAX_TOTAL_PENDING_BYTES {
+            self.flush_largest_pending_bucket()?;
+        }
+        Ok(())
+    }
+
+    fn flush_largest_pending_bucket(&mut self) -> Result<(), BucketError> {
+        let Some((graph_id, _)) = self
+            .pending
+            .iter()
+            .enumerate()
+            .max_by_key(|(_, pending)| pending.bytes.len())
+        else {
+            return Ok(());
+        };
+        self.flush_pending_bucket(graph_id)
+    }
+
+    fn flush_pending_bucket(&mut self, graph_id: usize) -> Result<(), BucketError> {
+        if self.pending[graph_id].bytes.is_empty() {
+            return Ok(());
+        }
+        let pending = std::mem::take(&mut self.pending[graph_id]);
+        self.pending_bytes -= pending.bytes.len();
+        self.sink.append_bucket(graph_id, pending)
+    }
+
+    pub fn finish(mut self) -> Result<(), BucketError> {
+        for graph_id in 0..self.pending.len() {
+            if !self.pending[graph_id].bytes.is_empty() {
+                self.flush_pending_bucket(graph_id)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+pub fn bucket_dir(params: &BuildParams) -> PathBuf {
+    let output_name = Path::new(&params.output_prefix)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .filter(|s| !s.is_empty())
+        .unwrap_or("cuttlefish3");
+    PathBuf::from(&params.work_dir).join(format!("{output_name}.cf3rs.wsk"))
+}
+
+pub fn write_manifest(
+    bucket_dir: &Path,
+    entries: &[(usize, u64, PathBuf)],
+) -> Result<(), BucketError> {
+    let path = bucket_dir.join("manifest.tsv");
+    let mut out = File::create(&path).map_err(|source| BucketError::Io {
+        path: path.clone(),
+        source,
+    })?;
+    writeln!(out, "graph_id\trecords\tpath").map_err(|source| BucketError::Io {
+        path: path.clone(),
+        source,
+    })?;
+    for (graph_id, records, bucket_path) in entries {
+        writeln!(out, "{graph_id}\t{records}\t{}", bucket_path.display()).map_err(|source| {
+            BucketError::Io {
+                path: path.clone(),
+                source,
+            }
+        })?;
+    }
+    Ok(())
+}
+
+fn append_record(
+    out: &mut Vec<u8>,
+    packed_attr: u32,
+    graph_id: usize,
+    seq: &[u8],
+    label_words: usize,
+    colored: bool,
+) -> Result<(), BucketError> {
+    let mut words = [0u64; 4];
+    if label_words > words.len() {
+        return Err(BucketError::MalformedRecord);
+    }
+    for (idx, &ch) in seq.iter().enumerate() {
+        let base_bits = ascii_base_bits(ch).ok_or(BucketError::InvalidBase(ch))?;
+        let word_idx = idx / 32;
+        let shift = 2 * (31 - (idx % 32));
+        words[word_idx] |= (base_bits as u64) << shift;
+    }
+
+    if colored {
+        out.extend_from_slice(&packed_attr.to_le_bytes());
+        out.extend_from_slice(&(graph_id as u16).to_le_bytes());
+        out.extend_from_slice(&0u16.to_le_bytes());
+    } else {
+        out.extend_from_slice(&(packed_attr as u16).to_le_bytes());
+        out.extend_from_slice(&(graph_id as u16).to_le_bytes());
+    }
+    for &word in &words[..label_words] {
+        out.extend_from_slice(&word.to_le_bytes());
+    }
+    Ok(())
+}
+
+fn append_record_valid(
+    out: &mut Vec<u8>,
+    packed_attr: u32,
+    graph_id: usize,
+    seq: &[u8],
+    label_words: usize,
+    colored: bool,
+) -> Result<(), BucketError> {
+    let mut words = [0u64; 4];
+    if label_words > words.len() {
+        return Err(BucketError::MalformedRecord);
+    }
+    for (idx, &ch) in seq.iter().enumerate() {
+        let word_idx = idx / 32;
+        let shift = 2 * (31 - (idx % 32));
+        words[word_idx] |= (valid_ascii_base_bits(ch) as u64) << shift;
+    }
+
+    out.reserve(record_size(colored, label_words));
+    if colored {
+        out.extend_from_slice(&packed_attr.to_le_bytes());
+        out.extend_from_slice(&(graph_id as u16).to_le_bytes());
+        out.extend_from_slice(&0u16.to_le_bytes());
+    } else {
+        out.extend_from_slice(&(packed_attr as u16).to_le_bytes());
+        out.extend_from_slice(&(graph_id as u16).to_le_bytes());
+    }
+    for &word in &words[..label_words] {
+        out.extend_from_slice(&word.to_le_bytes());
+    }
+    Ok(())
+}
+
+#[inline]
+fn append_uncolored_record_valid(
+    out: &mut Vec<u8>,
+    packed_attr: u16,
+    graph_id: u16,
+    seq: &[u8],
+    label_words: usize,
+) -> Result<(), BucketError> {
+    let mut words = [0u64; 4];
+    if label_words > words.len() {
+        return Err(BucketError::MalformedRecord);
+    }
+    for (idx, &ch) in seq.iter().enumerate() {
+        let word_idx = idx / 32;
+        let shift = 2 * (31 - (idx % 32));
+        words[word_idx] |= (valid_ascii_base_bits(ch) as u64) << shift;
+    }
+
+    out.reserve(4 + label_words * 8);
+    out.extend_from_slice(&packed_attr.to_le_bytes());
+    out.extend_from_slice(&graph_id.to_le_bytes());
+    for &word in &words[..label_words] {
+        out.extend_from_slice(&word.to_le_bytes());
+    }
+    Ok(())
+}
+
+struct BucketFile {
+    path: PathBuf,
+    file: File,
+    records: u64,
+    bytes_written: u64,
+    record_size: u64,
+}
+
+impl BucketFile {
+    fn create(
+        bucket_dir: &Path,
+        k: u16,
+        minimizer_len: u16,
+        graph_count: usize,
+        graph_id: usize,
+        colored: bool,
+        label_words: usize,
+    ) -> Result<Self, BucketError> {
+        let path = bucket_dir.join(format!("{graph_id:05}.wsk"));
+        let mut file = File::create(&path).map_err(|source| BucketError::Io {
+            path: path.clone(),
+            source,
+        })?;
+
+        file.write_all(MAGIC).map_err(|source| BucketError::Io {
+            path: path.clone(),
+            source,
+        })?;
+        write_u16(&mut file, &path, k)?;
+        write_u16(&mut file, &path, minimizer_len)?;
+        write_u64(&mut file, &path, graph_count as u64)?;
+        write_u64(&mut file, &path, graph_id as u64)?;
+        file.write_all(&[u8::from(colored), label_words as u8, 0, 0, 0, 0])
+            .map_err(|source| BucketError::Io {
+                path: path.clone(),
+                source,
+            })?;
+        write_u64(&mut file, &path, 0)?;
+
+        Ok(Self {
+            path,
+            file,
+            records: 0,
+            bytes_written: HEADER_LEN,
+            record_size: record_size(colored, label_words) as u64,
+        })
+    }
+
+    fn open_existing(path: &Path, records: u64, bytes_written: u64) -> Result<Self, BucketError> {
+        let mut file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(path)
+            .map_err(|source| BucketError::Io {
+                path: path.to_path_buf(),
+                source,
+            })?;
+        let header = read_header(&mut file, path)?;
+        file.seek(SeekFrom::End(0))
+            .map_err(|source| BucketError::Io {
+                path: path.to_path_buf(),
+                source,
+            })?;
+
+        Ok(Self {
+            path: path.to_path_buf(),
+            file,
+            records,
+            bytes_written,
+            record_size: record_size(header.colored, header.label_words) as u64,
+        })
+    }
+
+    fn write_records(&mut self, bytes: &[u8], records: u64) -> Result<(u64, u64), BucketError> {
+        debug_assert_eq!(bytes.len() as u64, records * self.record_size);
+        self.file
+            .write_all(bytes)
+            .map_err(|source| BucketError::Io {
+                path: self.path.clone(),
+                source,
+            })?;
+        self.records = self
+            .records
+            .checked_add(records)
+            .ok_or(BucketError::TooManyRecords)?;
+        self.bytes_written += bytes.len() as u64;
+        Ok((self.records, self.bytes_written))
+    }
+
+    fn flush(&mut self) -> Result<(), BucketError> {
+        self.file.flush().map_err(|source| BucketError::Io {
+            path: self.path.clone(),
+            source,
+        })
+    }
+
+    fn finish(&mut self) -> Result<(), BucketError> {
+        write_record_count(&mut self.file, &self.path, self.records)?;
+        self.file
+            .seek(SeekFrom::End(0))
+            .map_err(|source| BucketError::Io {
+                path: self.path.clone(),
+                source,
+            })?;
+        self.file.flush().map_err(|source| BucketError::Io {
+            path: self.path.clone(),
+            source,
+        })
+    }
+
+    fn finish_closed(path: &Path, records: u64) -> Result<(), BucketError> {
+        let mut file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(path)
+            .map_err(|source| BucketError::Io {
+                path: path.to_path_buf(),
+                source,
+            })?;
+        write_record_count(&mut file, path, records)?;
+        file.flush().map_err(|source| BucketError::Io {
+            path: path.to_path_buf(),
+            source,
+        })
+    }
+}
+
+fn write_record_count(file: &mut File, path: &Path, records: u64) -> Result<(), BucketError> {
+    file.seek(SeekFrom::Start(RECORD_COUNT_OFFSET))
+        .map_err(|source| BucketError::Io {
+            path: path.to_path_buf(),
+            source,
+        })?;
+    write_u64(file, path, records)
+}
+
+fn label_word_count(k: u16, minimizer_len: u16) -> usize {
+    let max_weak_superkmer_len = 2 * (usize::from(k) - 1) - usize::from(minimizer_len) + 2;
+    max_weak_superkmer_len.div_ceil(32)
+}
+
+fn record_size(colored: bool, label_words: usize) -> usize {
+    (if colored { 8 } else { 4 }) + label_words * 8
+}
+
+fn pack_uncolored_attr(len: usize, left_discontinuous: bool, right_discontinuous: bool) -> u32 {
+    (len as u32) | ((left_discontinuous as u32) << 8) | ((right_discontinuous as u32) << 9)
+}
+
+fn pack_colored_attr(
+    len: usize,
+    source_id: u32,
+    left_discontinuous: bool,
+    right_discontinuous: bool,
+) -> u32 {
+    pack_uncolored_attr(len, left_discontinuous, right_discontinuous) | (source_id << 10)
+}
+
+fn decode_label_into(words: &[u64], len: usize, seq: &mut Vec<u8>) -> Result<(), BucketError> {
+    if len > words.len() * 32 {
+        return Err(BucketError::MalformedRecord);
+    }
+
+    seq.clear();
+    seq.reserve(len);
+    for idx in 0..len {
+        let word_idx = idx / 32;
+        let shift = 2 * (31 - (idx % 32));
+        let base = match ((words[word_idx] >> shift) & 0b11) as u8 {
+            0 => Base::A,
+            1 => Base::C,
+            2 => Base::G,
+            3 => Base::T,
+            _ => unreachable!(),
+        };
+        seq.push(base.to_ascii());
+    }
+    Ok(())
+}
+
+fn read_header(file: &mut impl Read, path: &Path) -> Result<BucketHeader, BucketError> {
+    let mut magic = [0u8; 8];
+    file.read_exact(&mut magic)
+        .map_err(|source| BucketError::Io {
+            path: path.to_path_buf(),
+            source,
+        })?;
+    if &magic != MAGIC {
+        return Err(BucketError::BadMagic(path.to_path_buf()));
+    }
+
+    let k = read_u16(file, path)?;
+    let minimizer_len = read_u16(file, path)?;
+    let graph_count = usize::try_from(read_u64(file, path)?)
+        .map_err(|_| BucketError::MalformedHeader(path.to_path_buf()))?;
+    let graph_id = usize::try_from(read_u64(file, path)?)
+        .map_err(|_| BucketError::MalformedHeader(path.to_path_buf()))?;
+
+    let mut flags = [0u8; 6];
+    file.read_exact(&mut flags)
+        .map_err(|source| BucketError::Io {
+            path: path.to_path_buf(),
+            source,
+        })?;
+    let colored = match flags[0] {
+        0 => false,
+        1 => true,
+        _ => return Err(BucketError::MalformedHeader(path.to_path_buf())),
+    };
+    let label_words = flags[1] as usize;
+    if label_words == 0 || label_words != label_word_count(k, minimizer_len) {
+        return Err(BucketError::MalformedHeader(path.to_path_buf()));
+    }
+    if flags[2..].iter().any(|&b| b != 0) {
+        return Err(BucketError::MalformedHeader(path.to_path_buf()));
+    }
+    let records = read_u64(file, path)?;
+
+    if graph_id >= graph_count {
+        return Err(BucketError::MalformedHeader(path.to_path_buf()));
+    }
+
+    Ok(BucketHeader {
+        k,
+        minimizer_len,
+        graph_count,
+        graph_id,
+        colored,
+        label_words,
+        records,
+    })
+}
+
+fn read_u16(file: &mut impl Read, path: &Path) -> Result<u16, BucketError> {
+    let mut bytes = [0u8; 2];
+    file.read_exact(&mut bytes)
+        .map_err(|source| BucketError::Io {
+            path: path.to_path_buf(),
+            source,
+        })?;
+    Ok(u16::from_le_bytes(bytes))
+}
+
+fn read_u64(file: &mut impl Read, path: &Path) -> Result<u64, BucketError> {
+    let mut bytes = [0u8; 8];
+    file.read_exact(&mut bytes)
+        .map_err(|source| BucketError::Io {
+            path: path.to_path_buf(),
+            source,
+        })?;
+    Ok(u64::from_le_bytes(bytes))
+}
+
+fn write_u16(file: &mut File, path: &Path, value: u16) -> Result<(), BucketError> {
+    file.write_all(&value.to_le_bytes())
+        .map_err(|source| BucketError::Io {
+            path: path.to_path_buf(),
+            source,
+        })
+}
+
+fn write_u64(file: &mut File, path: &Path, value: u64) -> Result<(), BucketError> {
+    file.write_all(&value.to_le_bytes())
+        .map_err(|source| BucketError::Io {
+            path: path.to_path_buf(),
+            source,
+        })
+}
+
+#[derive(Debug)]
+pub enum BucketError {
+    Io {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+    GraphCountTooLarge(usize),
+    InvalidGraphId(usize),
+    LabelTooLong(usize),
+    MissingSourceId,
+    SourceIdTooLarge(u32),
+    InvalidBase(u8),
+    TooManyRecords,
+    BadMagic(PathBuf),
+    MalformedHeader(PathBuf),
+    MalformedManifest(PathBuf),
+    MalformedRecord,
+    RecordGraphMismatch {
+        expected: usize,
+        got: usize,
+    },
+    WorkerPanic,
+}
+
+impl std::fmt::Display for BucketError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Io { path, source } => write!(f, "{}: {source}", path.display()),
+            Self::GraphCountTooLarge(count) => write!(f, "graph count is too large: {count}"),
+            Self::InvalidGraphId(graph_id) => write!(f, "invalid graph id: {graph_id}"),
+            Self::LabelTooLong(len) => write!(f, "weak super-kmer label is too long: {len}"),
+            Self::MissingSourceId => write!(f, "colored bucket record is missing source id"),
+            Self::SourceIdTooLarge(source_id) => {
+                write!(
+                    f,
+                    "source id exceeds 21-bit colored bucket limit: {source_id}"
+                )
+            }
+            Self::InvalidBase(b) => write!(f, "invalid base in bucket label: '{}'", *b as char),
+            Self::TooManyRecords => write!(f, "too many weak super-kmer records"),
+            Self::BadMagic(path) => write!(
+                f,
+                "not a CF3 Rust weak-superkmer bucket: {}",
+                path.display()
+            ),
+            Self::MalformedHeader(path) => {
+                write!(
+                    f,
+                    "malformed weak-superkmer bucket header: {}",
+                    path.display()
+                )
+            }
+            Self::MalformedManifest(path) => {
+                write!(
+                    f,
+                    "malformed weak-superkmer bucket manifest: {}",
+                    path.display()
+                )
+            }
+            Self::MalformedRecord => write!(f, "malformed weak-superkmer bucket record"),
+            Self::RecordGraphMismatch { expected, got } => {
+                write!(
+                    f,
+                    "bucket record graph id mismatch: expected {expected}, got {got}"
+                )
+            }
+            Self::WorkerPanic => write!(f, "bucket worker thread panicked"),
+        }
+    }
+}
+
+impl std::error::Error for BucketError {}

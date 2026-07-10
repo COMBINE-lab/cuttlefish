@@ -1,0 +1,12 @@
+[workspace]
+members = [
+    "crates/cuttlefish3-core",
+    "crates/cuttlefish3-cli",
+    "crates/cuttlefish3-compat-tests",
+]
+resolver = "2"
+
+[workspace.package]
+edition = "2024"
+license = "BSD-3-Clause"
+rust-version = "1.85"

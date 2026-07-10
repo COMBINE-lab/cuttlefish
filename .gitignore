@@ -33,7 +33,9 @@
 
 # Build and binary files
 build/
+build-cpp-*/
 bin/
+target/
 
 # Miscellaneous
 .vscode/

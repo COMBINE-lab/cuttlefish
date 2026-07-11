@@ -358,19 +358,54 @@ impl ColorRepositoryManifest {
             source,
         })?;
         for (worker, records) in self.records.iter().enumerate() {
-            writeln!(
-                output,
-                "{worker}\t{records}\t{}",
-                color_worker_path(&self.dir, worker).display()
-            )
-            .map_err(|source| ColorError::Io {
-                path: path.clone(),
-                source,
+            writeln!(output, "{worker}\t{records}\t{:03}.colors", worker,).map_err(|source| {
+                ColorError::Io {
+                    path: path.clone(),
+                    source,
+                }
             })?;
         }
         output
             .flush()
             .map_err(|source| ColorError::Io { path, source })
+    }
+
+    pub fn write_metadata(
+        &self,
+        k: u16,
+        fasta_path: &Path,
+        sources: &[PathBuf],
+    ) -> Result<(), ColorError> {
+        let metadata_path = self.dir.join("metadata.tsv");
+        let mut metadata =
+            BufWriter::new(
+                File::create(&metadata_path).map_err(|source| ColorError::Io {
+                    path: metadata_path.clone(),
+                    source,
+                })?,
+            );
+        writeln!(metadata, "format\tcf3rs-color-repository-v1")
+            .and_then(|_| writeln!(metadata, "k\t{k}"))
+            .and_then(|_| writeln!(metadata, "fasta\t{}", fasta_path.display()))
+            .and_then(|_| writeln!(metadata, "coordinate\tworker:u8,index:u32"))
+            .and_then(|_| writeln!(metadata, "encoding\tcount-varint,delta-source-varints"))
+            .and_then(|_| writeln!(metadata, "source_count\t{}", sources.len()))
+            .map_err(|source| ColorError::Io {
+                path: metadata_path.clone(),
+                source,
+            })?;
+        for (index, source_path) in sources.iter().enumerate() {
+            writeln!(metadata, "source\t{}\t{}", index + 1, source_path.display()).map_err(
+                |source| ColorError::Io {
+                    path: metadata_path.clone(),
+                    source,
+                },
+            )?;
+        }
+        metadata.flush().map_err(|source| ColorError::Io {
+            path: metadata_path,
+            source,
+        })
     }
 
     pub fn read_color(&self, coordinate: ColorCoordinate) -> Result<Vec<u32>, ColorError> {
@@ -501,6 +536,15 @@ mod tests {
         let manifest = repository.finish().unwrap();
         assert_eq!(manifest.read_color(first).unwrap(), [1, 2, 150]);
         assert_eq!(manifest.read_color(second).unwrap(), [3, 1000]);
+        manifest
+            .write_metadata(31, Path::new("graph.fa"), &[PathBuf::from("source.fa")])
+            .unwrap();
+        let metadata = fs::read_to_string(dir.join("metadata.tsv")).unwrap();
+        assert!(metadata.contains("format\tcf3rs-color-repository-v1"));
+        assert!(metadata.contains("source\t1\tsource.fa"));
+        let manifest_text = fs::read_to_string(dir.join("manifest.tsv")).unwrap();
+        assert!(manifest_text.contains("000.colors"));
+        assert!(!manifest_text.contains(&dir.display().to_string()));
         fs::remove_dir_all(dir).unwrap();
     }
 

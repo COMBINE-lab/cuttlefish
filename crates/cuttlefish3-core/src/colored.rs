@@ -4,6 +4,7 @@ use crate::discontinuity::{
     emit_colored_external_discontinuity_inputs_with_threads_in_dir, report_process_memory,
     trim_process_allocations,
 };
+use crate::input::{InputError, expand_input_paths};
 use crate::kmer::KmerError;
 use crate::params::BuildParams;
 use std::path::{Path, PathBuf};
@@ -65,15 +66,15 @@ pub fn build_colored_from_buckets<const K: usize>(
     let color_repository = inputs
         .color_repository()
         .ok_or(ColoredBuildError::MissingColorArtifacts)?
-        .dir
         .clone();
+    color_repository.write_metadata(params.k, &output_path, &expand_input_paths(params)?)?;
     Ok(ColoredBuildStats {
         input_buckets: inputs.stats.input_buckets,
         bucket_records: inputs.stats.weak_superkmers,
         unitigs: stats.emitted_unitigs,
         unitig_bases: stats.emitted_bases,
         output_path,
-        color_repository,
+        color_repository: color_repository.dir,
     })
 }
 
@@ -81,6 +82,7 @@ pub fn build_colored_from_buckets<const K: usize>(
 pub enum ColoredBuildError {
     ColorRequired,
     MissingColorArtifacts,
+    SourceInput(InputError),
     Input(DiscontinuityInputError),
     Collation(SerialCollationError),
     Kmer(KmerError),
@@ -99,6 +101,18 @@ impl From<SerialCollationError> for ColoredBuildError {
     }
 }
 
+impl From<InputError> for ColoredBuildError {
+    fn from(value: InputError) -> Self {
+        Self::SourceInput(value)
+    }
+}
+
+impl From<ColorError> for ColoredBuildError {
+    fn from(value: ColorError) -> Self {
+        Self::Color(value)
+    }
+}
+
 impl std::fmt::Display for ColoredBuildError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -106,6 +120,7 @@ impl std::fmt::Display for ColoredBuildError {
             Self::MissingColorArtifacts => {
                 write!(f, "colored build did not produce color artifacts")
             }
+            Self::SourceInput(err) => write!(f, "{err}"),
             Self::Input(err) => write!(f, "{err}"),
             Self::Collation(err) => write!(f, "{err}"),
             Self::Kmer(err) => write!(f, "{err}"),

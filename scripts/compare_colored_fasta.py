@@ -58,7 +58,10 @@ def load_rust_repository(path):
         for line in manifest:
             worker_text, records_text, file_text = line.rstrip("\n").split("\t")
             worker = int(worker_text)
-            with Path(file_text).open("rb") as source:
+            file_path = Path(file_text)
+            if not file_path.is_absolute():
+                file_path = path / file_path
+            with file_path.open("rb") as source:
                 for index in range(int(records_text)):
                     count = read_varint(source)
                     values = []

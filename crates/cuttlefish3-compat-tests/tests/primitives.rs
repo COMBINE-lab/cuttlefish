@@ -176,6 +176,31 @@ fn endpoint<const K: usize>(label: &[u8], side: Side) -> DiscontinuityEndpoint<K
     }
 }
 
+fn endpoint_in_partition<const K: usize>(
+    matrix: &SerialEdgeMatrix<K>,
+    partition: usize,
+    ordinal: usize,
+    side: Side,
+) -> DiscontinuityEndpoint<K> {
+    let mut found = 0usize;
+    for encoded in 0..(1usize << (2 * K)) {
+        let mut label = vec![b'A'; K];
+        let mut value = encoded;
+        for base in label.iter_mut().rev() {
+            *base = b"ACGT"[value & 3];
+            value >>= 2;
+        }
+        let candidate = endpoint::<K>(&label, side);
+        if matrix.partition(MatrixEndpoint::Vertex(candidate)) == partition {
+            if found == ordinal {
+                return candidate;
+            }
+            found += 1;
+        }
+    }
+    panic!("no k-mer found for partition {partition} ordinal {ordinal}")
+}
+
 #[test]
 fn uncolored_refs2_matches_cpp_validated_unitigs() {
     normalized_uncolored_fixture(
@@ -507,9 +532,9 @@ fn emits_discontinuity_inputs_from_local_subgraphs() {
 
 #[test]
 fn serial_edge_matrix_uses_phi_and_upper_triangular_blocks() {
-    let low = endpoint::<7>(b"AAAAAAA", Side::Front);
-    let high = endpoint::<7>(b"AAAAAAT", Side::Back);
     let mut matrix = SerialEdgeMatrix::<7>::new(4).unwrap();
+    let low = endpoint_in_partition(&matrix, 1, 0, Side::Front);
+    let high = endpoint_in_partition(&matrix, 4, 0, Side::Back);
 
     assert_eq!(matrix.partition(MatrixEndpoint::Phi), 0);
     assert_eq!(matrix.partition(MatrixEndpoint::Vertex(low)), 1);
@@ -602,11 +627,11 @@ fn serial_discontinuity_contractor_groups_path_and_cycle_components() {
 
 #[test]
 fn diagonal_compression_collapses_same_partition_chains() {
-    let a = endpoint::<7>(b"AAAAAAA", Side::Front);
-    let b = endpoint::<7>(b"AAAAACA", Side::Back);
-    let c = endpoint::<7>(b"AAACAAA", Side::Front);
     let mut matrix = SerialEdgeMatrix::<7>::new(4).unwrap();
-    let partition = matrix.partition(MatrixEndpoint::Vertex(a));
+    let partition = 2;
+    let a = endpoint_in_partition(&matrix, partition, 0, Side::Front);
+    let b = endpoint_in_partition(&matrix, partition, 1, Side::Back);
+    let c = endpoint_in_partition(&matrix, partition, 2, Side::Front);
 
     assert_eq!(partition, matrix.partition(MatrixEndpoint::Vertex(b)));
     assert_eq!(partition, matrix.partition(MatrixEndpoint::Vertex(c)));
@@ -628,11 +653,11 @@ fn diagonal_compression_collapses_same_partition_chains() {
 
 #[test]
 fn diagonal_compression_records_isolated_cycle_meta_vertices() {
-    let a = endpoint::<7>(b"AAAAAAA", Side::Front);
-    let b = endpoint::<7>(b"AAAAACA", Side::Back);
-    let c = endpoint::<7>(b"AAACAAA", Side::Back);
     let mut matrix = SerialEdgeMatrix::<7>::new(4).unwrap();
-    let partition = matrix.partition(MatrixEndpoint::Vertex(a));
+    let partition = 2;
+    let a = endpoint_in_partition(&matrix, partition, 0, Side::Front);
+    let b = endpoint_in_partition(&matrix, partition, 1, Side::Back);
+    let c = endpoint_in_partition(&matrix, partition, 2, Side::Back);
 
     matrix.add_edge(MatrixEndpoint::Vertex(a), MatrixEndpoint::Vertex(b), 2, 0);
     matrix.add_edge(MatrixEndpoint::Vertex(b), MatrixEndpoint::Vertex(c), 3, 1);
@@ -652,11 +677,11 @@ fn diagonal_compression_records_isolated_cycle_meta_vertices() {
 
 #[test]
 fn partition_contraction_joins_non_diagonal_edges_through_partition_vertices() {
-    let left = endpoint::<7>(b"AAAAAAA", Side::Front);
-    let current = endpoint::<7>(b"AAAAAAT", Side::Back);
-    let right = endpoint::<7>(b"AAAAAAC", Side::Front);
     let mut matrix = SerialEdgeMatrix::<7>::new(4).unwrap();
-    let partition = matrix.partition(MatrixEndpoint::Vertex(current));
+    let partition = 4;
+    let left = endpoint_in_partition(&matrix, 1, 0, Side::Front);
+    let current = endpoint_in_partition(&matrix, partition, 0, Side::Back);
+    let right = endpoint_in_partition(&matrix, 2, 0, Side::Front);
 
     assert!(matrix.partition(MatrixEndpoint::Vertex(left)) < partition);
     assert!(matrix.partition(MatrixEndpoint::Vertex(right)) < partition);
@@ -688,10 +713,10 @@ fn partition_contraction_joins_non_diagonal_edges_through_partition_vertices() {
 
 #[test]
 fn partition_contraction_emits_false_phantoms_for_unpaired_endpoints() {
-    let lower = endpoint::<7>(b"AAAAAAA", Side::Front);
-    let current = endpoint::<7>(b"AAAAAAT", Side::Back);
     let mut matrix = SerialEdgeMatrix::<7>::new(4).unwrap();
-    let partition = matrix.partition(MatrixEndpoint::Vertex(current));
+    let partition = 4;
+    let lower = endpoint_in_partition(&matrix, 1, 0, Side::Front);
+    let current = endpoint_in_partition(&matrix, partition, 0, Side::Back);
 
     matrix.add_edge(
         MatrixEndpoint::Vertex(lower),
@@ -724,10 +749,10 @@ fn partition_contraction_emits_false_phantoms_for_unpaired_endpoints() {
 
 #[test]
 fn full_serial_contraction_reinserts_edges_for_lower_partitions() {
-    let low = endpoint::<7>(b"AAAAAAA", Side::Front);
-    let mid = endpoint::<7>(b"AAAAAAC", Side::Back);
-    let high = endpoint::<7>(b"AAAAAAT", Side::Front);
     let mut matrix = SerialEdgeMatrix::<7>::new(4).unwrap();
+    let low = endpoint_in_partition(&matrix, 1, 0, Side::Front);
+    let mid = endpoint_in_partition(&matrix, 2, 0, Side::Back);
+    let high = endpoint_in_partition(&matrix, 4, 0, Side::Front);
 
     assert!(
         matrix.partition(MatrixEndpoint::Vertex(low))

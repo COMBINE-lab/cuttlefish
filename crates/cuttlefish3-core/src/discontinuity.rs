@@ -1,11 +1,15 @@
 use crate::DEFAULT_VERTEX_PARTITIONS;
 use crate::Side;
 use crate::buckets::{BucketError, BucketManifestEntry, read_manifest};
+use crate::color::{
+    ColorError, ColorRepositoryManifest, ColorRunSidecar, ColorRunSidecarWriter,
+    ConcurrentColorRepository, append_color_runs, reverse_color_runs,
+};
 use crate::dna::{Base, complement_ascii};
 use crate::hash::{FastBuildHasher, hash_bytes, hash_u64};
 use crate::kmer::Kmer;
-use crate::state::VertexState;
-use crate::subgraph::{LocalSubgraph, LocalSubgraphError};
+use crate::state::{UnitigColor, VertexState};
+use crate::subgraph::{LocalSubgraph, LocalSubgraphError, LocalUnitigColorRun};
 use leapfrog::LeapMap;
 use rayon::prelude::*;
 use rayon::{ThreadPool, ThreadPoolBuilder};
@@ -13,7 +17,7 @@ use scc::{HashMap as SccHashMap, hash_map::Entry as SccEntry};
 use std::cell::UnsafeCell;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs::{self, File, OpenOptions};
-use std::io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write};
+use std::io::{BufRead, BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::marker::PhantomData;
 use std::mem::MaybeUninit;
 use std::os::unix::fs::FileExt;
@@ -42,12 +46,22 @@ pub struct ExternalDiscontinuityInputs<const K: usize> {
     unitigs: usize,
     ranges: Vec<ExternalLocalUnitigRange>,
     edge_matrix: Option<BlockedEdgeMatrix<K>>,
+    color_runs: Option<ColorRunSidecar>,
+    color_repository: Option<ColorRepositoryManifest>,
     pub stats: DiscontinuityInputStats,
 }
 
 impl<const K: usize> ExternalDiscontinuityInputs<K> {
     pub fn unitig_count(&self) -> usize {
         self.unitigs
+    }
+
+    pub fn color_runs(&self) -> Option<&ColorRunSidecar> {
+        self.color_runs.as_ref()
+    }
+
+    pub fn color_repository(&self) -> Option<&ColorRepositoryManifest> {
+        self.color_repository.as_ref()
     }
 }
 
@@ -1372,6 +1386,7 @@ pub enum SerialCollationError {
     },
     MalformedCoordBucket(std::path::PathBuf),
     WorkerPanic,
+    Color(ColorError),
 }
 
 impl std::fmt::Display for SerialCollationError {
@@ -1386,11 +1401,18 @@ impl std::fmt::Display for SerialCollationError {
                 )
             }
             Self::WorkerPanic => write!(f, "stitched coordinate worker thread panicked"),
+            Self::Color(err) => write!(f, "{err}"),
         }
     }
 }
 
 impl std::error::Error for SerialCollationError {}
+
+impl From<ColorError> for SerialCollationError {
+    fn from(value: ColorError) -> Self {
+        Self::Color(value)
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SerialComponent {
@@ -5077,7 +5099,11 @@ impl SerialUncoloredCollator {
         );
 
         let spill_started = Instant::now();
-        let mut final_buckets = FinalUnitigBucketWriters::create(final_dir, threads)?;
+        let mut final_buckets = FinalUnitigBucketWriters::create_with_color(
+            final_dir,
+            threads,
+            inputs.color_runs.is_some(),
+        )?;
         let use_cpp_path_info = std::env::var_os("CF3_RS_ENDPOINT_STITCH").is_none();
         let mut direct_local_unitigs = 0u64;
         let mut direct_local_complete = false;
@@ -5103,12 +5129,24 @@ impl SerialUncoloredCollator {
         if !direct_local_complete {
             let reader = ExternalDiscontinuityReader::open(inputs)?;
             let mut scratch = Vec::new();
-            for unitig in reader.iter()? {
+            for (unitig_index, unitig) in reader.iter()?.enumerate() {
                 let unitig = unitig?;
                 if unitig.left_exit().is_none() && unitig.right_exit().is_none() {
                     reader.read_label(&unitig, &mut scratch)?;
+                    let reverse = reverse_complement_is_less(&scratch);
                     let label = canonical_label(scratch.clone());
-                    final_buckets.write_label(&label)?;
+                    if let Some(sidecar) = inputs.color_runs.as_ref() {
+                        let mut colors = sidecar.read_unitig(unitig_index as u64)?;
+                        if reverse {
+                            colors = reverse_color_runs(
+                                &colors,
+                                (unitig.label_len as usize - K + 1) as u32,
+                            );
+                        }
+                        final_buckets.write_colored_label(&label, &colors)?;
+                    } else {
+                        final_buckets.write_label(&label)?;
+                    }
                     direct_local_unitigs += 1;
                 }
             }
@@ -5300,6 +5338,7 @@ struct FinalUnitigBucketEntry {
     bucket_id: usize,
     path: PathBuf,
     records: u64,
+    colored: bool,
 }
 
 struct FinalUnitigBucketWriters {
@@ -5308,10 +5347,19 @@ struct FinalUnitigBucketWriters {
     writers: Vec<Option<FinalUnitigBucketWriter>>,
     records: Vec<u64>,
     open_writers: usize,
+    colored: bool,
 }
 
 impl FinalUnitigBucketWriters {
     fn create(dir: &Path, threads: usize) -> Result<Self, SerialCollationError> {
+        Self::create_with_color(dir, threads, false)
+    }
+
+    fn create_with_color(
+        dir: &Path,
+        threads: usize,
+        colored: bool,
+    ) -> Result<Self, SerialCollationError> {
         if dir.exists() {
             fs::remove_dir_all(dir).map_err(|source| SerialCollationError::Io {
                 path: dir.to_path_buf(),
@@ -5331,6 +5379,7 @@ impl FinalUnitigBucketWriters {
             writers,
             records: vec![0; bucket_count],
             open_writers: 0,
+            colored,
         })
     }
 
@@ -5338,13 +5387,40 @@ impl FinalUnitigBucketWriters {
         let bucket_id = (hash_bytes(label, 0) as usize) & self.bucket_mask;
         if self.writers[bucket_id].is_none() {
             self.evict_writer_if_needed(bucket_id)?;
-            self.writers[bucket_id] = Some(FinalUnitigBucketWriter::open(&self.dir, bucket_id)?);
+            self.writers[bucket_id] = Some(FinalUnitigBucketWriter::open(
+                &self.dir,
+                bucket_id,
+                self.colored,
+            )?);
             self.open_writers += 1;
         }
         self.writers[bucket_id]
             .as_mut()
             .expect("final unitig bucket writer was just created")
-            .write_label(label)?;
+            .write_record(label, &[])?;
+        self.records[bucket_id] += 1;
+        Ok(())
+    }
+
+    fn write_colored_label(
+        &mut self,
+        label: &[u8],
+        colors: &[UnitigColor],
+    ) -> Result<(), SerialCollationError> {
+        if !self.colored {
+            return Err(SerialCollationError::MalformedCoordBucket(self.dir.clone()));
+        }
+        let bucket_id = (hash_bytes(label, 0) as usize) & self.bucket_mask;
+        if self.writers[bucket_id].is_none() {
+            self.evict_writer_if_needed(bucket_id)?;
+            self.writers[bucket_id] =
+                Some(FinalUnitigBucketWriter::open(&self.dir, bucket_id, true)?);
+            self.open_writers += 1;
+        }
+        self.writers[bucket_id]
+            .as_mut()
+            .expect("final unitig bucket writer was just created")
+            .write_record(label, colors)?;
         self.records[bucket_id] += 1;
         Ok(())
     }
@@ -5382,6 +5458,7 @@ impl FinalUnitigBucketWriters {
                     bucket_id,
                     path: self.dir.join(format!("{bucket_id:05}.fub")),
                     records,
+                    colored: self.colored,
                 });
             }
         }
@@ -5393,10 +5470,11 @@ impl FinalUnitigBucketWriters {
 struct FinalUnitigBucketWriter {
     path: PathBuf,
     out: BufWriter<File>,
+    colored: bool,
 }
 
 impl FinalUnitigBucketWriter {
-    fn open(dir: &Path, bucket_id: usize) -> Result<Self, SerialCollationError> {
+    fn open(dir: &Path, bucket_id: usize, colored: bool) -> Result<Self, SerialCollationError> {
         let path = dir.join(format!("{bucket_id:05}.fub"));
         let file = OpenOptions::new()
             .create(true)
@@ -5409,15 +5487,35 @@ impl FinalUnitigBucketWriter {
         Ok(Self {
             path,
             out: BufWriter::with_capacity(FINAL_UNITIG_BUCKET_WRITE_BUFFER, file),
+            colored,
         })
     }
 
-    fn write_label(&mut self, label: &[u8]) -> Result<(), SerialCollationError> {
+    fn write_record(
+        &mut self,
+        label: &[u8],
+        colors: &[UnitigColor],
+    ) -> Result<(), SerialCollationError> {
         let len = u32::try_from(label.len())
             .map_err(|_| SerialCollationError::MalformedCoordBucket(self.path.clone()))?;
         self.out
             .write_all(&len.to_le_bytes())
-            .and_then(|_| self.out.write_all(label))
+            .and_then(|_| {
+                if self.colored {
+                    let count = u32::try_from(colors.len())
+                        .map_err(|_| std::io::Error::from(std::io::ErrorKind::InvalidData))?;
+                    self.out.write_all(&count.to_le_bytes())?;
+                }
+                self.out.write_all(label)
+            })
+            .and_then(|_| {
+                if self.colored {
+                    for color in colors {
+                        self.out.write_all(&color.raw().to_le_bytes())?;
+                    }
+                }
+                Ok(())
+            })
             .map_err(|source| SerialCollationError::Io {
                 path: self.path.clone(),
                 source,
@@ -5455,12 +5553,16 @@ fn reduce_final_unitig_buckets_to_fasta(
         bucket.labels.dedup_by(|left, right| {
             bytes[left.0..left.0 + left.1] == bytes[right.0..right.0 + right.1]
         });
-        for (label_start, label_len) in bucket.labels {
+        for (label_start, label_len, color_start, color_count) in bucket.labels {
             let label = &bytes[label_start..label_start + label_len];
             emitted += 1;
             bases += label.len() as u64;
             fasta_buffer.extend_from_slice(b">utg");
             append_decimal_u64(&mut fasta_buffer, emitted);
+            for color in &bucket.colors[color_start..color_start + color_count] {
+                fasta_buffer.push(b' ');
+                append_decimal_u64(&mut fasta_buffer, color.raw());
+            }
             fasta_buffer.push(b'\n');
             fasta_buffer.extend_from_slice(&label);
             fasta_buffer.push(b'\n');
@@ -5505,7 +5607,8 @@ fn append_decimal_u64(output: &mut Vec<u8>, mut value: u64) {
 
 struct FinalUnitigBucketData {
     bytes: Vec<u8>,
-    labels: Vec<(usize, usize)>,
+    labels: Vec<(usize, usize, usize, usize)>,
+    colors: Vec<UnitigColor>,
 }
 
 fn read_final_unitig_bucket(
@@ -5516,6 +5619,7 @@ fn read_final_unitig_bucket(
         source,
     })?;
     let mut labels = Vec::with_capacity(entry.records as usize);
+    let mut colors = Vec::new();
     let mut cursor = 0usize;
     for _ in 0..entry.records {
         let len_end = cursor
@@ -5526,21 +5630,50 @@ fn read_final_unitig_bucket(
             .ok_or_else(|| SerialCollationError::MalformedCoordBucket(entry.path.clone()))?;
         let len =
             u32::from_le_bytes(len_bytes.try_into().expect("four-byte label length")) as usize;
-        let label_end = len_end
+        let color_count = if entry.colored {
+            let count_end = len_end + 4;
+            let count_bytes = bytes
+                .get(len_end..count_end)
+                .ok_or_else(|| SerialCollationError::MalformedCoordBucket(entry.path.clone()))?;
+            cursor = count_end;
+            u32::from_le_bytes(count_bytes.try_into().expect("four-byte color count")) as usize
+        } else {
+            cursor = len_end;
+            0
+        };
+        let label_end = cursor
             .checked_add(len)
             .ok_or_else(|| SerialCollationError::MalformedCoordBucket(entry.path.clone()))?;
         bytes
-            .get(len_end..label_end)
+            .get(cursor..label_end)
             .ok_or_else(|| SerialCollationError::MalformedCoordBucket(entry.path.clone()))?;
-        labels.push((len_end, len));
+        let label_start = cursor;
         cursor = label_end;
+        let color_start = colors.len();
+        for _ in 0..color_count {
+            let color_end = cursor + 8;
+            let raw = bytes
+                .get(cursor..color_end)
+                .ok_or_else(|| SerialCollationError::MalformedCoordBucket(entry.path.clone()))?;
+            let raw = u64::from_le_bytes(raw.try_into().expect("eight-byte unitig color"));
+            colors.push(UnitigColor::new(
+                (raw & 0xff_ffff) as u32,
+                crate::state::ColorCoordinate::from_u40(raw >> 24),
+            ));
+            cursor = color_end;
+        }
+        labels.push((label_start, len, color_start, color_count));
     }
     if cursor != bytes.len() {
         return Err(SerialCollationError::MalformedCoordBucket(
             entry.path.clone(),
         ));
     }
-    Ok(FinalUnitigBucketData { bytes, labels })
+    Ok(FinalUnitigBucketData {
+        bytes,
+        labels,
+        colors,
+    })
 }
 
 fn reverse_complement_is_less(label: &[u8]) -> bool {
@@ -6304,6 +6437,7 @@ struct MaterializedStitchedCoordRecord {
     label_len: u32,
     reverse: bool,
     is_cycle: bool,
+    color_index: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -6313,6 +6447,8 @@ struct MaterializedStitchedCoordBucketEntry {
     label_bytes: u64,
     coord_path: PathBuf,
     label_path: PathBuf,
+    color_path: Option<PathBuf>,
+    color_runs: u64,
 }
 
 const STITCH_COORD_MAGIC: &[u8; 8] = b"CF3SCB1\0";
@@ -6860,6 +6996,7 @@ fn serial_collation_to_input_error(error: SerialCollationError) -> Discontinuity
             ),
         },
         SerialCollationError::WorkerPanic => DiscontinuityInputError::WorkerPanic,
+        SerialCollationError::Color(err) => DiscontinuityInputError::Color(err),
     }
 }
 
@@ -7411,7 +7548,7 @@ fn map_external_cpp_path_info_buckets_to_max_unitig_buckets<const K: usize>(
         return Ok(ExternalCppPathInfoMaterialized {
             manifest,
             direct_local_unitigs,
-            direct_local_unitigs_complete: true,
+            direct_local_unitigs_complete: inputs.color_runs.is_none(),
         });
     }
 
@@ -7530,7 +7667,7 @@ fn map_external_cpp_path_info_buckets_to_max_unitig_buckets<const K: usize>(
     Ok(ExternalCppPathInfoMaterialized {
         manifest,
         direct_local_unitigs,
-        direct_local_unitigs_complete: true,
+        direct_local_unitigs_complete: inputs.color_runs.is_none(),
     })
 }
 
@@ -10524,7 +10661,7 @@ where
                     source,
                 })?;
             let bucket_id = stitched_coord_bucket(record.path_id, bucket_mask);
-            writers.write_materialized_record(bucket_id, record, &label)?;
+            write_external_materialized_record(inputs, writers, bucket_id, record, &label)?;
             record_idx += 1;
         } else if unitig.left_exit().is_none() && unitig.right_exit().is_none() {
             label.resize(unitig.label_len as usize, 0);
@@ -10534,7 +10671,9 @@ where
                     path: inputs.label_path.clone(),
                     source,
                 })?;
-            emit_direct_local(canonical_label(label.clone()))?;
+            if inputs.color_runs.is_none() {
+                emit_direct_local(canonical_label(label.clone()))?;
+            }
         } else {
             read_and_discard_exact(
                 &mut label_input,
@@ -10551,6 +10690,21 @@ where
     }
     debug_assert_eq!(unitig_span, end_unitig - start_unitig);
     Ok(())
+}
+
+fn write_external_materialized_record<const K: usize, W: MaterializedRecordSink>(
+    inputs: &ExternalDiscontinuityInputs<K>,
+    writers: &mut W,
+    bucket_id: usize,
+    record: &StitchedCoordRecord,
+    label: &[u8],
+) -> Result<(), SerialCollationError> {
+    if let Some(sidecar) = inputs.color_runs.as_ref() {
+        let colors = sidecar.read_unitig(u64::from(record.unitig_index))?;
+        writers.write_materialized_colored_record(bucket_id, record, label, &colors)
+    } else {
+        writers.write_materialized_record(bucket_id, record, label)
+    }
 }
 
 fn read_and_discard_exact(
@@ -10620,6 +10774,14 @@ trait MaterializedRecordSink {
         record: &StitchedCoordRecord,
         label: &[u8],
     ) -> Result<(), SerialCollationError>;
+
+    fn write_materialized_colored_record(
+        &mut self,
+        bucket_id: usize,
+        record: &StitchedCoordRecord,
+        label: &[u8],
+        colors: &[UnitigColor],
+    ) -> Result<(), SerialCollationError>;
 }
 
 impl MaterializedRecordSink for MaterializedStitchedCoordShardWriters<'_> {
@@ -10632,6 +10794,20 @@ impl MaterializedRecordSink for MaterializedStitchedCoordShardWriters<'_> {
         MaterializedStitchedCoordShardWriters::write_materialized_record(
             self, bucket_id, record, label,
         )
+    }
+
+    fn write_materialized_colored_record(
+        &mut self,
+        bucket_id: usize,
+        record: &StitchedCoordRecord,
+        label: &[u8],
+        colors: &[UnitigColor],
+    ) -> Result<(), SerialCollationError> {
+        self.ensure_writer(bucket_id)?;
+        self.writers[bucket_id]
+            .as_mut()
+            .expect("bucket writer was just created")
+            .write_colored_record(record, label, colors)
     }
 }
 
@@ -10679,6 +10855,32 @@ impl<'a> SharedMaterializedWriters<'a> {
         Ok(())
     }
 
+    fn write_colored_record(
+        &self,
+        bucket_id: usize,
+        record: &StitchedCoordRecord,
+        label: &[u8],
+        colors: &[UnitigColor],
+    ) -> Result<(), SerialCollationError> {
+        let mut writer = self.writers[bucket_id]
+            .lock()
+            .map_err(|_| SerialCollationError::WorkerPanic)?;
+        if writer.is_none() {
+            *writer = Some(MaterializedStitchedCoordShardWriter::create(
+                self.coord_dir,
+                0,
+                bucket_id,
+            )?);
+        }
+        let writer = writer.as_mut().expect("global writer was just created");
+        writer.ensure_open()?;
+        writer.write_colored_record(record, label, colors)?;
+        if !self.keep_open {
+            writer.flush_and_close()?;
+        }
+        Ok(())
+    }
+
     fn finish(self) -> Result<Vec<MaterializedStitchedCoordBucketEntry>, SerialCollationError> {
         let mut manifest = Vec::new();
         for writer in self.writers {
@@ -10717,6 +10919,13 @@ impl<'a, 'b> SharedMaterializedBatch<'a, 'b> {
         }
         Ok(())
     }
+
+    fn finish_bucket(&mut self, bucket_id: usize) -> Result<(), SerialCollationError> {
+        self.shared
+            .write_batch(bucket_id, &mut self.buckets[bucket_id])?;
+        self.bucket_bytes[bucket_id] = 0;
+        Ok(())
+    }
 }
 
 impl MaterializedRecordSink for SharedMaterializedBatch<'_, '_> {
@@ -10734,6 +10943,18 @@ impl MaterializedRecordSink for SharedMaterializedBatch<'_, '_> {
             self.bucket_bytes[bucket_id] = 0;
         }
         Ok(())
+    }
+
+    fn write_materialized_colored_record(
+        &mut self,
+        bucket_id: usize,
+        record: &StitchedCoordRecord,
+        label: &[u8],
+        colors: &[UnitigColor],
+    ) -> Result<(), SerialCollationError> {
+        self.finish_bucket(bucket_id)?;
+        self.shared
+            .write_colored_record(bucket_id, record, label, colors)
     }
 }
 
@@ -10849,11 +11070,15 @@ struct MaterializedStitchedCoordShardWriter {
     bucket_id: usize,
     coord_path: PathBuf,
     label_path: PathBuf,
+    color_path: PathBuf,
     coord_out: Option<BufWriter<File>>,
     label_out: Option<BufWriter<File>>,
+    color_out: Option<BufWriter<File>>,
     record_buffer: Vec<u8>,
     records: u64,
     label_bytes: u64,
+    color_runs: u64,
+    color_records: u32,
 }
 
 impl MaterializedStitchedCoordShardWriter {
@@ -10864,6 +11089,7 @@ impl MaterializedStitchedCoordShardWriter {
     ) -> Result<Self, SerialCollationError> {
         let coord_path = coord_dir.join(format!("{bucket_id:05}.{worker_id:03}.mcoord"));
         let label_path = coord_dir.join(format!("{bucket_id:05}.{worker_id:03}.mlabel"));
+        let color_path = coord_dir.join(format!("{bucket_id:05}.{worker_id:03}.mcolor"));
         let coord_file = File::create(&coord_path).map_err(|source| SerialCollationError::Io {
             path: coord_path.clone(),
             source,
@@ -10887,16 +11113,20 @@ impl MaterializedStitchedCoordShardWriter {
             bucket_id,
             coord_path,
             label_path,
+            color_path,
             coord_out: Some(coord_out),
             label_out: Some(BufWriter::with_capacity(1024 * 1024, label_file)),
+            color_out: None,
             record_buffer: Vec::with_capacity(STITCH_COORD_RECORD_WRITE_BUFFER),
             records: 0,
             label_bytes: 0,
+            color_runs: 0,
+            color_records: 0,
         })
     }
 
     fn is_open(&self) -> bool {
-        self.coord_out.is_some() || self.label_out.is_some()
+        self.coord_out.is_some() || self.label_out.is_some() || self.color_out.is_some()
     }
 
     fn ensure_open(&mut self) -> Result<(), SerialCollationError> {
@@ -10923,6 +11153,16 @@ impl MaterializedStitchedCoordShardWriter {
                 })?;
             self.label_out = Some(BufWriter::with_capacity(1024 * 1024, label_file));
         }
+        if self.color_runs != 0 && self.color_out.is_none() {
+            let color_file = OpenOptions::new()
+                .append(true)
+                .open(&self.color_path)
+                .map_err(|source| SerialCollationError::Io {
+                    path: self.color_path.clone(),
+                    source,
+                })?;
+            self.color_out = Some(BufWriter::with_capacity(1024 * 1024, color_file));
+        }
         Ok(())
     }
 
@@ -10930,6 +11170,15 @@ impl MaterializedStitchedCoordShardWriter {
         &mut self,
         record: &StitchedCoordRecord,
         label: &[u8],
+    ) -> Result<(), SerialCollationError> {
+        self.write_record_with_color_index(record, label, u32::MAX)
+    }
+
+    fn write_record_with_color_index(
+        &mut self,
+        record: &StitchedCoordRecord,
+        label: &[u8],
+        color_index: u32,
     ) -> Result<(), SerialCollationError> {
         let label_len = u32::try_from(label.len())
             .map_err(|_| SerialCollationError::MalformedCoordBucket(self.coord_path.clone()))?;
@@ -10942,6 +11191,7 @@ impl MaterializedStitchedCoordShardWriter {
                     label_len,
                     reverse: record.reverse,
                     is_cycle: record.is_cycle,
+                    color_index,
                 },
             ));
         if self.record_buffer.len() >= STITCH_COORD_RECORD_WRITE_BUFFER {
@@ -10958,6 +11208,54 @@ impl MaterializedStitchedCoordShardWriter {
         self.records += 1;
         self.label_bytes += u64::from(label_len);
         Ok(())
+    }
+
+    fn write_colored_record(
+        &mut self,
+        record: &StitchedCoordRecord,
+        label: &[u8],
+        colors: &[UnitigColor],
+    ) -> Result<(), SerialCollationError> {
+        if self.color_out.is_none() {
+            let file = OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&self.color_path)
+                .map_err(|source| SerialCollationError::Io {
+                    path: self.color_path.clone(),
+                    source,
+                })?;
+            self.color_out = Some(BufWriter::with_capacity(1024 * 1024, file));
+        }
+        let count = u32::try_from(colors.len())
+            .map_err(|_| SerialCollationError::MalformedCoordBucket(self.color_path.clone()))?;
+        let color_out = self
+            .color_out
+            .as_mut()
+            .expect("color writer was just created");
+        color_out
+            .write_all(&count.to_le_bytes())
+            .map_err(|source| SerialCollationError::Io {
+                path: self.color_path.clone(),
+                source,
+            })?;
+        for color in colors {
+            color_out
+                .write_all(&color.raw().to_le_bytes())
+                .map_err(|source| SerialCollationError::Io {
+                    path: self.color_path.clone(),
+                    source,
+                })?;
+        }
+        let color_index = self.color_records;
+        if color_index >= 0xff_ffff {
+            return Err(SerialCollationError::MalformedCoordBucket(
+                self.color_path.clone(),
+            ));
+        }
+        self.color_runs += u64::from(count);
+        self.color_records += 1;
+        self.write_record_with_color_index(record, label, color_index)
     }
 
     fn flush_record_buffer(&mut self) -> Result<(), SerialCollationError> {
@@ -10991,6 +11289,14 @@ impl MaterializedStitchedCoordShardWriter {
                 .flush()
                 .map_err(|source| SerialCollationError::Io {
                     path: self.label_path.clone(),
+                    source,
+                })?;
+        }
+        if let Some(mut color_out) = self.color_out.take() {
+            color_out
+                .flush()
+                .map_err(|source| SerialCollationError::Io {
+                    path: self.color_path.clone(),
                     source,
                 })?;
         }
@@ -11029,6 +11335,8 @@ impl MaterializedStitchedCoordShardWriter {
             label_bytes: self.label_bytes,
             coord_path: self.coord_path,
             label_path: self.label_path,
+            color_path: (self.color_runs != 0).then_some(self.color_path),
+            color_runs: self.color_runs,
         })
     }
 }
@@ -11340,6 +11648,14 @@ fn encoded_materialized_stitched_coord_record(
         flags |= STITCH_COORD_CYCLE_FLAG;
     }
     bytes[28] = flags;
+    let color_index = if record.color_index == u32::MAX {
+        0xff_ffff
+    } else {
+        record.color_index
+    };
+    bytes[29] = color_index as u8;
+    bytes[30] = (color_index >> 8) as u8;
+    bytes[31] = (color_index >> 16) as u8;
     bytes
 }
 
@@ -11372,9 +11688,13 @@ fn reduce_materialized_stitched_coord_bucket_files_to_final<const K: usize>(
     let mut emitted = 0u64;
     if workers == 1 {
         for group in &groups {
-            let labels = reduce_materialized_stitched_coord_bucket_file_group::<K>(group)?;
-            for label in labels {
-                final_buckets.write_label(&label)?;
+            let unitigs = reduce_materialized_stitched_coord_bucket_file_group::<K>(group)?;
+            for unitig in unitigs {
+                if unitig.colors.is_empty() {
+                    final_buckets.write_label(&unitig.label)?;
+                } else {
+                    final_buckets.write_colored_label(&unitig.label, &unitig.colors)?;
+                }
                 emitted += 1;
             }
         }
@@ -11382,7 +11702,8 @@ fn reduce_materialized_stitched_coord_bucket_files_to_final<const K: usize>(
     }
 
     let next_group = AtomicUsize::new(0);
-    let (tx, rx) = mpsc::sync_channel::<Result<Vec<Vec<u8>>, SerialCollationError>>(workers * 2);
+    let (tx, rx) =
+        mpsc::sync_channel::<Result<Vec<FinalUnitigRecord>, SerialCollationError>>(workers * 2);
     std::thread::scope(|scope| {
         let mut handles = Vec::new();
         for _ in 0..workers {
@@ -11408,9 +11729,14 @@ fn reduce_materialized_stitched_coord_bucket_files_to_final<const K: usize>(
         let mut first_error = None;
         for result in rx {
             match result {
-                Ok(labels) if first_error.is_none() => {
-                    for label in labels {
-                        if let Err(err) = final_buckets.write_label(&label) {
+                Ok(unitigs) if first_error.is_none() => {
+                    for unitig in unitigs {
+                        let result = if unitig.colors.is_empty() {
+                            final_buckets.write_label(&unitig.label)
+                        } else {
+                            final_buckets.write_colored_label(&unitig.label, &unitig.colors)
+                        };
+                        if let Err(err) = result {
                             first_error = Some(err);
                             break;
                         }
@@ -11441,29 +11767,48 @@ fn reduce_materialized_stitched_coord_bucket_files_to_final<const K: usize>(
 
 fn reduce_materialized_stitched_coord_bucket_file_group<const K: usize>(
     group: &[MaterializedStitchedCoordBucketEntry],
-) -> Result<Vec<Vec<u8>>, SerialCollationError> {
+) -> Result<Vec<FinalUnitigRecord>, SerialCollationError> {
     let total_records = group.iter().map(|entry| entry.records).sum::<u64>();
     let total_label_bytes = group.iter().map(|entry| entry.label_bytes).sum::<u64>();
     let mut records = Vec::with_capacity(total_records as usize);
     let mut labels = Vec::with_capacity(total_label_bytes as usize);
+    let mut colors = Vec::new();
     for entry in group {
         let label_offset = labels.len() as u64;
         let mut shard = read_materialized_stitched_coord_bucket_file(entry)?;
+        let color_offset = colors.len() as u32;
         for record in &mut shard.records {
             record.label_offset += label_offset;
+            if record.color_index != u32::MAX {
+                record.color_index =
+                    record
+                        .color_index
+                        .checked_add(color_offset)
+                        .ok_or_else(|| {
+                            SerialCollationError::MalformedCoordBucket(entry.coord_path.clone())
+                        })?;
+            }
         }
         records.extend(shard.records);
         labels.extend(shard.labels);
+        colors.extend(shard.colors);
     }
     Ok(reduce_materialized_stitched_coord_bucket::<K>(
         &mut records,
         &labels,
+        &colors,
     ))
 }
 
 struct MaterializedStitchedCoordBucket {
     records: Vec<MaterializedStitchedCoordRecord>,
     labels: Vec<u8>,
+    colors: Vec<Vec<UnitigColor>>,
+}
+
+struct FinalUnitigRecord {
+    label: Vec<u8>,
+    colors: Vec<UnitigColor>,
 }
 
 fn read_materialized_stitched_coord_bucket_file(
@@ -11552,9 +11897,65 @@ fn read_materialized_stitched_coord_bucket_file(
             source,
         })?;
 
+    let mut colors = Vec::new();
+    if let Some(color_path) = &entry.color_path {
+        let color_file = File::open(color_path).map_err(|source| SerialCollationError::Io {
+            path: color_path.clone(),
+            source,
+        })?;
+        let mut color_input = BufReader::with_capacity(1024 * 1024, color_file);
+        let color_records = out
+            .iter()
+            .filter_map(|record| (record.color_index != u32::MAX).then_some(record.color_index))
+            .max()
+            .map_or(0, |index| index + 1);
+        let mut observed_runs = 0u64;
+        for _ in 0..color_records {
+            let mut count = [0u8; 4];
+            color_input
+                .read_exact(&mut count)
+                .map_err(|source| SerialCollationError::Io {
+                    path: color_path.clone(),
+                    source,
+                })?;
+            let count = u32::from_le_bytes(count);
+            let mut runs = Vec::with_capacity(count as usize);
+            for _ in 0..count {
+                let mut raw = [0u8; 8];
+                color_input
+                    .read_exact(&mut raw)
+                    .map_err(|source| SerialCollationError::Io {
+                        path: color_path.clone(),
+                        source,
+                    })?;
+                let raw = u64::from_le_bytes(raw);
+                runs.push(UnitigColor::new(
+                    (raw & 0xff_ffff) as u32,
+                    crate::state::ColorCoordinate::from_u40(raw >> 24),
+                ));
+            }
+            observed_runs += u64::from(count);
+            colors.push(runs);
+        }
+        if observed_runs != entry.color_runs
+            || !color_input
+                .fill_buf()
+                .map_err(|source| SerialCollationError::Io {
+                    path: color_path.clone(),
+                    source,
+                })?
+                .is_empty()
+        {
+            return Err(SerialCollationError::MalformedCoordBucket(
+                color_path.clone(),
+            ));
+        }
+    }
+
     Ok(MaterializedStitchedCoordBucket {
         records: out,
         labels,
+        colors,
     })
 }
 
@@ -11574,11 +11975,8 @@ fn decoded_materialized_stitched_coord_record(
     let mut len_bytes = [0u8; 4];
     len_bytes.copy_from_slice(&bytes[24..28]);
     let flags = bytes[28];
-    if bytes[29..32].iter().any(|&byte| byte != 0) {
-        return Err(SerialCollationError::MalformedCoordBucket(
-            path.to_path_buf(),
-        ));
-    }
+    let encoded_color_index =
+        u32::from(bytes[29]) | (u32::from(bytes[30]) << 8) | (u32::from(bytes[31]) << 16);
     Ok(MaterializedStitchedCoordRecord {
         path_id,
         rank,
@@ -11586,13 +11984,19 @@ fn decoded_materialized_stitched_coord_record(
         label_len: u32::from_le_bytes(len_bytes),
         reverse: (flags & STITCH_COORD_REVERSE_FLAG) != 0,
         is_cycle: (flags & STITCH_COORD_CYCLE_FLAG) != 0,
+        color_index: if encoded_color_index == 0xff_ffff {
+            u32::MAX
+        } else {
+            encoded_color_index
+        },
     })
 }
 
 fn reduce_materialized_stitched_coord_bucket<const K: usize>(
     records: &mut [MaterializedStitchedCoordRecord],
     labels: &[u8],
-) -> Vec<Vec<u8>> {
+    color_sets: &[Vec<UnitigColor>],
+) -> Vec<FinalUnitigRecord> {
     if records.is_empty() {
         return Vec::new();
     }
@@ -11611,6 +12015,7 @@ fn reduce_materialized_stitched_coord_bucket<const K: usize>(
         }
 
         let mut label = Vec::new();
+        let mut colors = Vec::new();
         if end - start == 2 && !is_cycle && records[start].rank == 0 && records[start + 1].rank == 0
         {
             for (idx, record) in records[start..end].iter().enumerate() {
@@ -11622,6 +12027,13 @@ fn reduce_materialized_stitched_coord_bucket<const K: usize>(
                 } else {
                     !record.reverse
                 };
+                append_materialized_colors::<K>(
+                    &mut colors,
+                    label.len(),
+                    record,
+                    color_sets,
+                    reverse,
+                );
                 append_or_init_oriented_fast::<K>(&mut label, unitig_label, reverse);
             }
         } else {
@@ -11629,21 +12041,75 @@ fn reduce_materialized_stitched_coord_bucket<const K: usize>(
                 let label_start = record.label_offset as usize;
                 let label_end = label_start + record.label_len as usize;
                 let unitig_label = &labels[label_start..label_end];
+                append_materialized_colors::<K>(
+                    &mut colors,
+                    label.len(),
+                    record,
+                    color_sets,
+                    record.reverse,
+                );
                 append_or_init_oriented_fast::<K>(&mut label, unitig_label, record.reverse);
             }
         }
 
         if label.len() >= K {
-            let label = if is_cycle {
+            let colored = !colors.is_empty();
+            let label = if is_cycle && colored {
+                label.pop();
+                let vertex_count = label.len().saturating_sub(K - 1) as u32;
+                while colors
+                    .last()
+                    .is_some_and(|run| run.offset() >= vertex_count)
+                {
+                    colors.pop();
+                }
+                label
+            } else if is_cycle {
                 normalize_stitched_cycle::<K>(&label)
             } else {
+                let reverse = reverse_complement_is_less(&label);
+                if reverse && colored {
+                    colors = reverse_color_runs(&colors, (label.len() - K + 1) as u32);
+                }
                 canonical_label(label)
             };
-            unitigs.push(label);
+            unitigs.push(FinalUnitigRecord { label, colors });
         }
         start = end;
     }
     unitigs
+}
+
+fn append_materialized_colors<const K: usize>(
+    output: &mut Vec<UnitigColor>,
+    output_label_len: usize,
+    record: &MaterializedStitchedCoordRecord,
+    color_sets: &[Vec<UnitigColor>],
+    reverse: bool,
+) {
+    if record.color_index == u32::MAX {
+        return;
+    }
+    let Some(runs) = color_sets.get(record.color_index as usize) else {
+        return;
+    };
+    let unitig_vertex_count = record.label_len as usize - K + 1;
+    if output.is_empty() {
+        *output = if reverse {
+            reverse_color_runs(runs, unitig_vertex_count as u32)
+        } else {
+            runs.clone()
+        };
+    } else {
+        let output_vertex_count = output_label_len - K + 1;
+        append_color_runs(
+            output,
+            output_vertex_count as u32,
+            runs,
+            unitig_vertex_count as u32,
+            reverse,
+        );
+    }
 }
 
 fn materialized_stitched_coord_records_are_ordered(
@@ -13406,6 +13872,30 @@ pub fn emit_uncolored_external_discontinuity_inputs_with_threads_in_dir<const K:
         cutoff,
         threads,
         label_path.as_ref(),
+        None,
+    )
+}
+
+pub fn emit_colored_external_discontinuity_inputs_with_threads_in_dir<const K: usize>(
+    bucket_dir: impl AsRef<Path>,
+    cutoff: u32,
+    threads: usize,
+    label_path: impl AsRef<Path>,
+    color_path: impl AsRef<Path>,
+) -> Result<ExternalDiscontinuityInputs<K>, DiscontinuityInputError> {
+    if cutoff == 0 {
+        return Err(DiscontinuityInputError::InvalidCutoff);
+    }
+    if threads == 0 {
+        return Err(DiscontinuityInputError::InvalidThreadCount);
+    }
+    let entries = read_manifest(bucket_dir.as_ref())?;
+    contract_local_subgraphs_into_external_inputs::<K>(
+        &entries,
+        cutoff,
+        threads,
+        label_path.as_ref(),
+        Some(color_path.as_ref()),
     )
 }
 
@@ -13425,7 +13915,7 @@ fn emit_uncolored_discontinuity_inputs_with_threads_impl<const K: usize>(
     let entries = read_manifest(bucket_dir.as_ref())?;
     if let Some(label_path) = label_path {
         let external = contract_local_subgraphs_into_external_inputs::<K>(
-            &entries, cutoff, threads, label_path,
+            &entries, cutoff, threads, label_path, None,
         )?;
         return external_inputs_to_memory_inputs(external);
     }
@@ -13502,6 +13992,7 @@ fn contract_local_subgraphs_into_external_inputs<const K: usize>(
     cutoff: u32,
     threads: usize,
     label_path: &Path,
+    color_path: Option<&Path>,
 ) -> Result<ExternalDiscontinuityInputs<K>, DiscontinuityInputError> {
     let mut inputs = DiscontinuityInputs::empty(DiscontinuityInputStats {
         input_buckets: entries.len(),
@@ -13536,6 +14027,16 @@ fn contract_local_subgraphs_into_external_inputs<const K: usize>(
         .map_err(serial_collation_to_input_error)?;
     let mut label_offset = 0u64;
     let mut ranges = Vec::new();
+    let color_repository = color_path
+        .map(|path| {
+            ConcurrentColorRepository::create(
+                path.with_extension("color-repository"),
+                threads.min(256),
+                entries.len() * 8,
+            )
+        })
+        .transpose()?;
+    let mut color_run_writer = color_path.map(ColorRunSidecarWriter::create).transpose()?;
 
     let mut groups = local_bucket_groups(entries);
     groups.sort_by_key(|group| std::cmp::Reverse(group.records));
@@ -13568,6 +14069,9 @@ fn contract_local_subgraphs_into_external_inputs<const K: usize>(
                 &mut edge_matrix,
                 &mut build_elapsed,
                 &mut contract_elapsed,
+                color_repository.as_ref(),
+                color_run_writer.as_mut(),
+                threads,
             )?;
             report_local_contraction_progress(offset + 1, groups.len(), started);
         }
@@ -13619,6 +14123,9 @@ fn contract_local_subgraphs_into_external_inputs<const K: usize>(
                                 &mut edge_matrix,
                                 &mut build_elapsed,
                                 &mut contract_elapsed,
+                                color_repository.as_ref(),
+                                color_run_writer.as_mut(),
+                                threads,
                             ) {
                                 first_error = Some(err);
                             }
@@ -13670,12 +14177,20 @@ fn contract_local_subgraphs_into_external_inputs<const K: usize>(
     edge_matrix
         .flush_all_with_threads(threads)
         .map_err(serial_collation_to_input_error)?;
+    let color_runs = color_run_writer
+        .map(ColorRunSidecarWriter::finish)
+        .transpose()?;
+    let color_repository = color_repository
+        .map(|repository| repository.finish())
+        .transpose()?;
     Ok(ExternalDiscontinuityInputs {
         unitig_path,
         label_path: label_path.to_path_buf(),
         unitigs: usize::try_from(inputs.stats.local_unitigs).unwrap_or(usize::MAX),
         ranges,
         edge_matrix: Some(edge_matrix),
+        color_runs,
+        color_repository,
         stats: inputs.stats,
     })
 }
@@ -13704,6 +14219,9 @@ fn append_local_contraction_output_to_external_inputs<const K: usize>(
     edge_matrix: &mut BlockedEdgeMatrix<K>,
     build_elapsed: &mut Duration,
     contract_elapsed: &mut Duration,
+    color_repository: Option<&ConcurrentColorRepository>,
+    mut color_run_writer: Option<&mut ColorRunSidecarWriter>,
+    threads: usize,
 ) -> Result<(), DiscontinuityInputError> {
     inputs.stats.weak_superkmers += output.weak_superkmers;
     let start_unitig = usize::try_from(inputs.stats.local_unitigs).unwrap_or(usize::MAX);
@@ -13726,6 +14244,7 @@ fn append_local_contraction_output_to_external_inputs<const K: usize>(
     edge_matrix
         .add_prepared_edges(&output.matrix_edges, start_unitig)
         .map_err(serial_collation_to_input_error)?;
+    let mut output_colors = output.color_runs.map(Vec::into_iter);
     for mut unitig in output.unitigs {
         inputs.stats.local_unitigs += 1;
         inputs.stats.discontinuity_exits +=
@@ -13733,6 +14252,29 @@ fn append_local_contraction_output_to_external_inputs<const K: usize>(
         inputs.stats.unitig_bases += unitig.label_len as u64;
         unitig.label_start += *label_offset;
         write_discontinuity_unitig_record(unitigs, unitig_path, &unitig)?;
+        if let Some(writer) = color_run_writer.as_deref_mut() {
+            let runs = output_colors
+                .as_mut()
+                .and_then(Iterator::next)
+                .ok_or(DiscontinuityInputError::MissingColorRuns)?;
+            let worker = output.index % threads.min(256);
+            let repository = color_repository.ok_or(DiscontinuityInputError::MissingColorRuns)?;
+            let colors = runs
+                .into_iter()
+                .map(|run| {
+                    repository
+                        .resolve_or_insert(run.color_hash, &run.sources, worker)
+                        .map(|coordinate| UnitigColor::new(run.offset, coordinate))
+                })
+                .collect::<Result<Vec<_>, ColorError>>()?;
+            writer.write_unitig(&colors)?;
+        }
+    }
+    if output_colors
+        .as_mut()
+        .is_some_and(|colors| colors.next().is_some())
+    {
+        return Err(DiscontinuityInputError::MissingColorRuns);
     }
     *label_offset += output.labels.len() as u64;
     *build_elapsed += output.build_elapsed;
@@ -13775,6 +14317,7 @@ struct LocalContractionOutput<const K: usize> {
     unitigs: Vec<DiscontinuityUnitig<K>>,
     labels: Vec<u8>,
     matrix_edges: Vec<PreparedBlockedEdge>,
+    color_runs: Option<Vec<Vec<LocalUnitigColorRun>>>,
 }
 
 #[derive(Debug, Clone)]
@@ -13926,7 +14469,15 @@ fn contract_local_subgraph<const K: usize>(
     let mut inputs = DiscontinuityInputs::empty(DiscontinuityInputStats::default());
 
     let contract_start = Instant::now();
-    for unitig in subgraph.contract_compact()? {
+    let mut color_runs = None;
+    let local_unitigs = if subgraph.colored {
+        let colored = subgraph.contract_colored(&group.entries)?;
+        color_runs = Some(colored.iter().map(|unitig| unitig.colors.clone()).collect());
+        colored.into_iter().map(|unitig| unitig.unitig).collect()
+    } else {
+        subgraph.contract_compact()?
+    };
+    for unitig in local_unitigs {
         let left_exit = unitig
             .left_exit
             .map(|(vertex, side)| DiscontinuityEndpoint { vertex, side });
@@ -13960,6 +14511,7 @@ fn contract_local_subgraph<const K: usize>(
         unitigs: inputs.unitigs,
         labels: inputs.labels,
         matrix_edges,
+        color_runs,
     })
 }
 
@@ -13967,6 +14519,7 @@ fn contract_local_subgraph<const K: usize>(
 pub enum DiscontinuityInputError {
     Bucket(BucketError),
     LocalSubgraph(LocalSubgraphError),
+    Color(ColorError),
     Io {
         path: PathBuf,
         source: std::io::Error,
@@ -13974,6 +14527,7 @@ pub enum DiscontinuityInputError {
     InvalidCutoff,
     InvalidThreadCount,
     WorkerPanic,
+    MissingColorRuns,
 }
 
 impl From<BucketError> for DiscontinuityInputError {
@@ -13988,17 +14542,25 @@ impl From<LocalSubgraphError> for DiscontinuityInputError {
     }
 }
 
+impl From<ColorError> for DiscontinuityInputError {
+    fn from(value: ColorError) -> Self {
+        Self::Color(value)
+    }
+}
+
 impl std::fmt::Display for DiscontinuityInputError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Bucket(err) => write!(f, "{err}"),
             Self::LocalSubgraph(err) => write!(f, "{err}"),
+            Self::Color(err) => write!(f, "{err}"),
             Self::Io { path, source } => write!(f, "{}: {source}", path.display()),
             Self::InvalidCutoff => write!(f, "discontinuity input cutoff must be at least 1"),
             Self::InvalidThreadCount => {
                 write!(f, "discontinuity input thread count must be at least 1")
             }
             Self::WorkerPanic => write!(f, "local subgraph worker thread panicked"),
+            Self::MissingColorRuns => write!(f, "colored local unitig is missing color runs"),
         }
     }
 }

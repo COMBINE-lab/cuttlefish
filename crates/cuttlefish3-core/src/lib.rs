@@ -1,5 +1,6 @@
 pub mod buckets;
 pub mod color;
+pub mod colored;
 pub mod discontinuity;
 pub mod dna;
 pub mod hash;

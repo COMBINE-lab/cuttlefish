@@ -1,3 +1,4 @@
+use cuttlefish3_core::colored::{ColoredBuildError, build_colored_from_buckets};
 use cuttlefish3_core::discontinuity::report_process_memory;
 use cuttlefish3_core::input::InputError;
 use cuttlefish3_core::params::{BuildParams, ParamError};
@@ -78,23 +79,35 @@ where
                 partition_elapsed.as_secs_f64()
             );
             let build_start = Instant::now();
-            report_process_memory("before uncolored build");
-            let build = dispatch_uncolored_build(&params, &emission)?;
-            let build_elapsed = build_start.elapsed();
-            report_process_memory("after uncolored build");
+            if params.color {
+                report_process_memory("before colored build");
+                let build = dispatch_colored_build(&params, &emission)?;
+                report_process_memory("after colored build");
+                eprintln!(
+                    "cuttlefish3-rs: wrote {} colored unitig(s), {} base(s), FASTA at {}; color repository at {}",
+                    build.unitigs,
+                    build.unitig_bases,
+                    build.output_path.display(),
+                    build.color_repository.display(),
+                );
+            } else {
+                report_process_memory("before uncolored build");
+                let build = dispatch_uncolored_build(&params, &emission)?;
+                report_process_memory("after uncolored build");
+                eprintln!(
+                    "cuttlefish3-rs: graph handoff recorded {} retained/active edge(s) from {} observed exit/edge event(s)",
+                    build.retained_edges, build.observed_edges
+                );
+                eprintln!(
+                    "cuttlefish3-rs: wrote {} unitig(s), {} base(s), FASTA at {}",
+                    build.unitigs,
+                    build.unitig_bases,
+                    build.output_path.display()
+                );
+            }
             eprintln!(
-                "cuttlefish3-rs: graph handoff recorded {} retained/active edge(s) from {} observed exit/edge event(s)",
-                build.retained_edges, build.observed_edges
-            );
-            eprintln!(
-                "cuttlefish3-rs: wrote {} unitig(s), {} base(s), FASTA at {}",
-                build.unitigs,
-                build.unitig_bases,
-                build.output_path.display()
-            );
-            eprintln!(
-                "cuttlefish3-rs: uncolored build completed in {:.3}s",
-                build_elapsed.as_secs_f64()
+                "cuttlefish3-rs: graph build completed in {:.3}s",
+                build_start.elapsed().as_secs_f64()
             );
             // The build path has already flushed its output files. Exiting here
             // lets the OS reclaim large graph buffers instead of spending wall
@@ -149,6 +162,26 @@ fn dispatch_uncolored_build(
         };
     }
 
+    Ok(dispatch!(
+        3, 5, 7, 9, 11, 13, 15, 17, 19, 21, 23, 25, 27, 29, 31, 33, 35, 37, 39, 41, 43, 45, 47, 49,
+        51, 53, 55, 57, 59, 61, 63,
+    )?)
+}
+
+fn dispatch_colored_build(
+    params: &BuildParams,
+    emission: &PartitionEmissionStats,
+) -> Result<cuttlefish3_core::colored::ColoredBuildStats, CliError> {
+    macro_rules! dispatch {
+        ($($k:literal),* $(,)?) => {
+            match params.k {
+                $($k => build_colored_from_buckets::<$k>(params, &emission.buckets.bucket_dir),)*
+                other => Err(ColoredBuildError::Kmer(
+                    cuttlefish3_core::kmer::KmerError::UnsupportedK(other as usize),
+                )),
+            }
+        };
+    }
     Ok(dispatch!(
         3, 5, 7, 9, 11, 13, 15, 17, 19, 21, 23, 25, 27, 29, 31, 33, 35, 37, 39, 41, 43, 45, 47, 49,
         51, 53, 55, 57, 59, 61, 63,
@@ -325,6 +358,7 @@ enum CliError {
     Input(InputError),
     Partition(PartitionRunError),
     Uncolored(UncoloredBuildError),
+    Colored(ColoredBuildError),
 }
 
 impl From<ParamError> for CliError {
@@ -351,6 +385,12 @@ impl From<UncoloredBuildError> for CliError {
     }
 }
 
+impl From<ColoredBuildError> for CliError {
+    fn from(value: ColoredBuildError) -> Self {
+        Self::Colored(value)
+    }
+}
+
 impl std::fmt::Display for CliError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -363,6 +403,7 @@ impl std::fmt::Display for CliError {
             Self::Input(err) => write!(f, "{err}"),
             Self::Partition(err) => write!(f, "{err}"),
             Self::Uncolored(err) => write!(f, "{err}"),
+            Self::Colored(err) => write!(f, "{err}"),
         }
     }
 }

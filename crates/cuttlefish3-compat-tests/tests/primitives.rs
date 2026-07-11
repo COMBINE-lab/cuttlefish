@@ -6,6 +6,7 @@ use cuttlefish3_core::discontinuity::{
     FullSerialDiscontinuityContraction, MatrixEndpoint, OwnedDiscontinuityUnitig, PathInfo,
     SerialDiscontinuityContractor, SerialDiscontinuityExpander, SerialEdgeMatrix, SerialExpansion,
     SerialExpansionStats, SerialMetaVertex, SerialUncoloredCollator,
+    emit_colored_external_discontinuity_inputs_with_threads_in_dir,
     emit_uncolored_discontinuity_inputs,
 };
 use cuttlefish3_core::dna::Base;
@@ -79,6 +80,54 @@ fn normalized_uncolored_fixture(
 
     let _ = fs::remove_dir_all(emitted.buckets.bucket_dir);
     let _ = fs::remove_file(built.output_path);
+}
+
+#[test]
+fn colored_external_local_contraction_emits_resolvable_color_runs() {
+    let root = scratch_prefix("colored-external-local");
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).unwrap();
+    let first = root.join("first.fa");
+    let second = root.join("second.fa");
+    fs::write(&first, b">first\nAACCGGTTAACCGGTT\n").unwrap();
+    fs::write(&second, b">second\nAACCGGTTAACCTTAA\n").unwrap();
+
+    let mut params = BuildParams::new(
+        GraphInput::References,
+        root.join("colored").display().to_string(),
+    );
+    params.k = 7;
+    params.minimizer_len = 3;
+    params.color = true;
+    params.threads = 2;
+    params.work_dir = root.display().to_string();
+    params.seqs = vec![first.display().to_string(), second.display().to_string()];
+    let emitted = emit_weak_superkmer_buckets::<7>(&params, DEFAULT_SUBGRAPH_COUNT).unwrap();
+    let inputs = emit_colored_external_discontinuity_inputs_with_threads_in_dir::<7>(
+        &emitted.buckets.bucket_dir,
+        1,
+        2,
+        root.join("local.labels"),
+        root.join("local.colors"),
+    )
+    .unwrap();
+    let sidecar = inputs.color_runs().unwrap();
+    let repository = inputs.color_repository().unwrap();
+    assert_eq!(sidecar.unitigs, inputs.unitig_count() as u64);
+    assert!(sidecar.runs > 0);
+    for unitig in 0..sidecar.unitigs {
+        for run in sidecar.read_unitig(unitig).unwrap() {
+            let sources = repository
+                .read_color(cuttlefish3_core::state::ColorCoordinate::from_u40(
+                    run.coordinate(),
+                ))
+                .unwrap();
+            assert!(!sources.is_empty());
+            assert!(sources.windows(2).all(|pair| pair[0] < pair[1]));
+            assert!(sources.iter().all(|&source| source == 1 || source == 2));
+        }
+    }
+    fs::remove_dir_all(root).unwrap();
 }
 
 fn normalized_fasta_labels(path: &std::path::Path) -> Vec<Vec<u8>> {

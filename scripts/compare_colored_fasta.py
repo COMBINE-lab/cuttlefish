@@ -128,18 +128,27 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--cpp-fasta", required=True)
     parser.add_argument("--rust-fasta", required=True)
-    parser.add_argument("--rust-repository", required=True)
-    parser.add_argument("--source-list", required=True)
+    parser.add_argument("--rust-repository")
+    parser.add_argument("--source-list")
+    parser.add_argument("--topology-only", action="store_true")
     parser.add_argument("-k", type=int, required=True)
     args = parser.parse_args()
 
-    sources = [line.strip() for line in Path(args.source_list).read_text().splitlines() if line.strip()]
-    repository = load_rust_repository(args.rust_repository)
-    rust = rust_colored_records(args.rust_fasta, repository, args.k)
     cpp_topology = topology(args.cpp_fasta)
-    rust_topology = [seq for seq, _ in rust]
+    if args.topology_only:
+        rust_topology = topology(args.rust_fasta)
+    else:
+        if not args.rust_repository or not args.source_list:
+            parser.error("--rust-repository and --source-list are required for color validation")
+        repository = load_rust_repository(args.rust_repository)
+        rust = rust_colored_records(args.rust_fasta, repository, args.k)
+        rust_topology = [seq for seq, _ in rust]
     if cpp_topology != rust_topology:
         raise SystemExit("FAIL: C++ and Rust topology multisets differ")
+    if args.topology_only:
+        print(f"OK: {len(rust_topology)} unitigs match C++ topology")
+        return
+    sources = [line.strip() for line in Path(args.source_list).read_text().splitlines() if line.strip()]
     expected = expected_colors(rust, sources, args.k)
     if rust != expected:
         for actual, truth in zip(rust, expected):

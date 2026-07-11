@@ -671,7 +671,7 @@ impl ConcurrentBlockedEdgeWriters {
                 .map(|block| ConcurrentBlockedAppend {
                     path: block.path.clone(),
                     record_len: block.record_len,
-                    buffer: Mutex::new(Vec::with_capacity(BLOCKED_EDGE_WRITE_BUFFER_BYTES)),
+                    buffer: Mutex::new(Vec::new()),
                     edges: AtomicUsize::new(0),
                 })
                 .collect(),
@@ -778,11 +778,7 @@ impl<const K: usize> BlockedEdgeMatrix<K> {
                     path: dir.join(format!("{row}.{col}.edge")),
                     edges: 0,
                     record_len,
-                    buffer: if row <= col {
-                        Vec::with_capacity(BLOCKED_EDGE_WRITE_BUFFER_BYTES)
-                    } else {
-                        Vec::new()
-                    },
+                    buffer: Vec::new(),
                 });
             }
         }

@@ -28,6 +28,12 @@ pub const DEFAULT_THREADS: usize = 1;
 pub const MAX_K: u16 = 63;
 pub const MAX_MINIMIZER_LEN: u16 = 32;
 
+pub fn configure_global_parallelism(threads: usize) -> Result<(), rayon::ThreadPoolBuildError> {
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(threads.max(1))
+        .build_global()
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Side {
     Front = 0,

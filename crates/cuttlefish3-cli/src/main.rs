@@ -6,7 +6,7 @@ use cuttlefish3_core::partition::{
     PartitionEmissionStats, PartitionRunError, emit_weak_superkmer_buckets,
 };
 use cuttlefish3_core::uncolored::{UncoloredBuildError, build_uncolored_from_buckets};
-use cuttlefish3_core::{DEFAULT_SUBGRAPH_COUNT, GraphInput, MAX_K};
+use cuttlefish3_core::{DEFAULT_SUBGRAPH_COUNT, GraphInput, MAX_K, configure_global_parallelism};
 use std::time::Instant;
 
 #[global_allocator]
@@ -35,6 +35,8 @@ where
         "build" => {
             let params = parse_build(args)?;
             params.validate()?;
+            configure_global_parallelism(params.threads)
+                .map_err(|error| CliError::Parallelism(error.to_string()))?;
             eprintln!(
                 "cuttlefish3-rs: parsed build request for k={}, l={}, cutoff={}, color={}",
                 params.k,
@@ -354,6 +356,7 @@ enum CliError {
     MissingArg(&'static str),
     InvalidValue(&'static str),
     InputMode,
+    Parallelism(String),
     Param(ParamError),
     Input(InputError),
     Partition(PartitionRunError),
@@ -399,6 +402,7 @@ impl std::fmt::Display for CliError {
             Self::MissingArg(arg) => write!(f, "missing value for {arg}"),
             Self::InvalidValue(arg) => write!(f, "invalid value for {arg}"),
             Self::InputMode => write!(f, "select exactly one of --read or --ref"),
+            Self::Parallelism(err) => write!(f, "failed to configure worker threads: {err}"),
             Self::Param(err) => write!(f, "{err}"),
             Self::Input(err) => write!(f, "{err}"),
             Self::Partition(err) => write!(f, "{err}"),

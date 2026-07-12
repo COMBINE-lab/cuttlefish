@@ -38,6 +38,7 @@ pub struct BucketEmitter {
     minimizer_len: u16,
     graph_count: usize,
     colored: bool,
+    compress_buckets: bool,
     label_words: usize,
     files: BTreeMap<usize, BucketFileMeta>,
     writers: BTreeMap<usize, BucketFile>,
@@ -51,6 +52,7 @@ pub struct SharedBucketSink {
     minimizer_len: u16,
     graph_count: usize,
     colored: bool,
+    compress_buckets: bool,
     label_words: usize,
     workers: usize,
     atlases: Vec<Mutex<SharedBucketAtlas>>,
@@ -586,6 +588,7 @@ fn coalesce_bucket_group(
         *graph_id,
         first_header.colored,
         first_header.label_words,
+        first_header.compressed,
     )?;
 
     for entry in graph_entries {
@@ -703,6 +706,7 @@ impl BucketEmitter {
             minimizer_len: params.minimizer_len,
             graph_count,
             colored: params.color,
+            compress_buckets: params.color || params.compress_buckets,
             label_words: label_word_count(params.k, params.minimizer_len),
             files: BTreeMap::new(),
             writers: BTreeMap::new(),
@@ -807,6 +811,7 @@ impl BucketEmitter {
                         graph_id,
                         self.colored,
                         self.label_words,
+                        self.compress_buckets,
                     )?;
                     self.files.insert(
                         graph_id,
@@ -889,6 +894,7 @@ impl SharedBucketSink {
             minimizer_len: params.minimizer_len,
             graph_count,
             colored: params.color,
+            compress_buckets: params.color || params.compress_buckets,
             label_words: label_word_count(params.k, params.minimizer_len),
             workers: params.threads.max(1),
             atlases: (0..graph_count.div_ceil(ATLAS_GRAPH_COUNT))
@@ -944,6 +950,7 @@ impl SharedBucketSink {
             self.graph_count,
             self.colored,
             self.label_words,
+            self.compress_buckets,
             &mut flush_stats,
         )?;
         self.record_flush_stats(flush_stats, started.elapsed());
@@ -995,6 +1002,7 @@ impl SharedBucketSink {
                                 self.graph_count,
                                 true,
                                 self.label_words,
+                                true,
                                 &mut stats,
                             )?;
                         }
@@ -1028,6 +1036,7 @@ impl SharedBucketSink {
                 self.graph_count,
                 self.colored,
                 self.label_words,
+                self.compress_buckets,
                 &mut finish_flush_stats,
             )?;
             let first_graph_id = atlas.first_graph_id;
@@ -1191,6 +1200,7 @@ impl SharedBucketAtlas {
         graph_count: usize,
         colored: bool,
         label_words: usize,
+        compress_buckets: bool,
         stats: &mut SharedBucketFlushStats,
     ) -> Result<(), BucketError> {
         for local_graph_id in 0..self.files.len() {
@@ -1202,6 +1212,7 @@ impl SharedBucketAtlas {
                 graph_count,
                 colored,
                 label_words,
+                compress_buckets,
                 stats,
             )?;
         }
@@ -1217,6 +1228,7 @@ impl SharedBucketAtlas {
         graph_count: usize,
         colored: bool,
         label_words: usize,
+        compress_buckets: bool,
         stats: &mut SharedBucketFlushStats,
     ) -> Result<(), BucketError> {
         let file = &mut self.files[local_graph_id];
@@ -1237,6 +1249,7 @@ impl SharedBucketAtlas {
                 graph_id,
                 colored,
                 label_words,
+                compress_buckets,
             )?,
         };
         let flushed_bytes = file.buffer.len();
@@ -1516,6 +1529,7 @@ impl BucketFile {
         graph_id: usize,
         colored: bool,
         label_words: usize,
+        compressed: bool,
     ) -> Result<Self, BucketError> {
         let path = bucket_dir.join(format!("{graph_id:05}.wsk"));
         let mut file = File::create(&path).map_err(|source| BucketError::Io {
@@ -1531,8 +1545,6 @@ impl BucketFile {
         write_u16(&mut file, &path, minimizer_len)?;
         write_u64(&mut file, &path, graph_count as u64)?;
         write_u64(&mut file, &path, graph_id as u64)?;
-        let compressed = colored
-            || std::env::var_os("CF3_RS_COMPRESS_UNCOLORED_BUCKETS").is_some();
         let interleaved_compression = compressed && !colored;
         file.write_all(&[
             u8::from(colored),

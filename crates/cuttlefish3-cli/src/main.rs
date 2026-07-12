@@ -214,6 +214,7 @@ where
             "--read" => raw.read = true,
             "--ref" => raw.reference = true,
             "--color" => raw.color = true,
+            "--compress-buckets" => raw.compress_buckets = true,
             _ if arg.starts_with("--seq=") => split_values(arg[6..].to_string(), &mut raw.seqs),
             _ if arg.starts_with("--list=") => split_values(arg[7..].to_string(), &mut raw.lists),
             _ if arg.starts_with("--dir=") => split_values(arg[6..].to_string(), &mut raw.dirs),
@@ -258,6 +259,7 @@ where
     }
     params.cutoff = raw.cutoff;
     params.color = raw.color;
+    params.compress_buckets = raw.compress_buckets;
     if let Some(threads) = raw.threads {
         params.threads = threads;
     }
@@ -282,6 +284,7 @@ struct RawBuild {
     read: bool,
     reference: bool,
     color: bool,
+    compress_buckets: bool,
 }
 
 fn split_values(value: String, out: &mut Vec<String>) {
@@ -346,6 +349,7 @@ fn print_build_help() {
     println!("      --ref             construct a compacted reference de Bruijn graph");
     println!("  -c, --cutoff <arg>    frequency cutoff for (k + 1)-mers");
     println!("      --color           color the compacted graph");
+    println!("      --compress-buckets compress uncolored temporary buckets");
     println!("  -h, --help            print usage");
 }
 

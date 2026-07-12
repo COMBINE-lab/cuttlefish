@@ -363,6 +363,7 @@ fn emits_external_memory_weak_superkmer_buckets() {
     );
     params.k = 7;
     params.minimizer_len = 3;
+    params.compress_buckets = true;
     params
         .seqs
         .push(fixture("data/refs2.fa").display().to_string());
@@ -392,6 +393,7 @@ fn emits_external_memory_weak_superkmer_buckets() {
         assert_eq!(reader.header().graph_id, entry.graph_id);
         assert_eq!(reader.header().records, entry.records);
         assert!(!reader.header().colored);
+        assert!(reader.header().compressed);
 
         while let Some(record) = reader.next_record().unwrap() {
             assert_eq!(record.graph_id, entry.graph_id);

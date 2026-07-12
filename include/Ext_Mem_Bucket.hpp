@@ -254,8 +254,17 @@ inline void Ext_Mem_Bucket<T_>::remove()
 {
     if(!file_path.empty())
     {
-        file.close();
-        if(!file || !remove_file(file_path))
+        if(file.is_open())
+        {
+            file.close();
+            if(!file)
+            {
+                std::cerr << "Error closing file at " << file_path << ". Aborting.\n";
+                std::exit(EXIT_FAILURE);
+            }
+        }
+
+        if(!remove_file(file_path))
         {
             std::cerr << "Error removing file at " << file_path << ". Aborting.\n";
             std::exit(EXIT_FAILURE);
@@ -508,6 +517,14 @@ inline void Ext_Mem_Bucket_Concurrent<T_>::close()
 
     buf.clear();
     force_free(buf);
+
+    file.flush();
+    file.close();
+    if(!file)
+    {
+        std::cerr << "Error closing external-memory bucket at " << file_path << ". Aborting.\n";
+        std::exit(EXIT_FAILURE);
+    }
 }
 
 
@@ -666,8 +683,24 @@ inline void Ext_Mem_Bucket_Concurrent<T_>::remove()
 {
     if(!file_path.empty())
     {
-        file.close();
-        if(!file || !remove_file(file_path))
+        if(file.is_open())
+        {
+            file.close();
+            if(!file)
+            {
+                std::cerr << "Error closing file at " << file_path << ". Aborting.\n";
+                std::exit(EXIT_FAILURE);
+            }
+        }
+
+        parlay::parallel_for(0, read_is.size(), [&](const auto i)
+        {
+            auto& is = read_is[i].unwrap();
+            if(is.is_open())
+                is.close();
+        });
+
+        if(!remove_file(file_path))
         {
             std::cerr << "Error removing file at " << file_path << ". Aborting.\n";
             std::exit(EXIT_FAILURE);

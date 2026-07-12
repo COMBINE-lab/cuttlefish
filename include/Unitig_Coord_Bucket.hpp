@@ -201,9 +201,9 @@ private:
     std::vector<Padded<worker_buf_t>> worker_buf;   // Buffers for unitig-coordinates and -labels from workers.
     static constexpr std::size_t buf_sz_th = 8 * 1024; // Size threshold of each buffer in bytes: 8KB.
 
-    std::ofstream coord_os; // External-memory output stream of the unitig-coordinates.
-    std::ofstream label_os; // External-memory output stream of the unitig-labels.
-    std::ofstream color_os; // External-memory output stream of the unitig-colors.
+    mutable std::ofstream coord_os; // External-memory output stream of the unitig-coordinates.
+    mutable std::ofstream label_os; // External-memory output stream of the unitig-labels.
+    mutable std::ofstream color_os; // External-memory output stream of the unitig-colors.
 
     Spin_Lock lock; // Lock to data structures shared across workers.
 

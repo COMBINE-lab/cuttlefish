@@ -6,7 +6,7 @@ use crate::input::{
     parse_fragments_borrowed,
 };
 use crate::params::{BuildParams, ParamError};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
 
@@ -111,6 +111,9 @@ pub fn emit_weak_superkmer_buckets<const K: usize>(
     params.validate()?;
 
     let paths = expand_input_paths(params)?;
+    if params.color {
+        return emit_colored_weak_superkmer_buckets::<K>(params, graph_count, &paths);
+    }
     let mut stats = PartitionStats::new(graph_count);
     let workers = params.threads.max(1);
     let mut batch_txs = Vec::with_capacity(workers);
@@ -216,6 +219,134 @@ pub fn emit_weak_superkmer_buckets<const K: usize>(
     let bucket_stats = sink.finish()?;
     let bucket_finish_elapsed = bucket_finish_started.elapsed();
 
+    Ok(PartitionEmissionStats {
+        partition: stats,
+        buckets: bucket_stats,
+        parse_elapsed,
+        worker_elapsed,
+        bucket_flush_elapsed,
+        bucket_flushes,
+        bucket_finish_elapsed,
+    })
+}
+
+fn emit_colored_weak_superkmer_buckets<const K: usize>(
+    params: &BuildParams,
+    graph_count: usize,
+    paths: &[PathBuf],
+) -> Result<PartitionEmissionStats, PartitionRunError> {
+    const SOURCE_WINDOW_MAX: usize = 32;
+
+    let sink = SharedBucketSink::create(params, graph_count)?;
+    let mut stats = PartitionStats::new(graph_count);
+    let mut worker_elapsed = Duration::ZERO;
+    let mut parse_elapsed = Duration::ZERO;
+
+    for (window_index, window) in paths
+        .chunks(params.threads.max(1).min(SOURCE_WINDOW_MAX))
+        .enumerate()
+    {
+        let source_start = window_index * params.threads.max(1).min(SOURCE_WINDOW_MAX);
+        let workers = params.threads.max(1).min(window.len().max(1));
+        let mut batch_txs = Vec::with_capacity(workers);
+        let mut batch_rxs = Vec::with_capacity(workers);
+        for _ in 0..workers {
+            let (tx, rx) = mpsc::sync_channel::<PartitionFragmentBatch>(4);
+            batch_txs.push(tx);
+            batch_rxs.push(rx);
+        }
+
+        let parse_started = Instant::now();
+        std::thread::scope(|scope| {
+            let mut handles = Vec::new();
+            for rx in batch_rxs {
+                let sink = Arc::clone(&sink);
+                handles.push(scope.spawn(move || {
+                    let mut worker_stats = PartitionStats::new(graph_count);
+                    let mut elapsed = Duration::ZERO;
+                    let mut buckets = sink.emitter();
+                    while let Ok(batch) = rx.recv() {
+                        for fragment in &batch.fragments {
+                            let seq = &batch.bases[fragment.offset..fragment.offset + fragment.len];
+                            let started = Instant::now();
+                            emit_fragment_seq_weak_superkmer_buckets::<K>(
+                                params,
+                                graph_count,
+                                fragment.source_id,
+                                seq,
+                                &mut buckets,
+                                &mut worker_stats,
+                            )?;
+                            elapsed += started.elapsed();
+                        }
+                    }
+                    buckets.finish()?;
+                    Ok::<_, PartitionRunError>(PartitionWorkerOutput {
+                        stats: worker_stats,
+                        elapsed,
+                    })
+                }));
+            }
+
+            let mut producers = Vec::new();
+            for (offset, path) in window.iter().enumerate() {
+                let source_id = u32::try_from(source_start + offset + 1)
+                    .map_err(|_| PartitionRunError::TooManySources)?;
+                let txs = batch_txs.clone();
+                producers.push(scope.spawn(move || {
+                    let mut batch = PartitionFragmentBatch::new();
+                    let mut next_worker = offset % txs.len();
+                    let records =
+                        parse_fragments_borrowed(path, source_id, K + 1, |fragment| {
+                            batch.push(fragment);
+                            if batch.fragments.len() >= PARTITION_FRAGMENT_BATCH
+                                || batch.bases.len() >= PARTITION_BATCH_BASES
+                            {
+                                txs[next_worker].send(std::mem::take(&mut batch)).map_err(
+                                    |_| InputError::Partition(PartitionError::WorkerDisconnected),
+                                )?;
+                                next_worker = (next_worker + 1) % txs.len();
+                            }
+                            Ok(())
+                        })?;
+                    if !batch.fragments.is_empty() {
+                        txs[next_worker].send(batch).map_err(|_| {
+                            InputError::Partition(PartitionError::WorkerDisconnected)
+                        })?;
+                    }
+                    Ok::<_, InputError>(records)
+                }));
+            }
+            drop(batch_txs);
+
+            for producer in producers {
+                stats.records += producer
+                    .join()
+                    .map_err(|_| PartitionRunError::WorkerPanic)??;
+                stats.input_files += 1;
+            }
+            for handle in handles {
+                let output = handle
+                    .join()
+                    .map_err(|_| PartitionRunError::WorkerPanic)??;
+                worker_elapsed += output.elapsed;
+                stats.merge_from(&output.stats);
+            }
+            Ok::<_, PartitionRunError>(())
+        })?;
+        parse_elapsed += parse_started.elapsed();
+
+        let source_min =
+            u32::try_from(source_start + 1).map_err(|_| PartitionRunError::TooManySources)?;
+        let source_max = u32::try_from(source_start + window.len())
+            .map_err(|_| PartitionRunError::TooManySources)?;
+        sink.flush_colored_window(source_min, source_max)?;
+    }
+
+    let (bucket_flushes, bucket_flush_elapsed) = sink.flush_stats();
+    let bucket_finish_started = Instant::now();
+    let bucket_stats = sink.finish()?;
+    let bucket_finish_elapsed = bucket_finish_started.elapsed();
     Ok(PartitionEmissionStats {
         partition: stats,
         buckets: bucket_stats,

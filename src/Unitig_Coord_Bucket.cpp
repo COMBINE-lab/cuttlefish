@@ -119,6 +119,13 @@ std::size_t Unitig_Coord_Bucket_Concurrent<k, Colored_>::color_count() const
 template <uint16_t k, bool Colored_>
 std::size_t Unitig_Coord_Bucket_Concurrent<k, Colored_>::load_coords(Unitig_Coord<k, Colored_>* const buf) const
 {
+    coord_os.flush();
+    if(CF_UNLIKELY(!coord_os))
+    {
+        std::cerr << "Error flushing unitig-coordinate bucket at " << coord_bucket_path() << ". Aborting.\n";
+        std::exit(EXIT_FAILURE);
+    }
+
     const auto file_sz = load_file(coord_bucket_path(), reinterpret_cast<char*>(buf));
     assert(file_sz == flushed * sizeof(Unitig_Coord<k, Colored_>));
     (void)file_sz;
@@ -159,6 +166,13 @@ std::size_t Unitig_Coord_Bucket_Concurrent<k, Colored_>::load_coords(Unitig_Coor
 template <uint16_t k, bool Colored_>
 std::size_t Unitig_Coord_Bucket_Concurrent<k, Colored_>::load_labels(char* const buf) const
 {
+    label_os.flush();
+    if(CF_UNLIKELY(!label_os))
+    {
+        std::cerr << "Error flushing unitig-label bucket at " << label_bucket_path() << ". Aborting.\n";
+        std::exit(EXIT_FAILURE);
+    }
+
     auto len = load_file(label_bucket_path(), buf); // Length of the label data (i.e. dump-string of the bucket).
     assert(len == flushed_len);
 
@@ -179,6 +193,16 @@ std::size_t Unitig_Coord_Bucket_Concurrent<k, Colored_>::load_labels(char* const
 template <uint16_t k, bool Colored_>
 std::size_t Unitig_Coord_Bucket_Concurrent<k, Colored_>::load_colors(Unitig_Color* const buf) const
 {
+    if constexpr(Colored_)
+    {
+        color_os.flush();
+        if(CF_UNLIKELY(!color_os))
+        {
+            std::cerr << "Error flushing unitig-color bucket at " << color_bucket_path() << ". Aborting.\n";
+            std::exit(EXIT_FAILURE);
+        }
+    }
+
     const auto file_sz = load_file(color_bucket_path(), reinterpret_cast<char*>(buf));
     assert(file_sz == flushed_color_c * sizeof(Unitig_Color));
     (void)file_sz;

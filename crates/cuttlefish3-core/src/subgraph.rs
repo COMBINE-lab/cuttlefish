@@ -684,10 +684,7 @@ impl<const K: usize> LocalSubgraph<K> {
         self.stats.weak_superkmer_bases += record.len as u64;
 
         let last_vertex_offset = record.len - K;
-        let mut observed_bits = 0u128;
-        for idx in 0..K {
-            observed_bits = (observed_bits << 2) | packed_base(&record.words, idx).bits() as u128;
-        }
+        let observed_bits = packed_prefix_bits::<K>(&record.words);
         let mut observed = Kmer::<K>::from_bits(observed_bits);
         let mut reverse = observed.reverse_complement();
         let mut prev = None;
@@ -829,20 +826,20 @@ fn collect_wanted_color_relations<const K: usize>(
     if record.len < K || record.len > record.words.len() * 32 {
         return Err(LocalSubgraphError::MalformedRecord);
     }
-    let mut bits = 0u128;
-    for idx in 0..K {
-        bits = (bits << 2) | packed_base(&record.words, idx).bits() as u128;
-    }
-    let mut vertex = Kmer::<K>::from_bits(bits);
+    let mut vertex = Kmer::<K>::from_bits(packed_prefix_bits::<K>(&record.words));
+    let mut reverse = vertex.reverse_complement();
     for offset in 0..=record.len - K {
-        if let Some(&color_hash) = wanted.get(&vertex.canonical()) {
+        let canonical = vertex.min(reverse);
+        if let Some(&color_hash) = wanted.get(&canonical) {
             let sources = source_sets.entry(color_hash).or_default();
             if sources.last().copied() != Some(source) {
                 sources.push(source);
             }
         }
         if offset < record.len - K {
-            vertex = vertex.roll_forward(packed_base(&record.words, offset + K));
+            let next = packed_base(&record.words, offset + K);
+            vertex = vertex.roll_forward(next);
+            reverse = reverse.roll_backward(next.complement());
         }
     }
     Ok(())
@@ -858,6 +855,18 @@ fn packed_base(words: &[u64], idx: usize) -> Base {
         2 => Base::G,
         3 => Base::T,
         _ => unreachable!(),
+    }
+}
+
+#[inline]
+fn packed_prefix_bits<const K: usize>(words: &[u64]) -> u128 {
+    debug_assert!((1..=63).contains(&K));
+    debug_assert!(words.len() * 32 >= K);
+    if K <= 32 {
+        (words[0] >> (2 * (32 - K))) as u128
+    } else {
+        let tail_bases = K - 32;
+        ((words[0] as u128) << (2 * tail_bases)) | (words[1] >> (2 * (32 - tail_bases))) as u128
     }
 }
 
@@ -923,6 +932,25 @@ mod tests {
     use crate::params::BuildParams;
     use crate::partition::WeakSuperKmer;
     use std::fs;
+
+    fn assert_packed_prefix<const K: usize>(seq: &[u8]) {
+        let mut words = vec![0u64; seq.len().div_ceil(32)];
+        for (idx, &base) in seq.iter().enumerate() {
+            words[idx / 32] |= (Base::from_ascii(base).bits() as u64) << (2 * (31 - (idx % 32)));
+        }
+        assert_eq!(
+            packed_prefix_bits::<K>(&words),
+            Kmer::<K>::from_ascii(&seq[..K]).unwrap().as_u128()
+        );
+    }
+
+    #[test]
+    fn packed_prefix_decode_spans_word_boundary() {
+        let seq = b"ACGTTGCATGTCGCATACGATCGTAGCTAGCTTGCATGACCTAGGCTAACGTTCGATGCATAC";
+        assert_packed_prefix::<31>(seq);
+        assert_packed_prefix::<33>(seq);
+        assert_packed_prefix::<63>(seq);
+    }
 
     #[test]
     fn builds_state_from_record_label() {

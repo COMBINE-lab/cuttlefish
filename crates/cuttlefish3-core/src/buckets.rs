@@ -14,6 +14,7 @@ use std::time::{Duration, Instant};
 const MAGIC: &[u8; 8] = b"CF3WSK1\0";
 const RECORD_COUNT_OFFSET: u64 = 34;
 const HEADER_LEN: u64 = 42;
+const COMPRESSED_BLOCK_HEADER_LEN: usize = 12;
 const MAX_SOURCE_ID: u32 = 0x1f_ffff;
 const MAX_OPEN_BUCKET_WRITERS: usize = 512;
 const MAX_PENDING_BUCKET_BYTES: usize = 1024 * 1024;
@@ -111,6 +112,7 @@ pub struct BucketHeader {
     pub graph_count: usize,
     pub graph_id: usize,
     pub colored: bool,
+    pub compressed: bool,
     pub label_words: usize,
     pub records: u64,
 }
@@ -140,6 +142,10 @@ pub struct BucketReader {
     file: BufReader<File>,
     header: BucketHeader,
     records_read: u64,
+    block_attrs: Vec<u8>,
+    block_labels: Vec<u8>,
+    block_records: usize,
+    block_record: usize,
 }
 
 impl BucketReader {
@@ -157,6 +163,10 @@ impl BucketReader {
             file,
             header,
             records_read: 0,
+            block_attrs: Vec::new(),
+            block_labels: Vec::new(),
+            block_records: 0,
+            block_record: 0,
         })
     }
 
@@ -199,12 +209,20 @@ impl BucketReader {
 
         let mut fixed = [0u8; 8];
         let fixed_len = if self.header.colored { 8 } else { 4 };
-        self.file
-            .read_exact(&mut fixed[..fixed_len])
-            .map_err(|source| BucketError::Io {
-                path: self.path.clone(),
-                source,
-            })?;
+        if self.header.compressed {
+            if self.block_record == self.block_records {
+                self.read_compressed_block()?;
+            }
+            let start = self.block_record * fixed_len;
+            fixed[..fixed_len].copy_from_slice(&self.block_attrs[start..start + fixed_len]);
+        } else {
+            self.file
+                .read_exact(&mut fixed[..fixed_len])
+                .map_err(|source| BucketError::Io {
+                    path: self.path.clone(),
+                    source,
+                })?;
+        }
         let (packed_attr, record_graph_id) = if self.header.colored {
             (
                 u32::from_le_bytes(fixed[0..4].try_into().unwrap()),
@@ -225,8 +243,13 @@ impl BucketReader {
 
         record.words.clear();
         record.words.resize(self.header.label_words, 0);
-        for word in &mut record.words {
-            *word = read_u64(&mut self.file, &self.path)?;
+        for (word_idx, word) in record.words.iter_mut().enumerate() {
+            if self.header.compressed {
+                let start = (self.block_record * self.header.label_words + word_idx) * 8;
+                *word = u64::from_le_bytes(self.block_labels[start..start + 8].try_into().unwrap());
+            } else {
+                *word = read_u64(&mut self.file, &self.path)?;
+            }
         }
 
         let len = (packed_attr & 0xff) as usize;
@@ -241,6 +264,9 @@ impl BucketReader {
         record.right_discontinuous = (packed_attr & (1 << 9)) != 0;
 
         self.records_read += 1;
+        if self.header.compressed {
+            self.block_record += 1;
+        }
         Ok(true)
     }
 
@@ -255,6 +281,12 @@ impl BucketReader {
     {
         let remaining = self.header.records.saturating_sub(self.records_read);
         if remaining == 0 {
+            return Ok(());
+        }
+        if self.header.compressed {
+            while self.next_packed_record_into(record).map_err(E::from)? {
+                f(record)?;
+            }
             return Ok(());
         }
         let record_size = record_size(self.header.colored, self.header.label_words);
@@ -319,6 +351,50 @@ impl BucketReader {
 
     pub fn records(self) -> BucketRecords {
         BucketRecords { reader: self }
+    }
+
+    fn read_compressed_block(&mut self) -> Result<(), BucketError> {
+        let mut header = [0u8; COMPRESSED_BLOCK_HEADER_LEN];
+        self.file
+            .read_exact(&mut header)
+            .map_err(|source| BucketError::Io {
+                path: self.path.clone(),
+                source,
+            })?;
+        let records = u32::from_le_bytes(header[0..4].try_into().unwrap()) as usize;
+        let attr_bytes = u32::from_le_bytes(header[4..8].try_into().unwrap()) as usize;
+        let label_bytes = u32::from_le_bytes(header[8..12].try_into().unwrap()) as usize;
+        if records == 0 || attr_bytes == 0 || label_bytes == 0 {
+            return Err(BucketError::MalformedRecord);
+        }
+        let remaining = usize::try_from(self.header.records - self.records_read)
+            .map_err(|_| BucketError::TooManyRecords)?;
+        if records > remaining {
+            return Err(BucketError::MalformedRecord);
+        }
+        let mut compressed = vec![0u8; attr_bytes + label_bytes];
+        self.file
+            .read_exact(&mut compressed)
+            .map_err(|source| BucketError::Io {
+                path: self.path.clone(),
+                source,
+            })?;
+        let fixed_len = if self.header.colored { 8 } else { 4 };
+        self.block_attrs.resize(records * fixed_len, 0);
+        self.block_labels
+            .resize(records * self.header.label_words * 8, 0);
+        let decoded_attrs =
+            lz4_flex::block::decompress_into(&compressed[..attr_bytes], &mut self.block_attrs)
+                .map_err(|_| BucketError::MalformedRecord)?;
+        let decoded_labels =
+            lz4_flex::block::decompress_into(&compressed[attr_bytes..], &mut self.block_labels)
+                .map_err(|_| BucketError::MalformedRecord)?;
+        if decoded_attrs != self.block_attrs.len() || decoded_labels != self.block_labels.len() {
+            return Err(BucketError::MalformedRecord);
+        }
+        self.block_records = records;
+        self.block_record = 0;
+        Ok(())
     }
 }
 
@@ -1386,6 +1462,8 @@ struct BucketFile {
     records: u64,
     bytes_written: u64,
     record_size: u64,
+    compressed: bool,
+    label_words: usize,
 }
 
 impl BucketFile {
@@ -1412,11 +1490,19 @@ impl BucketFile {
         write_u16(&mut file, &path, minimizer_len)?;
         write_u64(&mut file, &path, graph_count as u64)?;
         write_u64(&mut file, &path, graph_id as u64)?;
-        file.write_all(&[u8::from(colored), label_words as u8, 0, 0, 0, 0])
-            .map_err(|source| BucketError::Io {
-                path: path.clone(),
-                source,
-            })?;
+        let compressed = colored;
+        file.write_all(&[
+            u8::from(colored),
+            label_words as u8,
+            u8::from(compressed),
+            0,
+            0,
+            0,
+        ])
+        .map_err(|source| BucketError::Io {
+            path: path.clone(),
+            source,
+        })?;
         write_u64(&mut file, &path, 0)?;
 
         Ok(Self {
@@ -1425,6 +1511,8 @@ impl BucketFile {
             records: 0,
             bytes_written: HEADER_LEN,
             record_size: record_size(colored, label_words) as u64,
+            compressed,
+            label_words,
         })
     }
 
@@ -1450,23 +1538,62 @@ impl BucketFile {
             records,
             bytes_written,
             record_size: record_size(header.colored, header.label_words) as u64,
+            compressed: header.compressed,
+            label_words: header.label_words,
         })
     }
 
     fn write_records(&mut self, bytes: &[u8], records: u64) -> Result<(u64, u64), BucketError> {
         debug_assert_eq!(bytes.len() as u64, records * self.record_size);
-        self.file
-            .write_all(bytes)
-            .map_err(|source| BucketError::Io {
-                path: self.path.clone(),
-                source,
-            })?;
+        let written = if self.compressed {
+            self.write_compressed_block(bytes, records)?
+        } else {
+            self.file
+                .write_all(bytes)
+                .map_err(|source| BucketError::Io {
+                    path: self.path.clone(),
+                    source,
+                })?;
+            bytes.len() as u64
+        };
         self.records = self
             .records
             .checked_add(records)
             .ok_or(BucketError::TooManyRecords)?;
-        self.bytes_written += bytes.len() as u64;
+        self.bytes_written += written;
         Ok((self.records, self.bytes_written))
+    }
+
+    fn write_compressed_block(&mut self, bytes: &[u8], records: u64) -> Result<u64, BucketError> {
+        let records_u32 = u32::try_from(records).map_err(|_| BucketError::TooManyRecords)?;
+        if records_u32 == 0 {
+            return Ok(0);
+        }
+        let record_len = usize::try_from(self.record_size).unwrap();
+        let fixed_len = record_len - self.label_words * 8;
+        let mut attrs = Vec::with_capacity(records as usize * fixed_len);
+        let mut labels = Vec::with_capacity(records as usize * self.label_words * 8);
+        for record in bytes.chunks_exact(record_len) {
+            attrs.extend_from_slice(&record[..fixed_len]);
+            labels.extend_from_slice(&record[fixed_len..]);
+        }
+        let compressed_attrs = lz4_flex::block::compress(&attrs);
+        let compressed_labels = lz4_flex::block::compress(&labels);
+        let attr_len =
+            u32::try_from(compressed_attrs.len()).map_err(|_| BucketError::TooManyRecords)?;
+        let label_len =
+            u32::try_from(compressed_labels.len()).map_err(|_| BucketError::TooManyRecords)?;
+        self.file
+            .write_all(&records_u32.to_le_bytes())
+            .and_then(|_| self.file.write_all(&attr_len.to_le_bytes()))
+            .and_then(|_| self.file.write_all(&label_len.to_le_bytes()))
+            .and_then(|_| self.file.write_all(&compressed_attrs))
+            .and_then(|_| self.file.write_all(&compressed_labels))
+            .map_err(|source| BucketError::Io {
+                path: self.path.clone(),
+                source,
+            })?;
+        Ok((COMPRESSED_BLOCK_HEADER_LEN + compressed_attrs.len() + compressed_labels.len()) as u64)
     }
 
     fn flush(&mut self) -> Result<(), BucketError> {
@@ -1593,7 +1720,12 @@ fn read_header(file: &mut impl Read, path: &Path) -> Result<BucketHeader, Bucket
     if label_words == 0 || label_words != label_word_count(k, minimizer_len) {
         return Err(BucketError::MalformedHeader(path.to_path_buf()));
     }
-    if flags[2..].iter().any(|&b| b != 0) {
+    let compressed = match flags[2] {
+        0 => false,
+        1 if colored => true,
+        _ => return Err(BucketError::MalformedHeader(path.to_path_buf())),
+    };
+    if flags[3..].iter().any(|&b| b != 0) {
         return Err(BucketError::MalformedHeader(path.to_path_buf()));
     }
     let records = read_u64(file, path)?;
@@ -1608,6 +1740,7 @@ fn read_header(file: &mut impl Read, path: &Path) -> Result<BucketHeader, Bucket
         graph_count,
         graph_id,
         colored,
+        compressed,
         label_words,
         records,
     })
@@ -1769,12 +1902,35 @@ mod tests {
 
         let path = stats.bucket_dir.join("00000.wsk");
         let mut reader = BucketReader::open(&path).unwrap();
+        assert!(reader.header().compressed);
         let mut sources = Vec::new();
         let mut record = BucketPackedRecord::default();
         while reader.next_packed_record_into(&mut record).unwrap() {
             sources.push(record.source_id.unwrap());
         }
         assert_eq!(sources, [1, 1, 2, 3, 3, 4, 4, 5, 6]);
+
+        let len = fs::metadata(&path).unwrap().len();
+        OpenOptions::new()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_len(len - 1)
+            .unwrap();
+        let mut truncated = BucketReader::open(&path).unwrap();
+        let mut record = BucketPackedRecord::default();
+        let mut failed = false;
+        loop {
+            match truncated.next_packed_record_into(&mut record) {
+                Ok(true) => {}
+                Ok(false) => break,
+                Err(_) => {
+                    failed = true;
+                    break;
+                }
+            }
+        }
+        assert!(failed, "truncated compressed block must be rejected");
         fs::remove_dir_all(dir).unwrap();
     }
 }

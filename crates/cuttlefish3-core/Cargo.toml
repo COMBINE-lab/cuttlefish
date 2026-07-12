@@ -13,5 +13,6 @@ path = "src/lib.rs"
 flate2 = "1"
 hashbrown = { version = "0.16.1", features = ["raw-entry"] }
 leapfrog = { version = "0.3.3", features = ["stable_alloc"] }
+lz4_flex = "0.11"
 rayon = "1.12.0"
 scc = "3.8.4"

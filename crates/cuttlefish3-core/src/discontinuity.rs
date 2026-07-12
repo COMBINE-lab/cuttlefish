@@ -71,6 +71,7 @@ struct ExternalLocalUnitigRange {
     unitigs: usize,
     label_start: u64,
     label_len: u64,
+    color_start: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -5124,15 +5125,23 @@ impl SerialUncoloredCollator {
 
         if !direct_local_complete {
             let reader = ExternalDiscontinuityReader::open(inputs)?;
+            let mut color_reader = inputs
+                .color_runs
+                .as_ref()
+                .map(|sidecar| sidecar.reader_at(0))
+                .transpose()?;
             let mut scratch = Vec::new();
-            for (unitig_index, unitig) in reader.iter()?.enumerate() {
+            for unitig in reader.iter()? {
                 let unitig = unitig?;
+                let colors = color_reader
+                    .as_mut()
+                    .map(|reader| reader.read_next())
+                    .transpose()?;
                 if unitig.left_exit().is_none() && unitig.right_exit().is_none() {
                     reader.read_label(&unitig, &mut scratch)?;
                     let reverse = reverse_complement_is_less(&scratch);
                     let label = canonical_label(scratch.clone());
-                    if let Some(sidecar) = inputs.color_runs.as_ref() {
-                        let mut colors = sidecar.read_unitig(unitig_index as u64)?;
+                    if let Some(mut colors) = colors {
                         if reverse {
                             colors = reverse_color_runs(
                                 &colors,
@@ -10524,7 +10533,6 @@ fn materialize_external_stitched_coord_range_group_from_records<const K: usize>(
     let mut label = Vec::new();
     let mut discard = vec![0u8; 64 * 1024];
     let mut record_idx = 0usize;
-
     for unitig_index in start_unitig..end_unitig {
         let unitig: DiscontinuityUnitig<K> =
             read_discontinuity_unitig_from_reader(&mut unitig_input, &inputs.unitig_path)?;
@@ -10641,10 +10649,19 @@ where
     let mut label = Vec::new();
     let mut discard = vec![0u8; 64 * 1024];
     let mut record_idx = 0usize;
+    let mut color_reader = inputs
+        .color_runs
+        .as_ref()
+        .map(|sidecar| sidecar.reader_at(first_range.color_start))
+        .transpose()?;
 
     for unitig_index in start_unitig..end_unitig {
         let unitig: DiscontinuityUnitig<K> =
             read_discontinuity_unitig_from_reader(&mut unitig_input, &inputs.unitig_path)?;
+        let colors = color_reader
+            .as_mut()
+            .map(|reader| reader.read_next())
+            .transpose()?;
         let record = path_info
             .get(record_idx)
             .filter(|record| record.unitig_index as usize == unitig_index);
@@ -10657,7 +10674,13 @@ where
                     source,
                 })?;
             let bucket_id = stitched_coord_bucket(record.path_id, bucket_mask);
-            write_external_materialized_record(inputs, writers, bucket_id, record, &label)?;
+            write_external_materialized_record(
+                writers,
+                bucket_id,
+                record,
+                &label,
+                colors.as_deref(),
+            )?;
             record_idx += 1;
         } else if unitig.left_exit().is_none() && unitig.right_exit().is_none() {
             label.resize(unitig.label_len as usize, 0);
@@ -10688,16 +10711,15 @@ where
     Ok(())
 }
 
-fn write_external_materialized_record<const K: usize, W: MaterializedRecordSink>(
-    inputs: &ExternalDiscontinuityInputs<K>,
+fn write_external_materialized_record<W: MaterializedRecordSink>(
     writers: &mut W,
     bucket_id: usize,
     record: &StitchedCoordRecord,
     label: &[u8],
+    colors: Option<&[UnitigColor]>,
 ) -> Result<(), SerialCollationError> {
-    if let Some(sidecar) = inputs.color_runs.as_ref() {
-        let colors = sidecar.read_unitig(u64::from(record.unitig_index))?;
-        writers.write_materialized_colored_record(bucket_id, record, label, &colors)
+    if let Some(colors) = colors {
+        writers.write_materialized_colored_record(bucket_id, record, label, colors)
     } else {
         writers.write_materialized_record(bucket_id, record, label)
     }
@@ -14223,12 +14245,17 @@ fn append_local_contraction_output_to_external_inputs<const K: usize>(
     let start_unitig = usize::try_from(inputs.stats.local_unitigs).unwrap_or(usize::MAX);
     let output_unitigs = output.unitigs.len();
     let output_label_len = output.labels.len() as u64;
+    let color_start = color_run_writer
+        .as_deref()
+        .map(ColorRunSidecarWriter::position)
+        .unwrap_or(0);
     if output_unitigs != 0 {
         ranges.push(ExternalLocalUnitigRange {
             start_unitig,
             unitigs: output_unitigs,
             label_start: *label_offset,
             label_len: output_label_len,
+            color_start,
         });
     }
     labels

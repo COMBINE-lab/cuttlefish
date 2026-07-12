@@ -2,13 +2,11 @@ use crate::hash::FastBuildHasher;
 use crate::state::{ColorCoordinate, UnitigColor};
 use scc::{HashMap as SccHashMap, hash_map::Entry as SccEntry};
 use std::fs::{self, File, OpenOptions};
-use std::io::{BufReader, BufWriter, Read, Write};
-use std::os::unix::fs::FileExt;
+use std::io::{BufReader, BufWriter, Read, Seek, Write};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 
 const COLOR_BUFFER_BYTES: usize = 128 * 1024;
-const COLOR_RUN_INDEX_RECORD_BYTES: u64 = 16;
 
 pub fn reverse_color_runs(runs: &[UnitigColor], vertex_count: u32) -> Vec<UnitigColor> {
     let mut reversed = Vec::with_capacity(runs.len());
@@ -94,28 +92,16 @@ fn compress_color_coordinates(colors: &[u64]) -> Vec<UnitigColor> {
 }
 
 pub struct ColorRunSidecarWriter {
-    index_path: PathBuf,
     run_path: PathBuf,
-    index: BufWriter<File>,
     runs: BufWriter<File>,
+    run_bytes: u64,
     run_count: u64,
     unitigs: u64,
 }
 
 impl ColorRunSidecarWriter {
     pub fn create(path_prefix: impl AsRef<Path>) -> Result<Self, ColorError> {
-        let index_path = path_prefix.as_ref().with_extension("color-index");
         let run_path = path_prefix.as_ref().with_extension("color-runs");
-        let index_file = OpenOptions::new()
-            .create(true)
-            .truncate(true)
-            .read(true)
-            .write(true)
-            .open(&index_path)
-            .map_err(|source| ColorError::Io {
-                path: index_path.clone(),
-                source,
-            })?;
         let run_file = OpenOptions::new()
             .create(true)
             .truncate(true)
@@ -127,23 +113,24 @@ impl ColorRunSidecarWriter {
                 source,
             })?;
         Ok(Self {
-            index_path,
             run_path,
-            index: BufWriter::with_capacity(COLOR_BUFFER_BYTES, index_file),
             runs: BufWriter::with_capacity(COLOR_BUFFER_BYTES, run_file),
+            run_bytes: 0,
             run_count: 0,
             unitigs: 0,
         })
     }
 
+    pub fn position(&self) -> u64 {
+        self.run_bytes
+    }
+
     pub fn write_unitig(&mut self, colors: &[UnitigColor]) -> Result<(), ColorError> {
         let count = u32::try_from(colors.len()).map_err(|_| ColorError::TooManyColorRuns)?;
-        self.index
-            .write_all(&self.run_count.to_le_bytes())
-            .and_then(|_| self.index.write_all(&count.to_le_bytes()))
-            .and_then(|_| self.index.write_all(&0u32.to_le_bytes()))
+        self.runs
+            .write_all(&count.to_le_bytes())
             .map_err(|source| ColorError::Io {
-                path: self.index_path.clone(),
+                path: self.run_path.clone(),
                 source,
             })?;
         for color in colors {
@@ -154,83 +141,99 @@ impl ColorRunSidecarWriter {
                     source,
                 })?;
         }
+        self.run_bytes += 4 + u64::from(count) * 8;
         self.run_count += u64::from(count);
         self.unitigs += 1;
         Ok(())
     }
 
     pub fn finish(mut self) -> Result<ColorRunSidecar, ColorError> {
-        self.index.flush().map_err(|source| ColorError::Io {
-            path: self.index_path.clone(),
-            source,
-        })?;
         self.runs.flush().map_err(|source| ColorError::Io {
             path: self.run_path.clone(),
             source,
         })?;
-        let index_file = self.index.into_inner().map_err(|error| ColorError::Io {
-            path: self.index_path.clone(),
-            source: error.into_error(),
-        })?;
-        let run_file = self.runs.into_inner().map_err(|error| ColorError::Io {
+        self.runs.into_inner().map_err(|error| ColorError::Io {
             path: self.run_path.clone(),
             source: error.into_error(),
         })?;
         Ok(ColorRunSidecar {
-            index_path: self.index_path,
             run_path: self.run_path,
             unitigs: self.unitigs,
             runs: self.run_count,
-            index_file: Arc::new(index_file),
-            run_file: Arc::new(run_file),
         })
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct ColorRunSidecar {
-    pub index_path: PathBuf,
     pub run_path: PathBuf,
     pub unitigs: u64,
     pub runs: u64,
-    index_file: Arc<File>,
-    run_file: Arc<File>,
 }
 
 impl ColorRunSidecar {
-    pub fn read_unitig(&self, unitig: u64) -> Result<Vec<UnitigColor>, ColorError> {
-        if unitig >= self.unitigs {
-            return Err(ColorError::MalformedUnitigIndex(unitig));
-        }
-        let mut index = [0u8; COLOR_RUN_INDEX_RECORD_BYTES as usize];
-        self.index_file
-            .read_exact_at(&mut index, unitig * COLOR_RUN_INDEX_RECORD_BYTES)
-            .map_err(|source| ColorError::Io {
-                path: self.index_path.clone(),
-                source,
-            })?;
-        let start = u64::from_le_bytes(index[..8].try_into().expect("run offset"));
-        let count = u32::from_le_bytes(index[8..12].try_into().expect("run count"));
-        if index[12..].iter().any(|&byte| byte != 0) || start + u64::from(count) > self.runs {
-            return Err(ColorError::MalformedUnitigIndex(unitig));
-        }
-        let mut bytes = vec![0u8; count as usize * 8];
-        self.run_file
-            .read_exact_at(&mut bytes, start * 8)
+    pub fn reader_at(&self, byte_offset: u64) -> Result<ColorRunStreamReader, ColorError> {
+        let mut file = File::open(&self.run_path).map_err(|source| ColorError::Io {
+            path: self.run_path.clone(),
+            source,
+        })?;
+        file.seek(std::io::SeekFrom::Start(byte_offset))
             .map_err(|source| ColorError::Io {
                 path: self.run_path.clone(),
                 source,
             })?;
-        Ok(bytes
-            .chunks_exact(8)
-            .map(|raw| {
-                let raw = u64::from_le_bytes(raw.try_into().expect("unitig color"));
-                UnitigColor::new(
-                    (raw & 0xff_ffff) as u32,
-                    ColorCoordinate::from_u40(raw >> 24),
-                )
-            })
-            .collect())
+        Ok(ColorRunStreamReader {
+            path: self.run_path.clone(),
+            input: BufReader::with_capacity(COLOR_BUFFER_BYTES, file),
+        })
+    }
+
+    pub fn read_unitig(&self, unitig: u64) -> Result<Vec<UnitigColor>, ColorError> {
+        if unitig >= self.unitigs {
+            return Err(ColorError::MalformedUnitigIndex(unitig));
+        }
+        let mut reader = self.reader_at(0)?;
+        for index in 0..=unitig {
+            let colors = reader.read_next()?;
+            if index == unitig {
+                return Ok(colors);
+            }
+        }
+        Err(ColorError::MalformedUnitigIndex(unitig))
+    }
+}
+
+pub struct ColorRunStreamReader {
+    path: PathBuf,
+    input: BufReader<File>,
+}
+
+impl ColorRunStreamReader {
+    pub fn read_next(&mut self) -> Result<Vec<UnitigColor>, ColorError> {
+        let mut count = [0u8; 4];
+        self.input
+            .read_exact(&mut count)
+            .map_err(|source| ColorError::Io {
+                path: self.path.clone(),
+                source,
+            })?;
+        let count = u32::from_le_bytes(count);
+        let mut colors = Vec::with_capacity(count as usize);
+        for _ in 0..count {
+            let mut raw = [0u8; 8];
+            self.input
+                .read_exact(&mut raw)
+                .map_err(|source| ColorError::Io {
+                    path: self.path.clone(),
+                    source,
+                })?;
+            let raw = u64::from_le_bytes(raw);
+            colors.push(UnitigColor::new(
+                (raw & 0xff_ffff) as u32,
+                ColorCoordinate::from_u40(raw >> 24),
+            ));
+        }
+        Ok(colors)
     }
 }
 
@@ -594,6 +597,7 @@ mod tests {
         let mut writer = ColorRunSidecarWriter::create(dir.join("local")).unwrap();
         let coordinate = ColorCoordinate::discovered(1, 9);
         writer.write_unitig(&[]).unwrap();
+        let second_offset = writer.position();
         writer
             .write_unitig(&[
                 UnitigColor::new(0, coordinate),
@@ -602,6 +606,15 @@ mod tests {
             .unwrap();
         let sidecar = writer.finish().unwrap();
         assert!(sidecar.read_unitig(0).unwrap().is_empty());
+        assert_eq!(
+            sidecar
+                .reader_at(second_offset)
+                .unwrap()
+                .read_next()
+                .unwrap()
+                .len(),
+            2
+        );
         assert_eq!(
             sidecar
                 .read_unitig(1)

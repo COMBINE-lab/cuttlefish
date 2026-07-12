@@ -587,7 +587,7 @@ mod tests {
     }
 
     #[test]
-    fn color_run_sidecar_supports_indexed_reads() {
+    fn color_run_sidecar_supports_range_streams() {
         let dir = std::env::temp_dir().join(format!(
             "cf3-color-runs-{}-{:?}",
             std::process::id(),

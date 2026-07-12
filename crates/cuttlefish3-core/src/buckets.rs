@@ -113,6 +113,7 @@ pub struct BucketHeader {
     pub graph_id: usize,
     pub colored: bool,
     pub compressed: bool,
+    pub interleaved_compression: bool,
     pub label_words: usize,
     pub records: u64,
 }
@@ -144,6 +145,7 @@ pub struct BucketReader {
     records_read: u64,
     block_attrs: Vec<u8>,
     block_labels: Vec<u8>,
+    block_interleaved: Vec<u8>,
     block_records: usize,
     block_record: usize,
 }
@@ -165,6 +167,7 @@ impl BucketReader {
             records_read: 0,
             block_attrs: Vec::new(),
             block_labels: Vec::new(),
+            block_interleaved: Vec::new(),
             block_records: 0,
             block_record: 0,
         })
@@ -214,7 +217,14 @@ impl BucketReader {
                 self.read_compressed_block()?;
             }
             let start = self.block_record * fixed_len;
-            fixed[..fixed_len].copy_from_slice(&self.block_attrs[start..start + fixed_len]);
+            if self.header.interleaved_compression {
+                let record_len = record_size(self.header.colored, self.header.label_words);
+                let start = self.block_record * record_len;
+                fixed[..fixed_len]
+                    .copy_from_slice(&self.block_interleaved[start..start + fixed_len]);
+            } else {
+                fixed[..fixed_len].copy_from_slice(&self.block_attrs[start..start + fixed_len]);
+            }
         } else {
             self.file
                 .read_exact(&mut fixed[..fixed_len])
@@ -245,8 +255,17 @@ impl BucketReader {
         record.words.resize(self.header.label_words, 0);
         for (word_idx, word) in record.words.iter_mut().enumerate() {
             if self.header.compressed {
-                let start = (self.block_record * self.header.label_words + word_idx) * 8;
-                *word = u64::from_le_bytes(self.block_labels[start..start + 8].try_into().unwrap());
+                if self.header.interleaved_compression {
+                    let record_len = record_size(self.header.colored, self.header.label_words);
+                    let start = self.block_record * record_len + fixed_len + word_idx * 8;
+                    *word = u64::from_le_bytes(
+                        self.block_interleaved[start..start + 8].try_into().unwrap(),
+                    );
+                } else {
+                    let start = (self.block_record * self.header.label_words + word_idx) * 8;
+                    *word =
+                        u64::from_le_bytes(self.block_labels[start..start + 8].try_into().unwrap());
+                }
             } else {
                 *word = read_u64(&mut self.file, &self.path)?;
             }
@@ -364,7 +383,11 @@ impl BucketReader {
         let records = u32::from_le_bytes(header[0..4].try_into().unwrap()) as usize;
         let attr_bytes = u32::from_le_bytes(header[4..8].try_into().unwrap()) as usize;
         let label_bytes = u32::from_le_bytes(header[8..12].try_into().unwrap()) as usize;
-        if records == 0 || attr_bytes == 0 || label_bytes == 0 {
+        if records == 0
+            || attr_bytes == 0
+            || (!self.header.interleaved_compression && label_bytes == 0)
+            || (self.header.interleaved_compression && label_bytes != 0)
+        {
             return Err(BucketError::MalformedRecord);
         }
         let remaining = usize::try_from(self.header.records - self.records_read)
@@ -380,6 +403,23 @@ impl BucketReader {
                 source,
             })?;
         let fixed_len = if self.header.colored { 8 } else { 4 };
+        if self.header.interleaved_compression {
+            self.block_interleaved.resize(
+                records * record_size(self.header.colored, self.header.label_words),
+                0,
+            );
+            let decoded = lz4_flex::block::decompress_into(
+                &compressed[..attr_bytes],
+                &mut self.block_interleaved,
+            )
+            .map_err(|_| BucketError::MalformedRecord)?;
+            if decoded != self.block_interleaved.len() {
+                return Err(BucketError::MalformedRecord);
+            }
+            self.block_records = records;
+            self.block_record = 0;
+            return Ok(());
+        }
         self.block_attrs.resize(records * fixed_len, 0);
         self.block_labels
             .resize(records * self.header.label_words * 8, 0);
@@ -1463,6 +1503,7 @@ struct BucketFile {
     bytes_written: u64,
     record_size: u64,
     compressed: bool,
+    interleaved_compression: bool,
     label_words: usize,
 }
 
@@ -1490,11 +1531,17 @@ impl BucketFile {
         write_u16(&mut file, &path, minimizer_len)?;
         write_u64(&mut file, &path, graph_count as u64)?;
         write_u64(&mut file, &path, graph_id as u64)?;
-        let compressed = colored;
+        let compressed = colored
+            || std::env::var_os("CF3_RS_COMPRESS_UNCOLORED_BUCKETS").is_some();
+        let interleaved_compression = compressed && !colored;
         file.write_all(&[
             u8::from(colored),
             label_words as u8,
-            u8::from(compressed),
+            if interleaved_compression {
+                2
+            } else {
+                u8::from(compressed)
+            },
             0,
             0,
             0,
@@ -1512,6 +1559,7 @@ impl BucketFile {
             bytes_written: HEADER_LEN,
             record_size: record_size(colored, label_words) as u64,
             compressed,
+            interleaved_compression,
             label_words,
         })
     }
@@ -1539,6 +1587,7 @@ impl BucketFile {
             bytes_written,
             record_size: record_size(header.colored, header.label_words) as u64,
             compressed: header.compressed,
+            interleaved_compression: header.interleaved_compression,
             label_words: header.label_words,
         })
     }
@@ -1568,6 +1617,21 @@ impl BucketFile {
         let records_u32 = u32::try_from(records).map_err(|_| BucketError::TooManyRecords)?;
         if records_u32 == 0 {
             return Ok(0);
+        }
+        if self.interleaved_compression {
+            let compressed = lz4_flex::block::compress(bytes);
+            let compressed_len =
+                u32::try_from(compressed.len()).map_err(|_| BucketError::TooManyRecords)?;
+            self.file
+                .write_all(&records_u32.to_le_bytes())
+                .and_then(|_| self.file.write_all(&compressed_len.to_le_bytes()))
+                .and_then(|_| self.file.write_all(&0u32.to_le_bytes()))
+                .and_then(|_| self.file.write_all(&compressed))
+                .map_err(|source| BucketError::Io {
+                    path: self.path.clone(),
+                    source,
+                })?;
+            return Ok((COMPRESSED_BLOCK_HEADER_LEN + compressed.len()) as u64);
         }
         let record_len = usize::try_from(self.record_size).unwrap();
         let fixed_len = record_len - self.label_words * 8;
@@ -1720,9 +1784,10 @@ fn read_header(file: &mut impl Read, path: &Path) -> Result<BucketHeader, Bucket
     if label_words == 0 || label_words != label_word_count(k, minimizer_len) {
         return Err(BucketError::MalformedHeader(path.to_path_buf()));
     }
-    let compressed = match flags[2] {
-        0 => false,
-        1 if colored => true,
+    let (compressed, interleaved_compression) = match flags[2] {
+        0 => (false, false),
+        1 => (true, false),
+        2 if !colored => (true, true),
         _ => return Err(BucketError::MalformedHeader(path.to_path_buf())),
     };
     if flags[3..].iter().any(|&b| b != 0) {
@@ -1741,6 +1806,7 @@ fn read_header(file: &mut impl Read, path: &Path) -> Result<BucketHeader, Bucket
         graph_id,
         colored,
         compressed,
+        interleaved_compression,
         label_words,
         records,
     })

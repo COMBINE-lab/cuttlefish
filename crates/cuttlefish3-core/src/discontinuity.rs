@@ -32,6 +32,24 @@ use std::time::{Duration, Instant};
 type FastHashMap<K, V> = HashMap<K, V, FastBuildHasher>;
 type FastHashSet<T> = HashSet<T, FastBuildHasher>;
 
+fn keep_intermediates() -> bool {
+    std::env::var_os("CF3_RS_KEEP_INTERMEDIATES").is_some()
+}
+
+fn remove_serial_file(path: &Path) -> Result<(), SerialCollationError> {
+    if keep_intermediates() {
+        return Ok(());
+    }
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(source) => Err(SerialCollationError::Io {
+            path: path.to_path_buf(),
+            source,
+        }),
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DiscontinuityInputs<const K: usize> {
     pub unitigs: Vec<DiscontinuityUnitig<K>>,
@@ -5156,6 +5174,13 @@ impl SerialUncoloredCollator {
                 }
             }
         }
+        if !keep_intermediates() {
+            remove_serial_file(&inputs.unitig_path)?;
+            remove_serial_file(&inputs.label_path)?;
+            if let Some(sidecar) = inputs.color_runs.as_ref() {
+                remove_serial_file(&sidecar.run_path)?;
+            }
+        }
         let manifest = final_buckets.finish()?;
         eprintln!(
             "cuttlefish3-rs: external collation stitched and spilled final-label candidates in {:.3}s",
@@ -5173,6 +5198,10 @@ impl SerialUncoloredCollator {
         let reduce_started = Instant::now();
         let (emitted_unitigs, emitted_bases) =
             reduce_final_unitig_buckets_to_fasta(&manifest, output_path)?;
+        if !keep_intermediates() {
+            let _ = fs::remove_dir(coord_dir);
+            let _ = fs::remove_dir(final_dir);
+        }
         eprintln!(
             "cuttlefish3-rs: collation external bucket reduce and FASTA write completed in {:.3}s",
             reduce_started.elapsed().as_secs_f64()
@@ -5551,6 +5580,7 @@ fn reduce_final_unitig_buckets_to_fasta(
 
     for entry in manifest {
         let mut bucket = read_final_unitig_bucket(entry)?;
+        remove_serial_file(&entry.path)?;
         let bytes = &bucket.bytes;
         bucket.labels.sort_unstable_by(|left, right| {
             bytes[left.0..left.0 + left.1].cmp(&bytes[right.0..right.0 + right.1])
@@ -11794,6 +11824,11 @@ fn reduce_materialized_stitched_coord_bucket_file_group<const K: usize>(
     for entry in group {
         let label_offset = labels.len() as u64;
         let mut shard = read_materialized_stitched_coord_bucket_file(entry)?;
+        remove_serial_file(&entry.coord_path)?;
+        remove_serial_file(&entry.label_path)?;
+        if let Some(path) = entry.color_path.as_ref() {
+            remove_serial_file(path)?;
+        }
         let color_offset = colors.len() as u32;
         for record in &mut shard.records {
             record.label_offset += label_offset;
@@ -14526,7 +14561,7 @@ fn contract_local_subgraph<const K: usize>(
         })
         .collect();
 
-    Ok(LocalContractionOutput {
+    let output = LocalContractionOutput {
         index: group.index,
         weak_superkmers,
         build_elapsed,
@@ -14535,7 +14570,22 @@ fn contract_local_subgraph<const K: usize>(
         labels: inputs.labels,
         matrix_edges,
         color_runs,
-    })
+    };
+    if !keep_intermediates() {
+        for entry in &group.entries {
+            match fs::remove_file(&entry.path) {
+                Ok(()) => {}
+                Err(source) if source.kind() == std::io::ErrorKind::NotFound => {}
+                Err(source) => {
+                    return Err(DiscontinuityInputError::Io {
+                        path: entry.path.clone(),
+                        source,
+                    });
+                }
+            }
+        }
+    }
+    Ok(output)
 }
 
 #[derive(Debug)]

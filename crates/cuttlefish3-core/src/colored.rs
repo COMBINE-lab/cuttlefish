@@ -27,6 +27,7 @@ pub fn build_colored_from_buckets<const K: usize>(
     if !params.color {
         return Err(ColoredBuildError::ColorRequired);
     }
+    let bucket_dir = bucket_dir.as_ref().to_path_buf();
     let output_name = Path::new(&params.output_prefix)
         .file_name()
         .and_then(|name| name.to_str())
@@ -39,7 +40,7 @@ pub fn build_colored_from_buckets<const K: usize>(
     let local_started = Instant::now();
     report_process_memory("before colored local contraction");
     let mut inputs = emit_colored_external_discontinuity_inputs_with_threads_in_dir::<K>(
-        bucket_dir,
+        &bucket_dir,
         params.cutoff(),
         params.threads,
         &label_path,
@@ -50,6 +51,12 @@ pub fn build_colored_from_buckets<const K: usize>(
         local_started.elapsed().as_secs_f64(),
         inputs.stats.local_unitigs,
     );
+    if std::env::var_os("CF3_RS_KEEP_INTERMEDIATES").is_none() {
+        std::fs::remove_dir_all(&bucket_dir).map_err(|source| ColoredBuildError::Cleanup {
+            path: bucket_dir.clone(),
+            source,
+        })?;
+    }
     trim_process_allocations();
 
     let output_path = PathBuf::from(format!("{}.fa", params.output_prefix));
@@ -87,6 +94,10 @@ pub enum ColoredBuildError {
     Collation(SerialCollationError),
     Kmer(KmerError),
     Color(ColorError),
+    Cleanup {
+        path: PathBuf,
+        source: std::io::Error,
+    },
 }
 
 impl From<DiscontinuityInputError> for ColoredBuildError {
@@ -125,6 +136,7 @@ impl std::fmt::Display for ColoredBuildError {
             Self::Collation(err) => write!(f, "{err}"),
             Self::Kmer(err) => write!(f, "{err}"),
             Self::Color(err) => write!(f, "{err}"),
+            Self::Cleanup { path, source } => write!(f, "{}: {source}", path.display()),
         }
     }
 }

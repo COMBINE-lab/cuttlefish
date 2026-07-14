@@ -25,7 +25,7 @@ use std::os::unix::fs::FileExt;
 use std::path::{Path, PathBuf};
 use std::sync::{
     Arc, Mutex,
-    atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
+    atomic::{AtomicU64, AtomicUsize, Ordering},
     mpsc,
 };
 use std::time::{Duration, Instant};
@@ -2619,12 +2619,10 @@ impl SerialDiscontinuityContractor {
         table.clear(threads, pool);
         timings.clear += phase.elapsed();
 
-        let phase = Instant::now();
+        let diagonal_read_started = Instant::now();
         let diagonal_edges = matrix.read_flushed_block(partition, partition)?;
         diagonal_matrix.blocks[partition][partition] = diagonal_edges;
-        let diagonal = Self::compress_diagonal_block(diagonal_matrix, partition);
-        diagonal_matrix.blocks[partition][partition].clear();
-        timings.diagonal += phase.elapsed();
+        let diagonal_read_elapsed = diagonal_read_started.elapsed();
 
         let record_len = discontinuity_edge_record_len::<K>();
         let block_ids = (0..partition)
@@ -2633,33 +2631,48 @@ impl SerialDiscontinuityContractor {
                 (matrix.blocks[block_id].edges != 0).then_some(block_id)
             })
             .collect::<Vec<_>>();
-        let phase = Instant::now();
-        let block_bytes = pool.install(|| {
-            block_ids
-                .par_iter()
-                .copied()
-                .map(|block_id| {
-                    let block = &matrix.blocks[block_id];
-                    let bytes = match fs::read(&block.path) {
-                        Ok(bytes) => bytes,
-                        Err(source) if source.kind() == std::io::ErrorKind::NotFound => Vec::new(),
-                        Err(source) => {
-                            return Err(SerialCollationError::Io {
-                                path: block.path.clone(),
-                                source,
-                            });
-                        }
-                    };
-                    if bytes.len() % record_len != 0 {
-                        return Err(SerialCollationError::MalformedCoordBucket(
-                            block.path.clone(),
-                        ));
-                    }
-                    Ok::<_, SerialCollationError>(bytes)
-                })
-                .collect::<Result<Vec<_>, SerialCollationError>>()
-        })?;
-        timings.read += phase.elapsed();
+        let ((block_bytes, read_elapsed), (diagonal, diagonal_elapsed)) = pool.install(|| {
+            rayon::join(
+                || {
+                    let phase = Instant::now();
+                    let bytes = block_ids
+                        .par_iter()
+                        .copied()
+                        .map(|block_id| {
+                            let block = &matrix.blocks[block_id];
+                            let bytes = match fs::read(&block.path) {
+                                Ok(bytes) => bytes,
+                                Err(source) if source.kind() == std::io::ErrorKind::NotFound => {
+                                    Vec::new()
+                                }
+                                Err(source) => {
+                                    return Err(SerialCollationError::Io {
+                                        path: block.path.clone(),
+                                        source,
+                                    });
+                                }
+                            };
+                            if bytes.len() % record_len != 0 {
+                                return Err(SerialCollationError::MalformedCoordBucket(
+                                    block.path.clone(),
+                                ));
+                            }
+                            Ok::<_, SerialCollationError>(bytes)
+                        })
+                        .collect::<Result<Vec<_>, SerialCollationError>>();
+                    (bytes, phase.elapsed())
+                },
+                || {
+                    let phase = Instant::now();
+                    let diagonal = Self::compress_diagonal_block(diagonal_matrix, partition);
+                    (diagonal, phase.elapsed())
+                },
+            )
+        });
+        let block_bytes = block_bytes?;
+        diagonal_matrix.blocks[partition][partition].clear();
+        timings.read += read_elapsed;
+        timings.diagonal += diagonal_read_elapsed + diagonal_elapsed;
         let records_per_task = (1024 * 1024 / record_len).max(1);
         let bytes_per_task = records_per_task * record_len;
         let mut tasks = Vec::new();
@@ -15821,12 +15834,12 @@ unsafe impl Sync for AtomicPartitionSlot {}
 
 struct AtomicPartitionTable<const K: usize> {
     slots: Vec<AtomicPartitionSlot>,
-    locks: Vec<AtomicBool>,
     mask: usize,
 }
 
 impl<const K: usize> AtomicPartitionTable<K> {
     const EMPTY: u64 = u64::MAX;
+    const LOCKED: u64 = 1 << 63;
     const HASH_SEED: u64 = 0xAAAA_AAAA_5555_5555;
 
     #[inline(always)]
@@ -15848,7 +15861,6 @@ impl<const K: usize> AtomicPartitionTable<K> {
                     value: UnsafeCell::new(MaybeUninit::uninit()),
                 })
                 .collect(),
-            locks: (0..capacity).map(|_| AtomicBool::new(false)).collect(),
             mask: capacity - 1,
         }
     }
@@ -15880,15 +15892,17 @@ impl<const K: usize> AtomicPartitionTable<K> {
             let slot = &self.slots[idx];
             let observed = slot.key.load(Ordering::Acquire);
             if observed == key {
-                if self.locks[idx]
-                    .compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed)
+                if slot
+                    .key
+                    .compare_exchange_weak(
+                        key,
+                        key | Self::LOCKED,
+                        Ordering::Acquire,
+                        Ordering::Relaxed,
+                    )
                     .is_err()
                 {
                     std::hint::spin_loop();
-                    continue;
-                }
-                if slot.key.load(Ordering::Acquire) != key {
-                    self.locks[idx].store(false, Ordering::Release);
                     continue;
                 }
                 let existing = unsafe { (*slot.value.get()).assume_init() }.unpack::<K>();
@@ -15906,24 +15920,29 @@ impl<const K: usize> AtomicPartitionTable<K> {
                 }
                 updated.processed = true;
                 unsafe { (*slot.value.get()).write(CompactPartitionOtherEnd::pack(updated)) };
-                self.locks[idx].store(false, Ordering::Release);
+                slot.key.store(key, Ordering::Release);
                 return;
             }
             if observed == Self::EMPTY {
-                if self.locks[idx]
-                    .compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed)
+                if slot
+                    .key
+                    .compare_exchange_weak(
+                        Self::EMPTY,
+                        Self::LOCKED,
+                        Ordering::Acquire,
+                        Ordering::Relaxed,
+                    )
                     .is_err()
                 {
                     std::hint::spin_loop();
                     continue;
                 }
-                if slot.key.load(Ordering::Acquire) == Self::EMPTY {
-                    unsafe { (*slot.value.get()).write(CompactPartitionOtherEnd::pack(incoming)) };
-                    slot.key.store(key, Ordering::Release);
-                    self.locks[idx].store(false, Ordering::Release);
-                    return;
-                }
-                self.locks[idx].store(false, Ordering::Release);
+                unsafe { (*slot.value.get()).write(CompactPartitionOtherEnd::pack(incoming)) };
+                slot.key.store(key, Ordering::Release);
+                return;
+            }
+            if observed & Self::LOCKED != 0 {
+                std::hint::spin_loop();
                 continue;
             }
             idx = (idx + 1) & self.mask;
@@ -15946,15 +15965,17 @@ impl<const K: usize> AtomicPartitionTable<K> {
             let slot = &self.slots[idx];
             let observed = slot.key.load(Ordering::Acquire);
             if observed == key {
-                if self.locks[idx]
-                    .compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed)
+                if slot
+                    .key
+                    .compare_exchange_weak(
+                        key,
+                        key | Self::LOCKED,
+                        Ordering::Acquire,
+                        Ordering::Relaxed,
+                    )
                     .is_err()
                 {
                     std::hint::spin_loop();
-                    continue;
-                }
-                if slot.key.load(Ordering::Acquire) != key {
-                    self.locks[idx].store(false, Ordering::Release);
                     continue;
                 }
                 let existing = unsafe { (*slot.value.get()).assume_init() }.unpack::<K>();
@@ -15983,24 +16004,29 @@ impl<const K: usize> AtomicPartitionTable<K> {
                 }
                 updated.processed = true;
                 unsafe { (*slot.value.get()).write(CompactPartitionOtherEnd::pack(updated)) };
-                self.locks[idx].store(false, Ordering::Release);
+                slot.key.store(key, Ordering::Release);
                 return;
             }
             if observed == Self::EMPTY {
-                if self.locks[idx]
-                    .compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed)
+                if slot
+                    .key
+                    .compare_exchange_weak(
+                        Self::EMPTY,
+                        Self::LOCKED,
+                        Ordering::Acquire,
+                        Ordering::Relaxed,
+                    )
                     .is_err()
                 {
                     std::hint::spin_loop();
                     continue;
                 }
-                if slot.key.load(Ordering::Acquire) == Self::EMPTY {
-                    unsafe { (*slot.value.get()).write(CompactPartitionOtherEnd::pack(incoming)) };
-                    slot.key.store(key, Ordering::Release);
-                    self.locks[idx].store(false, Ordering::Release);
-                    return;
-                }
-                self.locks[idx].store(false, Ordering::Release);
+                unsafe { (*slot.value.get()).write(CompactPartitionOtherEnd::pack(incoming)) };
+                slot.key.store(key, Ordering::Release);
+                return;
+            }
+            if observed & Self::LOCKED != 0 {
+                std::hint::spin_loop();
                 continue;
             }
             idx = (idx + 1) & self.mask;

@@ -481,8 +481,14 @@ fn reverse_complement_label(label: &[u8]) -> Vec<u8> {
     label
         .iter()
         .rev()
-        .map(|&b| Base::from_ascii(b).complement().to_ascii())
+        .map(|&b| complement_valid_ascii(b))
         .collect()
+}
+
+#[inline(always)]
+fn complement_valid_ascii(base: u8) -> u8 {
+    const COMPLEMENT: [u8; 8] = [b'N', b'T', b'N', b'G', b'A', b'N', b'N', b'C'];
+    COMPLEMENT[(base & 7) as usize]
 }
 
 fn canonical_cycle_label<const K: usize>(label: Vec<u8>) -> Vec<u8> {
@@ -1055,7 +1061,7 @@ impl<const K: usize> LocalSubgraph<K> {
                 .label
                 .iter()
                 .rev()
-                .map(|&base| Base::from_ascii(base).complement().to_ascii()),
+                .map(|&base| complement_valid_ascii(base)),
         );
         label.extend_from_slice(&back_walk.label[K..]);
         let left_exit = match front_term {
@@ -1103,7 +1109,7 @@ impl<const K: usize> LocalSubgraph<K> {
                 .label
                 .iter()
                 .rev()
-                .map(|&base| Base::from_ascii(base).complement().to_ascii()),
+                .map(|&base| complement_valid_ascii(base)),
         );
         label.extend_from_slice(&back_walk.label[K..]);
         let left_exit = match front_term {

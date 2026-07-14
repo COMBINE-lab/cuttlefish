@@ -97,6 +97,19 @@ At 1,000 genomes the same deferred atlas path completed in 18.81 s and used
 1.62 s and performed exactly 16,384 flushes. This confirms the partition
 optimization independently of the noisier downstream 5,000-genome phases.
 
+Subsequent profiling found that reverse-front local-unitig assembly compiled
+the checked ASCII base conversion into range checks and indirect jump tables.
+A valid-ASCII complement lookup reduced the 5,000-genome local contraction
+from 22.77 s to 19.98 s, slightly faster than the C++ 20.46 s phase. Folding
+the blocked contractor's lock into the unused high bit of its 62-bit k-mer key
+and overlapping diagonal compression with non-diagonal block reads reduced a
+matched 1,000-genome graph build from 18.13 s to 17.60 s (19.72 s process
+wall, 13,376,800 KiB peak RSS). Counts remained exact at 40,370,131 unitigs
+and 2,726,597,540 bases. A 5,000-genome validation reached local contraction
+in 19.35 s and 48 of 128 discontinuity partitions in 2.8 s, but the execution
+wrapper stopped the run before final output; do not treat that partial timing
+as a completed parity result.
+
 Profiling the 5,000-genome colored partition identified a different barrier.
 Rust spends about 3.6-4.2 s scanning and packing, followed by 5.8-7.3 s of
 window-level atlas collation and compression. C++ drains 64 KiB worker-local

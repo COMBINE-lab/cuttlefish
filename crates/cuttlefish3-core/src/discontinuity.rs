@@ -4220,92 +4220,93 @@ impl SerialDiscontinuityExpander {
         let outputs = pool.install(|| {
             tasks
                 .into_par_iter()
-                .map(|(col, record_len, bytes)| {
-                    let mut vertex_records = Vec::new();
-                    let mut path_records = (0..edge_writers.writers.len())
-                        .map(|_| None::<Vec<StitchedCoordRecord>>)
-                        .collect::<Vec<_>>();
-                    let mut used_path_buckets = Vec::new();
-                    let mut phantoms = Vec::new();
-                    let mut unresolved = 0u64;
-                    let mut inferred = 0u64;
-                    let mut emitted = 0u64;
-                    for encoded in bytes.chunks_exact(record_len) {
-                        let edge = decode_discontinuity_edge::<K>(encoded);
-                        let (MatrixEndpoint::Vertex(x), MatrixEndpoint::Vertex(y)) =
-                            (edge.first, edge.second)
-                        else {
-                            continue;
-                        };
-                        let Some(x_info) = map.get_compact(x.vertex) else {
-                            unresolved += 1;
-                            continue;
-                        };
-                        let y_info = Self::infer_compact(x_info, x.side, y.side, edge.weight);
-                        if y_info.rank() > 0 {
-                            append_encoded_compact_vertex_path_info::<K>(
-                                &mut vertex_records,
-                                y.vertex,
-                                y_info,
-                            );
-                            inferred += 1;
-                        }
-                        if edge.weight == 1 {
-                            let record = stitched_record_from_compact_edge_path_info(
-                                &edge,
-                                compact_edge_path_info(&edge, x_info, y_info),
-                                error_path,
-                            )?;
-                            if let Some(phantom) = edge.phantom_unitig {
-                                phantoms.push((record, phantom));
-                            } else {
-                                let bucket_id = edge_path_info_bucket(
-                                    &edge,
-                                    ranges,
-                                    range_index,
-                                    ranges_per_bucket,
-                                )
-                                .ok_or_else(|| {
-                                    SerialCollationError::MalformedCoordBucket(
-                                        error_path.to_path_buf(),
-                                    )
-                                })?;
-                                let bucket = &mut path_records[bucket_id];
-                                if bucket.is_none() {
-                                    *bucket = Some(Vec::new());
-                                    used_path_buckets.push(bucket_id);
-                                }
-                                bucket
-                                    .as_mut()
-                                    .expect("path bucket was just initialized")
-                                    .push(record);
+                .map_init(
+                    || {
+                        (
+                            Vec::<u8>::new(),
+                            (0..edge_writers.writers.len())
+                                .map(|_| Vec::<StitchedCoordRecord>::new())
+                                .collect::<Vec<_>>(),
+                            Vec::<usize>::new(),
+                        )
+                    },
+                    |(vertex_records, path_records, used_path_buckets),
+                     (col, record_len, bytes)| {
+                        vertex_records.clear();
+                        debug_assert!(used_path_buckets.is_empty());
+                        let mut phantoms = Vec::new();
+                        let mut unresolved = 0u64;
+                        let mut inferred = 0u64;
+                        let mut emitted = 0u64;
+                        for encoded in bytes.chunks_exact(record_len) {
+                            let edge = decode_discontinuity_edge::<K>(encoded);
+                            let (MatrixEndpoint::Vertex(x), MatrixEndpoint::Vertex(y)) =
+                                (edge.first, edge.second)
+                            else {
+                                continue;
+                            };
+                            let Some(x_info) = map.get_compact(x.vertex) else {
+                                unresolved += 1;
+                                continue;
+                            };
+                            let y_info = Self::infer_compact(x_info, x.side, y.side, edge.weight);
+                            if y_info.rank() > 0 {
+                                append_encoded_compact_vertex_path_info::<K>(
+                                    vertex_records,
+                                    y.vertex,
+                                    y_info,
+                                );
+                                inferred += 1;
                             }
-                            emitted += 1;
+                            if edge.weight == 1 {
+                                let record = stitched_record_from_compact_edge_path_info(
+                                    &edge,
+                                    compact_edge_path_info(&edge, x_info, y_info),
+                                    error_path,
+                                )?;
+                                if let Some(phantom) = edge.phantom_unitig {
+                                    phantoms.push((record, phantom));
+                                } else {
+                                    let bucket_id = edge_path_info_bucket(
+                                        &edge,
+                                        ranges,
+                                        range_index,
+                                        ranges_per_bucket,
+                                    )
+                                    .ok_or_else(|| {
+                                        SerialCollationError::MalformedCoordBucket(
+                                            error_path.to_path_buf(),
+                                        )
+                                    })?;
+                                    let bucket = &mut path_records[bucket_id];
+                                    if bucket.is_empty() {
+                                        used_path_buckets.push(bucket_id);
+                                    }
+                                    bucket.push(record);
+                                }
+                                emitted += 1;
+                            }
                         }
-                    }
-                    if !vertex_records.is_empty() {
-                        let path = vertex_path_info_bucket_path(vertex_path_info_dir, col);
-                        let mut file = OpenOptions::new()
-                            .create(true)
-                            .append(true)
-                            .open(&path)
-                            .map_err(|source| SerialCollationError::Io {
-                                path: path.clone(),
-                                source,
-                            })?;
-                        file.write_all(&vertex_records)
-                            .map_err(|source| SerialCollationError::Io { path, source })?;
-                    }
-                    for bucket_id in used_path_buckets {
-                        edge_writers.write_path_records(
-                            bucket_id,
-                            path_records[bucket_id]
-                                .as_deref()
-                                .expect("used path bucket is initialized"),
-                        )?;
-                    }
-                    Ok::<_, SerialCollationError>((phantoms, unresolved, inferred, emitted))
-                })
+                        if !vertex_records.is_empty() {
+                            let path = vertex_path_info_bucket_path(vertex_path_info_dir, col);
+                            let mut file = OpenOptions::new()
+                                .create(true)
+                                .append(true)
+                                .open(&path)
+                                .map_err(|source| SerialCollationError::Io {
+                                    path: path.clone(),
+                                    source,
+                                })?;
+                            file.write_all(&vertex_records)
+                                .map_err(|source| SerialCollationError::Io { path, source })?;
+                        }
+                        for bucket_id in used_path_buckets.drain(..) {
+                            edge_writers.write_path_records(bucket_id, &path_records[bucket_id])?;
+                            path_records[bucket_id].clear();
+                        }
+                        Ok::<_, SerialCollationError>((phantoms, unresolved, inferred, emitted))
+                    },
+                )
                 .collect::<Result<Vec<_>, SerialCollationError>>()
         })?;
         let mut phantoms = Vec::new();

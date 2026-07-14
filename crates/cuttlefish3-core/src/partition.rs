@@ -240,7 +240,10 @@ fn emit_colored_weak_superkmer_buckets<const K: usize>(
     // Keep enough sources in flight to balance uneven genome sizes and amortize
     // atlas collation. Source IDs remain contiguous within a window, so the
     // stable counting collation used by colored buckets is unchanged.
-    const SOURCE_WINDOW_MAX: usize = 1024;
+    // Two thousand bacterial sources fit comfortably below the reference
+    // implementation's atlas RSS while reducing repeated all-graph collation
+    // barriers on larger colored collections.
+    const SOURCE_WINDOW_MAX: usize = 2048;
 
     let sink = SharedBucketSink::create(params, graph_count)?;
     let mut stats = PartitionStats::new(graph_count);

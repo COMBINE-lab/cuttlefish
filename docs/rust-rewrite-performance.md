@@ -12,7 +12,7 @@ of constructing a global in-memory de Bruijn graph.
 
 1. Input records are parsed without copying sequence fragments. Rolling packed
    k-mers and the C++ wyhash minimizer specialization produce weak super-kmers.
-2. Colored partitioning processes a bounded window of 1024 sources. Files are
+2. Colored partitioning processes a bounded window of 2048 sources. Files are
    scheduled largest-first across at most 64 scan workers. Each worker retains
    atlas-local records until the source barrier.
 3. A 128-subgraph atlas is source-partitioned in place. Sixteen long-lived
@@ -65,6 +65,39 @@ mode, and a requested 256 threads. Rust bounds phase-local pools internally.
 The comparator confirmed that all 40,370,131 strand-normalized unitigs match.
 Rust was 3.3% faster and used 19.7% less peak RSS on this run.
 
+## HumGut2 scale results
+
+A matched 5,000-genome run on the first 5,000 entries of `genomes.list` used
+64 threads, `k=31`, minimizer length 12, cutoff 1, reference mode, and local
+`/scratch3/tmp` storage. All implementations produced 179,767,076 unitigs and
+11,337,993,544 bases. Internal local-unitig, edge-matrix, meta-vertex, and
+path-info counts also matched exactly.
+
+| path | implementation | wall time | peak RSS |
+| --- | --- | ---: | ---: |
+| colored | C++ | 73.28 s | 29,495,880 KiB |
+| colored | Rust, 2048-source windows | 78.70 s | 25,006,660 KiB |
+| uncolored | C++ | 61.70 s | 26,122,016 KiB |
+| uncolored | Rust | 89.67 s | 32,325,276 KiB |
+
+Colored Rust is 7.4% slower and uses 15.2% less memory at this rung. This is
+near parity, not strict time parity. Uncolored scale parity is not achieved:
+Rust is 45.3% slower and uses 23.7% more memory. Its largest deficits are the
+blocked contraction/expansion and final path-info map/reduce phases. Enabling
+the optional uncolored LZ4 bucket format reduced bucket bytes but did not fix
+the deficit (82.59 s, 36,949,396 KiB), because it emits many small compressed
+blocks. Do not cite the 1,000-genome result as evidence of uncolored scale
+parity.
+
+The 5,000-genome topology can be compared exactly with bounded memory:
+
+```bash
+python3 scripts/compare_colored_fasta.py \
+  --cpp-fasta /scratch3/tmp/humgut2/scale5000/cpp-uncolored3.fa \
+  --rust-fasta /scratch3/tmp/humgut2/scale5000/rust-uncolored.fa \
+  --topology-only --external-work-dir /scratch3/tmp/cf3-compare -k 31
+```
+
 The Rust command was:
 
 ```bash
@@ -107,4 +140,3 @@ unitigs and 31,235,773,275 bases. The best pre-parity implementation took
 8:40.59 and 22,354,288 KiB RSS. These runs establish scale correctness counts,
 but not current performance parity because they predate the final atlas design
 and no matched C++ timing log was retained.
-

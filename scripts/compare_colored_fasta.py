@@ -2,6 +2,9 @@
 import argparse
 import collections
 import gzip
+import heapq
+import itertools
+import tempfile
 from pathlib import Path
 
 
@@ -141,6 +144,59 @@ def topology(fasta, k):
     return sorted(canonical_unitig(seq, k) for _, seq in fasta_records(fasta))
 
 
+def external_topology(fasta, k, directory, chunk_records):
+    directory.mkdir(parents=True, exist_ok=True)
+    chunks = []
+    pending = []
+    for _, seq in fasta_records(fasta):
+        pending.append(canonical_unitig(seq, k))
+        if len(pending) >= chunk_records:
+            chunks.append(write_topology_chunk(pending, directory, len(chunks)))
+            pending.clear()
+    if pending:
+        chunks.append(write_topology_chunk(pending, directory, len(chunks)))
+    sources = [path.open("rb") for path in chunks]
+    return heapq.merge(*sources), sources
+
+
+def write_topology_chunk(records, directory, index):
+    records.sort()
+    path = directory / f"topology-{index:06}.txt"
+    with path.open("wb") as output:
+        for seq in records:
+            output.write(seq)
+            output.write(b"\n")
+    return path
+
+
+def compare_external_topology(cpp_fasta, rust_fasta, k, work_dir, chunk_records):
+    with tempfile.TemporaryDirectory(dir=work_dir, prefix="cf3-topology-") as temp:
+        temp = Path(temp)
+        cpp, cpp_sources = external_topology(cpp_fasta, k, temp / "cpp", chunk_records)
+        rust, rust_sources = external_topology(rust_fasta, k, temp / "rust", chunk_records)
+        count = 0
+        missing = object()
+        try:
+            for count, (cpp_seq, rust_seq) in enumerate(
+                itertools.zip_longest(cpp, rust, fillvalue=missing), 1
+            ):
+                if cpp_seq is missing or rust_seq is missing:
+                    raise ValueError("different topology counts")
+                if cpp_seq != rust_seq:
+                    raise SystemExit(
+                        "FAIL: C++ and Rust topology multisets differ at record "
+                        f"{count}: {cpp_seq.strip()!r} != {rust_seq.strip()!r}"
+                    )
+        except ValueError as error:
+            raise SystemExit(
+                f"FAIL: C++ and Rust topology counts differ after {count} records"
+            ) from error
+        finally:
+            for source in cpp_sources + rust_sources:
+                source.close()
+    return count
+
+
 def expected_colors(records, source_paths, k):
     wanted = set()
     for seq, _ in records:
@@ -174,11 +230,26 @@ def main():
     parser.add_argument("--source-list")
     parser.add_argument("--topology-only", action="store_true")
     parser.add_argument("--source-only", action="store_true")
+    parser.add_argument("--external-work-dir")
+    parser.add_argument("--chunk-records", type=int, default=1_000_000)
     parser.add_argument("-k", type=int, required=True)
     args = parser.parse_args()
 
     if not args.source_only and not args.cpp_fasta:
         parser.error("--cpp-fasta is required unless --source-only is used")
+    if args.external_work_dir:
+        if args.source_only or not args.topology_only:
+            parser.error("external comparison currently requires --topology-only")
+        Path(args.external_work_dir).mkdir(parents=True, exist_ok=True)
+        count = compare_external_topology(
+            args.cpp_fasta,
+            args.rust_fasta,
+            args.k,
+            args.external_work_dir,
+            args.chunk_records,
+        )
+        print(f"OK: {count} unitigs match C++ topology")
+        return
     cpp_topology = None if args.source_only else topology(args.cpp_fasta, args.k)
     if args.topology_only:
         rust_topology = topology(args.rust_fasta, args.k)

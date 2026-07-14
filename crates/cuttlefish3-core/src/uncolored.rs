@@ -107,8 +107,9 @@ pub fn build_uncolored_with_serial_discontinuity_pipeline<const K: usize>(
         .unwrap_or("cuttlefish3");
     let label_path =
         PathBuf::from(&params.work_dir).join(format!("{output_name}.cf3rs.lmtig-labels"));
+    let bucket_dir = bucket_dir.as_ref().to_path_buf();
     let mut inputs = emit_uncolored_external_discontinuity_inputs_with_threads_in_dir::<K>(
-        bucket_dir,
+        &bucket_dir,
         params.cutoff(),
         params.threads,
         &label_path,
@@ -123,6 +124,12 @@ pub fn build_uncolored_with_serial_discontinuity_pipeline<const K: usize>(
         "cuttlefish3-rs: local contraction phase completed in {:.3}s",
         local_elapsed.as_secs_f64()
     );
+    if std::env::var_os("CF3_RS_KEEP_INTERMEDIATES").is_none() {
+        std::fs::remove_dir_all(&bucket_dir).map_err(|source| UncoloredBuildError::Io {
+            path: bucket_dir.clone(),
+            source,
+        })?;
+    }
     trim_process_allocations();
     report_process_memory("after local contraction trim");
     eprintln!("cuttlefish3-rs: collating final unitigs");

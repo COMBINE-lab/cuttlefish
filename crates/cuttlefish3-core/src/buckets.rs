@@ -66,6 +66,7 @@ pub struct SharedBucketEmitter {
     pending: Vec<PendingBucket>,
     colored_pending: Vec<PendingColoredAtlas>,
     pending_bytes: usize,
+    deferred_uncolored: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1001,6 +1002,14 @@ impl SharedBucketSink {
     }
 
     pub fn emitter(self: &Arc<Self>) -> SharedBucketEmitter {
+        self.make_emitter(false)
+    }
+
+    pub fn deferred_uncolored_emitter(self: &Arc<Self>) -> SharedBucketEmitter {
+        self.make_emitter(true)
+    }
+
+    fn make_emitter(self: &Arc<Self>, deferred_uncolored: bool) -> SharedBucketEmitter {
         SharedBucketEmitter {
             sink: Arc::clone(self),
             pending: if self.colored {
@@ -1016,7 +1025,76 @@ impl SharedBucketSink {
                 Vec::new()
             },
             pending_bytes: 0,
+            deferred_uncolored,
         }
+    }
+
+    pub fn flush_uncolored_emitters(
+        &self,
+        emitters: Vec<SharedBucketEmitter>,
+    ) -> Result<(), BucketError> {
+        let started = Instant::now();
+        let mut by_atlas = (0..self.atlases.len())
+            .map(|_| Mutex::new(Vec::<(usize, PendingBucket)>::new()))
+            .collect::<Vec<_>>();
+        for emitter in emitters {
+            for (graph_id, pending) in emitter.pending.into_iter().enumerate() {
+                if !pending.bytes.is_empty() {
+                    by_atlas[graph_id / ATLAS_GRAPH_COUNT]
+                        .get_mut()
+                        .map_err(|_| BucketError::WorkerPanic)?
+                        .push((graph_id % ATLAS_GRAPH_COUNT, pending));
+                }
+            }
+        }
+        let next = AtomicUsize::new(0);
+        let workers = self.workers.min(16).min(self.atlases.len().max(1));
+        let calls = std::thread::scope(|scope| {
+            let mut handles = Vec::with_capacity(workers);
+            for _ in 0..workers {
+                handles.push(scope.spawn(|| {
+                    let mut calls = 0;
+                    loop {
+                        let atlas_id = next.fetch_add(1, Ordering::Relaxed);
+                        let Some(pending) = by_atlas.get(atlas_id) else {
+                            break;
+                        };
+                        let pending = std::mem::take(
+                            &mut *pending.lock().map_err(|_| BucketError::WorkerPanic)?,
+                        );
+                        if pending.is_empty() {
+                            continue;
+                        }
+                        let mut atlas = self.atlases[atlas_id]
+                            .lock()
+                            .map_err(|_| BucketError::WorkerPanic)?;
+                        for (local_graph_id, bucket) in pending {
+                            atlas.append_bucket(local_graph_id, bucket)?;
+                        }
+                        let mut stats = SharedBucketFlushStats::default();
+                        atlas.flush_all(
+                            &self.bucket_dir,
+                            self.k,
+                            self.minimizer_len,
+                            self.graph_count,
+                            false,
+                            self.label_words,
+                            self.compress_buckets,
+                            &mut stats,
+                        )?;
+                        calls += stats.calls;
+                    }
+                    Ok::<_, BucketError>(calls)
+                }));
+            }
+            let mut calls = 0;
+            for handle in handles {
+                calls += handle.join().map_err(|_| BucketError::WorkerPanic)??;
+            }
+            Ok::<_, BucketError>(calls)
+        })?;
+        self.record_flush_stats(SharedBucketFlushStats { calls }, started.elapsed());
+        Ok(())
     }
 
     fn append_bucket(&self, graph_id: usize, pending: PendingBucket) -> Result<(), BucketError> {
@@ -1717,9 +1795,15 @@ impl SharedBucketEmitter {
         // `flush_colored_emitters`; spilling one here would both duplicate the
         // window in shared buffers and lose global source order. The source
         // window in `partition` is the external-memory bound for this path.
-        if !self.sink.colored && self.pending[graph_id].bytes.len() >= MAX_PENDING_BUCKET_BYTES {
+        if !self.sink.colored
+            && !self.deferred_uncolored
+            && self.pending[graph_id].bytes.len() >= MAX_PENDING_BUCKET_BYTES
+        {
             self.flush_pending_bucket(graph_id)?;
-        } else if !self.sink.colored && self.pending_bytes >= MAX_TOTAL_PENDING_BYTES {
+        } else if !self.sink.colored
+            && !self.deferred_uncolored
+            && self.pending_bytes >= MAX_TOTAL_PENDING_BYTES
+        {
             self.flush_largest_pending_bucket()?;
         }
         Ok(())

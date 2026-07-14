@@ -6141,6 +6141,35 @@ impl FinalUnitigBucketWriters {
         Ok(())
     }
 
+    fn prepare_parallel_direct_output(
+        &mut self,
+    ) -> Result<(File, PathBuf, u64), SerialCollationError> {
+        let path = self
+            .direct_output_path
+            .clone()
+            .expect("direct output path exists");
+        let output = self.direct_output.as_mut().expect("direct output exists");
+        output.flush().map_err(|source| SerialCollationError::Io {
+            path: path.clone(),
+            source,
+        })?;
+        let file = output
+            .get_ref()
+            .try_clone()
+            .map_err(|source| SerialCollationError::Io {
+                path: path.clone(),
+                source,
+            })?;
+        let offset = file
+            .metadata()
+            .map_err(|source| SerialCollationError::Io {
+                path: path.clone(),
+                source,
+            })?
+            .len();
+        Ok((file, path, offset))
+    }
+
     fn evict_writer_if_needed(
         &mut self,
         requested_bucket_id: usize,
@@ -13538,22 +13567,28 @@ fn reduce_materialized_groups_to_direct_fasta<const K: usize>(
     workers: usize,
     final_buckets: &mut FinalUnitigBucketWriters,
 ) -> Result<u64, SerialCollationError> {
-    const DIRECT_FINAL_BATCH_RECORDS: usize = 4096;
+    const DIRECT_FINAL_BATCH_RECORDS: usize = 16 * 1024;
     let next_group = AtomicUsize::new(0);
     let next_record = AtomicU64::new(final_buckets.direct_record_id_highwater + 1);
-    let (tx, rx) = mpsc::sync_channel::<Result<EncodedFinalBatch, SerialCollationError>>(2);
+    let (output, output_path, initial_offset) = final_buckets.prepare_parallel_direct_output()?;
+    let next_offset = AtomicU64::new(initial_offset);
+    let emitted = AtomicU64::new(0);
+    let emitted_bases = AtomicU64::new(0);
     let load_ns = AtomicU64::new(0);
     let sort_ns = AtomicU64::new(0);
     let assemble_ns = AtomicU64::new(0);
     let send_ns = AtomicU64::new(0);
-    let mut emitted = 0u64;
     let write_started = Instant::now();
     std::thread::scope(|scope| {
         let mut handles = Vec::with_capacity(workers);
         for _ in 0..workers {
-            let tx = tx.clone();
             let next_group = &next_group;
             let next_record = &next_record;
+            let next_offset = &next_offset;
+            let emitted = &emitted;
+            let emitted_bases = &emitted_bases;
+            let output = &output;
+            let output_path = &output_path;
             let load_ns = &load_ns;
             let sort_ns = &sort_ns;
             let assemble_ns = &assemble_ns;
@@ -13576,14 +13611,14 @@ fn reduce_materialized_groups_to_direct_fasta<const K: usize>(
                         .sort_unstable_by_key(|record| (record.path_id, record.rank));
                     sort_ns.fetch_add(started.elapsed().as_nanos() as u64, Ordering::Relaxed);
                     let mut batch = None::<DirectFinalBatchBuilder>;
-                    let mut send_failed = false;
+                    let mut write_error = None;
                     let started = Instant::now();
                     reduce_sorted_materialized_stitched_coord_bucket_with::<K, _>(
                         &mut shard.records,
                         &shard.labels,
                         &shard.colors,
                         |label, colors| {
-                            if send_failed {
+                            if write_error.is_some() {
                                 return;
                             }
                             let builder = batch.get_or_insert_with(|| {
@@ -13595,51 +13630,45 @@ fn reduce_materialized_groups_to_direct_fasta<const K: usize>(
                             });
                             builder.push(label, colors);
                             if builder.records as usize >= DIRECT_FINAL_BATCH_RECORDS {
-                                let send_started = Instant::now();
-                                let failed = tx
-                                    .send(Ok(batch.take().expect("batch exists").finish()))
-                                    .is_err();
+                                let write_started = Instant::now();
+                                let encoded = batch.take().expect("batch exists").finish();
+                                let result = write_encoded_final_batch_at(
+                                    output,
+                                    output_path,
+                                    next_offset,
+                                    emitted,
+                                    emitted_bases,
+                                    encoded,
+                                );
                                 send_ns.fetch_add(
-                                    send_started.elapsed().as_nanos() as u64,
+                                    write_started.elapsed().as_nanos() as u64,
                                     Ordering::Relaxed,
                                 );
-                                if failed {
-                                    send_failed = true;
+                                if let Err(error) = result {
+                                    write_error = Some(error);
                                 }
                             }
                         },
                     );
                     assemble_ns.fetch_add(started.elapsed().as_nanos() as u64, Ordering::Relaxed);
-                    if send_failed {
-                        return Err(SerialCollationError::WorkerPanic);
+                    if let Some(error) = write_error {
+                        return Err(error);
                     }
                     if let Some(batch) = batch {
-                        tx.send(Ok(batch.finish()))
-                            .map_err(|_| SerialCollationError::WorkerPanic)?;
+                        write_encoded_final_batch_at(
+                            output,
+                            output_path,
+                            next_offset,
+                            emitted,
+                            emitted_bases,
+                            batch.finish(),
+                        )?;
                     }
                 }
                 Ok::<_, SerialCollationError>(())
             }));
         }
-        drop(tx);
-
         let mut first_error = None;
-        for result in rx {
-            match result {
-                Ok(batch) if first_error.is_none() => {
-                    if let Err(err) =
-                        final_buckets.write_direct_batch(&batch.bytes, batch.records, batch.bases)
-                    {
-                        first_error = Some(err);
-                    } else {
-                        emitted += batch.records;
-                    }
-                }
-                Ok(_) => {}
-                Err(err) if first_error.is_none() => first_error = Some(err),
-                Err(_) => {}
-            }
-        }
         for handle in handles {
             let result = handle
                 .join()
@@ -13658,6 +13687,9 @@ fn reduce_materialized_groups_to_direct_fasta<const K: usize>(
     })?;
     final_buckets.direct_record_id_highwater =
         next_record.load(Ordering::Relaxed).saturating_sub(1);
+    let emitted = emitted.load(Ordering::Relaxed);
+    final_buckets.direct_records += emitted;
+    final_buckets.direct_bases += emitted_bases.load(Ordering::Relaxed);
     eprintln!(
         "cuttlefish3-rs: path-info reduce worker detail: load {:.3}s, sort {:.3}s, assemble/encode {:.3}s, blocked send {:.3}s; reducer wall/write-drain {:.3}s",
         load_ns.load(Ordering::Relaxed) as f64 / 1e9,
@@ -13667,6 +13699,26 @@ fn reduce_materialized_groups_to_direct_fasta<const K: usize>(
         write_started.elapsed().as_secs_f64(),
     );
     Ok(emitted)
+}
+
+fn write_encoded_final_batch_at(
+    output: &File,
+    output_path: &Path,
+    next_offset: &AtomicU64,
+    emitted: &AtomicU64,
+    emitted_bases: &AtomicU64,
+    batch: EncodedFinalBatch,
+) -> Result<(), SerialCollationError> {
+    let offset = next_offset.fetch_add(batch.bytes.len() as u64, Ordering::Relaxed);
+    output
+        .write_all_at(&batch.bytes, offset)
+        .map_err(|source| SerialCollationError::Io {
+            path: output_path.to_path_buf(),
+            source,
+        })?;
+    emitted.fetch_add(batch.records, Ordering::Relaxed);
+    emitted_bases.fetch_add(batch.bases, Ordering::Relaxed);
+    Ok(())
 }
 
 fn encode_final_unitig_batch(
@@ -16394,8 +16446,11 @@ fn contract_local_subgraphs_into_external_inputs<const K: usize>(
     label_path: &Path,
     color_path: Option<&Path>,
 ) -> Result<ExternalDiscontinuityInputs<K>, DiscontinuityInputError> {
-    let compact_unitigs =
-        color_path.is_some() && std::env::var_os("CF3_RS_ENDPOINT_STITCH").is_none();
+    // C++ hands both colored and uncolored local contractions to expansion in
+    // max-unitig coordinate buckets. The representation does not depend on
+    // colors; keeping uncolored on the legacy global unitig/range stream adds
+    // a full random-access materialization at scale.
+    let compact_unitigs = std::env::var_os("CF3_RS_ENDPOINT_STITCH").is_none();
     let mut inputs = DiscontinuityInputs::empty(DiscontinuityInputStats {
         input_buckets: entries.len(),
         ..DiscontinuityInputStats::default()
@@ -16964,7 +17019,7 @@ impl<'a, const K: usize> ConcurrentLocalOutputSink<'a, K> {
         );
 
         let color_started = Instant::now();
-        let resolved_colors = if self.color_runs.is_some() || self.local_unitig_writers.is_some() {
+        let resolved_colors = if self.color_repository.is_some() {
             let repository = self
                 .color_repository
                 .ok_or(DiscontinuityInputError::MissingColorRuns)?;

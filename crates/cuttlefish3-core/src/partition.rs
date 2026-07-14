@@ -115,6 +115,9 @@ pub fn emit_weak_superkmer_buckets<const K: usize>(
     if params.color {
         return emit_colored_weak_superkmer_buckets::<K>(params, graph_count, &paths);
     }
+    if std::env::var_os("CF3_RS_LEGACY_UNCOLORED_PARTITION").is_none() {
+        return emit_uncolored_windowed_weak_superkmer_buckets::<K>(params, graph_count, &paths);
+    }
     let mut stats = PartitionStats::new(graph_count);
     let workers = params.threads.max(1);
     let mut batch_txs = Vec::with_capacity(workers);
@@ -221,6 +224,111 @@ pub fn emit_weak_superkmer_buckets<const K: usize>(
     let bucket_finish_elapsed = bucket_finish_started.elapsed();
     populate_emitted_graph_histogram(&mut stats, &bucket_stats)?;
 
+    Ok(PartitionEmissionStats {
+        partition: stats,
+        buckets: bucket_stats,
+        parse_elapsed,
+        worker_elapsed,
+        bucket_flush_elapsed,
+        bucket_flushes,
+        bucket_finish_elapsed,
+    })
+}
+
+fn emit_uncolored_windowed_weak_superkmer_buckets<const K: usize>(
+    params: &BuildParams,
+    graph_count: usize,
+    paths: &[PathBuf],
+) -> Result<PartitionEmissionStats, PartitionRunError> {
+    const SOURCE_WINDOW_MAX: usize = 2048;
+
+    let sink = SharedBucketSink::create(params, graph_count)?;
+    let mut stats = PartitionStats::new(graph_count);
+    let mut worker_elapsed = Duration::ZERO;
+    let mut parse_elapsed = Duration::ZERO;
+
+    for (window_index, window) in paths.chunks(SOURCE_WINDOW_MAX).enumerate() {
+        let source_start = window_index * SOURCE_WINDOW_MAX;
+        let started = Instant::now();
+        let mut work_order = (0..window.len()).collect::<Vec<_>>();
+        work_order.sort_unstable_by_key(|&offset| {
+            std::cmp::Reverse(window[offset].metadata().map_or(0, |meta| meta.len()))
+        });
+        let next_source = AtomicUsize::new(0);
+        let workers = params.threads.clamp(1, 64).min(window.len());
+        let mut emitters = Vec::with_capacity(workers);
+
+        std::thread::scope(|scope| {
+            let mut handles = Vec::with_capacity(workers);
+            for _ in 0..workers {
+                let sink = Arc::clone(&sink);
+                let next_source = &next_source;
+                let work_order = &work_order;
+                handles.push(scope.spawn(move || {
+                    let mut worker_stats = PartitionStats::new(graph_count);
+                    let mut elapsed = Duration::ZERO;
+                    let mut records = 0u64;
+                    let mut input_files = 0usize;
+                    let mut buckets = sink.deferred_uncolored_emitter();
+                    loop {
+                        let order_idx = next_source.fetch_add(1, Ordering::Relaxed);
+                        let Some(&offset) = work_order.get(order_idx) else {
+                            break;
+                        };
+                        let source_id = u32::try_from(source_start + offset + 1)
+                            .map_err(|_| PartitionRunError::TooManySources)?;
+                        records += parse_fragments_borrowed(
+                            &window[offset],
+                            source_id,
+                            K + 1,
+                            |fragment| {
+                                let fragment_started = Instant::now();
+                                emit_fragment_seq_weak_superkmer_buckets::<K, InputError>(
+                                    params,
+                                    graph_count,
+                                    fragment.source_id,
+                                    fragment.seq,
+                                    &mut buckets,
+                                    &mut worker_stats,
+                                )?;
+                                elapsed += fragment_started.elapsed();
+                                Ok(())
+                            },
+                        )?;
+                        input_files += 1;
+                    }
+                    Ok::<_, PartitionRunError>((
+                        records,
+                        input_files,
+                        PartitionWorkerOutput {
+                            stats: worker_stats,
+                            elapsed,
+                        },
+                        buckets,
+                    ))
+                }));
+            }
+            for handle in handles {
+                let (records, input_files, output, buckets) = handle
+                    .join()
+                    .map_err(|_| PartitionRunError::WorkerPanic)??;
+                stats.records += records;
+                stats.input_files += input_files;
+                worker_elapsed += output.elapsed;
+                stats.merge_from(&output.stats);
+                emitters.push(buckets);
+            }
+            Ok::<_, PartitionRunError>(())
+        })?;
+        parse_elapsed += started.elapsed();
+        sink.flush_uncolored_emitters(emitters)?;
+    }
+
+    let (bucket_flushes, bucket_flush_elapsed) = sink.flush_stats();
+    let bucket_finish_started = Instant::now();
+    let bucket_stats = sink.finish()?;
+    let bucket_finish_elapsed = bucket_finish_started.elapsed();
+    populate_emitted_graph_histogram(&mut stats, &bucket_stats)?;
     Ok(PartitionEmissionStats {
         partition: stats,
         buckets: bucket_stats,

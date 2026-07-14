@@ -78,16 +78,34 @@ path-info counts also matched exactly.
 | colored | C++ | 73.28 s | 29,495,880 KiB |
 | colored | Rust, 2048-source windows | 78.70 s | 25,006,660 KiB |
 | uncolored | C++ | 61.70 s | 26,122,016 KiB |
-| uncolored | Rust | 89.67 s | 32,325,276 KiB |
+| uncolored | Rust, deferred atlas emission | 84.84 s | 32,879,540 KiB |
 
 Colored Rust is 7.4% slower and uses 15.2% less memory at this rung. This is
 near parity, not strict time parity. Uncolored scale parity is not achieved:
-Rust is 45.3% slower and uses 23.7% more memory. Its largest deficits are the
-blocked contraction/expansion and final path-info map/reduce phases. Enabling
+the deferred worker-local atlas path reduced partitioning from 10.64 s to
+6.59 s and bucket flushes to 49,152, but the measured process remained 37.5%
+slower and used 25.9% more memory. Its largest deficits are the local graph
+construction, blocked contraction/expansion, and final path-info map/reduce
+phases. Enabling
 the optional uncolored LZ4 bucket format reduced bucket bytes but did not fix
 the deficit (82.59 s, 36,949,396 KiB), because it emits many small compressed
 blocks. Do not cite the 1,000-genome result as evidence of uncolored scale
 parity.
+
+At 1,000 genomes the same deferred atlas path completed in 18.81 s and used
+13,893,160 KiB, versus 16.32 s and 23,481,744 KiB for C++. Partitioning took
+1.62 s and performed exactly 16,384 flushes. This confirms the partition
+optimization independently of the noisier downstream 5,000-genome phases.
+
+Profiling the 5,000-genome colored partition identified a different barrier.
+Rust spends about 3.6-4.2 s scanning and packing, followed by 5.8-7.3 s of
+window-level atlas collation and compression. C++ drains 64 KiB worker-local
+atlas chunks during scanning. Whole-window pipelining was rejected because it
+left partition time near 10 s and raised peak RSS to 36.2 GB. Removing source
+collation was also rejected: sorting extracted source relationships moved work
+into local contraction and increased total time. The next colored partition
+change should therefore use fine-grained worker-atlas draining through the
+bounded worker pool while preserving source-counting collation.
 
 The 5,000-genome topology can be compared exactly with bounded memory:
 

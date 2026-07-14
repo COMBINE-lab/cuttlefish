@@ -110,6 +110,20 @@ in 19.35 s and 48 of 128 discontinuity partitions in 2.8 s, but the execution
 wrapper stopped the run before final output; do not treat that partial timing
 as a completed parity result.
 
+A later blocked-contraction migration replaced the Rust read-all-files barrier
+with dynamically scheduled, aligned 1 MiB reads that immediately decode,
+contract, and emit edges through reusable worker buffers. On the matched 5,000
+genome input, contraction fell from 13.76 s to 9.02 s while preserving the
+179,767,076-unitig / 11,337,993,544-base result. C++ takes 7.15 s, so this
+closes 4.74 s of the 6.61 s contraction deficit but does not yet reach parity.
+The same run completed in 77.53 s process wall time, down from 82.88 s; C++
+remains at 61.70 s. A fused path-info `pread` experiment won on 1,000 genomes
+but regressed at 5,000 and was rejected. Final collation now uses C++-style
+32-bit bucket-local label offsets and packs flags into the 30-bit color-count
+word, reducing its hot in-memory coordinate from 40 to 32 bytes. Scale timing
+for that isolated layout change was collected under heavy host contention and
+is not suitable as a new total-time acceptance result.
+
 Profiling the 5,000-genome colored partition identified a different barrier.
 Rust spends about 3.6-4.2 s scanning and packing, followed by 5.8-7.3 s of
 window-level atlas collation and compression. C++ drains 64 KiB worker-local

@@ -124,6 +124,16 @@ word, reducing its hot in-memory coordinate from 40 to 32 bytes. Scale timing
 for that isolated layout change was collected under heavy host contention and
 is not suitable as a new total-time acceptance result.
 
+The uncolored local path now follows C++ for trivial maximal unitigs: unitigs
+with no discontinuity exits are canonicalized and emitted during local
+contraction instead of being written to local-coordinate buckets and reread by
+the global collator. On 5,000 HumGut2 genomes this bypassed 60,463,337 unitigs,
+reduced intermediate writes by about 5.8 GB, and lowered path-info mapping from
+4.00 s to 3.62 s. The matched run completed in 77.16 s with exact counts, a
+small improvement over 77.53 s; local contraction absorbed the canonicalization
+cost. The 1,000-genome strand-normalized comparator still matched all
+40,370,131 C++ unitigs exactly.
+
 Profiling the 5,000-genome colored partition identified a different barrier.
 Rust spends about 3.6-4.2 s scanning and packing, followed by 5.8-7.3 s of
 window-level atlas collation and compression. C++ drains 64 KiB worker-local

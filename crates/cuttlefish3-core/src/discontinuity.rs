@@ -69,6 +69,7 @@ pub struct ExternalDiscontinuityInputs<const K: usize> {
     edge_matrix: Option<BlockedEdgeMatrix<K>>,
     color_runs: Option<ColorRunSidecar>,
     local_unitig_buckets: Option<Vec<LocalUnitigBucketEntry>>,
+    trivial_fasta: Option<(PathBuf, u64, u64)>,
     color_repository: Option<ColorRepositoryManifest>,
     pub stats: DiscontinuityInputStats,
 }
@@ -5746,8 +5747,13 @@ impl SerialUncoloredCollator {
                 .as_ref()
                 .is_some_and(|buckets| buckets.iter().any(|bucket| bucket.color_runs.is_some()));
         let mut final_buckets = FinalUnitigBucketWriters::create_direct(output_path, colored)?;
-        let use_cpp_path_info = std::env::var_os("CF3_RS_ENDPOINT_STITCH").is_none();
         let mut direct_local_unitigs = 0u64;
+        if let Some((path, records, bases)) = inputs.trivial_fasta.take() {
+            final_buckets.append_direct_fasta_file(&path, records, bases)?;
+            remove_serial_file(&path)?;
+            direct_local_unitigs = records;
+        }
+        let use_cpp_path_info = std::env::var_os("CF3_RS_ENDPOINT_STITCH").is_none();
         let mut direct_local_complete = false;
         let stitched_discontinuity_unitigs = if use_cpp_path_info {
             let result = collate_external_cpp_path_info_to_final_buckets::<K>(
@@ -5756,7 +5762,7 @@ impl SerialUncoloredCollator {
                 coord_dir,
                 &mut final_buckets,
             )?;
-            direct_local_unitigs = result.direct_local_unitigs;
+            direct_local_unitigs += result.direct_local_unitigs;
             direct_local_complete = result.direct_local_unitigs_complete;
             result.stitched_unitigs
         } else {
@@ -6194,6 +6200,30 @@ impl FinalUnitigBucketWriters {
                 source,
             })?;
         self.direct_records += records;
+        self.direct_bases += bases;
+        Ok(())
+    }
+
+    fn append_direct_fasta_file(
+        &mut self,
+        path: &Path,
+        records: u64,
+        bases: u64,
+    ) -> Result<(), SerialCollationError> {
+        let file = File::open(path).map_err(|source| SerialCollationError::Io {
+            path: path.to_path_buf(),
+            source,
+        })?;
+        std::io::copy(
+            &mut BufReader::with_capacity(8 * 1024 * 1024, file),
+            self.direct_output.as_mut().expect("direct output exists"),
+        )
+        .map_err(|source| SerialCollationError::Io {
+            path: path.to_path_buf(),
+            source,
+        })?;
+        self.direct_records += records;
+        self.direct_record_id_highwater += records;
         self.direct_bases += bases;
         Ok(())
     }
@@ -16620,6 +16650,15 @@ fn contract_local_subgraphs_into_external_inputs<const K: usize>(
         source,
     })?;
     let mut unitigs = BufWriter::with_capacity(8 * 1024 * 1024, unitig_file);
+    let trivial_path = label_path.with_extension("trivial.fa");
+    let trivial_file =
+        File::create(&trivial_path).map_err(|source| DiscontinuityInputError::Io {
+            path: trivial_path.clone(),
+            source,
+        })?;
+    let mut trivial_output = BufWriter::with_capacity(8 * 1024 * 1024, trivial_file);
+    let mut trivial_unitigs = 0u64;
+    let mut trivial_bases = 0u64;
     let matrix_dir = unitig_path.with_file_name(format!(
         "{}.edge-matrix",
         unitig_path
@@ -16730,6 +16769,10 @@ fn contract_local_subgraphs_into_external_inputs<const K: usize>(
                 &mut reusable_vertices,
             )?;
             append_local_contraction_output_to_external_inputs(
+                &mut trivial_output,
+                &trivial_path,
+                &mut trivial_unitigs,
+                &mut trivial_bases,
                 output,
                 &mut inputs,
                 &mut labels,
@@ -16785,6 +16828,16 @@ fn contract_local_subgraphs_into_external_inputs<const K: usize>(
             local_unitig_writers: local_unitig_writers.as_deref(),
             color_workers: threads.min(256),
             compact_unitigs,
+            trivial_output: trivial_output.get_ref().try_clone().map_err(|source| {
+                DiscontinuityInputError::Io {
+                    path: trivial_path.clone(),
+                    source,
+                }
+            })?,
+            trivial_path: &trivial_path,
+            next_trivial_byte: AtomicU64::new(0),
+            trivial_unitigs: AtomicU64::new(0),
+            trivial_bases: AtomicU64::new(0),
             marker: PhantomData,
         };
         let worker_result = std::thread::scope(|scope| {
@@ -16859,8 +16912,12 @@ fn contract_local_subgraphs_into_external_inputs<const K: usize>(
             .map_err(serial_collation_to_input_error)?;
         inputs.stats.weak_superkmers = sink.weak_superkmers.load(Ordering::Relaxed);
         inputs.stats.local_unitigs = sink.next_unitig.load(Ordering::Relaxed) as u64;
+        trivial_unitigs = sink.trivial_unitigs.load(Ordering::Relaxed);
+        trivial_bases = sink.trivial_bases.load(Ordering::Relaxed);
+        inputs.stats.local_unitigs += trivial_unitigs;
         inputs.stats.discontinuity_exits = sink.discontinuity_exits.load(Ordering::Relaxed);
         inputs.stats.unitig_bases = sink.unitig_bases.load(Ordering::Relaxed);
+        inputs.stats.unitig_bases += trivial_bases;
         build_elapsed = Duration::from_nanos(sink.build_nanos.load(Ordering::Relaxed));
         contract_elapsed = Duration::from_nanos(sink.contract_nanos.load(Ordering::Relaxed));
         sink_io_elapsed = Duration::from_nanos(sink.sink_io_nanos.load(Ordering::Relaxed));
@@ -16899,6 +16956,12 @@ fn contract_local_subgraphs_into_external_inputs<const K: usize>(
             path: unitig_path.clone(),
             source,
         })?;
+    trivial_output
+        .flush()
+        .map_err(|source| DiscontinuityInputError::Io {
+            path: trivial_path.clone(),
+            source,
+        })?;
     drop(labels);
     drop(unitigs);
     edge_matrix
@@ -16917,15 +16980,23 @@ fn contract_local_subgraphs_into_external_inputs<const K: usize>(
     let color_repository = color_repository
         .map(|repository| repository.finish())
         .transpose()?;
+    let trivial_fasta = if trivial_unitigs == 0 {
+        let _ = fs::remove_file(&trivial_path);
+        None
+    } else {
+        Some((trivial_path, trivial_unitigs, trivial_bases))
+    };
     Ok(ExternalDiscontinuityInputs {
         unitig_path,
         label_path: label_path.to_path_buf(),
-        unitigs: usize::try_from(inputs.stats.local_unitigs).unwrap_or(usize::MAX),
+        // Trivial uncolored unitigs are already in the direct FASTA artifact.
+        unitigs: inputs.stats.local_unitigs.saturating_sub(trivial_unitigs) as usize,
         compact_unitigs,
         ranges,
         edge_matrix: Some(edge_matrix),
         color_runs,
         local_unitig_buckets,
+        trivial_fasta,
         color_repository,
         stats: inputs.stats,
     })
@@ -16944,6 +17015,10 @@ fn unitig_table_path_for_labels(label_path: &Path) -> PathBuf {
 }
 
 fn append_local_contraction_output_to_external_inputs<const K: usize>(
+    trivial_output: &mut BufWriter<File>,
+    trivial_path: &Path,
+    trivial_unitigs: &mut u64,
+    trivial_bases: &mut u64,
     output: LocalContractionOutput<K>,
     inputs: &mut DiscontinuityInputs<K>,
     labels: &mut BufWriter<File>,
@@ -16960,6 +17035,16 @@ fn append_local_contraction_output_to_external_inputs<const K: usize>(
     threads: usize,
     compact_unitigs: bool,
 ) -> Result<(), DiscontinuityInputError> {
+    trivial_output
+        .write_all(&output.trivial_fasta)
+        .map_err(|source| DiscontinuityInputError::Io {
+            path: trivial_path.to_path_buf(),
+            source,
+        })?;
+    *trivial_unitigs += output.trivial_unitigs;
+    *trivial_bases += output.trivial_bases;
+    inputs.stats.local_unitigs += output.trivial_unitigs;
+    inputs.stats.unitig_bases += output.trivial_bases;
     inputs.stats.weak_superkmers += output.weak_superkmers;
     let start_unitig = usize::try_from(inputs.stats.local_unitigs).unwrap_or(usize::MAX);
     let output_unitigs = output.unitigs.len();
@@ -17076,6 +17161,9 @@ struct LocalContractionOutput<const K: usize> {
     labels: Vec<u8>,
     matrix_edges: Vec<PreparedBlockedEdge>,
     color_runs: Option<Vec<Vec<LocalUnitigColorRun>>>,
+    trivial_fasta: Vec<u8>,
+    trivial_unitigs: u64,
+    trivial_bases: u64,
 }
 
 struct ConcurrentLocalOutputSink<'a, const K: usize> {
@@ -17100,6 +17188,11 @@ struct ConcurrentLocalOutputSink<'a, const K: usize> {
     local_unitig_writers: Option<&'a [Mutex<LocalUnitigBucketWriter>]>,
     color_workers: usize,
     compact_unitigs: bool,
+    trivial_output: File,
+    trivial_path: &'a Path,
+    next_trivial_byte: AtomicU64,
+    trivial_unitigs: AtomicU64,
+    trivial_bases: AtomicU64,
     marker: PhantomData<[(); K]>,
 }
 
@@ -17110,6 +17203,21 @@ impl<'a, const K: usize> ConcurrentLocalOutputSink<'a, K> {
         unitig_bucket: u16,
     ) -> Result<(), DiscontinuityInputError> {
         let io_started = Instant::now();
+        if !output.trivial_fasta.is_empty() {
+            let offset = self
+                .next_trivial_byte
+                .fetch_add(output.trivial_fasta.len() as u64, Ordering::Relaxed);
+            self.trivial_output
+                .write_all_at(&output.trivial_fasta, offset)
+                .map_err(|source| DiscontinuityInputError::Io {
+                    path: self.trivial_path.to_path_buf(),
+                    source,
+                })?;
+            self.trivial_unitigs
+                .fetch_add(output.trivial_unitigs, Ordering::Relaxed);
+            self.trivial_bases
+                .fetch_add(output.trivial_bases, Ordering::Relaxed);
+        }
         let output_unitigs = output.unitigs.len();
         let unitig_base = self
             .next_unitig
@@ -17474,6 +17582,9 @@ fn contract_local_subgraph<const K: usize>(
     } else {
         subgraph.contract_compact()?
     };
+    let mut trivial_fasta = Vec::new();
+    let mut trivial_unitigs = 0u64;
+    let mut trivial_bases = 0u64;
     for unitig in local_unitigs {
         let left_exit = unitig
             .left_exit
@@ -17481,6 +17592,16 @@ fn contract_local_subgraph<const K: usize>(
         let right_exit = unitig
             .right_exit
             .map(|(vertex, side)| DiscontinuityEndpoint { vertex, side });
+
+        if !subgraph.colored && left_exit.is_none() && right_exit.is_none() {
+            let label = canonical_label(unitig.label);
+            trivial_fasta.extend_from_slice(b">utg\n");
+            trivial_fasta.extend_from_slice(&label);
+            trivial_fasta.push(b'\n');
+            trivial_unitigs += 1;
+            trivial_bases += label.len() as u64;
+            continue;
+        }
 
         inputs.push_unitig(OwnedDiscontinuityUnitig {
             graph_id,
@@ -17509,6 +17630,9 @@ fn contract_local_subgraph<const K: usize>(
         labels: inputs.labels,
         matrix_edges,
         color_runs,
+        trivial_fasta,
+        trivial_unitigs,
+        trivial_bases,
     };
     *reusable_vertices = Some(subgraph.into_vertex_map());
     if !keep_intermediates() {

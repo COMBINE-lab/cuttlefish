@@ -405,6 +405,7 @@ fn emit_colored_weak_superkmer_buckets<const K: usize>(
                                 Ok(())
                             },
                         )?;
+                        buckets.flush_colored_worker_if_required()?;
                         input_files += 1;
                     }
                     Ok::<_, PartitionRunError>((

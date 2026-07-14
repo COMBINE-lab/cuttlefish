@@ -103,9 +103,17 @@ window-level atlas collation and compression. C++ drains 64 KiB worker-local
 atlas chunks during scanning. Whole-window pipelining was rejected because it
 left partition time near 10 s and raised peak RSS to 36.2 GB. Removing source
 collation was also rejected: sorting extracted source relationships moved work
-into local contraction and increased total time. The next colored partition
-change should therefore use fine-grained worker-atlas draining through the
-bounded worker pool while preserving source-counting collation.
+into local contraction and increased total time.
+
+The subsequent implementation drains 64 KiB worker-atlas chunks after source
+boundaries and writes subgraph buffers once they reach 64 KiB. Exact source
+sets are recovered with the reference algorithm's reusable bit-vector
+deduplication. At 5,000 genomes this reduced colored partitioning to 6.16 s and
+the measured full-run peak RSS to 14,563,704 KiB. The full run took 97.45 s,
+but unchanged contraction, expansion, and reduction phases were substantially
+slower during that shared-system run, so it is not a valid total-time A/B
+against the earlier 78.70 s result. Keeping all 16,384 bucket descriptors open
+was tested and rejected: partitioning regressed to 6.53 s.
 
 The 5,000-genome topology can be compared exactly with bounded memory:
 

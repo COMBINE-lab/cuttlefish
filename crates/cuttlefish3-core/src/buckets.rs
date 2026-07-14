@@ -1143,6 +1143,7 @@ impl SharedBucketSink {
         if pending.graph_ids.len() * record_len != pending.bytes.len() {
             return Err(BucketError::MalformedRecord);
         }
+        let started = Instant::now();
         let mut atlas = self.atlases[atlas_id]
             .lock()
             .map_err(|_| BucketError::WorkerPanic)?;
@@ -1169,6 +1170,23 @@ impl SharedBucketSink {
             file.buffer.extend_from_slice(record);
         }
         atlas.buffered_bytes += pending.bytes.len();
+        let mut flush_stats = SharedBucketFlushStats::default();
+        for local_graph_id in 0..atlas.files.len() {
+            if atlas.files[local_graph_id].buffer.len() >= SUBGRAPH_CHUNK_BYTES {
+                atlas.flush_subgraph(
+                    local_graph_id,
+                    &self.bucket_dir,
+                    self.k,
+                    self.minimizer_len,
+                    self.graph_count,
+                    true,
+                    self.label_words,
+                    self.compress_buckets,
+                    &mut flush_stats,
+                )?;
+            }
+        }
+        self.record_flush_stats(flush_stats, started.elapsed());
         Ok(())
     }
 
@@ -1698,6 +1716,18 @@ impl SharedBucketAtlas {
 }
 
 impl SharedBucketEmitter {
+    pub fn flush_colored_worker_if_required(&mut self) -> Result<(), BucketError> {
+        if !self.sink.colored {
+            return Err(BucketError::MalformedRecord);
+        }
+        for atlas_id in 0..self.colored_pending.len() {
+            if self.colored_pending[atlas_id].bytes.len() >= SUBGRAPH_CHUNK_BYTES {
+                self.flush_pending_colored_atlas(atlas_id)?;
+            }
+        }
+        Ok(())
+    }
+
     pub fn add(&mut self, superkmer: &WeakSuperKmer, seq: &[u8]) -> Result<(), BucketError> {
         self.add_impl(superkmer, seq, true)
     }

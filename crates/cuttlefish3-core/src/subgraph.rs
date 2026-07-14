@@ -788,6 +788,7 @@ impl<const K: usize> LocalSubgraph<K> {
                 collect_wanted_color_relations::<K>(record, &wanted, &mut source_sets)
             })?;
         }
+        normalize_source_sets(&mut source_sets);
 
         unitigs
             .into_iter()
@@ -1454,6 +1455,39 @@ impl<const K: usize> LocalSubgraph<K> {
     }
 }
 
+fn normalize_source_sets(source_sets: &mut [Vec<u32>]) {
+    let max_source = source_sets
+        .iter()
+        .flat_map(|sources| sources.iter().copied())
+        .max()
+        .unwrap_or(0) as usize;
+    let mut words = vec![0u64; max_source / 64 + 1];
+    let mut touched = Vec::<usize>::new();
+    for sources in source_sets {
+        if sources.len() < 2 {
+            continue;
+        }
+        touched.clear();
+        for source in sources.drain(..) {
+            let word_index = source as usize / 64;
+            if words[word_index] == 0 {
+                touched.push(word_index);
+            }
+            words[word_index] |= 1u64 << (source & 63);
+        }
+        touched.sort_unstable();
+        for &word_index in &touched {
+            let mut word = words[word_index];
+            while word != 0 {
+                let bit = word.trailing_zeros();
+                sources.push((word_index as u32) * 64 + bit);
+                word &= word - 1;
+            }
+            words[word_index] = 0;
+        }
+    }
+}
+
 fn canonical_vertices_from_label<const K: usize>(
     label: &[u8],
 ) -> Result<Vec<Kmer<K>>, LocalSubgraphError> {
@@ -1682,7 +1716,7 @@ mod tests {
         params.minimizer_len = 2;
         params.color = true;
         let mut emitter = BucketEmitter::create_in_dir(&params, 1, dir.clone()).unwrap();
-        for source_id in [1, 2] {
+        for source_id in [2, 1, 2] {
             emitter
                 .add(
                     &WeakSuperKmer {

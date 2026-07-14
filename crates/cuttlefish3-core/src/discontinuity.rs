@@ -7378,6 +7378,7 @@ struct MaterializedStitchedCoordRecord {
     color_index: u32,
 }
 
+#[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct LoadedMaterializedStitchedCoordRecord {
     path_id: u64,
@@ -7387,6 +7388,8 @@ struct LoadedMaterializedStitchedCoordRecord {
     color_start: u32,
     color_count_and_flags: u32,
 }
+
+const _: () = assert!(std::mem::size_of::<LoadedMaterializedStitchedCoordRecord>() == 32);
 
 impl LoadedMaterializedStitchedCoordRecord {
     const REVERSE_FLAG: u32 = 1 << 31;
@@ -7450,7 +7453,7 @@ struct MaterializedStitchedCoordBucketEntry {
 }
 
 const STITCH_COORD_MAGIC: &[u8; 8] = b"CF3SCB2\0";
-const MATERIALIZED_STITCH_COORD_MAGIC: &[u8; 8] = b"CF3MCB1\0";
+const MATERIALIZED_STITCH_COORD_MAGIC: &[u8; 8] = b"CF3MCB2\0";
 const STITCH_COORD_HEADER_LEN: u64 = 32;
 const STITCH_PATH_INFO_RECORD_LEN: u64 = 24;
 const STITCH_COORD_RECORD_LEN: u64 = 32;
@@ -13507,25 +13510,18 @@ fn encoded_materialized_stitched_coord_record(
     let mut bytes = [0u8; STITCH_COORD_RECORD_LEN as usize];
     bytes[..8].copy_from_slice(&record.path_id.to_le_bytes());
     bytes[8..16].copy_from_slice(&record.rank.to_le_bytes());
-    bytes[16..24].copy_from_slice(&record.label_offset.to_le_bytes());
-    bytes[24..28].copy_from_slice(&record.label_len.to_le_bytes());
-    let mut flags = 0u8;
+    debug_assert!(u32::try_from(record.label_offset).is_ok());
+    bytes[16..20].copy_from_slice(&(record.label_offset as u32).to_le_bytes());
+    bytes[20..24].copy_from_slice(&record.label_len.to_le_bytes());
+    bytes[24..28].copy_from_slice(&record.color_index.to_le_bytes());
+    let mut flags = 0u32;
     if record.reverse {
-        flags |= STITCH_COORD_REVERSE_FLAG;
+        flags |= LoadedMaterializedStitchedCoordRecord::REVERSE_FLAG;
     }
     if record.is_cycle {
-        flags |= STITCH_COORD_CYCLE_FLAG;
+        flags |= LoadedMaterializedStitchedCoordRecord::CYCLE_FLAG;
     }
-    bytes[28] = flags;
-    let color_index = if record.color_index == u32::MAX {
-        0x3fff_ffff
-    } else {
-        record.color_index
-    };
-    bytes[28] |= ((color_index >> 24) as u8) << 2;
-    bytes[29] = color_index as u8;
-    bytes[30] = (color_index >> 8) as u8;
-    bytes[31] = (color_index >> 16) as u8;
+    bytes[28..32].copy_from_slice(&flags.to_le_bytes());
     bytes
 }
 
@@ -13722,7 +13718,7 @@ fn reduce_materialized_groups_to_direct_fasta<const K: usize>(
     let assemble_ns = AtomicU64::new(0);
     let send_ns = AtomicU64::new(0);
     let write_started = Instant::now();
-    std::thread::scope(|scope| {
+    let worker_timings = std::thread::scope(|scope| {
         let mut handles = Vec::with_capacity(workers);
         for _ in 0..workers {
             let next_group = &next_group;
@@ -13737,22 +13733,34 @@ fn reduce_materialized_groups_to_direct_fasta<const K: usize>(
             let assemble_ns = &assemble_ns;
             let send_ns = &send_ns;
             handles.push(scope.spawn(move || {
+                let worker_started = Instant::now();
+                let mut groups_processed = 0u64;
+                let mut max_group_ns = 0u64;
+                let mut max_load_ns = 0u64;
+                let mut max_sort_ns = 0u64;
+                let mut max_assemble_ns = 0u64;
+                let mut max_send_ns = 0u64;
                 loop {
                     let group_idx = next_group.fetch_add(1, Ordering::Relaxed);
                     let Some(group) = groups.get(group_idx) else {
                         break;
                     };
+                    let group_started = Instant::now();
                     let started = Instant::now();
                     let mut shard = load_materialized_stitched_coord_bucket_file_group_with_tails(
                         &group.1,
                         retained.get(group.0).map_or(&[], Vec::as_slice),
                     )?;
-                    load_ns.fetch_add(started.elapsed().as_nanos() as u64, Ordering::Relaxed);
+                    let elapsed_ns = started.elapsed().as_nanos() as u64;
+                    load_ns.fetch_add(elapsed_ns, Ordering::Relaxed);
+                    max_load_ns = max_load_ns.max(elapsed_ns);
                     let started = Instant::now();
                     shard
                         .records
                         .sort_unstable_by_key(|record| (record.path_id, record.rank));
-                    sort_ns.fetch_add(started.elapsed().as_nanos() as u64, Ordering::Relaxed);
+                    let elapsed_ns = started.elapsed().as_nanos() as u64;
+                    sort_ns.fetch_add(elapsed_ns, Ordering::Relaxed);
+                    max_sort_ns = max_sort_ns.max(elapsed_ns);
                     let mut batch = None::<DirectFinalBatchBuilder>;
                     let mut write_error = None;
                     let started = Instant::now();
@@ -13783,21 +13791,23 @@ fn reduce_materialized_groups_to_direct_fasta<const K: usize>(
                                     emitted_bases,
                                     encoded,
                                 );
-                                send_ns.fetch_add(
-                                    write_started.elapsed().as_nanos() as u64,
-                                    Ordering::Relaxed,
-                                );
+                                let elapsed_ns = write_started.elapsed().as_nanos() as u64;
+                                send_ns.fetch_add(elapsed_ns, Ordering::Relaxed);
+                                max_send_ns = max_send_ns.max(elapsed_ns);
                                 if let Err(error) = result {
                                     write_error = Some(error);
                                 }
                             }
                         },
                     );
-                    assemble_ns.fetch_add(started.elapsed().as_nanos() as u64, Ordering::Relaxed);
+                    let elapsed_ns = started.elapsed().as_nanos() as u64;
+                    assemble_ns.fetch_add(elapsed_ns, Ordering::Relaxed);
+                    max_assemble_ns = max_assemble_ns.max(elapsed_ns);
                     if let Some(error) = write_error {
                         return Err(error);
                     }
                     if let Some(batch) = batch {
+                        let started = Instant::now();
                         write_encoded_final_batch_at(
                             output,
                             output_path,
@@ -13806,26 +13816,40 @@ fn reduce_materialized_groups_to_direct_fasta<const K: usize>(
                             emitted_bases,
                             batch.finish(),
                         )?;
+                        let elapsed_ns = started.elapsed().as_nanos() as u64;
+                        send_ns.fetch_add(elapsed_ns, Ordering::Relaxed);
+                        max_send_ns = max_send_ns.max(elapsed_ns);
                     }
+                    groups_processed += 1;
+                    max_group_ns = max_group_ns.max(group_started.elapsed().as_nanos() as u64);
                 }
-                Ok::<_, SerialCollationError>(())
+                Ok::<_, SerialCollationError>(ReducerWorkerTiming {
+                    elapsed_ns: worker_started.elapsed().as_nanos() as u64,
+                    groups: groups_processed,
+                    max_group_ns,
+                    max_load_ns,
+                    max_sort_ns,
+                    max_assemble_ns,
+                    max_send_ns,
+                })
             }));
         }
         let mut first_error = None;
+        let mut timings = Vec::with_capacity(handles.len());
         for handle in handles {
             let result = handle
                 .join()
                 .map_err(|_| SerialCollationError::WorkerPanic)?;
-            if let Err(err) = result
-                && first_error.is_none()
-            {
-                first_error = Some(err);
+            match result {
+                Ok(timing) => timings.push(timing),
+                Err(err) if first_error.is_none() => first_error = Some(err),
+                Err(_) => {}
             }
         }
         if let Some(err) = first_error {
             Err(err)
         } else {
-            Ok(())
+            Ok(timings)
         }
     })?;
     final_buckets.direct_record_id_highwater =
@@ -13841,7 +13865,29 @@ fn reduce_materialized_groups_to_direct_fasta<const K: usize>(
         send_ns.load(Ordering::Relaxed) as f64 / 1e9,
         write_started.elapsed().as_secs_f64(),
     );
+    if let Some(slowest) = worker_timings.iter().max_by_key(|timing| timing.elapsed_ns) {
+        eprintln!(
+            "cuttlefish3-rs: path-info reduce critical worker: elapsed {:.3}s, groups {}; largest group {:.3}s (load {:.3}s, sort {:.3}s, assemble/write {:.3}s, write {:.3}s)",
+            slowest.elapsed_ns as f64 / 1e9,
+            slowest.groups,
+            slowest.max_group_ns as f64 / 1e9,
+            slowest.max_load_ns as f64 / 1e9,
+            slowest.max_sort_ns as f64 / 1e9,
+            slowest.max_assemble_ns as f64 / 1e9,
+            slowest.max_send_ns as f64 / 1e9,
+        );
+    }
     Ok(emitted)
+}
+
+struct ReducerWorkerTiming {
+    elapsed_ns: u64,
+    groups: u64,
+    max_group_ns: u64,
+    max_load_ns: u64,
+    max_sort_ns: u64,
+    max_assemble_ns: u64,
+    max_send_ns: u64,
 }
 
 fn write_encoded_final_batch_at(
@@ -14091,37 +14137,22 @@ fn read_materialized_stitched_coord_bucket_file(
             entry.coord_path.clone(),
         ));
     }
-    const COORD_DECODE_CHUNK: usize = 1024 * 1024;
-    let mut out = Vec::with_capacity(records as usize);
-    let mut remaining = records as usize;
-    let mut coord_bytes = vec![0u8; COORD_DECODE_CHUNK];
-    while remaining != 0 {
-        let chunk_records = remaining.min(COORD_DECODE_CHUNK / STITCH_COORD_RECORD_LEN as usize);
-        let chunk_len = chunk_records * STITCH_COORD_RECORD_LEN as usize;
-        input
-            .read_exact(&mut coord_bytes[..chunk_len])
-            .map_err(|source| SerialCollationError::Io {
-                path: entry.coord_path.clone(),
-                source,
-            })?;
-        for chunk in coord_bytes[..chunk_len].chunks_exact(STITCH_COORD_RECORD_LEN as usize) {
-            let record = decoded_materialized_stitched_coord_record(chunk, &entry.coord_path)?;
-            let label_offset = u32::try_from(record.label_offset).map_err(|_| {
-                SerialCollationError::MalformedCoordBucket(entry.coord_path.clone())
-            })?;
-            out.push(LoadedMaterializedStitchedCoordRecord::new(
-                record.path_id,
-                record.rank,
-                label_offset,
-                record.label_len,
-                record.reverse,
-                record.is_cycle,
-                record.color_index,
-                0,
-            ));
-        }
-        remaining -= chunk_records;
-    }
+    let empty_record =
+        LoadedMaterializedStitchedCoordRecord::new(0, 0, 0, 0, false, false, u32::MAX, 0);
+    let mut out = vec![empty_record; records as usize];
+    // The private bucket format is the native little-endian in-memory layout.
+    let coord_bytes = unsafe {
+        std::slice::from_raw_parts_mut(
+            out.as_mut_ptr().cast::<u8>(),
+            out.len() * std::mem::size_of::<LoadedMaterializedStitchedCoordRecord>(),
+        )
+    };
+    input
+        .read_exact(coord_bytes)
+        .map_err(|source| SerialCollationError::Io {
+            path: entry.coord_path.clone(),
+            source,
+        })?;
 
     let label_file = File::open(&entry.label_path).map_err(|source| SerialCollationError::Io {
         path: entry.label_path.clone(),
@@ -14248,26 +14279,18 @@ fn decoded_materialized_stitched_coord_record(
     let path_id = u64::from_le_bytes(bytes[..8].try_into().expect("u64 path_id field"));
     let rank = u64::from_le_bytes(bytes[8..16].try_into().expect("u64 rank field"));
     let label_offset =
-        u64::from_le_bytes(bytes[16..24].try_into().expect("u64 label offset field"));
-    let mut len_bytes = [0u8; 4];
-    len_bytes.copy_from_slice(&bytes[24..28]);
-    let flags = bytes[28];
-    let encoded_color_index = u32::from(flags >> 2) << 24
-        | u32::from(bytes[29])
-        | (u32::from(bytes[30]) << 8)
-        | (u32::from(bytes[31]) << 16);
+        u32::from_le_bytes(bytes[16..20].try_into().expect("u32 label offset field"));
+    let label_len = u32::from_le_bytes(bytes[20..24].try_into().expect("u32 label length field"));
+    let color_index = u32::from_le_bytes(bytes[24..28].try_into().expect("u32 color index field"));
+    let flags = u32::from_le_bytes(bytes[28..32].try_into().expect("u32 flags field"));
     Ok(MaterializedStitchedCoordRecord {
         path_id,
         rank,
-        label_offset,
-        label_len: u32::from_le_bytes(len_bytes),
-        reverse: (flags & STITCH_COORD_REVERSE_FLAG) != 0,
-        is_cycle: (flags & STITCH_COORD_CYCLE_FLAG) != 0,
-        color_index: if encoded_color_index == 0x3fff_ffff {
-            u32::MAX
-        } else {
-            encoded_color_index
-        },
+        label_offset: u64::from(label_offset),
+        label_len,
+        reverse: flags & LoadedMaterializedStitchedCoordRecord::REVERSE_FLAG != 0,
+        is_cycle: flags & LoadedMaterializedStitchedCoordRecord::CYCLE_FLAG != 0,
+        color_index,
     })
 }
 

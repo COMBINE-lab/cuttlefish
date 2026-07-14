@@ -134,6 +134,14 @@ small improvement over 77.53 s; local contraction absorbed the canonicalization
 cost. The 1,000-genome strand-normalized comparator still matched all
 40,370,131 C++ unitigs exactly.
 
+The materialized coordinate buckets now use the same native 32-byte layout as
+the reducer's in-memory coordinate record. This removes the field-by-field
+decode and narrowing pass that C++ avoids by loading `Unitig_Coord` records
+directly. On the 1,000-genome control, reducer wall time fell from 1.51 to 1.33
+seconds and the largest group's load time fell from 225 to 145 milliseconds.
+The full build completed in 20.54 seconds and the topology comparator matched
+all 40,370,131 C++ unitigs.
+
 Profiling the 5,000-genome colored partition identified a different barrier.
 Rust spends about 3.6-4.2 s scanning and packing, followed by 5.8-7.3 s of
 window-level atlas collation and compression. C++ drains 64 KiB worker-local

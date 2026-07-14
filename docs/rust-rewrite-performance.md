@@ -142,6 +142,16 @@ seconds and the largest group's load time fell from 225 to 145 milliseconds.
 The full build completed in 20.54 seconds and the topology comparator matched
 all 40,370,131 C++ unitigs.
 
+Expansion vertex path-info uses a native aligned 24-byte temporary record for
+`k <= 31`, with rank and flags already packed for the compact lookup table.
+The compact table uses byte-sized per-slot epochs instead of borrowing the two
+unused high bits of a 62-bit `k=31` key. The old tags wrapped every four graph
+partitions and repeatedly cleared the full table; epochs make all 128 normal
+partition clears constant-time. A direct 5,000-genome A/B measured 34.12
+seconds for epoch expansion and 73.32 seconds for the graph build, versus 37.84
+and 77.44 seconds with the tagged-key table. Peak RSS was 37.79 GB versus 38.13
+GB, and both runs emitted 179,767,076 unitigs and 11,337,993,544 bases.
+
 Profiling the 5,000-genome colored partition identified a different barrier.
 Rust spends about 3.6-4.2 s scanning and packing, followed by 5.8-7.3 s of
 window-level atlas collation and compression. C++ drains 64 KiB worker-local

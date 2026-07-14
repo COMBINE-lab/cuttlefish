@@ -25,7 +25,7 @@ use std::os::unix::fs::FileExt;
 use std::path::{Path, PathBuf};
 use std::sync::{
     Arc, Mutex,
-    atomic::{AtomicU64, AtomicUsize, Ordering},
+    atomic::{AtomicU8, AtomicU64, AtomicUsize, Ordering},
     mpsc,
 };
 use std::time::{Duration, Instant};
@@ -8054,8 +8054,22 @@ const VERTEX_PATH_INFO_WRITE_BUFFER: usize = 1024 * 1024;
 
 #[inline]
 const fn vertex_path_info_record_len<const K: usize>() -> usize {
-    2 * discontinuity_edge_kmer_bytes::<K>() + 9
+    if K <= 31 {
+        std::mem::size_of::<CompactVertexPathInfoRecord>()
+    } else {
+        2 * discontinuity_edge_kmer_bytes::<K>() + 9
+    }
 }
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct CompactVertexPathInfoRecord {
+    vertex: u64,
+    path_id: u64,
+    rank_and_flags: u64,
+}
+
+const _: () = assert!(std::mem::size_of::<CompactVertexPathInfoRecord>() == 24);
 
 struct VertexPathInfoBucketWriters<const K: usize> {
     dir: PathBuf,
@@ -8179,6 +8193,15 @@ fn vertex_path_info_bucket_path(dir: &Path, bucket_id: usize) -> PathBuf {
 }
 
 fn encoded_vertex_path_info_record<const K: usize>(record: &VertexPathInfo<K>) -> [u8; 41] {
+    if K <= 31 {
+        let mut bytes = [0u8; 41];
+        bytes[..8].copy_from_slice(&(record.vertex.as_u128() as u64).to_le_bytes());
+        bytes[8..16].copy_from_slice(&(record.info.path_id.as_u128() as u64).to_le_bytes());
+        let flags =
+            u64::from(record.info.exit_side == Side::Back) | (u64::from(record.info.is_cycle) << 1);
+        bytes[16..24].copy_from_slice(&((record.info.rank << 2) | flags).to_le_bytes());
+        return bytes;
+    }
     let kmer_bytes = discontinuity_edge_kmer_bytes::<K>();
     let path_off = kmer_bytes;
     let rank_off = 2 * kmer_bytes;
@@ -8255,14 +8278,31 @@ fn append_encoded_compact_vertex_path_info<const K: usize>(
     vertex: Kmer<K>,
     info: CompactExpansionPathInfo,
 ) {
-    let kmer_bytes = discontinuity_edge_kmer_bytes::<K>();
-    output.extend_from_slice(&(vertex.as_u128() as u64).to_le_bytes()[..kmer_bytes]);
-    output.extend_from_slice(&info.path_id.to_le_bytes()[..kmer_bytes]);
-    output.extend_from_slice(&info.rank().to_le_bytes());
-    output.push(info.rank_and_flags as u8 & 3);
+    debug_assert!(K <= 31);
+    output.extend_from_slice(&(vertex.as_u128() as u64).to_le_bytes());
+    output.extend_from_slice(&info.path_id.to_le_bytes());
+    output.extend_from_slice(&info.rank_and_flags.to_le_bytes());
 }
 
 fn decoded_vertex_path_info_record<const K: usize>(bytes: &[u8]) -> VertexPathInfo<K> {
+    if K <= 31 {
+        let vertex = u64::from_le_bytes(bytes[..8].try_into().expect("u64 vertex field"));
+        let path_id = u64::from_le_bytes(bytes[8..16].try_into().expect("u64 path field"));
+        let rank_and_flags = u64::from_le_bytes(bytes[16..24].try_into().expect("u64 rank field"));
+        return VertexPathInfo {
+            vertex: Kmer::from_bits(vertex as u128),
+            info: PathInfo {
+                path_id: Kmer::from_bits(path_id as u128),
+                rank: rank_and_flags >> 2,
+                exit_side: if rank_and_flags & 1 == 0 {
+                    Side::Front
+                } else {
+                    Side::Back
+                },
+                is_cycle: rank_and_flags & 2 != 0,
+            },
+        };
+    }
     let kmer_bytes = discontinuity_edge_kmer_bytes::<K>();
     let path_off = kmer_bytes;
     let rank_off = 2 * kmer_bytes;
@@ -8302,18 +8342,53 @@ fn read_vertex_path_info_bucket_into<const K: usize>(
     if !path.exists() {
         return Ok(());
     }
+    let record_len = vertex_path_info_record_len::<K>();
+    let byte_len = fs::metadata(&path)
+        .map_err(|source| SerialCollationError::Io {
+            path: path.clone(),
+            source,
+        })?
+        .len() as usize;
+    if byte_len % record_len != 0 {
+        return Err(SerialCollationError::MalformedCoordBucket(
+            malformed_path.to_path_buf(),
+        ));
+    }
+    if K <= 31 {
+        let phase = Instant::now();
+        let empty = CompactVertexPathInfoRecord {
+            vertex: 0,
+            path_id: 0,
+            rank_and_flags: 0,
+        };
+        let mut records = vec![empty; byte_len / record_len];
+        let bytes =
+            unsafe { std::slice::from_raw_parts_mut(records.as_mut_ptr().cast::<u8>(), byte_len) };
+        File::open(&path)
+            .and_then(|mut file| file.read_exact(bytes))
+            .map_err(|source| SerialCollationError::Io {
+                path: path.clone(),
+                source,
+            })?;
+        *read_elapsed += phase.elapsed();
+        let records_per_chunk = (1024 * 1024 / record_len).max(1);
+        let phase = Instant::now();
+        pool.install(|| {
+            records.par_chunks(records_per_chunk).for_each(|block| {
+                for record in block {
+                    map.insert_compact_record(*record);
+                }
+            });
+        });
+        *insert_elapsed += phase.elapsed();
+        return Ok(());
+    }
     let phase = Instant::now();
     let bytes = fs::read(&path).map_err(|source| SerialCollationError::Io {
         path: path.clone(),
         source,
     })?;
     *read_elapsed += phase.elapsed();
-    let record_len = vertex_path_info_record_len::<K>();
-    if bytes.len() % record_len != 0 {
-        return Err(SerialCollationError::MalformedCoordBucket(
-            malformed_path.to_path_buf(),
-        ));
-    }
     let records_per_chunk = (1024 * 1024 / record_len).max(1);
     let phase = Instant::now();
     pool.install(|| {
@@ -15421,7 +15496,10 @@ struct CompactPathInfoSlot {
     key: AtomicU64,
     path_id: AtomicU64,
     rank_and_flags: AtomicU64,
+    epoch: AtomicU8,
 }
+
+const _: () = assert!(std::mem::size_of::<CompactPathInfoSlot>() == 32);
 
 #[derive(Clone, Copy)]
 struct CompactExpansionPathInfo {
@@ -15463,7 +15541,7 @@ struct CompactPathInfoTable {
     slots: Vec<CompactPathInfoSlot>,
     mask: usize,
     key_mask: u64,
-    generation: AtomicU64,
+    generation: AtomicU8,
 }
 
 impl CompactPathInfoTable {
@@ -15481,24 +15559,23 @@ impl CompactPathInfoTable {
                     key: AtomicU64::new(0),
                     path_id: AtomicU64::new(0),
                     rank_and_flags: AtomicU64::new(0),
+                    epoch: AtomicU8::new(0),
                 })
                 .collect(),
             mask: capacity - 1,
             key_mask,
-            generation: AtomicU64::new(0),
+            generation: AtomicU8::new(0),
         }
     }
 
     fn clear(&self) {
-        let tag_step = self.key_mask + 1;
-        let tag_mask = !self.key_mask;
         let current = self.generation.load(Ordering::Relaxed);
-        let mut next = current.wrapping_add(tag_step) & tag_mask;
-        if next == 0 {
+        let mut next = current.wrapping_add(1);
+        if next == 0 || next == u8::MAX {
             self.slots
                 .par_iter()
-                .for_each(|slot| slot.key.store(0, Ordering::Relaxed));
-            next = tag_step;
+                .for_each(|slot| slot.epoch.store(0, Ordering::Relaxed));
+            next = 1;
         }
         self.generation.store(next, Ordering::Relaxed);
     }
@@ -15531,30 +15608,42 @@ impl CompactPathInfoTable {
     fn insert_raw(&self, key: u64, path_id: u64, rank: u64, flags: u8) -> bool {
         debug_assert!(rank <= (u64::MAX >> 2));
         debug_assert!(flags < 4);
+        self.insert_packed(key, path_id, (rank << 2) | u64::from(flags))
+    }
+
+    #[inline(always)]
+    fn insert_packed(&self, key: u64, path_id: u64, rank_and_flags: u64) -> bool {
+        const BUSY: u8 = u8::MAX;
         debug_assert_eq!(key & !self.key_mask, 0);
         let generation = self.generation.load(Ordering::Relaxed);
-        let tagged_key = generation | key;
         let mut idx = wyhash_u64(key, 0) as usize & self.mask;
         loop {
             let slot = &self.slots[idx];
-            let observed = slot.key.load(Ordering::Relaxed);
-            if observed == tagged_key {
-                return false;
+            let observed_epoch = slot.epoch.load(Ordering::Acquire);
+            if observed_epoch == generation {
+                if slot.key.load(Ordering::Relaxed) == key {
+                    return false;
+                }
+                idx = (idx + 1) & self.mask;
+                continue;
             }
-            if observed & !self.key_mask != generation
-                && slot
-                    .key
-                    .compare_exchange(observed, tagged_key, Ordering::Relaxed, Ordering::Relaxed)
-                    .is_ok()
+            if observed_epoch == BUSY {
+                std::hint::spin_loop();
+                continue;
+            }
+            if slot
+                .epoch
+                .compare_exchange(observed_epoch, BUSY, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok()
             {
                 // Parallel loading only inserts values; lookups begin after the
                 // worker pool joins. Later diagonal inserts are single-threaded.
-                slot.path_id.store(path_id, Ordering::Release);
-                slot.rank_and_flags
-                    .store((rank << 2) | u64::from(flags), Ordering::Release);
+                slot.key.store(key, Ordering::Relaxed);
+                slot.path_id.store(path_id, Ordering::Relaxed);
+                slot.rank_and_flags.store(rank_and_flags, Ordering::Relaxed);
+                slot.epoch.store(generation, Ordering::Release);
                 return true;
             }
-            idx = (idx + 1) & self.mask;
         }
     }
 
@@ -15577,17 +15666,15 @@ impl CompactPathInfoTable {
     #[inline(always)]
     fn get_compact_raw(&self, key: u64) -> Option<CompactExpansionPathInfo> {
         let generation = self.generation.load(Ordering::Relaxed);
-        let tagged_key = generation | key;
         let mut idx = wyhash_u64(key, 0) as usize & self.mask;
         loop {
             let slot = &self.slots[idx];
-            let observed = slot.key.load(Ordering::Relaxed);
-            if observed & !self.key_mask != generation {
+            if slot.epoch.load(Ordering::Acquire) != generation {
                 return None;
             }
-            if observed == tagged_key {
-                let path_id = slot.path_id.load(Ordering::Acquire);
-                let rank_and_flags = slot.rank_and_flags.load(Ordering::Acquire);
+            if slot.key.load(Ordering::Relaxed) == key {
+                let path_id = slot.path_id.load(Ordering::Relaxed);
+                let rank_and_flags = slot.rank_and_flags.load(Ordering::Relaxed);
                 return Some(CompactExpansionPathInfo {
                     path_id,
                     rank_and_flags,
@@ -15651,6 +15738,16 @@ impl<const K: usize> ExpansionPathInfoTable<K> {
         }
     }
 
+    #[inline(always)]
+    fn insert_compact_record(&self, record: CompactVertexPathInfoRecord) -> bool {
+        match self {
+            Self::Compact(table) => {
+                table.insert_packed(record.vertex, record.path_id, record.rank_and_flags)
+            }
+            Self::Wide(_) => unreachable!("compact path info is only used for k <= 31"),
+        }
+    }
+
     fn contains_key(&self, vertex: &Kmer<K>) -> bool {
         self.get(*vertex).is_some()
     }
@@ -15683,11 +15780,10 @@ impl<const K: usize> ExpansionPathInfoTable<K> {
                 path_id.copy_from_slice(&bytes[8..16]);
                 let mut rank = [0u8; 8];
                 rank.copy_from_slice(&bytes[16..24]);
-                table.insert_raw(
+                table.insert_packed(
                     u64::from_le_bytes(key),
                     u64::from_le_bytes(path_id),
                     u64::from_le_bytes(rank),
-                    bytes[24],
                 )
             }
             Self::Wide(table) => {
@@ -17751,7 +17847,7 @@ mod materialized_record_tests {
     #[test]
     fn compact_path_info_table_survives_collisions_and_generation_wraps() {
         let table = CompactPathInfoTable::with_max_entries(6, 31);
-        assert_eq!(std::mem::size_of::<CompactPathInfoSlot>(), 24);
+        assert_eq!(std::mem::size_of::<CompactPathInfoSlot>(), 32);
 
         let mut first_by_bucket = [None; 8];
         let (first, second) = (0u64..)
@@ -17766,7 +17862,7 @@ mod materialized_record_tests {
             })
             .unwrap();
 
-        for generation in 0..10u64 {
+        for generation in 0..300u64 {
             table.clear();
             assert!(table.get::<31>(Kmer::from_bits(first as u128)).is_none());
             let first_info = PathInfo {

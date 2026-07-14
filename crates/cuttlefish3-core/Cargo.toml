@@ -16,3 +16,4 @@ leapfrog = { version = "0.3.3", features = ["stable_alloc"] }
 lz4_flex = "0.11"
 rayon = "1.12.0"
 scc = "3.8.4"
+xxhash-rust = { version = "0.8.15", features = ["xxh3"] }

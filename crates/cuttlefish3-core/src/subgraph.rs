@@ -1,17 +1,282 @@
 use crate::Side;
 #[cfg(test)]
 use crate::buckets::BucketRecord;
-use crate::buckets::{BucketError, BucketManifestEntry, BucketPackedRecord, BucketReader};
+use crate::buckets::{BorrowedBucketPackedRecord, BucketError, BucketManifestEntry, BucketReader};
+use crate::color::{ColorError, ConcurrentColorRepository};
 use crate::dna::Base;
-use crate::hash::{FastBuildHasher, hash_two_u64};
+use crate::hash::{FastBuildHasher, fast_u64_hash, hash_two_u64};
 use crate::kmer::{Kmer, KmerError};
-use crate::state::VertexState;
+use crate::state::{ColorCoordinate, VertexState, source_hash};
 use hashbrown::HashMap;
+use hashbrown::HashTable;
 use hashbrown::hash_map::RawEntryMut;
 use std::collections::HashSet;
 use std::path::Path;
 
-pub type LocalVertexMap<const K: usize> = HashMap<Kmer<K>, VertexState, FastBuildHasher>;
+#[derive(Debug, Clone)]
+pub struct DenseLocalVertexMap {
+    indices: HashTable<u32>,
+    entries: Vec<(u64, VertexState)>,
+}
+
+impl DenseLocalVertexMap {
+    fn with_capacity(capacity: usize) -> Self {
+        Self {
+            indices: HashTable::with_capacity(capacity),
+            entries: Vec::with_capacity(capacity),
+        }
+    }
+
+    fn clear_and_reserve(&mut self, capacity: usize) {
+        self.indices.clear();
+        self.entries.clear();
+        if self.entries.capacity() < capacity {
+            self.entries.reserve(capacity - self.entries.capacity());
+        }
+        if self.indices.capacity() < capacity {
+            let entries = &self.entries;
+            self.indices
+                .reserve(capacity - self.indices.capacity(), |&index| {
+                    local_u64_hash(entries[index as usize].0)
+                });
+        }
+    }
+
+    #[inline(always)]
+    fn get(&self, key: u64) -> Option<&VertexState> {
+        let hash = local_u64_hash(key);
+        let index = *self
+            .indices
+            .find(hash, |&index| self.entries[index as usize].0 == key)?;
+        Some(&self.entries[index as usize].1)
+    }
+
+    #[inline(always)]
+    fn get_mut(&mut self, key: u64) -> Option<&mut VertexState> {
+        let hash = local_u64_hash(key);
+        let index = *self
+            .indices
+            .find(hash, |&index| self.entries[index as usize].0 == key)?;
+        Some(&mut self.entries[index as usize].1)
+    }
+
+    #[inline(always)]
+    fn state_or_default(&mut self, key: u64) -> &mut VertexState {
+        let hash = local_u64_hash(key);
+        if let Some(&index) = self
+            .indices
+            .find(hash, |&index| self.entries[index as usize].0 == key)
+        {
+            return &mut self.entries[index as usize].1;
+        }
+        let index = self.entries.len() as u32;
+        self.entries.push((key, VertexState::default()));
+        let entries = &self.entries;
+        self.indices.insert_unique(hash, index, |&stored| {
+            local_u64_hash(entries[stored as usize].0)
+        });
+        &mut self.entries[index as usize].1
+    }
+}
+
+impl PartialEq for DenseLocalVertexMap {
+    fn eq(&self, other: &Self) -> bool {
+        self.entries.len() == other.entries.len()
+            && self
+                .entries
+                .iter()
+                .all(|&(key, state)| other.get(key) == Some(&state))
+    }
+}
+
+impl Eq for DenseLocalVertexMap {}
+
+#[derive(Default)]
+struct DenseWantedColorMap {
+    indices: HashTable<u32>,
+    entries: Vec<(u64, usize)>,
+}
+
+impl DenseWantedColorMap {
+    fn with_capacity(capacity: usize) -> Self {
+        Self {
+            indices: HashTable::with_capacity(capacity),
+            entries: Vec::with_capacity(capacity),
+        }
+    }
+
+    #[inline(always)]
+    fn get(&self, key: u64) -> Option<usize> {
+        let hash = local_u64_hash(key);
+        let index = *self
+            .indices
+            .find(hash, |&index| self.entries[index as usize].0 == key)?;
+        Some(self.entries[index as usize].1)
+    }
+
+    fn insert(&mut self, key: u64, value: usize) {
+        let hash = local_u64_hash(key);
+        if let Some(&index) = self
+            .indices
+            .find(hash, |&index| self.entries[index as usize].0 == key)
+        {
+            self.entries[index as usize].1 = value;
+            return;
+        }
+        let index = self.entries.len() as u32;
+        self.entries.push((key, value));
+        let entries = &self.entries;
+        self.indices.insert_unique(hash, index, |&stored| {
+            local_u64_hash(entries[stored as usize].0)
+        });
+    }
+}
+
+enum WantedColorMap<const K: usize> {
+    OneWord(DenseWantedColorMap),
+    TwoWord(HashMap<Kmer<K>, usize, FastBuildHasher>),
+}
+
+impl<const K: usize> WantedColorMap<K> {
+    fn with_capacity(capacity: usize) -> Self {
+        if K <= 32 {
+            Self::OneWord(DenseWantedColorMap::with_capacity(capacity))
+        } else {
+            Self::TwoWord(HashMap::with_capacity_and_hasher(
+                capacity,
+                FastBuildHasher::default(),
+            ))
+        }
+    }
+
+    fn insert(&mut self, key: Kmer<K>, value: usize) {
+        match self {
+            Self::OneWord(map) => map.insert(key.as_u128() as u64, value),
+            Self::TwoWord(map) => {
+                map.insert(key, value);
+            }
+        }
+    }
+
+    #[inline(always)]
+    fn get(&self, key: Kmer<K>) -> Option<usize> {
+        match self {
+            Self::OneWord(map) => map.get(key.as_u128() as u64),
+            Self::TwoWord(map) => map.get(&key).copied(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LocalVertexMap<const K: usize> {
+    OneWord(DenseLocalVertexMap),
+    TwoWord(HashMap<Kmer<K>, VertexState, FastBuildHasher>),
+}
+
+impl<const K: usize> LocalVertexMap<K> {
+    #[inline(always)]
+    fn with_capacity(capacity: usize) -> Self {
+        if K <= 32 {
+            Self::OneWord(DenseLocalVertexMap::with_capacity(capacity))
+        } else {
+            Self::TwoWord(HashMap::with_capacity_and_hasher(
+                capacity,
+                FastBuildHasher::default(),
+            ))
+        }
+    }
+
+    fn clear_and_reserve(&mut self, capacity: usize) {
+        match self {
+            Self::OneWord(map) => {
+                map.clear_and_reserve(capacity);
+            }
+            Self::TwoWord(map) => {
+                map.clear();
+                if map.capacity() < capacity {
+                    map.reserve(capacity);
+                }
+            }
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        match self {
+            Self::OneWord(map) => map.entries.len(),
+            Self::TwoWord(map) => map.len(),
+        }
+    }
+
+    #[inline(always)]
+    fn get(&self, kmer: &Kmer<K>) -> Option<&VertexState> {
+        match self {
+            Self::OneWord(map) => map.get(kmer.as_u128() as u64),
+            Self::TwoWord(map) => map.get(kmer),
+        }
+    }
+
+    #[inline(always)]
+    fn get_mut(&mut self, kmer: &Kmer<K>) -> Option<&mut VertexState> {
+        match self {
+            Self::OneWord(map) => map.get_mut(kmer.as_u128() as u64),
+            Self::TwoWord(map) => map.get_mut(kmer),
+        }
+    }
+
+    fn keys_vec(&self) -> Vec<Kmer<K>> {
+        match self {
+            Self::OneWord(map) => map
+                .entries
+                .iter()
+                .map(|&(key, _)| Kmer::<K>::from_bits(key as u128))
+                .collect(),
+            Self::TwoWord(map) => map.keys().copied().collect(),
+        }
+    }
+
+    fn dense_key_state(&self, index: usize) -> Option<(Kmer<K>, VertexState)> {
+        match self {
+            Self::OneWord(map) => map
+                .entries
+                .get(index)
+                .map(|&(key, state)| (Kmer::<K>::from_bits(key as u128), state)),
+            Self::TwoWord(_) => None,
+        }
+    }
+
+    fn dense_len(&self) -> Option<usize> {
+        match self {
+            Self::OneWord(map) => Some(map.entries.len()),
+            Self::TwoWord(_) => None,
+        }
+    }
+
+    #[inline(always)]
+    fn state_or_default(&mut self, kmer: Kmer<K>) -> &mut VertexState {
+        match self {
+            Self::OneWord(map) => {
+                let key = kmer.as_u128() as u64;
+                map.state_or_default(key)
+            }
+            Self::TwoWord(map) => {
+                let hash = local_vertex_hash(kmer);
+                match map
+                    .raw_entry_mut()
+                    .from_hash(hash, |stored| *stored == kmer)
+                {
+                    RawEntryMut::Occupied(entry) => entry.into_mut(),
+                    RawEntryMut::Vacant(entry) => {
+                        entry
+                            .insert_with_hasher(hash, kmer, VertexState::default(), |stored| {
+                                local_vertex_hash(*stored)
+                            })
+                            .1
+                    }
+                }
+            }
+        }
+    }
+}
 type LocalEdgeSet<const K: usize> = HashSet<LocalEdge<K>, FastBuildHasher>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -52,6 +317,7 @@ pub struct LocalSubgraphStats {
 pub struct LocalUnitig<const K: usize> {
     pub label: Vec<u8>,
     pub vertices: Vec<Kmer<K>>,
+    color_hashes: Vec<u64>,
     pub left_exit: Option<(Kmer<K>, Side)>,
     pub right_exit: Option<(Kmer<K>, Side)>,
     pub is_cycle: bool,
@@ -61,6 +327,7 @@ pub struct LocalUnitig<const K: usize> {
 pub struct LocalUnitigColorRun {
     pub offset: u32,
     pub color_hash: u64,
+    pub coordinate: Option<ColorCoordinate>,
     pub sources: Vec<u32>,
 }
 
@@ -73,8 +340,52 @@ pub struct ColoredLocalUnitig<const K: usize> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct UnitigWalk<const K: usize> {
     label: Vec<u8>,
-    vertices: Vec<Kmer<K>>,
+    vertices: WalkVertices<K>,
+    color_hashes: Vec<u64>,
     is_cycle: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct WalkVertices<const K: usize> {
+    low: Vec<u64>,
+    high: Vec<u64>,
+}
+
+impl<const K: usize> WalkVertices<K> {
+    #[inline]
+    fn clear(&mut self) {
+        self.low.clear();
+        self.high.clear();
+    }
+
+    #[inline]
+    fn push(&mut self, vertex: Kmer<K>) {
+        let words = vertex.words();
+        self.low.push(words[0]);
+        if K > 32 {
+            self.high.push(words[1]);
+        }
+    }
+
+    #[inline]
+    fn len(&self) -> usize {
+        self.low.len()
+    }
+
+    #[inline]
+    fn get(&self, index: usize) -> Kmer<K> {
+        let high = if K > 32 { self.high[index] } else { 0 };
+        Kmer::from_bits(self.low[index] as u128 | ((high as u128) << 64))
+    }
+}
+
+impl<const K: usize> Default for WalkVertices<K> {
+    fn default() -> Self {
+        Self {
+            low: Vec::new(),
+            high: Vec::new(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -92,13 +403,6 @@ struct DirectedKmer<const K: usize> {
 }
 
 impl<const K: usize> DirectedKmer<K> {
-    fn new(observed: Kmer<K>) -> Self {
-        Self {
-            observed,
-            reverse: observed.reverse_complement(),
-        }
-    }
-
     #[inline]
     fn canonical(self) -> Kmer<K> {
         self.observed.min(self.reverse)
@@ -128,16 +432,16 @@ impl<const K: usize> DirectedKmer<K> {
 }
 
 impl<const K: usize> UnitigWalk<K> {
-    fn init(v: DirectedKmer<K>, collect_vertices: bool) -> Self {
-        Self {
-            label: v.observed.to_ascii_string().into_bytes(),
-            vertices: if collect_vertices {
-                vec![v.canonical()]
-            } else {
-                Vec::new()
-            },
-            is_cycle: false,
+    fn reset(&mut self, v: DirectedKmer<K>, collect_vertices: bool, color_hash: u64) {
+        self.label.clear();
+        v.observed.append_ascii(&mut self.label);
+        self.vertices.clear();
+        self.color_hashes.clear();
+        if collect_vertices {
+            self.vertices.push(v.canonical());
+            self.color_hashes.push(color_hash);
         }
+        self.is_cycle = false;
     }
 
     fn extend(
@@ -146,6 +450,7 @@ impl<const K: usize> UnitigWalk<K> {
         base: Base,
         anchor: Kmer<K>,
         collect_vertices: bool,
+        color_hash: u64,
     ) -> bool {
         if v.canonical() == anchor {
             self.is_cycle = true;
@@ -155,8 +460,20 @@ impl<const K: usize> UnitigWalk<K> {
         self.label.push(base.to_ascii());
         if collect_vertices {
             self.vertices.push(v.canonical());
+            self.color_hashes.push(color_hash);
         }
         true
+    }
+}
+
+impl<const K: usize> Default for UnitigWalk<K> {
+    fn default() -> Self {
+        Self {
+            label: Vec::new(),
+            vertices: WalkVertices::default(),
+            color_hashes: Vec::new(),
+            is_cycle: false,
+        }
     }
 }
 
@@ -239,7 +556,7 @@ impl<const K: usize> LocalSubgraph<K> {
         path: impl AsRef<Path>,
         cutoff: u32,
     ) -> Result<Self, LocalSubgraphError> {
-        Self::from_bucket_paths_with_capacity(&[path.as_ref().to_path_buf()], cutoff, 0)
+        Self::from_bucket_paths_with_capacity(&[path.as_ref().to_path_buf()], cutoff, 0, None)
     }
 
     pub fn from_manifest_entries(
@@ -250,19 +567,41 @@ impl<const K: usize> LocalSubgraph<K> {
             .iter()
             .map(|entry| entry.path.clone())
             .collect::<Vec<_>>();
-        let vertices_per_record_hint = (K / 4).max(4);
+        // Weak super-kmers overlap heavily. HumGut's C++ construction observes
+        // about 2.15 unique vertices per record (2.4 in the largest bucket), so
+        // reserving K/4 slots wastes cache and scan bandwidth on sparse tables.
         let vertex_capacity = entries
             .iter()
             .map(|entry| entry.records as usize)
             .sum::<usize>()
-            .saturating_mul(vertices_per_record_hint);
-        Self::from_bucket_paths_with_capacity(&paths, cutoff, vertex_capacity)
+            .saturating_mul(5)
+            / 2;
+        Self::from_bucket_paths_with_capacity(&paths, cutoff, vertex_capacity, None)
+    }
+
+    pub(crate) fn from_manifest_entries_reusing(
+        entries: &[BucketManifestEntry],
+        cutoff: u32,
+        vertices: Option<LocalVertexMap<K>>,
+    ) -> Result<Self, LocalSubgraphError> {
+        let paths = entries
+            .iter()
+            .map(|entry| entry.path.clone())
+            .collect::<Vec<_>>();
+        let vertex_capacity = entries
+            .iter()
+            .map(|entry| entry.records as usize)
+            .sum::<usize>()
+            .saturating_mul(5)
+            / 2;
+        Self::from_bucket_paths_with_capacity(&paths, cutoff, vertex_capacity, vertices)
     }
 
     fn from_bucket_paths_with_capacity(
         paths: &[std::path::PathBuf],
         cutoff: u32,
         vertex_capacity: usize,
+        reusable_vertices: Option<LocalVertexMap<K>>,
     ) -> Result<Self, LocalSubgraphError> {
         if cutoff == 0 {
             return Err(LocalSubgraphError::InvalidCutoff);
@@ -280,21 +619,21 @@ impl<const K: usize> LocalSubgraph<K> {
 
         let graph_id = reader.header().graph_id;
         let colored = reader.header().colored;
+        let mut vertices =
+            reusable_vertices.unwrap_or_else(|| LocalVertexMap::with_capacity(vertex_capacity));
+        vertices.clear_and_reserve(vertex_capacity);
         let mut subgraph = Self {
             graph_id,
             colored,
             cutoff,
-            vertices: HashMap::with_capacity_and_hasher(
-                vertex_capacity,
-                FastBuildHasher::default(),
-            ),
+            vertices,
             edges: HashSet::with_hasher(FastBuildHasher::default()),
             stats: LocalSubgraphStats::default(),
         };
 
-        let mut record = BucketPackedRecord::default();
-        reader
-            .try_for_each_packed_record(&mut record, |record| subgraph.add_packed_record(record))?;
+        reader.try_for_each_borrowed_packed_record(|record| {
+            subgraph.add_borrowed_packed_record(record)
+        })?;
         for path in &paths[1..] {
             let mut reader = BucketReader::open(path)?;
             if reader.header().k as usize != K {
@@ -312,8 +651,8 @@ impl<const K: usize> LocalSubgraph<K> {
             if reader.header().colored != subgraph.colored {
                 return Err(LocalSubgraphError::MalformedRecord);
             }
-            reader.try_for_each_packed_record(&mut record, |record| {
-                subgraph.add_packed_record(record)
+            reader.try_for_each_borrowed_packed_record(|record| {
+                subgraph.add_borrowed_packed_record(record)
             })?;
         }
 
@@ -321,6 +660,10 @@ impl<const K: usize> LocalSubgraph<K> {
         subgraph.stats.unique_edges = subgraph.edges.len() as u64;
 
         Ok(subgraph)
+    }
+
+    pub(crate) fn into_vertex_map(self) -> LocalVertexMap<K> {
+        self.vertices
     }
 
     pub fn vertex_state(&self, kmer: Kmer<K>) -> Option<&VertexState> {
@@ -339,44 +682,109 @@ impl<const K: usize> LocalSubgraph<K> {
         &mut self,
         entries: &[BucketManifestEntry],
     ) -> Result<Vec<ColoredLocalUnitig<K>>, LocalSubgraphError> {
+        self.contract_colored_with_known(entries, |_| None)
+    }
+
+    pub fn contract_colored_with_known<F>(
+        &mut self,
+        entries: &[BucketManifestEntry],
+        color_is_known: F,
+    ) -> Result<Vec<ColoredLocalUnitig<K>>, LocalSubgraphError>
+    where
+        F: Fn(u64) -> Option<ColorCoordinate>,
+    {
+        self.contract_colored_impl(entries, color_is_known, None)
+    }
+
+    pub(crate) fn contract_colored_resolved(
+        &mut self,
+        entries: &[BucketManifestEntry],
+        repository: &ConcurrentColorRepository,
+        worker: usize,
+    ) -> Result<Vec<ColoredLocalUnitig<K>>, LocalSubgraphError> {
+        let mut resolve = |color_hash: u64, sources: &[u32]| {
+            repository
+                .resolve_or_insert(color_hash, sources, worker)
+                .map_err(LocalSubgraphError::Color)
+        };
+        self.contract_colored_impl(
+            entries,
+            |color_hash| repository.get(color_hash),
+            Some(&mut resolve),
+        )
+    }
+
+    fn contract_colored_impl<F>(
+        &mut self,
+        entries: &[BucketManifestEntry],
+        color_is_known: F,
+        mut resolve_color: Option<
+            &mut dyn FnMut(u64, &[u32]) -> Result<ColorCoordinate, LocalSubgraphError>,
+        >,
+    ) -> Result<Vec<ColoredLocalUnitig<K>>, LocalSubgraphError>
+    where
+        F: Fn(u64) -> Option<ColorCoordinate>,
+    {
         if !self.colored {
             return Err(LocalSubgraphError::MalformedRecord);
         }
-        let mut unitigs = self.contract_internal(true)?;
-        for unitig in &mut unitigs {
-            unitig.vertices = canonical_vertices_from_label::<K>(&unitig.label)?;
-        }
-
-        let mut representatives = HashMap::<u64, Kmer<K>, FastBuildHasher>::default();
-        let mut unitig_hash_runs = Vec::with_capacity(unitigs.len());
-        for unitig in &unitigs {
-            let mut runs = Vec::<(u32, u64)>::new();
-            for (offset, &vertex) in unitig.vertices.iter().enumerate() {
-                let color_hash = self
+        let mut representative_indices = HashMap::<u64, usize, FastBuildHasher>::default();
+        let mut representatives = Vec::<Kmer<K>>::new();
+        let mut unitigs = Vec::new();
+        let mut unitig_hash_runs = Vec::new();
+        let mut back_walk = UnitigWalk::default();
+        let mut front_walk = UnitigWalk::default();
+        if let Some(vertex_count) = self.vertices.dense_len()
+            && std::env::var_os("CF3_RS_SORT_LOCAL_VERTICES").is_none()
+        {
+            for index in 0..vertex_count {
+                let (v_hat, state) = self
                     .vertices
-                    .get(&vertex)
-                    .ok_or(LocalSubgraphError::MissingVertex)?
-                    .color_hash();
-                if runs
-                    .last()
-                    .is_none_or(|&(_, previous)| previous != color_hash)
-                {
-                    runs.push((offset as u32, color_hash));
-                    representatives.entry(color_hash).or_insert(vertex);
-                }
+                    .dense_key_state(index)
+                    .expect("dense vertex index is in bounds");
+                self.contract_colored_vertex(
+                    v_hat,
+                    state,
+                    &color_is_known,
+                    &mut unitigs,
+                    &mut unitig_hash_runs,
+                    &mut representative_indices,
+                    &mut representatives,
+                    &mut back_walk,
+                    &mut front_walk,
+                )?;
             }
-            unitig_hash_runs.push(runs);
+        } else {
+            let mut vertices = self.vertices.keys_vec();
+            if std::env::var_os("CF3_RS_SORT_LOCAL_VERTICES").is_some() {
+                vertices.sort_unstable();
+            }
+            for v_hat in vertices {
+                let Some(state) = self.vertices.get(&v_hat).copied() else {
+                    continue;
+                };
+                self.contract_colored_vertex(
+                    v_hat,
+                    state,
+                    &color_is_known,
+                    &mut unitigs,
+                    &mut unitig_hash_runs,
+                    &mut representative_indices,
+                    &mut representatives,
+                    &mut back_walk,
+                    &mut front_walk,
+                )?;
+            }
         }
 
-        let mut wanted = HashMap::<Kmer<K>, u64, FastBuildHasher>::default();
-        for (&hash, &vertex) in &representatives {
-            wanted.insert(vertex, hash);
+        let mut wanted = WantedColorMap::<K>::with_capacity(representatives.len());
+        for (index, &vertex) in representatives.iter().enumerate() {
+            wanted.insert(vertex, index);
         }
-        let mut source_sets = HashMap::<u64, Vec<u32>, FastBuildHasher>::default();
+        let mut source_sets = vec![Vec::<u32>::new(); representatives.len()];
         for entry in entries {
             let mut reader = BucketReader::open(&entry.path)?;
-            let mut record = BucketPackedRecord::default();
-            reader.try_for_each_packed_record(&mut record, |record| {
+            reader.try_for_each_borrowed_packed_record(|record| {
                 collect_wanted_color_relations::<K>(record, &wanted, &mut source_sets)
             })?;
         }
@@ -387,14 +795,26 @@ impl<const K: usize> LocalSubgraph<K> {
             .map(|(unitig, runs)| {
                 let colors = runs
                     .into_iter()
-                    .map(|(offset, color_hash)| {
-                        let sources = source_sets
-                            .get(&color_hash)
-                            .cloned()
-                            .ok_or(LocalSubgraphError::MissingVertex)?;
+                    .map(|(offset, color_hash, coordinate)| {
+                        let (coordinate, sources) = match coordinate {
+                            Some(coordinate) => (Some(coordinate), Vec::new()),
+                            None => {
+                                let &index = representative_indices
+                                    .get(&color_hash)
+                                    .ok_or(LocalSubgraphError::MissingVertex)?;
+                                match resolve_color.as_deref_mut() {
+                                    Some(resolve) => (
+                                        Some(resolve(color_hash, &source_sets[index])?),
+                                        Vec::new(),
+                                    ),
+                                    None => (None, source_sets[index].clone()),
+                                }
+                            }
+                        };
                         Ok(LocalUnitigColorRun {
                             offset,
                             color_hash,
+                            coordinate,
                             sources,
                         })
                     })
@@ -404,77 +824,238 @@ impl<const K: usize> LocalSubgraph<K> {
             .collect()
     }
 
+    #[allow(clippy::too_many_arguments)]
+    fn contract_colored_vertex<F>(
+        &mut self,
+        v_hat: Kmer<K>,
+        state: VertexState,
+        color_is_known: &F,
+        unitigs: &mut Vec<LocalUnitig<K>>,
+        unitig_hash_runs: &mut Vec<Vec<(u32, u64, Option<ColorCoordinate>)>>,
+        representative_indices: &mut HashMap<u64, usize, FastBuildHasher>,
+        representatives: &mut Vec<Kmer<K>>,
+        back_walk: &mut UnitigWalk<K>,
+        front_walk: &mut UnitigWalk<K>,
+    ) -> Result<(), LocalSubgraphError>
+    where
+        F: Fn(u64) -> Option<ColorCoordinate>,
+    {
+        if state.is_visited() {
+            return Ok(());
+        }
+        if state.is_isolated(self.cutoff) {
+            if let Some(state) = self.vertices.get_mut(&v_hat) {
+                state.mark_visited();
+            }
+            self.stats.isolated_vertices += 1;
+            return Ok(());
+        }
+
+        let unitig = self.extract_maximal_unitig_compact(v_hat, back_walk, front_walk)?;
+        self.stats.unitigs += 1;
+        self.stats.unitig_bases += unitig.label.len() as u64;
+        if unitig.is_cycle {
+            self.stats.cyclic_unitigs += 1;
+        }
+        if unitig.left_exit.is_none() && unitig.right_exit.is_none() {
+            self.stats.trivial_unitigs += 1;
+        } else {
+            self.stats.discontinuity_exits +=
+                u64::from(unitig.left_exit.is_some()) + u64::from(unitig.right_exit.is_some());
+        }
+
+        let mut runs = Vec::<(u32, u64, Option<ColorCoordinate>)>::new();
+        let mut record_hash = |offset: usize, vertex: Kmer<K>, color_hash: u64| {
+            if runs
+                .last()
+                .is_none_or(|&(_, previous, _)| previous != color_hash)
+            {
+                let coordinate = color_is_known(color_hash);
+                runs.push((offset as u32, color_hash, coordinate));
+                if coordinate.is_none() {
+                    representative_indices.entry(color_hash).or_insert_with(|| {
+                        let index = representatives.len();
+                        representatives.push(vertex);
+                        index
+                    });
+                }
+            }
+        };
+        if unitig.is_cycle {
+            let mut vertex = Kmer::<K>::from_ascii(&unitig.label[..K])?;
+            for offset in 0..=unitig.label.len() - K {
+                let canonical = vertex.canonical();
+                let color_hash = self
+                    .vertices
+                    .get(&canonical)
+                    .ok_or(LocalSubgraphError::MissingVertex)?
+                    .color_hash();
+                record_hash(offset, canonical, color_hash);
+                if offset < unitig.label.len() - K {
+                    vertex = vertex.roll_forward(Base::from_ascii(unitig.label[offset + K]));
+                }
+            }
+        } else {
+            debug_assert_eq!(front_walk.vertices.len(), front_walk.color_hashes.len());
+            debug_assert_eq!(back_walk.vertices.len(), back_walk.color_hashes.len());
+            let mut offset = 0;
+            for index in (0..front_walk.vertices.len()).rev() {
+                record_hash(
+                    offset,
+                    front_walk.vertices.get(index),
+                    front_walk.color_hashes[index],
+                );
+                offset += 1;
+            }
+            for index in 1..back_walk.vertices.len() {
+                record_hash(
+                    offset,
+                    back_walk.vertices.get(index),
+                    back_walk.color_hashes[index],
+                );
+                offset += 1;
+            }
+        }
+        unitigs.push(unitig);
+        unitig_hash_runs.push(runs);
+        Ok(())
+    }
+
     fn contract_internal(
         &mut self,
         collect_vertices: bool,
     ) -> Result<Vec<LocalUnitig<K>>, LocalSubgraphError> {
         let mut unitigs = Vec::new();
-        let mut vertices = self.vertices.keys().copied().collect::<Vec<_>>();
-        if std::env::var_os("CF3_RS_SORT_LOCAL_VERTICES").is_some() {
-            vertices.sort_unstable();
-        }
-
-        for v_hat in vertices {
-            let Some(state) = self.vertices.get(&v_hat).copied() else {
-                continue;
-            };
-            if state.is_visited() {
-                continue;
+        let mut back_walk = UnitigWalk::default();
+        let mut front_walk = UnitigWalk::default();
+        if let Some(vertex_count) = self.vertices.dense_len()
+            && std::env::var_os("CF3_RS_SORT_LOCAL_VERTICES").is_none()
+        {
+            for index in 0..vertex_count {
+                let (v_hat, state) = self
+                    .vertices
+                    .dense_key_state(index)
+                    .expect("dense vertex index is in bounds");
+                self.contract_vertex(
+                    v_hat,
+                    state,
+                    collect_vertices,
+                    &mut unitigs,
+                    &mut back_walk,
+                    &mut front_walk,
+                )?;
             }
-            if state.is_isolated(self.cutoff) {
-                if let Some(st) = self.vertices.get_mut(&v_hat) {
-                    st.mark_visited();
-                }
-                self.stats.isolated_vertices += 1;
-                continue;
+        } else {
+            let mut vertices = self.vertices.keys_vec();
+            if std::env::var_os("CF3_RS_SORT_LOCAL_VERTICES").is_some() {
+                vertices.sort_unstable();
             }
-
-            let unitig = self.extract_maximal_unitig(v_hat, collect_vertices)?;
-            self.stats.unitigs += 1;
-            self.stats.unitig_bases += unitig.label.len() as u64;
-            if unitig.is_cycle {
-                self.stats.cyclic_unitigs += 1;
+            for v_hat in vertices {
+                let Some(state) = self.vertices.get(&v_hat).copied() else {
+                    continue;
+                };
+                self.contract_vertex(
+                    v_hat,
+                    state,
+                    collect_vertices,
+                    &mut unitigs,
+                    &mut back_walk,
+                    &mut front_walk,
+                )?;
             }
-            if unitig.left_exit.is_none() && unitig.right_exit.is_none() {
-                self.stats.trivial_unitigs += 1;
-            } else {
-                self.stats.discontinuity_exits +=
-                    u64::from(unitig.left_exit.is_some()) + u64::from(unitig.right_exit.is_some());
-            }
-            unitigs.push(unitig);
         }
 
         Ok(unitigs)
+    }
+
+    fn contract_vertex(
+        &mut self,
+        v_hat: Kmer<K>,
+        state: VertexState,
+        collect_vertices: bool,
+        unitigs: &mut Vec<LocalUnitig<K>>,
+        back_walk: &mut UnitigWalk<K>,
+        front_walk: &mut UnitigWalk<K>,
+    ) -> Result<(), LocalSubgraphError> {
+        if state.is_visited() {
+            return Ok(());
+        }
+        if state.is_isolated(self.cutoff) {
+            if let Some(st) = self.vertices.get_mut(&v_hat) {
+                st.mark_visited();
+            }
+            self.stats.isolated_vertices += 1;
+            return Ok(());
+        }
+
+        let unitig = self.extract_maximal_unitig(v_hat, collect_vertices, back_walk, front_walk)?;
+        self.stats.unitigs += 1;
+        self.stats.unitig_bases += unitig.label.len() as u64;
+        if unitig.is_cycle {
+            self.stats.cyclic_unitigs += 1;
+        }
+        if unitig.left_exit.is_none() && unitig.right_exit.is_none() {
+            self.stats.trivial_unitigs += 1;
+        } else {
+            self.stats.discontinuity_exits +=
+                u64::from(unitig.left_exit.is_some()) + u64::from(unitig.right_exit.is_some());
+        }
+        unitigs.push(unitig);
+        Ok(())
     }
 
     fn extract_maximal_unitig(
         &mut self,
         v_hat: Kmer<K>,
         collect_vertices: bool,
+        back_walk: &mut UnitigWalk<K>,
+        front_walk: &mut UnitigWalk<K>,
     ) -> Result<LocalUnitig<K>, LocalSubgraphError> {
-        let (back_walk, back_term) = self.walk_unitig(v_hat, Side::Back, collect_vertices)?;
+        let back_term = self.walk_unitig(v_hat, Side::Back, collect_vertices, back_walk)?;
 
         if back_walk.is_cycle {
             return Ok(LocalUnitig {
                 label: canonical_cycle_label::<K>(back_walk.label.clone()),
-                vertices: back_walk.vertices,
+                vertices: (0..back_walk.vertices.len())
+                    .map(|index| back_walk.vertices.get(index))
+                    .collect(),
+                color_hashes: back_walk.color_hashes.clone(),
                 left_exit: None,
                 right_exit: None,
                 is_cycle: true,
             });
         }
 
-        let (front_walk, front_term) = self.walk_unitig(v_hat, Side::Front, collect_vertices)?;
+        let front_term = self.walk_unitig(v_hat, Side::Front, collect_vertices, front_walk)?;
         let vertices = if collect_vertices {
-            let mut vertices = front_walk.vertices;
-            vertices.reverse();
-            vertices.extend(back_walk.vertices.into_iter().skip(1));
-            vertices
+            (0..front_walk.vertices.len())
+                .rev()
+                .map(|index| front_walk.vertices.get(index))
+                .chain((1..back_walk.vertices.len()).map(|index| back_walk.vertices.get(index)))
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let color_hashes = if collect_vertices {
+            front_walk
+                .color_hashes
+                .iter()
+                .rev()
+                .chain(back_walk.color_hashes.iter().skip(1))
+                .copied()
+                .collect()
         } else {
             Vec::new()
         };
 
-        let mut label = reverse_complement_label(&front_walk.label);
+        let mut label = Vec::with_capacity(front_walk.label.len() + back_walk.label.len() - K);
+        label.extend(
+            front_walk
+                .label
+                .iter()
+                .rev()
+                .map(|&base| Base::from_ascii(base).complement().to_ascii()),
+        );
         label.extend_from_slice(&back_walk.label[K..]);
         let left_exit = match front_term {
             WalkTermination::Exited(v) => Some((v.canonical(), v.entrance_side())),
@@ -488,6 +1069,55 @@ impl<const K: usize> LocalSubgraph<K> {
         Ok(LocalUnitig {
             label,
             vertices,
+            color_hashes,
+            left_exit,
+            right_exit,
+            is_cycle: false,
+        })
+    }
+
+    fn extract_maximal_unitig_compact(
+        &mut self,
+        v_hat: Kmer<K>,
+        back_walk: &mut UnitigWalk<K>,
+        front_walk: &mut UnitigWalk<K>,
+    ) -> Result<LocalUnitig<K>, LocalSubgraphError> {
+        let back_term = self.walk_unitig(v_hat, Side::Back, true, back_walk)?;
+
+        if back_walk.is_cycle {
+            return Ok(LocalUnitig {
+                label: canonical_cycle_label::<K>(back_walk.label.clone()),
+                vertices: Vec::new(),
+                color_hashes: Vec::new(),
+                left_exit: None,
+                right_exit: None,
+                is_cycle: true,
+            });
+        }
+
+        let front_term = self.walk_unitig(v_hat, Side::Front, true, front_walk)?;
+        let mut label = Vec::with_capacity(front_walk.label.len() + back_walk.label.len() - K);
+        label.extend(
+            front_walk
+                .label
+                .iter()
+                .rev()
+                .map(|&base| Base::from_ascii(base).complement().to_ascii()),
+        );
+        label.extend_from_slice(&back_walk.label[K..]);
+        let left_exit = match front_term {
+            WalkTermination::Exited(v) => Some((v.canonical(), v.entrance_side())),
+            _ => None,
+        };
+        let right_exit = match back_term {
+            WalkTermination::Exited(v) => Some((v.canonical(), v.entrance_side())),
+            _ => None,
+        };
+
+        Ok(LocalUnitig {
+            label,
+            vertices: Vec::new(),
+            color_hashes: Vec::new(),
             left_exit,
             right_exit,
             is_cycle: false,
@@ -499,37 +1129,43 @@ impl<const K: usize> LocalSubgraph<K> {
         v_hat: Kmer<K>,
         start_side: Side,
         collect_vertices: bool,
-    ) -> Result<(UnitigWalk<K>, WalkTermination<K>), LocalSubgraphError> {
+        walk: &mut UnitigWalk<K>,
+    ) -> Result<WalkTermination<K>, LocalSubgraphError> {
         let icc_return_side = start_side.inverse();
+        let v_hat_reverse = v_hat.reverse_complement();
         let mut v = if start_side == Side::Back {
-            DirectedKmer::new(v_hat)
+            DirectedKmer {
+                observed: v_hat,
+                reverse: v_hat_reverse,
+            }
         } else {
-            DirectedKmer::new(v_hat.reverse_complement())
+            DirectedKmer {
+                observed: v_hat_reverse,
+                reverse: v_hat,
+            }
         };
         let mut side = start_side;
-        let mut walk = UnitigWalk::init(v, collect_vertices);
+        let mut state = {
+            let state = self
+                .vertices
+                .get_mut(&v.canonical())
+                .ok_or(LocalSubgraphError::MissingVertex)?;
+            let copied = *state;
+            state.mark_visited();
+            copied
+        };
+        walk.reset(v, collect_vertices, state.color_hash());
 
         loop {
-            let canonical = v.canonical();
-            let state = {
-                let state = self
-                    .vertices
-                    .get_mut(&canonical)
-                    .ok_or(LocalSubgraphError::MissingVertex)?;
-                let copied = *state;
-                state.mark_visited();
-                copied
-            };
-
             let mut edge = state.edge_at(side, self.cutoff);
             if edge == Base::N {
-                return Ok((walk, WalkTermination::Branched));
+                return Ok(WalkTermination::Branched);
             }
             if edge == Base::E {
                 if !state.is_discontinuous(side) {
-                    return Ok((walk, WalkTermination::DeadEnded));
+                    return Ok(WalkTermination::DeadEnded);
                 }
-                return Ok((walk, WalkTermination::Exited(v)));
+                return Ok(WalkTermination::Exited(v));
             }
 
             if side == Side::Front {
@@ -537,24 +1173,33 @@ impl<const K: usize> LocalSubgraph<K> {
             }
             v = v.roll_forward(edge);
 
-            let next_state = *self
+            let next_state = self
                 .vertices
-                .get(&v.canonical())
+                .get_mut(&v.canonical())
                 .ok_or(LocalSubgraphError::MissingVertex)?;
+            let next_state_copy = *next_state;
             side = v.entrance_side();
-            if next_state.is_branching_side(side, self.cutoff) {
-                return Ok((walk, WalkTermination::Crossed));
+            if next_state_copy.is_branching_side(side, self.cutoff) {
+                return Ok(WalkTermination::Crossed);
             }
-            if next_state.is_visited() {
+            if next_state_copy.is_visited() {
                 if v.canonical() == v_hat && side == icc_return_side {
                     walk.is_cycle = true;
                 }
-                return Ok((walk, WalkTermination::Crossed));
+                return Ok(WalkTermination::Crossed);
             }
 
-            if !walk.extend(v, edge, v_hat, collect_vertices) {
-                return Ok((walk, WalkTermination::Crossed));
+            next_state.mark_visited();
+            if !walk.extend(
+                v,
+                edge,
+                v_hat,
+                collect_vertices,
+                next_state_copy.color_hash(),
+            ) {
+                return Ok(WalkTermination::Crossed);
             }
+            state = next_state_copy;
             side = side.inverse();
         }
     }
@@ -669,37 +1314,61 @@ impl<const K: usize> LocalSubgraph<K> {
         Ok(())
     }
 
-    fn add_packed_record(&mut self, record: &BucketPackedRecord) -> Result<(), LocalSubgraphError> {
-        if record.graph_id != self.graph_id {
+    fn add_borrowed_packed_record(
+        &mut self,
+        record: BorrowedBucketPackedRecord<'_>,
+    ) -> Result<(), LocalSubgraphError> {
+        self.add_packed_parts(
+            record.graph_id,
+            record.len,
+            record.source_id,
+            record.left_discontinuous,
+            record.right_discontinuous,
+            record.words,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn add_packed_parts(
+        &mut self,
+        graph_id: usize,
+        len: usize,
+        source_id: Option<u32>,
+        left_discontinuous: bool,
+        right_discontinuous: bool,
+        words: &[u64],
+    ) -> Result<(), LocalSubgraphError> {
+        if graph_id != self.graph_id {
             return Err(LocalSubgraphError::GraphMismatch {
                 expected: self.graph_id,
-                got: record.graph_id,
+                got: graph_id,
             });
         }
-        if record.len < K || record.len > record.words.len() * 32 {
+        if len < K || len > words.len() * 32 {
             return Err(LocalSubgraphError::MalformedRecord);
         }
 
         self.stats.weak_superkmers += 1;
-        self.stats.weak_superkmer_bases += record.len as u64;
+        self.stats.weak_superkmer_bases += len as u64;
 
-        let last_vertex_offset = record.len - K;
-        let observed_bits = packed_prefix_bits::<K>(&record.words);
+        let last_vertex_offset = len - K;
+        let observed_bits = packed_prefix_bits::<K>(words);
         let mut observed = Kmer::<K>::from_bits(observed_bits);
         let mut reverse = observed.reverse_complement();
         let mut prev = None;
+        let source = source_id.map(|source| (source, source_hash(source)));
         for offset in 0..=last_vertex_offset {
             let in_canonical_form = observed <= reverse;
             let canonical = if in_canonical_form { observed } else { reverse };
             let pred_base = if offset == 0 {
                 Base::E
             } else {
-                packed_base(&record.words, offset - 1)
+                packed_base(words, offset - 1)
             };
             let succ_base = if offset == last_vertex_offset {
                 Base::E
             } else {
-                packed_base(&record.words, offset + K)
+                packed_base(words, offset + K)
             };
             let mut front = if in_canonical_form {
                 pred_base
@@ -725,10 +1394,10 @@ impl<const K: usize> LocalSubgraph<K> {
             {
                 let state = self.vertex_state_or_default(canonical);
                 state.update_edges(front, back);
-                if let Some(source_id) = record.source_id {
-                    state.add_source(source_id);
+                if let Some((source_id, hash)) = source {
+                    state.add_source_hashed(source_id, hash);
                 }
-                if offset == 0 && record.left_discontinuous {
+                if offset == 0 && left_discontinuous {
                     let side = if in_canonical_form {
                         Side::Front
                     } else {
@@ -740,7 +1409,7 @@ impl<const K: usize> LocalSubgraph<K> {
                         Side::Back => discontinuity_backs += 1,
                     }
                 }
-                if offset == last_vertex_offset && record.right_discontinuous {
+                if offset == last_vertex_offset && right_discontinuous {
                     let side = if in_canonical_form {
                         Side::Back
                     } else {
@@ -781,21 +1450,7 @@ impl<const K: usize> LocalSubgraph<K> {
 
     #[inline]
     fn vertex_state_or_default(&mut self, kmer: Kmer<K>) -> &mut VertexState {
-        let hash = local_vertex_hash(kmer);
-        match self
-            .vertices
-            .raw_entry_mut()
-            .from_hash(hash, |key| *key == kmer)
-        {
-            RawEntryMut::Occupied(entry) => entry.into_mut(),
-            RawEntryMut::Vacant(entry) => {
-                entry
-                    .insert_with_hasher(hash, kmer, VertexState::default(), |key| {
-                        local_vertex_hash(*key)
-                    })
-                    .1
-            }
-        }
+        self.vertices.state_or_default(kmer)
     }
 }
 
@@ -816,9 +1471,9 @@ fn canonical_vertices_from_label<const K: usize>(
 }
 
 fn collect_wanted_color_relations<const K: usize>(
-    record: &BucketPackedRecord,
-    wanted: &HashMap<Kmer<K>, u64, FastBuildHasher>,
-    source_sets: &mut HashMap<u64, Vec<u32>, FastBuildHasher>,
+    record: BorrowedBucketPackedRecord<'_>,
+    wanted: &WantedColorMap<K>,
+    source_sets: &mut [Vec<u32>],
 ) -> Result<(), LocalSubgraphError> {
     let source = record
         .source_id
@@ -826,18 +1481,18 @@ fn collect_wanted_color_relations<const K: usize>(
     if record.len < K || record.len > record.words.len() * 32 {
         return Err(LocalSubgraphError::MalformedRecord);
     }
-    let mut vertex = Kmer::<K>::from_bits(packed_prefix_bits::<K>(&record.words));
+    let mut vertex = Kmer::<K>::from_bits(packed_prefix_bits::<K>(record.words));
     let mut reverse = vertex.reverse_complement();
     for offset in 0..=record.len - K {
         let canonical = vertex.min(reverse);
-        if let Some(&color_hash) = wanted.get(&canonical) {
-            let sources = source_sets.entry(color_hash).or_default();
+        if let Some(color_index) = wanted.get(canonical) {
+            let sources = &mut source_sets[color_index];
             if sources.last().copied() != Some(source) {
                 sources.push(source);
             }
         }
         if offset < record.len - K {
-            let next = packed_base(&record.words, offset + K);
+            let next = packed_base(record.words, offset + K);
             vertex = vertex.roll_forward(next);
             reverse = reverse.roll_backward(next.complement());
         }
@@ -876,9 +1531,15 @@ fn local_vertex_hash<const K: usize>(kmer: Kmer<K>) -> u64 {
     hash_two_u64(words[0], words[1])
 }
 
+#[inline]
+fn local_u64_hash(key: u64) -> u64 {
+    fast_u64_hash(key, 0xAAAA_AAAA_5555_5555)
+}
+
 #[derive(Debug)]
 pub enum LocalSubgraphError {
     Bucket(BucketError),
+    Color(ColorError),
     Kmer(KmerError),
     InvalidCutoff,
     EmptyBucketGroup,
@@ -904,6 +1565,7 @@ impl std::fmt::Display for LocalSubgraphError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Bucket(err) => write!(f, "{err}"),
+            Self::Color(err) => write!(f, "{err}"),
             Self::Kmer(err) => write!(f, "{err}"),
             Self::InvalidCutoff => write!(f, "local subgraph cutoff must be at least 1"),
             Self::EmptyBucketGroup => write!(f, "local subgraph bucket group is empty"),
@@ -966,14 +1628,17 @@ mod tests {
             graph_id: 3,
             colored: true,
             cutoff: 1,
-            vertices: HashMap::with_hasher(FastBuildHasher::default()),
+            vertices: LocalVertexMap::with_capacity(0),
             edges: HashSet::with_hasher(FastBuildHasher::default()),
             stats: LocalSubgraphStats::default(),
         };
 
         subgraph.add_record(&record).unwrap();
         subgraph.stats.unique_vertices = subgraph.vertices.len() as u64;
-        subgraph.stats.unique_edges = subgraph.edges.len() as u64;
+        #[cfg(debug_assertions)]
+        {
+            subgraph.stats.unique_edges = subgraph.edges.len() as u64;
+        }
 
         assert_eq!(subgraph.stats.observed_vertices, 3);
         assert_eq!(subgraph.stats.observed_edges, 2);
@@ -981,6 +1646,7 @@ mod tests {
             subgraph.stats.discontinuity_fronts + subgraph.stats.discontinuity_backs,
             2
         );
+        #[cfg(debug_assertions)]
         assert_eq!(subgraph.stats.unique_edges, 2);
 
         let acg = Kmer::<3>::from_ascii(b"ACG").unwrap();

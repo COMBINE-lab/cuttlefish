@@ -35,7 +35,10 @@ where
         "build" => {
             let params = parse_build(args)?;
             params.validate()?;
-            configure_global_parallelism(params.threads)
+            // The compact k <= 31 path uses phase-local bounded pools. Avoid
+            // keeping an otherwise idle global Rayon pool contending with
+            // those workers for the entire build.
+            configure_global_parallelism(if params.k <= 31 { 1 } else { params.threads })
                 .map_err(|error| CliError::Parallelism(error.to_string()))?;
             eprintln!(
                 "cuttlefish3-rs: parsed build request for k={}, l={}, cutoff={}, color={}",

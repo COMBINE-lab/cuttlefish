@@ -117,9 +117,41 @@ where
     match first_line.first().copied() {
         Some(b'>') => parse_fasta_reader(first_line, reader, source_id, min_len, &mut on_fragment),
         Some(b'@') => parse_fastq_reader(first_line, reader, source_id, min_len, &mut on_fragment),
+        Some(_) if first_line.iter().copied().all(is_dna_ascii) => {
+            parse_plain_sequence_reader(first_line, reader, source_id, min_len, &mut on_fragment)
+        }
         Some(_) => Err(InputError::UnknownFormat(path.to_path_buf())),
         None => Err(InputError::EmptyFile(path.to_path_buf())),
     }
+}
+
+fn parse_plain_sequence_reader<R, F>(
+    first_line: Vec<u8>,
+    mut reader: R,
+    source_id: u32,
+    min_len: usize,
+    on_fragment: &mut F,
+) -> Result<u64, InputError>
+where
+    R: BufRead,
+    F: for<'a> FnMut(BorrowedSequenceFragment<'a>) -> Result<(), InputError>,
+{
+    let mut seq = first_line;
+    let mut line = Vec::new();
+    loop {
+        line.clear();
+        if reader
+            .read_until(b'\n', &mut line)
+            .map_err(|source| InputError::Read { source })?
+            == 0
+        {
+            break;
+        }
+        trim_ascii_line_in_place(&mut line);
+        seq.extend(line.iter().copied().filter(|b| !b.is_ascii_whitespace()));
+    }
+    emit_actg_fragments(source_id, 1, &seq, min_len, on_fragment)?;
+    Ok(1)
 }
 
 fn next_non_empty_line<R: BufRead>(reader: &mut R, path: &Path) -> Result<Vec<u8>, InputError> {
@@ -488,6 +520,28 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![b"ACGT".as_slice(), b"TA".as_slice()]
         );
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn parses_headerless_wrapped_sequence() {
+        let path =
+            std::env::temp_dir().join(format!("cf3rs-input-{}-plain.fna.gz", std::process::id()));
+        let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(b"\nAACGT\nTNNACGT\n").unwrap();
+        fs::write(&path, encoder.finish().unwrap()).unwrap();
+
+        let mut fragments = Vec::new();
+        let records = parse_fragments(&path, 9, 3, |fragment| {
+            fragments.push(fragment);
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(records, 1);
+        assert_eq!(fragments[0].seq, b"AACGTT");
+        assert_eq!(fragments[1].seq, b"ACGT");
+        assert_eq!(fragments[1].offset, 8);
 
         let _ = fs::remove_file(path);
     }

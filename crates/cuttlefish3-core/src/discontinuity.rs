@@ -3,13 +3,14 @@ use crate::Side;
 use crate::buckets::{BucketError, BucketManifestEntry, read_manifest};
 use crate::color::{
     ColorError, ColorRepositoryManifest, ColorRunSidecar, ColorRunSidecarWriter,
-    ConcurrentColorRepository, append_color_runs, reverse_color_runs,
+    ConcurrentColorRepository, ConcurrentColorRunSidecarWriter, append_color_runs,
+    reverse_color_runs, reverse_color_runs_in_place,
 };
 use crate::dna::{Base, complement_ascii};
-use crate::hash::{FastBuildHasher, hash_bytes, hash_u64};
+use crate::hash::{FastBuildHasher, hash_bytes, hash_u64, wyhash_u64};
 use crate::kmer::Kmer;
 use crate::state::{UnitigColor, VertexState};
-use crate::subgraph::{LocalSubgraph, LocalSubgraphError, LocalUnitigColorRun};
+use crate::subgraph::{LocalSubgraph, LocalSubgraphError, LocalUnitigColorRun, LocalVertexMap};
 use leapfrog::LeapMap;
 use rayon::prelude::*;
 use rayon::{ThreadPool, ThreadPoolBuilder};
@@ -17,17 +18,18 @@ use scc::{HashMap as SccHashMap, hash_map::Entry as SccEntry};
 use std::cell::UnsafeCell;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs::{self, File, OpenOptions};
-use std::io::{BufRead, BufReader, BufWriter, Read, Seek, SeekFrom, Write};
+use std::io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::marker::PhantomData;
 use std::mem::MaybeUninit;
 use std::os::unix::fs::FileExt;
 use std::path::{Path, PathBuf};
 use std::sync::{
     Arc, Mutex,
-    atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering},
+    atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
     mpsc,
 };
 use std::time::{Duration, Instant};
+use xxhash_rust::xxh3::xxh3_64;
 
 type FastHashMap<K, V> = HashMap<K, V, FastBuildHasher>;
 type FastHashSet<T> = HashSet<T, FastBuildHasher>;
@@ -62,9 +64,11 @@ pub struct ExternalDiscontinuityInputs<const K: usize> {
     unitig_path: PathBuf,
     label_path: PathBuf,
     unitigs: usize,
+    compact_unitigs: bool,
     ranges: Vec<ExternalLocalUnitigRange>,
     edge_matrix: Option<BlockedEdgeMatrix<K>>,
     color_runs: Option<ColorRunSidecar>,
+    local_unitig_buckets: Option<Vec<LocalUnitigBucketEntry>>,
     color_repository: Option<ColorRepositoryManifest>,
     pub stats: DiscontinuityInputStats,
 }
@@ -90,6 +94,144 @@ struct ExternalLocalUnitigRange {
     label_start: u64,
     label_len: u64,
     color_start: u64,
+}
+
+#[derive(Debug)]
+struct LocalUnitigBucketEntry {
+    bucket_id: u16,
+    unitig_path: PathBuf,
+    label_path: PathBuf,
+    unitigs: usize,
+    color_runs: Option<ColorRunSidecar>,
+}
+
+struct LocalUnitigBucketWriter {
+    bucket_id: u16,
+    unitig_path: PathBuf,
+    label_path: PathBuf,
+    unitigs: BufWriter<File>,
+    labels: BufWriter<File>,
+    color_runs: Option<ColorRunSidecarWriter>,
+    unitig_count: usize,
+}
+
+impl LocalUnitigBucketWriter {
+    fn create(dir: &Path, bucket_id: u16, colored: bool) -> Result<Self, DiscontinuityInputError> {
+        let unitig_path = dir.join(format!("{bucket_id:03}.unitigs"));
+        let label_path = dir.join(format!("{bucket_id:03}.labels"));
+        let unitig_file =
+            File::create(&unitig_path).map_err(|source| DiscontinuityInputError::Io {
+                path: unitig_path.clone(),
+                source,
+            })?;
+        let label_file =
+            File::create(&label_path).map_err(|source| DiscontinuityInputError::Io {
+                path: label_path.clone(),
+                source,
+            })?;
+        let color_runs = colored
+            .then(|| ColorRunSidecarWriter::create(dir.join(format!("{bucket_id:03}.colors"))))
+            .transpose()?;
+        Ok(Self {
+            bucket_id,
+            unitig_path,
+            label_path,
+            unitigs: BufWriter::with_capacity(1024 * 1024, unitig_file),
+            labels: BufWriter::with_capacity(4 * 1024 * 1024, label_file),
+            color_runs,
+            unitig_count: 0,
+        })
+    }
+
+    fn write<const K: usize>(
+        &mut self,
+        labels: &[u8],
+        unitigs: &[DiscontinuityUnitig<K>],
+        colors: Option<&[Vec<UnitigColor>]>,
+    ) -> Result<usize, DiscontinuityInputError> {
+        if colors.is_some_and(|runs| runs.len() != unitigs.len()) {
+            return Err(DiscontinuityInputError::MissingColorRuns);
+        }
+        let base = self.unitig_count;
+        self.labels
+            .write_all(labels)
+            .map_err(|source| DiscontinuityInputError::Io {
+                path: self.label_path.clone(),
+                source,
+            })?;
+        for (index, unitig) in unitigs.iter().enumerate() {
+            write_discontinuity_unitig_record(&mut self.unitigs, &self.unitig_path, unitig, true)?;
+            if let Some(writer) = self.color_runs.as_mut() {
+                writer.write_unitig(&colors.expect("colored bucket has colors")[index])?;
+            }
+        }
+        self.unitig_count += unitigs.len();
+        Ok(base)
+    }
+
+    fn finish(mut self) -> Result<LocalUnitigBucketEntry, DiscontinuityInputError> {
+        self.unitigs
+            .flush()
+            .map_err(|source| DiscontinuityInputError::Io {
+                path: self.unitig_path.clone(),
+                source,
+            })?;
+        self.labels
+            .flush()
+            .map_err(|source| DiscontinuityInputError::Io {
+                path: self.label_path.clone(),
+                source,
+            })?;
+        Ok(LocalUnitigBucketEntry {
+            bucket_id: self.bucket_id,
+            unitig_path: self.unitig_path,
+            label_path: self.label_path,
+            unitigs: self.unitig_count,
+            color_runs: self
+                .color_runs
+                .map(ColorRunSidecarWriter::finish)
+                .transpose()?,
+        })
+    }
+}
+
+fn finish_local_unitig_writers(
+    writers: Vec<Mutex<LocalUnitigBucketWriter>>,
+    threads: usize,
+) -> Result<Vec<LocalUnitigBucketEntry>, DiscontinuityInputError> {
+    let worker_count = threads.max(1).min(writers.len().max(1));
+    let mut work = (0..worker_count).map(|_| Vec::new()).collect::<Vec<_>>();
+    for (index, writer) in writers.into_iter().enumerate() {
+        work[index % worker_count].push(writer);
+    }
+    let mut entries = std::thread::scope(|scope| {
+        let mut handles = Vec::with_capacity(worker_count);
+        for worker_writers in work {
+            handles.push(scope.spawn(move || {
+                let mut entries = Vec::with_capacity(worker_writers.len());
+                for writer in worker_writers {
+                    entries.push(
+                        writer
+                            .into_inner()
+                            .map_err(|_| DiscontinuityInputError::WorkerPanic)?
+                            .finish()?,
+                    );
+                }
+                Ok::<_, DiscontinuityInputError>(entries)
+            }));
+        }
+        let mut entries = Vec::new();
+        for handle in handles {
+            entries.extend(
+                handle
+                    .join()
+                    .map_err(|_| DiscontinuityInputError::WorkerPanic)??,
+            );
+        }
+        Ok::<_, DiscontinuityInputError>(entries)
+    })?;
+    entries.sort_unstable_by_key(|entry| entry.bucket_id);
+    Ok(entries)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -292,6 +434,7 @@ struct ExternalDiscontinuityReader<const K: usize> {
     unitig_path: PathBuf,
     label_path: PathBuf,
     unitigs: usize,
+    compact_unitigs: bool,
 }
 
 impl<const K: usize> ExternalDiscontinuityReader<K> {
@@ -306,6 +449,7 @@ impl<const K: usize> ExternalDiscontinuityReader<K> {
             unitig_path: inputs.unitig_path.clone(),
             label_path: inputs.label_path.clone(),
             unitigs: inputs.unitigs,
+            compact_unitigs: inputs.compact_unitigs,
         })
     }
 
@@ -332,6 +476,7 @@ impl<const K: usize> ExternalDiscontinuityReader<K> {
             input: BufReader::with_capacity(1024 * 1024, file),
             path: self.unitig_path.clone(),
             remaining: self.unitigs,
+            compact_unitigs: self.compact_unitigs,
         })
     }
 }
@@ -340,6 +485,7 @@ struct ExternalDiscontinuityIter<const K: usize> {
     input: BufReader<File>,
     path: PathBuf,
     remaining: usize,
+    compact_unitigs: bool,
 }
 
 impl<const K: usize> ExternalDiscontinuityIter<K> {
@@ -350,7 +496,7 @@ impl<const K: usize> ExternalDiscontinuityIter<K> {
             ));
         }
         self.remaining -= 1;
-        read_discontinuity_unitig_from_reader(&mut self.input, &self.path)
+        read_discontinuity_unitig_from_reader(&mut self.input, &self.path, self.compact_unitigs)
     }
 }
 
@@ -368,7 +514,24 @@ impl<const K: usize> Iterator for ExternalDiscontinuityIter<K> {
 fn read_discontinuity_unitig_from_reader<const K: usize>(
     input: &mut BufReader<File>,
     path: &Path,
+    compact: bool,
 ) -> Result<DiscontinuityUnitig<K>, SerialCollationError> {
+    if compact {
+        let mut bytes = [0u8; 8];
+        input
+            .read_exact(&mut bytes)
+            .map_err(|source| SerialCollationError::Io {
+                path: path.to_path_buf(),
+                source,
+            })?;
+        return Ok(DiscontinuityUnitig {
+            label_start: 0,
+            left_vertex: Kmer::zero(),
+            right_vertex: Kmer::zero(),
+            label_len: u32::from_le_bytes(bytes[..4].try_into().expect("label length")),
+            flags: bytes[4],
+        });
+    }
     let mut out = MaybeUninit::<DiscontinuityUnitig<K>>::zeroed();
     let bytes = unsafe {
         std::slice::from_raw_parts_mut(
@@ -383,6 +546,14 @@ fn read_discontinuity_unitig_from_reader<const K: usize>(
             source,
         })?;
     Ok(unsafe { out.assume_init() })
+}
+
+const fn external_unitig_record_len<const K: usize>(compact: bool) -> usize {
+    if compact {
+        8
+    } else {
+        std::mem::size_of::<DiscontinuityUnitig<K>>()
+    }
 }
 
 fn read_discontinuity_unitig_from_reader_for_input<const K: usize>(
@@ -464,6 +635,7 @@ pub struct DiscontinuityEdge<const K: usize> {
     pub first: MatrixEndpoint<K>,
     pub second: MatrixEndpoint<K>,
     pub weight: u64,
+    pub unitig_bucket: u16,
     pub unitig_index: usize,
     pub unitig_exit_side: Side,
     pub phantom_unitig: Option<DiscontinuityEndpoint<K>>,
@@ -588,6 +760,7 @@ impl<const K: usize> SerialEdgeMatrix<K> {
             first,
             second,
             weight,
+            unitig_bucket: 0,
             unitig_index,
             unitig_exit_side,
             phantom_unitig,
@@ -642,7 +815,7 @@ impl<const K: usize> MatrixEndpoint<K> {
     }
 }
 
-const BLOCKED_EDGE_WRITE_BUFFER_BYTES: usize = 16 * 1024;
+const BLOCKED_EDGE_WRITE_BUFFER_BYTES: usize = 256 * 1024;
 
 #[derive(Debug)]
 struct BlockedEdgeBlock {
@@ -678,6 +851,8 @@ struct ConcurrentBlockedAppend {
 struct ConcurrentBlockedEdgeWriters {
     partition_count: usize,
     blocks: Vec<ConcurrentBlockedAppend>,
+    phi_edges: AtomicU64,
+    diagonal_edges: AtomicU64,
 }
 
 impl ConcurrentBlockedEdgeWriters {
@@ -694,6 +869,8 @@ impl ConcurrentBlockedEdgeWriters {
                     edges: AtomicUsize::new(0),
                 })
                 .collect(),
+            phi_edges: AtomicU64::new(0),
+            diagonal_edges: AtomicU64::new(0),
         }
     }
 
@@ -730,6 +907,76 @@ impl ConcurrentBlockedEdgeWriters {
             buffer.extend_from_slice(&edge.bytes[..block.record_len]);
         }
         block.edges.fetch_add(edges.len(), Ordering::Relaxed);
+        Ok(())
+    }
+
+    fn add_prepared_edges<const K: usize>(
+        &self,
+        edges: &mut [PreparedBlockedEdge],
+        unitig_base: usize,
+        unitig_bucket: u16,
+    ) -> Result<(), SerialCollationError> {
+        if edges.is_empty() {
+            return Ok(());
+        }
+        edges.sort_unstable_by_key(|edge| edge.block);
+        let unitig_off = blocked_edge_unitig_offset::<K>();
+        let mut start = 0;
+        while start < edges.len() {
+            let block_id = edges[start].block;
+            let mut end = start + 1;
+            while end < edges.len() && edges[end].block == block_id {
+                end += 1;
+            }
+            let block = &self.blocks[block_id];
+            let mut buffer = block
+                .buffer
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
+            for edge in &edges[start..end] {
+                let mut bytes = edge.bytes;
+                add_unitig_base_to_encoded_edge::<K>(&mut bytes, unitig_off, unitig_base);
+                set_encoded_edge_unitig_bucket::<K>(&mut bytes, unitig_bucket);
+                if buffer.len() + block.record_len > BLOCKED_EDGE_WRITE_BUFFER_BYTES {
+                    append_blocked_bytes(&block.path, &buffer)?;
+                    buffer.clear();
+                }
+                buffer.extend_from_slice(&bytes[..block.record_len]);
+            }
+            block.edges.fetch_add(end - start, Ordering::Relaxed);
+            start = end;
+        }
+        self.phi_edges.fetch_add(
+            edges.iter().filter(|edge| edge.phi).count() as u64,
+            Ordering::Relaxed,
+        );
+        self.diagonal_edges.fetch_add(
+            edges.iter().filter(|edge| edge.diagonal).count() as u64,
+            Ordering::Relaxed,
+        );
+        Ok(())
+    }
+
+    fn finish_into<const K: usize>(
+        &self,
+        matrix: &mut BlockedEdgeMatrix<K>,
+    ) -> Result<(), SerialCollationError> {
+        let mut edges = 0u64;
+        for (block, target) in self.blocks.iter().zip(&mut matrix.blocks) {
+            let mut buffer = block
+                .buffer
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
+            if !buffer.is_empty() {
+                append_blocked_bytes(&block.path, &buffer)?;
+                buffer.clear();
+            }
+            target.edges = block.edges.load(Ordering::Relaxed);
+            edges += target.edges as u64;
+        }
+        matrix.stats.edges = edges;
+        matrix.stats.phi_edges = self.phi_edges.load(Ordering::Relaxed);
+        matrix.stats.diagonal_edges = self.diagonal_edges.load(Ordering::Relaxed);
         Ok(())
     }
 
@@ -863,10 +1110,7 @@ impl<const K: usize> BlockedEdgeMatrix<K> {
         let unitig_off = blocked_edge_unitig_offset::<K>();
         for edge in edges {
             let mut bytes = edge.bytes;
-            let mut local_index = [0u8; 8];
-            local_index.copy_from_slice(&bytes[unitig_off..unitig_off + 8]);
-            let unitig_index = unitig_base + u64::from_le_bytes(local_index) as usize;
-            bytes[unitig_off..unitig_off + 8].copy_from_slice(&(unitig_index as u64).to_le_bytes());
+            add_unitig_base_to_encoded_edge::<K>(&mut bytes, unitig_off, unitig_base);
             let block = &mut self.blocks[edge.block];
             if block.buffer.len() + block.record_len > BLOCKED_EDGE_WRITE_BUFFER_BYTES {
                 flush_blocked_edge_block(block)?;
@@ -947,20 +1191,27 @@ impl<const K: usize> BlockedEdgeMatrix<K> {
         if block.edges == 0 {
             return Ok(Vec::new());
         }
-        let bytes = fs::read(&block.path).map_err(|source| SerialCollationError::Io {
-            path: block.path.clone(),
-            source,
-        })?;
-        if bytes.len() != block.edges * block.record_len {
+        let bytes = match fs::read(&block.path) {
+            Ok(bytes) => bytes,
+            Err(source) if source.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+            Err(source) => {
+                return Err(SerialCollationError::Io {
+                    path: block.path.clone(),
+                    source,
+                });
+            }
+        };
+        if bytes.len() + block.buffer.len() != block.edges * block.record_len {
             return Err(SerialCollationError::MalformedCoordBucket(
                 block.path.clone(),
             ));
         }
         let mut records = Vec::with_capacity(block.edges);
         for encoded in bytes.chunks_exact(block.record_len) {
-            let mut record = [0u8; 72];
-            record[..block.record_len].copy_from_slice(encoded);
-            records.push(decode_discontinuity_edge::<K>(&record));
+            records.push(decode_discontinuity_edge::<K>(encoded));
+        }
+        for encoded in block.buffer.chunks_exact(block.record_len) {
+            records.push(decode_discontinuity_edge::<K>(encoded));
         }
         Ok(records)
     }
@@ -1072,7 +1323,9 @@ struct ExternalBlockedContraction<const K: usize> {
     vertex_partitions: usize,
     expansion_matrix: BlockedEdgeMatrix<K>,
     pub compressed_diagonal_edges: Vec<Vec<DiscontinuityEdge<K>>>,
-    meta_vertices: Vec<SerialMetaVertex<K>>,
+    meta_vertex_dir: PathBuf,
+    meta_vertex_count: u64,
+    meta_vertices_per_partition: Vec<usize>,
     stats: FullSerialContractionStats,
 }
 
@@ -1115,6 +1368,31 @@ fn flush_blocked_edge_block(block: &mut BlockedEdgeBlock) -> Result<(), SerialCo
 
 fn encode_discontinuity_edge<const K: usize>(edge: &DiscontinuityEdge<K>) -> [u8; 72] {
     let mut bytes = [0u8; 72];
+    if K <= 31 {
+        let endpoint_bits = |endpoint: MatrixEndpoint<K>| match endpoint {
+            MatrixEndpoint::Phi => u64::MAX,
+            MatrixEndpoint::Vertex(endpoint) => endpoint.vertex.as_u128() as u64,
+        };
+        bytes[..8].copy_from_slice(&endpoint_bits(edge.first).to_le_bytes());
+        bytes[8..16].copy_from_slice(&endpoint_bits(edge.second).to_le_bytes());
+        bytes[16..24].copy_from_slice(&edge.weight.to_le_bytes());
+        let unitig_index = if edge.unitig_index == usize::MAX {
+            u32::MAX
+        } else {
+            u32::try_from(edge.unitig_index).expect("local unitig index fits compact edge")
+        };
+        bytes[24..28].copy_from_slice(&unitig_index.to_le_bytes());
+        bytes[28] = u8::from(
+            matches!(edge.first, MatrixEndpoint::Vertex(endpoint) if endpoint.side == Side::Back),
+        ) | (u8::from(
+            matches!(edge.second, MatrixEndpoint::Vertex(endpoint) if endpoint.side == Side::Back),
+        ) << 1)
+            | (u8::from(edge.unitig_exit_side == Side::Back) << 2)
+            | (u8::from(edge.swapped) << 3)
+            | (u8::from(edge.phantom_unitig.is_some()) << 4);
+        bytes[29..31].copy_from_slice(&edge.unitig_bucket.to_le_bytes());
+        return bytes;
+    }
     let kmer_bytes = discontinuity_edge_kmer_bytes::<K>();
     let endpoint_len = kmer_bytes + 2;
     encode_matrix_endpoint(edge.first, &mut bytes[0..endpoint_len], kmer_bytes);
@@ -1137,6 +1415,8 @@ fn encode_discontinuity_edge<const K: usize>(edge: &DiscontinuityEdge<K>) -> [u8
             .copy_from_slice(&endpoint.vertex.as_u128().to_le_bytes()[..kmer_bytes]);
         bytes[phantom_off + kmer_bytes] = endpoint.side as u8;
     }
+    let bucket_off = discontinuity_edge_record_len::<K>() - 2;
+    bytes[bucket_off..bucket_off + 2].copy_from_slice(&edge.unitig_bucket.to_le_bytes());
     bytes
 }
 
@@ -1153,7 +1433,57 @@ fn encode_matrix_endpoint<const K: usize>(
     }
 }
 
-fn decode_discontinuity_edge<const K: usize>(bytes: &[u8; 72]) -> DiscontinuityEdge<K> {
+fn decode_discontinuity_edge<const K: usize>(bytes: &[u8]) -> DiscontinuityEdge<K> {
+    if K <= 31 {
+        let read_u64 = |range: std::ops::Range<usize>| {
+            u64::from_le_bytes(bytes[range].try_into().expect("eight-byte edge field"))
+        };
+        let flags = bytes[28];
+        let endpoint = |bits: u64, side_bit: u8| {
+            if bits == u64::MAX {
+                MatrixEndpoint::Phi
+            } else {
+                MatrixEndpoint::Vertex(DiscontinuityEndpoint {
+                    vertex: Kmer::from_bits(bits as u128),
+                    side: if flags & side_bit == 0 {
+                        Side::Front
+                    } else {
+                        Side::Back
+                    },
+                })
+            }
+        };
+        let first = endpoint(read_u64(0..8), 1);
+        let second = endpoint(read_u64(8..16), 2);
+        let raw_unitig = u32::from_le_bytes(bytes[24..28].try_into().unwrap());
+        let phantom_unitig = if flags & (1 << 4) == 0 {
+            None
+        } else {
+            match (first, second) {
+                (MatrixEndpoint::Vertex(endpoint), MatrixEndpoint::Phi)
+                | (MatrixEndpoint::Phi, MatrixEndpoint::Vertex(endpoint)) => Some(endpoint),
+                _ => None,
+            }
+        };
+        return DiscontinuityEdge {
+            first,
+            second,
+            weight: read_u64(16..24),
+            unitig_bucket: u16::from_le_bytes(bytes[29..31].try_into().unwrap()),
+            unitig_index: if raw_unitig == u32::MAX {
+                usize::MAX
+            } else {
+                raw_unitig as usize
+            },
+            unitig_exit_side: if flags & (1 << 2) == 0 {
+                Side::Front
+            } else {
+                Side::Back
+            },
+            phantom_unitig,
+            swapped: flags & (1 << 3) != 0,
+        };
+    }
     let kmer_bytes = discontinuity_edge_kmer_bytes::<K>();
     let endpoint_len = kmer_bytes + 2;
     let endpoint = |src: &[u8]| {
@@ -1188,6 +1518,11 @@ fn decode_discontinuity_edge<const K: usize>(bytes: &[u8; 72]) -> DiscontinuityE
         first: endpoint(&bytes[0..endpoint_len]),
         second: endpoint(&bytes[endpoint_len..2 * endpoint_len]),
         weight: u64::from_le_bytes(weight),
+        unitig_bucket: u16::from_le_bytes(
+            bytes[discontinuity_edge_record_len::<K>() - 2..discontinuity_edge_record_len::<K>()]
+                .try_into()
+                .unwrap(),
+        ),
         unitig_index: u64::from_le_bytes(unitig) as usize,
         unitig_exit_side: decode_side(bytes[flags_off]),
         phantom_unitig,
@@ -1199,6 +1534,40 @@ fn decode_discontinuity_edge<const K: usize>(bytes: &[u8; 72]) -> DiscontinuityE
 fn decode_partition_incoming<const K: usize>(
     bytes: &[u8],
 ) -> Option<(Kmer<K>, PartitionOtherEnd<K>)> {
+    if K <= 31 {
+        let first = u64::from_le_bytes(bytes[..8].try_into().unwrap());
+        let second = u64::from_le_bytes(bytes[8..16].try_into().unwrap());
+        if second == u64::MAX {
+            return None;
+        }
+        let flags = bytes[28];
+        let endpoint = if first == u64::MAX {
+            MatrixEndpoint::Phi
+        } else {
+            MatrixEndpoint::Vertex(DiscontinuityEndpoint {
+                vertex: Kmer::from_bits(first as u128),
+                side: if flags & 1 == 0 {
+                    Side::Front
+                } else {
+                    Side::Back
+                },
+            })
+        };
+        return Some((
+            Kmer::from_bits(second as u128),
+            PartitionOtherEnd {
+                endpoint,
+                side_at_current: if flags & 2 == 0 {
+                    Side::Front
+                } else {
+                    Side::Back
+                },
+                weight: u64::from_le_bytes(bytes[16..24].try_into().unwrap()),
+                in_same_part: false,
+                processed: false,
+            },
+        ));
+    }
     let kmer_bytes = discontinuity_edge_kmer_bytes::<K>();
     let endpoint_len = kmer_bytes + 2;
     let decode_endpoint = |src: &[u8]| {
@@ -1240,12 +1609,53 @@ const fn discontinuity_edge_kmer_bytes<const K: usize>() -> usize {
 
 #[inline]
 const fn discontinuity_edge_record_len<const K: usize>() -> usize {
-    3 * discontinuity_edge_kmer_bytes::<K>() + 24
+    if K <= 31 {
+        31
+    } else {
+        3 * discontinuity_edge_kmer_bytes::<K>() + 24
+    }
 }
 
 #[inline]
 const fn blocked_edge_unitig_offset<const K: usize>() -> usize {
-    2 * (discontinuity_edge_kmer_bytes::<K>() + 2) + 8
+    if K <= 31 {
+        24
+    } else {
+        2 * (discontinuity_edge_kmer_bytes::<K>() + 2) + 8
+    }
+}
+
+fn add_unitig_base_to_encoded_edge<const K: usize>(
+    bytes: &mut [u8; 72],
+    unitig_off: usize,
+    unitig_base: usize,
+) {
+    if K <= 31 {
+        let local = u32::from_le_bytes(bytes[unitig_off..unitig_off + 4].try_into().unwrap());
+        if local != u32::MAX {
+            let index = unitig_base
+                .checked_add(local as usize)
+                .and_then(|index| u32::try_from(index).ok())
+                .expect("global local-unitig index fits compact edge");
+            bytes[unitig_off..unitig_off + 4].copy_from_slice(&index.to_le_bytes());
+        }
+    } else {
+        let local = u64::from_le_bytes(bytes[unitig_off..unitig_off + 8].try_into().unwrap());
+        if local != u64::MAX {
+            let index = unitig_base + local as usize;
+            bytes[unitig_off..unitig_off + 8].copy_from_slice(&(index as u64).to_le_bytes());
+        }
+    }
+}
+
+#[inline]
+fn set_encoded_edge_unitig_bucket<const K: usize>(bytes: &mut [u8; 72], bucket: u16) {
+    let offset = if K <= 31 {
+        29
+    } else {
+        discontinuity_edge_record_len::<K>() - 2
+    };
+    bytes[offset..offset + 2].copy_from_slice(&bucket.to_le_bytes());
 }
 
 #[inline]
@@ -1584,6 +1994,7 @@ impl SerialDiscontinuityContractor {
                         side: v.side,
                     }),
                     weight,
+                    unitig_bucket: if weight == 1 { edge.unitig_bucket } else { 0 },
                     unitig_index: if weight == 1 { edge.unitig_index } else { 0 },
                     unitig_exit_side: if weight == 1 {
                         edge.unitig_exit_side
@@ -1641,6 +2052,7 @@ impl SerialDiscontinuityContractor {
                             side: end.side_at_vertex,
                         }),
                         weight: end.weight,
+                        unitig_bucket: 0,
                         unitig_index: end.unitig_index,
                         unitig_exit_side: end.unitig_exit_side,
                         phantom_unitig: None,
@@ -2215,23 +2627,33 @@ impl SerialDiscontinuityContractor {
         timings.diagonal += phase.elapsed();
 
         let record_len = discontinuity_edge_record_len::<K>();
-        let paths = (0..partition)
+        let block_ids = (0..partition)
             .filter_map(|row| {
-                let block = &matrix.blocks[matrix.block_index(row, partition)];
-                (block.edges != 0).then(|| block.path.clone())
+                let block_id = matrix.block_index(row, partition);
+                (matrix.blocks[block_id].edges != 0).then_some(block_id)
             })
             .collect::<Vec<_>>();
         let phase = Instant::now();
         let block_bytes = pool.install(|| {
-            paths
-                .into_par_iter()
-                .map(|path| {
-                    let bytes = fs::read(&path).map_err(|source| SerialCollationError::Io {
-                        path: path.clone(),
-                        source,
-                    })?;
+            block_ids
+                .par_iter()
+                .copied()
+                .map(|block_id| {
+                    let block = &matrix.blocks[block_id];
+                    let bytes = match fs::read(&block.path) {
+                        Ok(bytes) => bytes,
+                        Err(source) if source.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+                        Err(source) => {
+                            return Err(SerialCollationError::Io {
+                                path: block.path.clone(),
+                                source,
+                            });
+                        }
+                    };
                     if bytes.len() % record_len != 0 {
-                        return Err(SerialCollationError::MalformedCoordBucket(path));
+                        return Err(SerialCollationError::MalformedCoordBucket(
+                            block.path.clone(),
+                        ));
                     }
                     Ok::<_, SerialCollationError>(bytes)
                 })
@@ -2240,16 +2662,21 @@ impl SerialDiscontinuityContractor {
         timings.read += phase.elapsed();
         let records_per_task = (1024 * 1024 / record_len).max(1);
         let bytes_per_task = records_per_task * record_len;
-        let tasks = block_bytes
-            .iter()
-            .flat_map(|bytes| bytes.chunks(bytes_per_task))
-            .collect::<Vec<_>>();
+        let mut tasks = Vec::new();
+        for (index, bytes) in block_bytes.iter().enumerate() {
+            tasks.extend(bytes.chunks(bytes_per_task));
+            tasks.extend(
+                matrix.blocks[block_ids[index]]
+                    .buffer
+                    .chunks(bytes_per_task),
+            );
+        }
         let phase = Instant::now();
         let outputs = pool.install(|| {
             tasks
                 .into_par_iter()
                 .map(|bytes| {
-                    let mut edges = Vec::with_capacity(bytes.len() / record_len / 2);
+                    let mut prepared = Vec::with_capacity(bytes.len() / record_len / 2);
                     let mut meta_vertices = Vec::new();
                     let mut input_edges = 0u64;
                     for encoded in bytes.chunks_exact(record_len) {
@@ -2258,10 +2685,16 @@ impl SerialDiscontinuityContractor {
                             continue;
                         };
                         input_edges += 1;
-                        table.absorb(vertex, incoming, partition, &mut edges, &mut meta_vertices);
+                        table.absorb_prepared(
+                            vertex,
+                            incoming,
+                            partition,
+                            matrix.vertex_partitions,
+                            &mut prepared,
+                            &mut meta_vertices,
+                        );
                     }
-                    let emitted =
-                        emit_contracted_edge_batch(edges, matrix.vertex_partitions, appenders)?;
+                    let emitted = emit_prepared_edge_batch(&mut prepared, appenders)?;
                     Ok::<_, SerialCollationError>((meta_vertices, input_edges, emitted))
                 })
                 .collect::<Result<Vec<_>, SerialCollationError>>()
@@ -2463,56 +2896,80 @@ impl SerialDiscontinuityContractor {
         meta_vertices.extend(diagonal.meta_vertices);
         let mut phantom_edges = 0u64;
 
-        for edge in &diagonal.edges {
-            let (MatrixEndpoint::Vertex(x), MatrixEndpoint::Vertex(y)) = (edge.first, edge.second)
-            else {
-                continue;
-            };
-            for endpoint in [x, y] {
-                if table.get(endpoint.vertex).is_none() {
-                    phantom_edges += 1;
-                    let phantom = DiscontinuityEndpoint {
-                        vertex: endpoint.vertex,
-                        side: endpoint.side.inverse(),
-                    };
-                    expansion_edges.push(join_other_ends_with_phantom(
-                        MatrixEndpoint::Phi,
-                        MatrixEndpoint::Vertex(phantom),
-                        1,
-                        Some(phantom),
-                    ));
-                    table.insert_serial(
-                        endpoint.vertex,
-                        PartitionOtherEnd {
+        let diagonal_chunk = diagonal.edges.len().div_ceil(threads.max(1)).max(1);
+        let diagonal_outputs = pool.install(|| {
+            diagonal
+                .edges
+                .par_chunks(diagonal_chunk)
+                .map(|diagonal_edges| {
+                    let mut local_edges = Vec::new();
+                    let mut local_expansion = Vec::new();
+                    let mut local_meta = Vec::new();
+                    let mut local_phantoms = 0u64;
+                    for edge in diagonal_edges {
+                        let (MatrixEndpoint::Vertex(x), MatrixEndpoint::Vertex(y)) =
+                            (edge.first, edge.second)
+                        else {
+                            continue;
+                        };
+                        let x_stored = table.get(x.vertex);
+                        let y_stored = table.get(y.vertex);
+                        let endpoint = |vertex: DiscontinuityEndpoint<K>| PartitionOtherEnd {
                             endpoint: MatrixEndpoint::Phi,
-                            side_at_current: endpoint.side.inverse(),
+                            side_at_current: vertex.side.inverse(),
                             weight: 1,
                             in_same_part: false,
-                            processed: false,
-                        },
-                    );
-                }
-            }
-            let x_end = table.get(x.vertex).expect("inserted x endpoint");
-            let y_end = table.get(y.vertex).expect("inserted y endpoint");
-            if x_end.endpoint.is_phi() && y_end.endpoint.is_phi() {
-                meta_vertices.push(two_weight_meta_vertex(
-                    x.vertex,
-                    partition,
-                    x.side.inverse(),
-                    x_end.weight,
-                    edge.weight + y_end.weight,
-                    false,
-                ));
-            } else {
-                edges.push(join_other_ends(
-                    x_end.endpoint,
-                    y_end.endpoint,
-                    x_end.weight + edge.weight + y_end.weight,
-                ));
-            }
-            table.mark_processed(x.vertex);
-            table.mark_processed(y.vertex);
+                            processed: true,
+                        };
+                        let x_end = x_stored.unwrap_or_else(|| endpoint(x));
+                        let y_end = y_stored.unwrap_or_else(|| endpoint(y));
+                        for (stored, endpoint) in [(x_stored, x), (y_stored, y)] {
+                            if stored.is_none() {
+                                local_phantoms += 1;
+                                let phantom = DiscontinuityEndpoint {
+                                    vertex: endpoint.vertex,
+                                    side: endpoint.side.inverse(),
+                                };
+                                local_expansion.push(join_other_ends_with_phantom(
+                                    MatrixEndpoint::Phi,
+                                    MatrixEndpoint::Vertex(phantom),
+                                    1,
+                                    Some(phantom),
+                                ));
+                            }
+                        }
+                        if x_end.endpoint.is_phi() && y_end.endpoint.is_phi() {
+                            local_meta.push(two_weight_meta_vertex(
+                                x.vertex,
+                                partition,
+                                x.side.inverse(),
+                                x_end.weight,
+                                edge.weight + y_end.weight,
+                                false,
+                            ));
+                        } else {
+                            local_edges.push(join_other_ends(
+                                x_end.endpoint,
+                                y_end.endpoint,
+                                x_end.weight + edge.weight + y_end.weight,
+                            ));
+                        }
+                        if x_stored.is_some() {
+                            table.mark_processed(x.vertex);
+                        }
+                        if y_stored.is_some() {
+                            table.mark_processed(y.vertex);
+                        }
+                    }
+                    (local_edges, local_expansion, local_meta, local_phantoms)
+                })
+                .collect::<Vec<_>>()
+        });
+        for (local_edges, local_expansion, local_meta, local_phantoms) in diagonal_outputs {
+            edges.extend(local_edges);
+            expansion_edges.extend(local_expansion);
+            meta_vertices.extend(local_meta);
+            phantom_edges += local_phantoms;
         }
 
         let scan_chunk = table.slots.len().div_ceil(threads.max(1)).max(1);
@@ -2530,7 +2987,7 @@ impl SerialDiscontinuityContractor {
                         if key == AtomicPartitionTable::<K>::EMPTY {
                             continue;
                         }
-                        let end = unsafe { (*slot.value.get()).assume_init() };
+                        let end = unsafe { (*slot.value.get()).assume_init() }.unpack::<K>();
                         if end.processed {
                             continue;
                         }
@@ -3244,7 +3701,19 @@ impl SerialDiscontinuityContractor {
         let total_partitions = partition_count - 1;
         let mut compressed_diagonal_edges =
             (0..partition_count).map(|_| Vec::new()).collect::<Vec<_>>();
-        let mut meta_vertices = Vec::new();
+        let meta_vertex_dir = working.dir.join("contracted-meta-path-info");
+        if meta_vertex_dir.exists() {
+            fs::remove_dir_all(&meta_vertex_dir).map_err(|source| SerialCollationError::Io {
+                path: meta_vertex_dir.clone(),
+                source,
+            })?;
+        }
+        fs::create_dir_all(&meta_vertex_dir).map_err(|source| SerialCollationError::Io {
+            path: meta_vertex_dir.clone(),
+            source,
+        })?;
+        let mut meta_vertex_count = 0u64;
+        let mut meta_vertices_per_partition = vec![0usize; partition_count];
         let mut reusable_table =
             FastHashMap::<Kmer<K>, PartitionOtherEnd<K>>::with_hasher(FastBuildHasher::default());
         let mut column = SerialEdgeMatrix::new(working.vertex_partitions)
@@ -3272,7 +3741,7 @@ impl SerialDiscontinuityContractor {
                 setup_elapsed.as_secs_f64(),
                 max_partition_vertices,
                 table.slots.len(),
-                std::mem::size_of::<AtomicPartitionSlot<K>>(),
+                std::mem::size_of::<AtomicPartitionSlot>(),
             );
         }
         let mut stats = FullSerialContractionStats {
@@ -3284,6 +3753,7 @@ impl SerialDiscontinuityContractor {
         let mut partition_contract_elapsed = Duration::default();
         let mut reinsert_elapsed = Duration::default();
         let mut direct_timings = BlockedContractTimings::default();
+        let mut meta_write_elapsed = Duration::default();
         eprintln!(
             "cuttlefish3-rs: contracting {} blocked discontinuity partition(s) with {} worker(s)",
             total_partitions, threads
@@ -3350,7 +3820,16 @@ impl SerialDiscontinuityContractor {
             })?;
             stats.reinserted_edges += reinserted;
             reinsert_elapsed += phase_started.elapsed();
-            meta_vertices.extend(contracted.meta_vertices);
+            let meta_write_started = Instant::now();
+            write_meta_vertex_bucket_parallel(
+                &meta_vertex_dir,
+                partition,
+                &contracted.meta_vertices,
+                &contraction_pool,
+            )?;
+            meta_write_elapsed += meta_write_started.elapsed();
+            meta_vertex_count += contracted.meta_vertices.len() as u64;
+            meta_vertices_per_partition[partition] += contracted.meta_vertices.len();
             for row in 0..=partition {
                 column.blocks[row][partition].clear();
             }
@@ -3374,11 +3853,12 @@ impl SerialDiscontinuityContractor {
         working.flush_all_with_threads(threads)?;
         let block_flush_elapsed = flush_started.elapsed();
         eprintln!(
-            "cuttlefish3-rs: blocked contraction detail: setup {:.3}s, block load/decode {:.3}s, partition contraction {:.3}s, reinsertion {:.3}s, block flush {:.3}s",
+            "cuttlefish3-rs: blocked contraction detail: setup {:.3}s, block load/decode {:.3}s, partition contraction {:.3}s, reinsertion {:.3}s, meta write {:.3}s, block flush {:.3}s",
             setup_elapsed.as_secs_f64(),
             block_load_elapsed.as_secs_f64(),
             partition_contract_elapsed.as_secs_f64(),
             reinsert_elapsed.as_secs_f64(),
+            meta_write_elapsed.as_secs_f64(),
             block_flush_elapsed.as_secs_f64(),
         );
         if atomic_table.is_some() {
@@ -3393,12 +3873,14 @@ impl SerialDiscontinuityContractor {
             );
         }
         stats.partitions = total_partitions as u64;
-        stats.meta_vertices = meta_vertices.len() as u64;
+        stats.meta_vertices = meta_vertex_count;
         Ok(ExternalBlockedContraction {
             vertex_partitions: working.vertex_partitions,
             expansion_matrix: working,
             compressed_diagonal_edges,
-            meta_vertices,
+            meta_vertex_dir,
+            meta_vertex_count,
+            meta_vertices_per_partition,
             stats,
         })
     }
@@ -3638,6 +4120,26 @@ impl SerialDiscontinuityExpander {
         }
     }
 
+    #[inline(always)]
+    fn infer_compact(
+        source: CompactExpansionPathInfo,
+        source_side: Side,
+        target_side: Side,
+        weight: u64,
+    ) -> CompactExpansionPathInfo {
+        let rank = if source_side == source.exit_side() {
+            source.rank() + weight
+        } else {
+            source.rank().saturating_sub(weight)
+        };
+        let exit_side = if source_side == source.exit_side() {
+            target_side.inverse()
+        } else {
+            target_side
+        };
+        CompactExpansionPathInfo::new(source.path_id, rank, exit_side, source.is_cycle())
+    }
+
     fn expand_non_diagonal_raw<const K: usize>(
         matrix: &BlockedEdgeMatrix<K>,
         partition: usize,
@@ -3645,6 +4147,7 @@ impl SerialDiscontinuityExpander {
         vertex_path_info_dir: &Path,
         edge_writers: &ConcurrentStitchedCoordWriters<'_>,
         ranges: &[ExternalLocalUnitigRange],
+        range_index: &ExternalRangeIndex,
         ranges_per_bucket: usize,
         error_path: &Path,
         pool: &ThreadPool,
@@ -3659,30 +4162,46 @@ impl SerialDiscontinuityExpander {
     > {
         let blocks = (partition + 1..matrix.partition_count())
             .filter_map(|col| {
-                let block = &matrix.blocks[matrix.block_index(partition, col)];
-                (block.edges != 0).then(|| (col, block.path.clone(), block.record_len))
+                let block_id = matrix.block_index(partition, col);
+                let block = &matrix.blocks[block_id];
+                (block.edges != 0).then_some((col, block_id))
             })
             .collect::<Vec<_>>();
         let block_bytes = pool.install(|| {
             blocks
-                .into_par_iter()
-                .map(|(col, path, record_len)| {
-                    let bytes = fs::read(&path).map_err(|source| SerialCollationError::Io {
-                        path: path.clone(),
-                        source,
-                    })?;
-                    if bytes.len() % record_len != 0 {
-                        return Err(SerialCollationError::MalformedCoordBucket(path));
+                .par_iter()
+                .copied()
+                .map(|(col, block_id)| {
+                    let block = &matrix.blocks[block_id];
+                    let bytes = match fs::read(&block.path) {
+                        Ok(bytes) => bytes,
+                        Err(source) if source.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+                        Err(source) => {
+                            return Err(SerialCollationError::Io {
+                                path: block.path.clone(),
+                                source,
+                            });
+                        }
+                    };
+                    if bytes.len() % block.record_len != 0 {
+                        return Err(SerialCollationError::MalformedCoordBucket(
+                            block.path.clone(),
+                        ));
                     }
-                    Ok::<_, SerialCollationError>((col, record_len, bytes))
+                    Ok::<_, SerialCollationError>((col, block_id, bytes))
                 })
                 .collect::<Result<Vec<_>, SerialCollationError>>()
         })?;
         let mut tasks = Vec::new();
-        for (col, record_len, bytes) in &block_bytes {
+        for (col, block_id, bytes) in &block_bytes {
+            let block = &matrix.blocks[*block_id];
+            let record_len = block.record_len;
             let bytes_per_task = (1024 * 1024 / record_len).max(1) * record_len;
             for chunk in bytes.chunks(bytes_per_task) {
-                tasks.push((*col, *record_len, chunk));
+                tasks.push((*col, record_len, chunk));
+            }
+            for chunk in block.buffer.chunks(bytes_per_task) {
+                tasks.push((*col, record_len, chunk));
             }
         }
         let outputs = pool.install(|| {
@@ -3690,51 +4209,63 @@ impl SerialDiscontinuityExpander {
                 .into_par_iter()
                 .map(|(col, record_len, bytes)| {
                     let mut vertex_records = Vec::new();
-                    let mut path_records = Vec::<(usize, StitchedCoordRecord)>::new();
+                    let mut path_records = (0..edge_writers.writers.len())
+                        .map(|_| None::<Vec<StitchedCoordRecord>>)
+                        .collect::<Vec<_>>();
+                    let mut used_path_buckets = Vec::new();
                     let mut phantoms = Vec::new();
                     let mut unresolved = 0u64;
                     let mut inferred = 0u64;
                     let mut emitted = 0u64;
                     for encoded in bytes.chunks_exact(record_len) {
-                        let mut raw = [0u8; 72];
-                        raw[..record_len].copy_from_slice(encoded);
-                        let edge = decode_discontinuity_edge::<K>(&raw);
+                        let edge = decode_discontinuity_edge::<K>(encoded);
                         let (MatrixEndpoint::Vertex(x), MatrixEndpoint::Vertex(y)) =
                             (edge.first, edge.second)
                         else {
                             continue;
                         };
-                        let Some(x_info) = map.get(x.vertex) else {
+                        let Some(x_info) = map.get_compact(x.vertex) else {
                             unresolved += 1;
                             continue;
                         };
-                        let y_info = Self::infer(x_info, x.side, y.side, edge.weight);
-                        if y_info.rank > 0 {
-                            vertex_records.extend_from_slice(
-                                &encoded_vertex_path_info_record(&VertexPathInfo {
-                                    vertex: y.vertex,
-                                    info: y_info,
-                                })[..vertex_path_info_record_len::<K>()],
+                        let y_info = Self::infer_compact(x_info, x.side, y.side, edge.weight);
+                        if y_info.rank() > 0 {
+                            append_encoded_compact_vertex_path_info::<K>(
+                                &mut vertex_records,
+                                y.vertex,
+                                y_info,
                             );
                             inferred += 1;
                         }
                         if edge.weight == 1 {
-                            let record = stitched_record_from_edge_path_info(
+                            let record = stitched_record_from_compact_edge_path_info(
                                 &edge,
-                                edge_path_info(&edge, x_info, y_info),
+                                compact_edge_path_info(&edge, x_info, y_info),
                                 error_path,
                             )?;
                             if let Some(phantom) = edge.phantom_unitig {
                                 phantoms.push((record, phantom));
                             } else {
-                                let range_id =
-                                    external_range_id_for_unitig(ranges, edge.unitig_index)
-                                        .ok_or_else(|| {
-                                            SerialCollationError::MalformedCoordBucket(
-                                                error_path.to_path_buf(),
-                                            )
-                                        })?;
-                                path_records.push((range_id / ranges_per_bucket, record));
+                                let bucket_id = edge_path_info_bucket(
+                                    &edge,
+                                    ranges,
+                                    range_index,
+                                    ranges_per_bucket,
+                                )
+                                .ok_or_else(|| {
+                                    SerialCollationError::MalformedCoordBucket(
+                                        error_path.to_path_buf(),
+                                    )
+                                })?;
+                                let bucket = &mut path_records[bucket_id];
+                                if bucket.is_none() {
+                                    *bucket = Some(Vec::new());
+                                    used_path_buckets.push(bucket_id);
+                                }
+                                bucket
+                                    .as_mut()
+                                    .expect("path bucket was just initialized")
+                                    .push(record);
                             }
                             emitted += 1;
                         }
@@ -3752,20 +4283,13 @@ impl SerialDiscontinuityExpander {
                         file.write_all(&vertex_records)
                             .map_err(|source| SerialCollationError::Io { path, source })?;
                     }
-                    path_records.sort_unstable_by_key(|(bucket, _)| *bucket);
-                    let mut start = 0;
-                    while start < path_records.len() {
-                        let bucket = path_records[start].0;
-                        let mut end = start + 1;
-                        while end < path_records.len() && path_records[end].0 == bucket {
-                            end += 1;
-                        }
-                        let batch = path_records[start..end]
-                            .iter()
-                            .map(|(_, record)| *record)
-                            .collect::<Vec<_>>();
-                        edge_writers.write_path_records(bucket, &batch)?;
-                        start = end;
+                    for bucket_id in used_path_buckets {
+                        edge_writers.write_path_records(
+                            bucket_id,
+                            path_records[bucket_id]
+                                .as_deref()
+                                .expect("used path bucket is initialized"),
+                        )?;
                     }
                     Ok::<_, SerialCollationError>((phantoms, unresolved, inferred, emitted))
                 })
@@ -3834,28 +4358,11 @@ impl SerialDiscontinuityExpander {
             .map_err(|_| SerialCollationError::WorkerPanic)?;
 
         let partition_count = contraction.vertex_partitions + 1;
-        let vertex_path_info_dir = expansion_dir.join("P_v");
+        let vertex_path_info_dir = contraction.meta_vertex_dir.clone();
         let mut vertex_writers =
-            VertexPathInfoBucketWriters::<K>::create(&vertex_path_info_dir, partition_count)?;
-        let mut meta_vertices_per_partition = vec![0usize; partition_count];
-        for meta in &contraction.meta_vertices {
-            if meta.partition < partition_count {
-                meta_vertices_per_partition[meta.partition] += 1;
-                vertex_writers.write_record(
-                    meta.partition,
-                    &VertexPathInfo {
-                        vertex: meta.vertex,
-                        info: PathInfo {
-                            path_id: meta.vertex,
-                            rank: meta.weight,
-                            exit_side: meta.entry_side,
-                            is_cycle: meta.is_cycle,
-                        },
-                    },
-                )?;
-            }
-        }
-        let seed_vertices = contraction.meta_vertices.len() as u64;
+            VertexPathInfoBucketWriters::<K>::open_existing(&vertex_path_info_dir, partition_count);
+        let meta_vertices_per_partition = &contraction.meta_vertices_per_partition;
+        let seed_vertices = contraction.meta_vertex_count;
 
         let mut diagonal_by_partition = contraction.compressed_diagonal_edges.clone();
         diagonal_by_partition.resize_with(partition_count, Vec::new);
@@ -3865,7 +4372,9 @@ impl SerialDiscontinuityExpander {
             path: edge_path_info_dir.clone(),
             source,
         })?;
-        let edge_writers = ConcurrentStitchedCoordWriters::new(&edge_path_info_dir, bucket_count);
+        let edge_writers =
+            ConcurrentStitchedCoordWriters::new(&edge_path_info_dir, bucket_count, threads);
+        let range_index = ExternalRangeIndex::new(ranges);
         let mut phantom_records = Vec::new();
         let mut unresolved_edges = 0u64;
         let mut inferred_vertices = 0u64;
@@ -3915,6 +4424,7 @@ impl SerialDiscontinuityExpander {
                 partition,
                 error_path,
                 &map,
+                &expansion_pool,
                 &mut path_info_read_elapsed,
                 &mut path_info_insert_elapsed,
             )?;
@@ -3928,16 +4438,28 @@ impl SerialDiscontinuityExpander {
                     continue;
                 };
 
-                if let Some(y_info) = map.get(y.vertex) {
+                if K <= 31 {
+                    if let Some(y_info) = map.get_compact(y.vertex) {
+                        let x_info = Self::infer_compact(y_info, y.side, x.side, edge.weight);
+                        if x_info.rank() > 0 && map.insert_compact(x.vertex, x_info) {
+                            inferred_vertices += 1;
+                        }
+                    } else if let Some(x_info) = map.get_compact(x.vertex) {
+                        let y_info = Self::infer_compact(x_info, x.side, y.side, edge.weight);
+                        if y_info.rank() > 0 && map.insert_compact(y.vertex, y_info) {
+                            inferred_vertices += 1;
+                        }
+                    } else {
+                        unresolved_edges += 1;
+                    }
+                } else if let Some(y_info) = map.get(y.vertex) {
                     let x_info = Self::infer(y_info, y.side, x.side, edge.weight);
-                    if x_info.rank > 0 && !map.contains_key(&x.vertex) {
-                        map.insert(x.vertex, x_info);
+                    if x_info.rank > 0 && map.insert(x.vertex, x_info) {
                         inferred_vertices += 1;
                     }
                 } else if let Some(x_info) = map.get(x.vertex) {
                     let y_info = Self::infer(x_info, x.side, y.side, edge.weight);
-                    if y_info.rank > 0 && !map.contains_key(&y.vertex) {
-                        map.insert(y.vertex, y_info);
+                    if y_info.rank > 0 && map.insert(y.vertex, y_info) {
                         inferred_vertices += 1;
                     }
                 } else {
@@ -3959,6 +4481,7 @@ impl SerialDiscontinuityExpander {
                         &vertex_path_info_dir,
                         &edge_writers,
                         ranges,
+                        &range_index,
                         ranges_per_bucket,
                         error_path,
                         &expansion_pool,
@@ -3995,6 +4518,7 @@ impl SerialDiscontinuityExpander {
                                 edge,
                                 edge_path_info(edge, x_info, y_info),
                                 ranges,
+                                &range_index,
                                 ranges_per_bucket,
                                 &edge_writers,
                                 &mut phantom_records,
@@ -4084,9 +4608,11 @@ impl SerialDiscontinuityExpander {
                                         if let Some(phantom) = edge.phantom_unitig {
                                             local_phantoms.push((record, phantom));
                                         } else {
-                                            let range_id = external_range_id_for_unitig(
+                                            let bucket_id = edge_path_info_bucket(
+                                                edge,
                                                 ranges,
-                                                edge.unitig_index,
+                                                &range_index,
+                                                ranges_per_bucket,
                                             )
                                             .ok_or_else(|| {
                                                 SerialCollationError::MalformedCoordBucket(
@@ -4094,7 +4620,7 @@ impl SerialDiscontinuityExpander {
                                                 )
                                             })?;
                                             range_records
-                                                .get_mut(range_id / ranges_per_bucket)
+                                                .get_mut(bucket_id)
                                                 .ok_or_else(|| {
                                                     SerialCollationError::MalformedCoordBucket(
                                                         error_path.to_path_buf(),
@@ -4151,31 +4677,55 @@ impl SerialDiscontinuityExpander {
                 else {
                     continue;
                 };
-                let Some(x_info) = map.get(x.vertex) else {
-                    unresolved_edges += 1;
-                    continue;
-                };
-                let y_info = Self::infer(x_info, x.side, y.side, edge.weight);
-                push_edge_path_record_to_range_buffers(
-                    edge,
-                    edge_path_info(edge, x_info, y_info),
-                    ranges,
-                    ranges_per_bucket,
-                    &mut original_records,
-                    &mut phantom_records,
-                    error_path,
-                )?;
+                if K <= 31 {
+                    let Some(x_info) = map.get_compact(x.vertex) else {
+                        unresolved_edges += 1;
+                        continue;
+                    };
+                    let y_info = Self::infer_compact(x_info, x.side, y.side, edge.weight);
+                    push_compact_edge_path_record_to_range_buffers(
+                        edge,
+                        compact_edge_path_info(edge, x_info, y_info),
+                        ranges,
+                        &range_index,
+                        ranges_per_bucket,
+                        &mut original_records,
+                        &mut phantom_records,
+                        error_path,
+                    )?;
+                } else {
+                    let Some(x_info) = map.get(x.vertex) else {
+                        unresolved_edges += 1;
+                        continue;
+                    };
+                    let y_info = Self::infer(x_info, x.side, y.side, edge.weight);
+                    push_edge_path_record_to_range_buffers(
+                        edge,
+                        edge_path_info(edge, x_info, y_info),
+                        ranges,
+                        &range_index,
+                        ranges_per_bucket,
+                        &mut original_records,
+                        &mut phantom_records,
+                        error_path,
+                    )?;
+                }
                 edge_path_infos += 1;
             }
 
             let phi_block = &matrix.blocks[matrix.block_index(0, partition)];
             if phi_block.edges != 0 {
-                let bytes =
-                    fs::read(&phi_block.path).map_err(|source| SerialCollationError::Io {
-                        path: phi_block.path.clone(),
-                        source,
-                    })?;
-                if bytes.len() != phi_block.edges * phi_block.record_len {
+                let bytes = match fs::read(&phi_block.path) {
+                    Ok(bytes) => bytes,
+                    Err(source) if source.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+                    Err(source) => {
+                        return Err(SerialCollationError::Io {
+                            path: phi_block.path.clone(),
+                            source,
+                        });
+                    }
+                };
+                if bytes.len() + phi_block.buffer.len() != phi_block.edges * phi_block.record_len {
                     return Err(SerialCollationError::MalformedCoordBucket(
                         phi_block.path.clone(),
                     ));
@@ -4185,15 +4735,17 @@ impl SerialDiscontinuityExpander {
                 let phi_outputs = expansion_pool.install(|| {
                     bytes
                         .par_chunks(bytes_per_chunk)
+                        .chain(phi_block.buffer.par_chunks(bytes_per_chunk))
                         .map(|chunk| {
-                            let mut records = Vec::<(usize, StitchedCoordRecord)>::new();
+                            let mut records = (0..bucket_count)
+                                .map(|_| None::<Vec<StitchedCoordRecord>>)
+                                .collect::<Vec<_>>();
+                            let mut used_buckets = Vec::new();
                             let mut phantoms = Vec::new();
                             let mut local_unresolved = 0u64;
                             let mut local_emitted = 0u64;
                             for encoded in chunk.chunks_exact(phi_block.record_len) {
-                                let mut raw = [0u8; 72];
-                                raw[..phi_block.record_len].copy_from_slice(encoded);
-                                let edge = decode_discontinuity_edge::<K>(&raw);
+                                let edge = decode_discontinuity_edge::<K>(encoded);
                                 if edge.weight != 1 {
                                     continue;
                                 }
@@ -4202,43 +4754,60 @@ impl SerialDiscontinuityExpander {
                                 else {
                                     continue;
                                 };
-                                let Some(v_info) = map.get(v.vertex) else {
-                                    local_unresolved += 1;
-                                    continue;
+                                let record = if K <= 31 {
+                                    let Some(v_info) = map.get_compact(v.vertex) else {
+                                        local_unresolved += 1;
+                                        continue;
+                                    };
+                                    stitched_record_from_compact_edge_path_info(
+                                        &edge,
+                                        compact_phi_edge_path_info(&edge, v_info),
+                                        error_path,
+                                    )?
+                                } else {
+                                    let Some(v_info) = map.get(v.vertex) else {
+                                        local_unresolved += 1;
+                                        continue;
+                                    };
+                                    stitched_record_from_edge_path_info(
+                                        &edge,
+                                        phi_edge_path_info(&edge, v_info),
+                                        error_path,
+                                    )?
                                 };
-                                let record = stitched_record_from_edge_path_info(
-                                    &edge,
-                                    phi_edge_path_info(&edge, v_info),
-                                    error_path,
-                                )?;
                                 if let Some(phantom) = edge.phantom_unitig {
                                     phantoms.push((record, phantom));
                                 } else {
-                                    let range_id =
-                                        external_range_id_for_unitig(ranges, edge.unitig_index)
-                                            .ok_or_else(|| {
-                                                SerialCollationError::MalformedCoordBucket(
-                                                    error_path.to_path_buf(),
-                                                )
-                                            })?;
-                                    records.push((range_id / ranges_per_bucket, record));
+                                    let bucket_id = edge_path_info_bucket(
+                                        &edge,
+                                        ranges,
+                                        &range_index,
+                                        ranges_per_bucket,
+                                    )
+                                    .ok_or_else(|| {
+                                        SerialCollationError::MalformedCoordBucket(
+                                            error_path.to_path_buf(),
+                                        )
+                                    })?;
+                                    let bucket = &mut records[bucket_id];
+                                    if bucket.is_none() {
+                                        *bucket = Some(Vec::new());
+                                        used_buckets.push(bucket_id);
+                                    }
+                                    bucket
+                                        .as_mut()
+                                        .expect("edge bucket was just initialized")
+                                        .push(record);
                                 }
                                 local_emitted += 1;
                             }
-                            records.sort_unstable_by_key(|(bucket, _)| *bucket);
-                            let mut start = 0;
-                            while start < records.len() {
-                                let bucket = records[start].0;
-                                let mut end = start + 1;
-                                while end < records.len() && records[end].0 == bucket {
-                                    end += 1;
-                                }
-                                let batch = records[start..end]
-                                    .iter()
-                                    .map(|(_, record)| *record)
-                                    .collect::<Vec<_>>();
-                                edge_writers.write_path_records(bucket, &batch)?;
-                                start = end;
+                            for bucket_id in used_buckets {
+                                edge_writers.write_path_records(
+                                    bucket_id,
+                                    records[bucket_id]
+                                        .as_deref()
+                                        .expect("used edge bucket is initialized"),
+                                )?;
                             }
                             Ok::<_, SerialCollationError>((
                                 phantoms,
@@ -4282,7 +4851,7 @@ impl SerialDiscontinuityExpander {
             non_diagonal_elapsed.as_secs_f64(),
             original_edge_elapsed.as_secs_f64(),
         );
-        let mut record_manifest = edge_writers.finish()?;
+        let mut record_manifest = edge_writers.finish(&expansion_pool)?;
         record_manifest.sort_by(|left, right| {
             left.bucket_id
                 .cmp(&right.bucket_id)
@@ -5114,11 +5683,12 @@ impl SerialUncoloredCollator {
         );
 
         let spill_started = Instant::now();
-        let mut final_buckets = FinalUnitigBucketWriters::create_with_color(
-            final_dir,
-            threads,
-            inputs.color_runs.is_some(),
-        )?;
+        let colored = inputs.color_runs.is_some()
+            || inputs
+                .local_unitig_buckets
+                .as_ref()
+                .is_some_and(|buckets| buckets.iter().any(|bucket| bucket.color_runs.is_some()));
+        let mut final_buckets = FinalUnitigBucketWriters::create_direct(output_path, colored)?;
         let use_cpp_path_info = std::env::var_os("CF3_RS_ENDPOINT_STITCH").is_none();
         let mut direct_local_unitigs = 0u64;
         let mut direct_local_complete = false;
@@ -5143,14 +5713,23 @@ impl SerialUncoloredCollator {
 
         if !direct_local_complete {
             let reader = ExternalDiscontinuityReader::open(inputs)?;
-            let mut color_reader = inputs
-                .color_runs
-                .as_ref()
-                .map(|sidecar| sidecar.reader_at(0))
-                .transpose()?;
+            let mut color_reader = None;
+            let mut range_index = 0usize;
             let mut scratch = Vec::new();
-            for unitig in reader.iter()? {
+            for (unitig_index, unitig) in reader.iter()?.enumerate() {
                 let unitig = unitig?;
+                if inputs
+                    .ranges
+                    .get(range_index)
+                    .is_some_and(|range| range.start_unitig == unitig_index)
+                {
+                    color_reader = inputs
+                        .color_runs
+                        .as_ref()
+                        .map(|sidecar| sidecar.reader_at(inputs.ranges[range_index].color_start))
+                        .transpose()?;
+                    range_index += 1;
+                }
                 let colors = color_reader
                     .as_mut()
                     .map(|reader| reader.read_next())
@@ -5372,16 +5951,25 @@ struct FinalUnitigBucketEntry {
     bucket_id: usize,
     path: PathBuf,
     records: u64,
+    bases: u64,
     colored: bool,
+    direct_output: bool,
 }
 
 struct FinalUnitigBucketWriters {
     dir: PathBuf,
     bucket_mask: usize,
+    next_bucket: usize,
     writers: Vec<Option<FinalUnitigBucketWriter>>,
     records: Vec<u64>,
+    bases: Vec<u64>,
     open_writers: usize,
     colored: bool,
+    direct_output: Option<BufWriter<File>>,
+    direct_output_path: Option<PathBuf>,
+    direct_records: u64,
+    direct_record_id_highwater: u64,
+    direct_bases: u64,
 }
 
 impl FinalUnitigBucketWriters {
@@ -5410,15 +5998,48 @@ impl FinalUnitigBucketWriters {
         Ok(Self {
             dir: dir.to_path_buf(),
             bucket_mask: bucket_count - 1,
+            next_bucket: 0,
             writers,
             records: vec![0; bucket_count],
+            bases: vec![0; bucket_count],
             open_writers: 0,
             colored,
+            direct_output: None,
+            direct_output_path: None,
+            direct_records: 0,
+            direct_record_id_highwater: 0,
+            direct_bases: 0,
+        })
+    }
+
+    fn create_direct(output_path: &Path, colored: bool) -> Result<Self, SerialCollationError> {
+        let file = File::create(output_path).map_err(|source| SerialCollationError::Io {
+            path: output_path.to_path_buf(),
+            source,
+        })?;
+        Ok(Self {
+            dir: output_path.parent().unwrap_or(Path::new(".")).to_path_buf(),
+            bucket_mask: 0,
+            next_bucket: 0,
+            writers: Vec::new(),
+            records: Vec::new(),
+            bases: Vec::new(),
+            open_writers: 0,
+            colored,
+            direct_output: Some(BufWriter::with_capacity(8 * 1024 * 1024, file)),
+            direct_output_path: Some(output_path.to_path_buf()),
+            direct_records: 0,
+            direct_record_id_highwater: 0,
+            direct_bases: 0,
         })
     }
 
     fn write_label(&mut self, label: &[u8]) -> Result<(), SerialCollationError> {
-        let bucket_id = (hash_bytes(label, 0) as usize) & self.bucket_mask;
+        if self.direct_output.is_some() {
+            return self.write_direct_record(label, &[]);
+        }
+        let bucket_id = self.next_bucket;
+        self.next_bucket = (self.next_bucket + 1) & self.bucket_mask;
         if self.writers[bucket_id].is_none() {
             self.evict_writer_if_needed(bucket_id)?;
             self.writers[bucket_id] = Some(FinalUnitigBucketWriter::open(
@@ -5433,6 +6054,7 @@ impl FinalUnitigBucketWriters {
             .expect("final unitig bucket writer was just created")
             .write_record(label, &[])?;
         self.records[bucket_id] += 1;
+        self.bases[bucket_id] += label.len() as u64;
         Ok(())
     }
 
@@ -5444,7 +6066,11 @@ impl FinalUnitigBucketWriters {
         if !self.colored {
             return Err(SerialCollationError::MalformedCoordBucket(self.dir.clone()));
         }
-        let bucket_id = (hash_bytes(label, 0) as usize) & self.bucket_mask;
+        if self.direct_output.is_some() {
+            return self.write_direct_record(label, colors);
+        }
+        let bucket_id = self.next_bucket;
+        self.next_bucket = (self.next_bucket + 1) & self.bucket_mask;
         if self.writers[bucket_id].is_none() {
             self.evict_writer_if_needed(bucket_id)?;
             self.writers[bucket_id] =
@@ -5456,6 +6082,62 @@ impl FinalUnitigBucketWriters {
             .expect("final unitig bucket writer was just created")
             .write_record(label, colors)?;
         self.records[bucket_id] += 1;
+        self.bases[bucket_id] += label.len() as u64;
+        Ok(())
+    }
+
+    fn write_direct_record(
+        &mut self,
+        label: &[u8],
+        colors: &[UnitigColor],
+    ) -> Result<(), SerialCollationError> {
+        self.direct_records += 1;
+        self.direct_record_id_highwater += 1;
+        self.direct_bases += label.len() as u64;
+        let output_path = self
+            .direct_output_path
+            .as_ref()
+            .expect("direct output path exists")
+            .clone();
+        let out = self.direct_output.as_mut().expect("direct output exists");
+        let mut header = Vec::with_capacity(64 + colors.len() * 12);
+        header.extend_from_slice(b">utg");
+        append_decimal_u64(&mut header, self.direct_record_id_highwater);
+        for color in colors {
+            header.push(b' ');
+            append_decimal_u64(&mut header, color.raw());
+        }
+        header.push(b'\n');
+        out.write_all(&header)
+            .and_then(|_| out.write_all(label))
+            .and_then(|_| out.write_all(b"\n"))
+            .map_err(|source| SerialCollationError::Io {
+                path: output_path,
+                source,
+            })
+    }
+
+    fn write_direct_batch(
+        &mut self,
+        bytes: &[u8],
+        records: u64,
+        bases: u64,
+    ) -> Result<(), SerialCollationError> {
+        let output_path = self
+            .direct_output_path
+            .as_ref()
+            .expect("direct output path exists")
+            .clone();
+        self.direct_output
+            .as_mut()
+            .expect("direct output exists")
+            .write_all(bytes)
+            .map_err(|source| SerialCollationError::Io {
+                path: output_path,
+                source,
+            })?;
+        self.direct_records += records;
+        self.direct_bases += bases;
         Ok(())
     }
 
@@ -5482,6 +6164,23 @@ impl FinalUnitigBucketWriters {
     }
 
     fn finish(mut self) -> Result<Vec<FinalUnitigBucketEntry>, SerialCollationError> {
+        if let Some(mut output) = self.direct_output.take() {
+            output.flush().map_err(|source| SerialCollationError::Io {
+                path: self
+                    .direct_output_path
+                    .clone()
+                    .expect("direct output path exists"),
+                source,
+            })?;
+            return Ok(vec![FinalUnitigBucketEntry {
+                bucket_id: 0,
+                path: self.direct_output_path.expect("direct output path exists"),
+                records: self.direct_records,
+                bases: self.direct_bases,
+                colored: self.colored,
+                direct_output: true,
+            }]);
+        }
         let mut manifest = Vec::new();
         for writer in self.writers.iter_mut().flatten() {
             writer.flush()?;
@@ -5492,7 +6191,9 @@ impl FinalUnitigBucketWriters {
                     bucket_id,
                     path: self.dir.join(format!("{bucket_id:05}.fub")),
                     records,
+                    bases: self.bases[bucket_id],
                     colored: self.colored,
+                    direct_output: false,
                 });
             }
         }
@@ -5569,6 +6270,16 @@ fn reduce_final_unitig_buckets_to_fasta(
     manifest: &[FinalUnitigBucketEntry],
     output_path: &Path,
 ) -> Result<(u64, u64), SerialCollationError> {
+    if let [entry] = manifest
+        && entry.direct_output
+    {
+        if entry.path != output_path {
+            return Err(SerialCollationError::MalformedCoordBucket(
+                entry.path.clone(),
+            ));
+        }
+        return Ok((entry.records, entry.bases));
+    }
     let file = File::create(output_path).map_err(|source| SerialCollationError::Io {
         path: output_path.to_path_buf(),
         source,
@@ -5579,15 +6290,9 @@ fn reduce_final_unitig_buckets_to_fasta(
     let mut bases = 0u64;
 
     for entry in manifest {
-        let mut bucket = read_final_unitig_bucket(entry)?;
+        let bucket = read_final_unitig_bucket(entry)?;
         remove_serial_file(&entry.path)?;
         let bytes = &bucket.bytes;
-        bucket.labels.sort_unstable_by(|left, right| {
-            bytes[left.0..left.0 + left.1].cmp(&bytes[right.0..right.0 + right.1])
-        });
-        bucket.labels.dedup_by(|left, right| {
-            bytes[left.0..left.0 + left.1] == bytes[right.0..right.0 + right.1]
-        });
         for (label_start, label_len, color_start, color_count) in bucket.labels {
             let label = &bytes[label_start..label_start + label_len];
             emitted += 1;
@@ -6148,6 +6853,32 @@ fn phi_edge_path_info<const K: usize>(
     }
 }
 
+#[inline(always)]
+fn compact_phi_edge_path_info<const K: usize>(
+    edge: &DiscontinuityEdge<K>,
+    vertex_info: CompactExpansionPathInfo,
+) -> CompactExpansionPathInfo {
+    compact_phi_edge_path_info_with_exit(edge.unitig_exit_side, vertex_info)
+}
+
+#[inline(always)]
+fn compact_phi_edge_path_info_with_exit(
+    unitig_exit_side: Side,
+    vertex_info: CompactExpansionPathInfo,
+) -> CompactExpansionPathInfo {
+    let rank = if vertex_info.rank() == 1 {
+        0
+    } else {
+        vertex_info.rank()
+    };
+    let exit_side = if rank == 0 {
+        unitig_exit_side
+    } else {
+        unitig_exit_side.inverse()
+    };
+    CompactExpansionPathInfo::new(vertex_info.path_id, rank, exit_side, vertex_info.is_cycle())
+}
+
 fn edge_path_info<const K: usize>(
     edge: &DiscontinuityEdge<K>,
     first_info: PathInfo<K>,
@@ -6166,6 +6897,30 @@ fn edge_path_info<const K: usize>(
         exit_side,
         is_cycle: first_info.is_cycle,
     }
+}
+
+#[inline(always)]
+fn compact_edge_path_info<const K: usize>(
+    edge: &DiscontinuityEdge<K>,
+    first_info: CompactExpansionPathInfo,
+    second_info: CompactExpansionPathInfo,
+) -> CompactExpansionPathInfo {
+    compact_edge_path_info_with_exit(edge.unitig_exit_side, first_info, second_info)
+}
+
+#[inline(always)]
+fn compact_edge_path_info_with_exit(
+    unitig_exit_side: Side,
+    first_info: CompactExpansionPathInfo,
+    second_info: CompactExpansionPathInfo,
+) -> CompactExpansionPathInfo {
+    let rank = first_info.rank().min(second_info.rank());
+    let exit_side = if rank == first_info.rank() {
+        unitig_exit_side
+    } else {
+        unitig_exit_side.inverse()
+    };
+    CompactExpansionPathInfo::new(first_info.path_id, rank, exit_side, first_info.is_cycle())
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -6457,6 +7212,38 @@ struct StitchedCoordRecord {
     is_cycle: bool,
 }
 
+#[derive(Clone, Copy)]
+struct DenseLocalPathInfo {
+    path_id: u64,
+    rank_and_flags: u64,
+}
+
+impl DenseLocalPathInfo {
+    const EMPTY: Self = Self {
+        path_id: 0,
+        rank_and_flags: u64::MAX,
+    };
+
+    fn from_record(record: StitchedCoordRecord) -> Self {
+        Self {
+            path_id: record.path_id,
+            rank_and_flags: (record.rank << 2)
+                | u64::from(record.reverse)
+                | (u64::from(record.is_cycle) << 1),
+        }
+    }
+
+    fn to_record(self, unitig_index: usize) -> Option<StitchedCoordRecord> {
+        (self.rank_and_flags != u64::MAX).then(|| StitchedCoordRecord {
+            path_id: self.path_id,
+            rank: self.rank_and_flags >> 2,
+            unitig_index: unitig_index as u32,
+            reverse: self.rank_and_flags & 1 != 0,
+            is_cycle: self.rank_and_flags & 2 != 0,
+        })
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct StitchedCoordBucketEntry {
     bucket_id: usize,
@@ -6475,6 +7262,18 @@ struct MaterializedStitchedCoordRecord {
     color_index: u32,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct LoadedMaterializedStitchedCoordRecord {
+    path_id: u64,
+    rank: u64,
+    label_offset: u64,
+    label_len: u32,
+    reverse: bool,
+    is_cycle: bool,
+    color_start: u32,
+    color_count: u32,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct MaterializedStitchedCoordBucketEntry {
     bucket_id: usize,
@@ -6486,20 +7285,22 @@ struct MaterializedStitchedCoordBucketEntry {
     color_runs: u64,
 }
 
-const STITCH_COORD_MAGIC: &[u8; 8] = b"CF3SCB1\0";
+const STITCH_COORD_MAGIC: &[u8; 8] = b"CF3SCB2\0";
 const MATERIALIZED_STITCH_COORD_MAGIC: &[u8; 8] = b"CF3MCB1\0";
 const STITCH_COORD_HEADER_LEN: u64 = 32;
+const STITCH_PATH_INFO_RECORD_LEN: u64 = 24;
 const STITCH_COORD_RECORD_LEN: u64 = 32;
 const MATERIALIZED_STITCH_COORD_SHARD_WRITE_BUFFER: usize = 16 * 1024;
 const FINAL_UNITIG_BUCKET_WRITE_BUFFER: usize = 128 * 1024;
 const STITCH_COORD_SHARD_WRITE_BUFFER: usize = 1024 * 1024;
 const STITCH_COORD_RECORD_WRITE_BUFFER: usize = 1024 * 1024;
+const EDGE_PATH_INFO_WORKER_BUFFER: usize = 128 * 1024;
 const STITCH_COORD_REVERSE_FLAG: u8 = 1;
 const STITCH_COORD_CYCLE_FLAG: u8 = 2;
 const MAX_OPEN_STITCH_PATH_INFO_WRITERS: usize = 768;
 const MAX_OPEN_MATERIALIZED_STITCH_WRITERS: usize = 768;
 const MAX_OPEN_MATERIALIZED_STITCH_WRITERS_PER_SHARD: usize = 8;
-const STITCH_PATH_INFO_BUCKET_TARGET: usize = 64;
+const STITCH_PATH_INFO_BUCKET_TARGET: usize = 32;
 const DEFAULT_INMEM_STITCH_PATH_INFO_LIMIT: usize = 768 * 1024 * 1024;
 fn stitch_discontinuity_paths<const K: usize>(
     inputs: &DiscontinuityInputs<K>,
@@ -6609,6 +7410,7 @@ fn stitch_discontinuity_paths_to_final_buckets<const K: usize>(
     )?;
     let emitted = reduce_materialized_stitched_coord_bucket_files_to_final::<K>(
         &manifest,
+        &[],
         threads,
         final_buckets,
     )?;
@@ -6753,6 +7555,7 @@ fn stitch_external_discontinuity_paths_to_final_buckets<const K: usize>(
         let reduce_started = Instant::now();
         let emitted = reduce_materialized_stitched_coord_bucket_files_to_final::<K>(
             &manifest,
+            &[],
             threads,
             final_buckets,
         )?;
@@ -6817,8 +7620,17 @@ fn collate_external_cpp_path_info_to_final_buckets<const K: usize>(
         contraction.stats.final_edges,
         contraction.stats.reinserted_edges
     );
-    let ranges_per_bucket = ranges_per_path_info_bucket(inputs.ranges.len(), threads.max(1));
-    let path_info_bucket_count = inputs.ranges.len().div_ceil(ranges_per_bucket).max(1);
+    let (ranges_per_bucket, path_info_bucket_count) = if let Some(buckets) =
+        inputs.local_unitig_buckets.as_ref()
+    {
+        (1, buckets.len().max(1))
+    } else {
+        let ranges_per_bucket = ranges_per_path_info_bucket(inputs.ranges.len(), threads.max(1));
+        (
+            ranges_per_bucket,
+            inputs.ranges.len().div_ceil(ranges_per_bucket).max(1),
+        )
+    };
     let expansion_dir = coord_dir.with_file_name(format!(
         "{}.cpp-expansion",
         coord_dir
@@ -6869,6 +7681,7 @@ fn collate_external_cpp_path_info_to_final_buckets<const K: usize>(
     report_process_memory("before C++-style path-info reduce");
     let emitted = reduce_materialized_stitched_coord_bucket_files_to_final::<K>(
         &materialized.manifest,
+        &materialized.retained,
         threads,
         final_buckets,
     )?;
@@ -6894,6 +7707,7 @@ fn prepare_unitig_blocked_edge<const K: usize>(
             first: MatrixEndpoint::Vertex(left),
             second: MatrixEndpoint::Vertex(right),
             weight: 1,
+            unitig_bucket: 0,
             unitig_index,
             unitig_exit_side: Side::Back,
             phantom_unitig: None,
@@ -6903,6 +7717,7 @@ fn prepare_unitig_blocked_edge<const K: usize>(
             first: MatrixEndpoint::Phi,
             second: MatrixEndpoint::Vertex(endpoint),
             weight: 1,
+            unitig_bucket: 0,
             unitig_index,
             unitig_exit_side: Side::Front,
             phantom_unitig: None,
@@ -6912,6 +7727,7 @@ fn prepare_unitig_blocked_edge<const K: usize>(
             first: MatrixEndpoint::Phi,
             second: MatrixEndpoint::Vertex(endpoint),
             weight: 1,
+            unitig_bucket: 0,
             unitig_index,
             unitig_exit_side: Side::Back,
             phantom_unitig: None,
@@ -7020,6 +7836,24 @@ fn emit_contracted_edge_batch<const K: usize>(
     Ok(prepared.len() as u64)
 }
 
+fn emit_prepared_edge_batch(
+    prepared: &mut [PreparedBlockedEdge],
+    appenders: &ConcurrentBlockedEdgeWriters,
+) -> Result<u64, SerialCollationError> {
+    prepared.sort_unstable_by_key(|edge| edge.block);
+    let mut start = 0;
+    while start < prepared.len() {
+        let block = prepared[start].block;
+        let mut end = start + 1;
+        while end < prepared.len() && prepared[end].block == block {
+            end += 1;
+        }
+        appenders.add_batch(&prepared[start..end])?;
+        start = end;
+    }
+    Ok(prepared.len() as u64)
+}
+
 fn serial_collation_to_input_error(error: SerialCollationError) -> DiscontinuityInputError {
     match error {
         SerialCollationError::Io { path, source } => DiscontinuityInputError::Io { path, source },
@@ -7037,6 +7871,7 @@ fn serial_collation_to_input_error(error: SerialCollationError) -> Discontinuity
 
 struct ExternalCppPathInfoMaterialized {
     manifest: Vec<MaterializedStitchedCoordBucketEntry>,
+    retained: Vec<Vec<PendingMaterializedBucket>>,
     direct_local_unitigs: u64,
     direct_local_unitigs_complete: bool,
 }
@@ -7084,6 +7919,19 @@ impl<const K: usize> VertexPathInfoBucketWriters<K> {
             buffers,
             phantom: PhantomData,
         })
+    }
+
+    fn open_existing(dir: &Path, bucket_count: usize) -> Self {
+        let mut writers = Vec::with_capacity(bucket_count);
+        writers.resize_with(bucket_count, || None);
+        let mut buffers = Vec::with_capacity(bucket_count);
+        buffers.resize_with(bucket_count, Vec::new);
+        Self {
+            dir: dir.to_path_buf(),
+            writers,
+            buffers,
+            phantom: PhantomData,
+        }
     }
 
     fn write_record(
@@ -7184,6 +8032,69 @@ fn encoded_vertex_path_info_record<const K: usize>(record: &VertexPathInfo<K>) -
     bytes
 }
 
+fn write_meta_vertex_bucket_parallel<const K: usize>(
+    dir: &Path,
+    bucket_id: usize,
+    records: &[SerialMetaVertex<K>],
+    pool: &ThreadPool,
+) -> Result<(), SerialCollationError> {
+    if records.is_empty() {
+        return Ok(());
+    }
+    let path = vertex_path_info_bucket_path(dir, bucket_id);
+    let file = File::create(&path).map_err(|source| SerialCollationError::Io {
+        path: path.clone(),
+        source,
+    })?;
+    let record_len = vertex_path_info_record_len::<K>();
+    file.set_len((records.len() * record_len) as u64)
+        .map_err(|source| SerialCollationError::Io {
+            path: path.clone(),
+            source,
+        })?;
+    let records_per_chunk = (1024 * 1024 / record_len).max(1);
+    pool.install(|| {
+        records
+            .par_chunks(records_per_chunk)
+            .enumerate()
+            .try_for_each(|(chunk_id, chunk)| {
+                let mut encoded = Vec::with_capacity(chunk.len() * record_len);
+                for meta in chunk {
+                    let record = VertexPathInfo {
+                        vertex: meta.vertex,
+                        info: PathInfo {
+                            path_id: meta.vertex,
+                            rank: meta.weight,
+                            exit_side: meta.entry_side,
+                            is_cycle: meta.is_cycle,
+                        },
+                    };
+                    encoded
+                        .extend_from_slice(&encoded_vertex_path_info_record(&record)[..record_len]);
+                }
+                let offset = (chunk_id * records_per_chunk * record_len) as u64;
+                file.write_all_at(&encoded, offset)
+                    .map_err(|source| SerialCollationError::Io {
+                        path: path.clone(),
+                        source,
+                    })
+            })
+    })
+}
+
+#[inline(always)]
+fn append_encoded_compact_vertex_path_info<const K: usize>(
+    output: &mut Vec<u8>,
+    vertex: Kmer<K>,
+    info: CompactExpansionPathInfo,
+) {
+    let kmer_bytes = discontinuity_edge_kmer_bytes::<K>();
+    output.extend_from_slice(&(vertex.as_u128() as u64).to_le_bytes()[..kmer_bytes]);
+    output.extend_from_slice(&info.path_id.to_le_bytes()[..kmer_bytes]);
+    output.extend_from_slice(&info.rank().to_le_bytes());
+    output.push(info.rank_and_flags as u8 & 3);
+}
+
 fn decoded_vertex_path_info_record<const K: usize>(bytes: &[u8]) -> VertexPathInfo<K> {
     let kmer_bytes = discontinuity_edge_kmer_bytes::<K>();
     let path_off = kmer_bytes;
@@ -7216,6 +8127,7 @@ fn read_vertex_path_info_bucket_into<const K: usize>(
     bucket_id: usize,
     malformed_path: &Path,
     map: &ExpansionPathInfoTable<K>,
+    pool: &ThreadPool,
     read_elapsed: &mut Duration,
     insert_elapsed: &mut Duration,
 ) -> Result<(), SerialCollationError> {
@@ -7235,15 +8147,17 @@ fn read_vertex_path_info_bucket_into<const K: usize>(
             malformed_path.to_path_buf(),
         ));
     }
-    let records_per_chunk = (256 * 1024 / record_len).max(1);
+    let records_per_chunk = (1024 * 1024 / record_len).max(1);
     let phase = Instant::now();
-    bytes
-        .par_chunks(records_per_chunk * record_len)
-        .for_each(|block| {
-            for chunk in block.chunks_exact(record_len) {
-                map.insert_encoded(chunk);
-            }
-        });
+    pool.install(|| {
+        bytes
+            .par_chunks(records_per_chunk * record_len)
+            .for_each(|block| {
+                for chunk in block.chunks_exact(record_len) {
+                    map.insert_encoded(chunk);
+                }
+            });
+    });
     *insert_elapsed += phase.elapsed();
     Ok(())
 }
@@ -7252,6 +8166,7 @@ fn push_edge_path_record_to_range_bucket_writer<const K: usize>(
     edge: &DiscontinuityEdge<K>,
     info: PathInfo<K>,
     ranges: &[ExternalLocalUnitigRange],
+    range_index: &ExternalRangeIndex,
     ranges_per_bucket: usize,
     writers: &ConcurrentStitchedCoordWriters<'_>,
     phantom_records: &mut Vec<(StitchedCoordRecord, DiscontinuityEndpoint<K>)>,
@@ -7262,15 +8177,16 @@ fn push_edge_path_record_to_range_bucket_writer<const K: usize>(
         phantom_records.push((record, phantom));
         return Ok(());
     }
-    let range_id = external_range_id_for_unitig(ranges, edge.unitig_index)
+    let bucket_id = edge_path_info_bucket(edge, ranges, range_index, ranges_per_bucket)
         .ok_or_else(|| SerialCollationError::MalformedCoordBucket(error_path.to_path_buf()))?;
-    writers.write_record(range_id / ranges_per_bucket, record)
+    writers.write_record(bucket_id, record)
 }
 
 fn push_edge_path_record_to_range_buffers<const K: usize>(
     edge: &DiscontinuityEdge<K>,
     info: PathInfo<K>,
     ranges: &[ExternalLocalUnitigRange],
+    range_index: &ExternalRangeIndex,
     ranges_per_bucket: usize,
     buffers: &mut [Vec<StitchedCoordRecord>],
     phantom_records: &mut Vec<(StitchedCoordRecord, DiscontinuityEndpoint<K>)>,
@@ -7281,10 +8197,47 @@ fn push_edge_path_record_to_range_buffers<const K: usize>(
         phantom_records.push((record, phantom));
         return Ok(());
     }
-    let range_id = external_range_id_for_unitig(ranges, edge.unitig_index)
+    let bucket_id = edge_path_info_bucket(edge, ranges, range_index, ranges_per_bucket)
         .ok_or_else(|| SerialCollationError::MalformedCoordBucket(error_path.to_path_buf()))?;
-    buffers[range_id / ranges_per_bucket].push(record);
+    buffers[bucket_id].push(record);
     Ok(())
+}
+
+fn push_compact_edge_path_record_to_range_buffers<const K: usize>(
+    edge: &DiscontinuityEdge<K>,
+    info: CompactExpansionPathInfo,
+    ranges: &[ExternalLocalUnitigRange],
+    range_index: &ExternalRangeIndex,
+    ranges_per_bucket: usize,
+    buffers: &mut [Vec<StitchedCoordRecord>],
+    phantom_records: &mut Vec<(StitchedCoordRecord, DiscontinuityEndpoint<K>)>,
+    error_path: &Path,
+) -> Result<(), SerialCollationError> {
+    let record = stitched_record_from_compact_edge_path_info(edge, info, error_path)?;
+    if let Some(phantom) = edge.phantom_unitig {
+        phantom_records.push((record, phantom));
+        return Ok(());
+    }
+    let bucket_id = edge_path_info_bucket(edge, ranges, range_index, ranges_per_bucket)
+        .ok_or_else(|| SerialCollationError::MalformedCoordBucket(error_path.to_path_buf()))?;
+    buffers[bucket_id].push(record);
+    Ok(())
+}
+
+#[inline]
+fn edge_path_info_bucket<const K: usize>(
+    edge: &DiscontinuityEdge<K>,
+    ranges: &[ExternalLocalUnitigRange],
+    range_index: &ExternalRangeIndex,
+    ranges_per_bucket: usize,
+) -> Option<usize> {
+    if edge.unitig_bucket != 0 {
+        Some(edge.unitig_bucket as usize - 1)
+    } else {
+        range_index
+            .find(ranges, edge.unitig_index)
+            .map(|range_id| range_id / ranges_per_bucket)
+    }
 }
 
 fn stitched_record_from_edge_path_info<const K: usize>(
@@ -7302,6 +8255,23 @@ fn stitched_record_from_edge_path_info<const K: usize>(
         unitig_index,
         reverse: info.exit_side == Side::Front,
         is_cycle: info.is_cycle,
+    })
+}
+
+#[inline(always)]
+fn stitched_record_from_compact_edge_path_info<const K: usize>(
+    edge: &DiscontinuityEdge<K>,
+    info: CompactExpansionPathInfo,
+    error_path: &Path,
+) -> Result<StitchedCoordRecord, SerialCollationError> {
+    let unitig_index = u32::try_from(edge.unitig_index)
+        .map_err(|_| SerialCollationError::MalformedCoordBucket(error_path.to_path_buf()))?;
+    Ok(StitchedCoordRecord {
+        path_id: info.path_id,
+        rank: info.rank(),
+        unitig_index,
+        reverse: info.exit_side() == Side::Front,
+        is_cycle: info.is_cycle(),
     })
 }
 
@@ -7417,6 +8387,7 @@ fn write_external_cpp_path_info_materialized_coord_buckets_from_bucketed<const K
     });
     Ok(ExternalCppPathInfoMaterialized {
         manifest,
+        retained: Vec::new(),
         direct_local_unitigs: 0,
         direct_local_unitigs_complete: false,
     })
@@ -7430,6 +8401,7 @@ fn map_external_cpp_path_info_buckets_to_max_unitig_buckets<const K: usize>(
     expansion: RangeBucketedExpansion<K>,
     final_buckets: &mut FinalUnitigBucketWriters,
 ) -> Result<ExternalCppPathInfoMaterialized, SerialCollationError> {
+    const DIRECT_FINAL_BATCH_RECORDS: usize = 4096;
     if coord_dir.exists() {
         fs::remove_dir_all(coord_dir).map_err(|source| SerialCollationError::Io {
             path: coord_dir.to_path_buf(),
@@ -7442,6 +8414,9 @@ fn map_external_cpp_path_info_buckets_to_max_unitig_buckets<const K: usize>(
     })?;
 
     let max_unitig_bucket_count = 1024;
+    eprintln!(
+        "cuttlefish3-rs: materializing final coordinates into {max_unitig_bucket_count} bucket(s)"
+    );
     let max_unitig_bucket_mask = max_unitig_bucket_count - 1;
     let shared_writers = SharedMaterializedWriters::new(coord_dir, max_unitig_bucket_count);
     let mut phantom_writers =
@@ -7456,6 +8431,30 @@ fn map_external_cpp_path_info_buckets_to_max_unitig_buckets<const K: usize>(
     let mut manifest = Vec::new();
     let mut direct_local_unitigs = 0u64;
     let path_info_manifest = expansion.record_manifest;
+    if let Some(local_buckets) = inputs.local_unitig_buckets.as_ref() {
+        direct_local_unitigs = map_local_unitig_buckets_to_max_unitig_buckets::<K>(
+            inputs,
+            local_buckets,
+            path_info_manifest,
+            threads,
+            max_unitig_bucket_mask,
+            &shared_writers,
+            final_buckets,
+        )?;
+        let materialized = shared_writers.finish()?;
+        manifest = materialized.manifest;
+        manifest.sort_by(|left, right| {
+            left.bucket_id
+                .cmp(&right.bucket_id)
+                .then_with(|| left.coord_path.cmp(&right.coord_path))
+        });
+        return Ok(ExternalCppPathInfoMaterialized {
+            manifest,
+            retained: materialized.retained,
+            direct_local_unitigs,
+            direct_local_unitigs_complete: true,
+        });
+    }
     if !path_info_manifest.is_empty() {
         let path_info_bucket_count = inputs.ranges.len().div_ceil(ranges_per_bucket).max(1);
         let mut groups = vec![Vec::<StitchedCoordBucketEntry>::new(); path_info_bucket_count];
@@ -7471,21 +8470,23 @@ fn map_external_cpp_path_info_buckets_to_max_unitig_buckets<const K: usize>(
             let mut writers =
                 SharedMaterializedBatch::new(&shared_writers, max_unitig_bucket_count);
             for (bucket_id, group) in groups.iter().enumerate() {
-                let mut records = Vec::new();
-                for entry in group {
-                    records.extend(read_stitched_coord_bucket_file(entry)?);
-                }
-                let mut emit_direct = |label: Vec<u8>| -> Result<(), SerialCollationError> {
-                    final_buckets.write_label(&label)?;
-                    direct_local_unitigs += 1;
-                    Ok(())
-                };
-                map_external_cpp_path_info_range_bucket::<K, _, _>(
+                let records = read_stitched_coord_bucket_group(group)?;
+                let mut emit_direct =
+                    |unitig: FinalUnitigRecord| -> Result<(), SerialCollationError> {
+                        if unitig.colors.is_empty() {
+                            final_buckets.write_label(&unitig.label)?;
+                        } else {
+                            final_buckets.write_colored_label(&unitig.label, &unitig.colors)?;
+                        }
+                        direct_local_unitigs += 1;
+                        Ok(())
+                    };
+                map_external_cpp_path_info_range_bucket_owned::<K, _, _>(
                     inputs,
                     max_unitig_bucket_mask,
                     ranges_per_bucket,
                     bucket_id,
-                    &records,
+                    records,
                     &mut writers,
                     &mut emit_direct,
                 )?;
@@ -7493,51 +8494,55 @@ fn map_external_cpp_path_info_buckets_to_max_unitig_buckets<const K: usize>(
             writers.finish()?;
         } else {
             let next_bucket = AtomicUsize::new(0);
+            let next_direct_record = AtomicU64::new(final_buckets.direct_record_id_highwater + 1);
             let (tx, rx) =
-                mpsc::sync_channel::<Result<Vec<Vec<u8>>, SerialCollationError>>(workers * 2);
+                mpsc::sync_channel::<Result<EncodedFinalBatch, SerialCollationError>>(workers * 2);
             let mut first_error = None;
             std::thread::scope(|scope| {
                 let mut handles = Vec::new();
                 for _worker_id in 0..workers {
                     let next_bucket = &next_bucket;
+                    let next_direct_record = &next_direct_record;
                     let groups = &groups;
                     let tx = tx.clone();
                     let shared_writers = &shared_writers;
                     handles.push(scope.spawn(move || {
                         let mut writers =
                             SharedMaterializedBatch::new(&shared_writers, max_unitig_bucket_count);
-                        let mut direct_batch = Vec::with_capacity(256);
-                        let mut emit_direct = |label: Vec<u8>| -> Result<(), SerialCollationError> {
-                            direct_batch.push(label);
-                            if direct_batch.len() >= 256 {
-                                let batch = std::mem::take(&mut direct_batch);
-                                tx.send(Ok(batch))
-                                    .map_err(|_| SerialCollationError::WorkerPanic)?;
-                            }
-                            Ok(())
-                        };
+                        let mut direct_batch = Vec::with_capacity(DIRECT_FINAL_BATCH_RECORDS);
+                        let mut emit_direct =
+                            |unitig: FinalUnitigRecord| -> Result<(), SerialCollationError> {
+                                direct_batch.push(unitig);
+                                if direct_batch.len() >= DIRECT_FINAL_BATCH_RECORDS {
+                                    let batch = std::mem::take(&mut direct_batch);
+                                    let first_record = next_direct_record
+                                        .fetch_add(batch.len() as u64, Ordering::Relaxed);
+                                    tx.send(Ok(encode_final_unitig_batch(batch, first_record)))
+                                        .map_err(|_| SerialCollationError::WorkerPanic)?;
+                                }
+                                Ok(())
+                            };
 
                         loop {
                             let bucket_id = next_bucket.fetch_add(1, Ordering::Relaxed);
                             let Some(group) = groups.get(bucket_id) else {
                                 break;
                             };
-                            let mut records = Vec::new();
-                            for entry in group {
-                                records.extend(read_stitched_coord_bucket_file(entry)?);
-                            }
-                            map_external_cpp_path_info_range_bucket::<K, _, _>(
+                            let records = read_stitched_coord_bucket_group(group)?;
+                            map_external_cpp_path_info_range_bucket_owned::<K, _, _>(
                                 inputs,
                                 max_unitig_bucket_mask,
                                 ranges_per_bucket,
                                 bucket_id,
-                                &records,
+                                records,
                                 &mut writers,
                                 &mut emit_direct,
                             )?;
                         }
                         if !direct_batch.is_empty() {
-                            tx.send(Ok(direct_batch))
+                            let first_record = next_direct_record
+                                .fetch_add(direct_batch.len() as u64, Ordering::Relaxed);
+                            tx.send(Ok(encode_final_unitig_batch(direct_batch, first_record)))
                                 .map_err(|_| SerialCollationError::WorkerPanic)?;
                         }
                         writers.finish()
@@ -7547,13 +8552,15 @@ fn map_external_cpp_path_info_buckets_to_max_unitig_buckets<const K: usize>(
 
                 for result in rx {
                     match result {
-                        Ok(labels) if first_error.is_none() => {
-                            for label in labels {
-                                if let Err(err) = final_buckets.write_label(&label) {
-                                    first_error = Some(err);
-                                    break;
-                                }
-                                direct_local_unitigs += 1;
+                        Ok(batch) if first_error.is_none() => {
+                            if let Err(err) = final_buckets.write_direct_batch(
+                                &batch.bytes,
+                                batch.records,
+                                batch.bases,
+                            ) {
+                                first_error = Some(err);
+                            } else {
+                                direct_local_unitigs += batch.records;
                             }
                         }
                         Ok(_) => {}
@@ -7569,12 +8576,15 @@ fn map_external_cpp_path_info_buckets_to_max_unitig_buckets<const K: usize>(
                 }
                 Ok::<_, SerialCollationError>(())
             })?;
+            final_buckets.direct_record_id_highwater =
+                next_direct_record.load(Ordering::Relaxed).saturating_sub(1);
             if let Some(err) = first_error {
                 return Err(err);
             }
         }
 
-        manifest = shared_writers.finish()?;
+        let materialized = shared_writers.finish()?;
+        manifest = materialized.manifest;
         manifest.sort_by(|left, right| {
             left.bucket_id
                 .cmp(&right.bucket_id)
@@ -7582,8 +8592,9 @@ fn map_external_cpp_path_info_buckets_to_max_unitig_buckets<const K: usize>(
         });
         return Ok(ExternalCppPathInfoMaterialized {
             manifest,
+            retained: materialized.retained,
             direct_local_unitigs,
-            direct_local_unitigs_complete: inputs.color_runs.is_none(),
+            direct_local_unitigs_complete: true,
         });
     }
 
@@ -7594,8 +8605,12 @@ fn map_external_cpp_path_info_buckets_to_max_unitig_buckets<const K: usize>(
         let mut writers =
             MaterializedStitchedCoordShardWriters::new(coord_dir, 0, max_unitig_bucket_count);
         for (bucket_id, records) in path_info_records.iter().enumerate() {
-            let mut emit_direct = |label: Vec<u8>| -> Result<(), SerialCollationError> {
-                final_buckets.write_label(&label)?;
+            let mut emit_direct = |unitig: FinalUnitigRecord| -> Result<(), SerialCollationError> {
+                if unitig.colors.is_empty() {
+                    final_buckets.write_label(&unitig.label)?;
+                } else {
+                    final_buckets.write_colored_label(&unitig.label, &unitig.colors)?;
+                }
                 direct_local_unitigs += 1;
                 Ok(())
             };
@@ -7613,7 +8628,7 @@ fn map_external_cpp_path_info_buckets_to_max_unitig_buckets<const K: usize>(
     } else {
         let next_bucket = AtomicUsize::new(0);
         let (tx, rx) =
-            mpsc::sync_channel::<Result<Vec<Vec<u8>>, SerialCollationError>>(workers * 2);
+            mpsc::sync_channel::<Result<Vec<FinalUnitigRecord>, SerialCollationError>>(workers * 2);
         let mut first_error = None;
         std::thread::scope(|scope| {
             let mut handles = Vec::new();
@@ -7628,15 +8643,16 @@ fn map_external_cpp_path_info_buckets_to_max_unitig_buckets<const K: usize>(
                         max_unitig_bucket_count,
                     );
                     let mut direct_batch = Vec::with_capacity(256);
-                    let mut emit_direct = |label: Vec<u8>| -> Result<(), SerialCollationError> {
-                        direct_batch.push(label);
-                        if direct_batch.len() >= 256 {
-                            let batch = std::mem::take(&mut direct_batch);
-                            tx.send(Ok(batch))
-                                .map_err(|_| SerialCollationError::WorkerPanic)?;
-                        }
-                        Ok(())
-                    };
+                    let mut emit_direct =
+                        |unitig: FinalUnitigRecord| -> Result<(), SerialCollationError> {
+                            direct_batch.push(unitig);
+                            if direct_batch.len() >= 256 {
+                                let batch = std::mem::take(&mut direct_batch);
+                                tx.send(Ok(batch))
+                                    .map_err(|_| SerialCollationError::WorkerPanic)?;
+                            }
+                            Ok(())
+                        };
 
                     loop {
                         let bucket_id = next_bucket.fetch_add(1, Ordering::Relaxed);
@@ -7664,9 +8680,14 @@ fn map_external_cpp_path_info_buckets_to_max_unitig_buckets<const K: usize>(
 
             for result in rx {
                 match result {
-                    Ok(labels) if first_error.is_none() => {
-                        for label in labels {
-                            if let Err(err) = final_buckets.write_label(&label) {
+                    Ok(unitigs) if first_error.is_none() => {
+                        for unitig in unitigs {
+                            let write = if unitig.colors.is_empty() {
+                                final_buckets.write_label(&unitig.label)
+                            } else {
+                                final_buckets.write_colored_label(&unitig.label, &unitig.colors)
+                            };
+                            if let Err(err) = write {
                                 first_error = Some(err);
                                 break;
                             }
@@ -7693,7 +8714,8 @@ fn map_external_cpp_path_info_buckets_to_max_unitig_buckets<const K: usize>(
         }
     }
 
-    manifest.extend(shared_writers.finish()?);
+    let materialized = shared_writers.finish()?;
+    manifest.extend(materialized.manifest);
     manifest.sort_by(|left, right| {
         left.bucket_id
             .cmp(&right.bucket_id)
@@ -7701,9 +8723,218 @@ fn map_external_cpp_path_info_buckets_to_max_unitig_buckets<const K: usize>(
     });
     Ok(ExternalCppPathInfoMaterialized {
         manifest,
+        retained: materialized.retained,
         direct_local_unitigs,
-        direct_local_unitigs_complete: inputs.color_runs.is_none(),
+        direct_local_unitigs_complete: true,
     })
+}
+
+fn map_local_unitig_buckets_to_max_unitig_buckets<const K: usize>(
+    inputs: &ExternalDiscontinuityInputs<K>,
+    local_buckets: &[LocalUnitigBucketEntry],
+    path_info_manifest: Vec<StitchedCoordBucketEntry>,
+    threads: usize,
+    max_unitig_bucket_mask: usize,
+    shared_writers: &SharedMaterializedWriters<'_>,
+    final_buckets: &mut FinalUnitigBucketWriters,
+) -> Result<u64, SerialCollationError> {
+    const DIRECT_FINAL_BATCH_RECORDS: usize = 4096;
+    let mut groups = (0..local_buckets.len())
+        .map(|_| Vec::<StitchedCoordBucketEntry>::new())
+        .collect::<Vec<_>>();
+    for entry in path_info_manifest {
+        let Some(group) = groups.get_mut(entry.bucket_id) else {
+            return Err(SerialCollationError::MalformedCoordBucket(entry.path));
+        };
+        group.push(entry);
+    }
+
+    let workers = threads.max(1).min(local_buckets.len().max(1));
+    let next_bucket = AtomicUsize::new(0);
+    let next_direct_record = AtomicU64::new(final_buckets.direct_record_id_highwater + 1);
+    let (tx, rx) =
+        mpsc::sync_channel::<Result<EncodedFinalBatch, SerialCollationError>>(workers * 2);
+    let mut direct_local_unitigs = 0u64;
+    let mut first_error = None;
+    std::thread::scope(|scope| {
+        let mut handles = Vec::new();
+        for _ in 0..workers {
+            let tx = tx.clone();
+            let next_bucket = &next_bucket;
+            let next_direct_record = &next_direct_record;
+            let groups = &groups;
+            handles.push(scope.spawn(move || {
+                let mut writers =
+                    SharedMaterializedBatch::new(shared_writers, max_unitig_bucket_mask + 1);
+                let mut direct_batch = None::<DirectFinalBatchBuilder>;
+                let mut emit_direct =
+                    |label: &[u8], colors: &[UnitigColor]| -> Result<(), SerialCollationError> {
+                        let batch = direct_batch.get_or_insert_with(|| {
+                            let first_record = next_direct_record
+                                .fetch_add(DIRECT_FINAL_BATCH_RECORDS as u64, Ordering::Relaxed);
+                            DirectFinalBatchBuilder::new(first_record)
+                        });
+                        batch.push(label, colors);
+                        if batch.records as usize >= DIRECT_FINAL_BATCH_RECORDS {
+                            tx.send(Ok(direct_batch.take().expect("batch exists").finish()))
+                                .map_err(|_| SerialCollationError::WorkerPanic)?;
+                        }
+                        Ok(())
+                    };
+                loop {
+                    let bucket_index = next_bucket.fetch_add(1, Ordering::Relaxed);
+                    let Some(bucket) = local_buckets.get(bucket_index) else {
+                        break;
+                    };
+                    let path_info = read_stitched_coord_bucket_group_dense(
+                        &groups[bucket_index],
+                        bucket.unitigs,
+                        &bucket.unitig_path,
+                    )?;
+                    map_local_unitig_bucket::<K, _, _>(
+                        inputs,
+                        bucket,
+                        path_info,
+                        max_unitig_bucket_mask,
+                        &mut writers,
+                        &mut emit_direct,
+                    )?;
+                }
+                if let Some(direct_batch) = direct_batch {
+                    tx.send(Ok(direct_batch.finish()))
+                        .map_err(|_| SerialCollationError::WorkerPanic)?;
+                }
+                writers.finish()
+            }));
+        }
+        drop(tx);
+        for result in rx {
+            match result {
+                Ok(batch) if first_error.is_none() => {
+                    if let Err(err) =
+                        final_buckets.write_direct_batch(&batch.bytes, batch.records, batch.bases)
+                    {
+                        first_error = Some(err);
+                    } else {
+                        direct_local_unitigs += batch.records;
+                    }
+                }
+                Ok(_) => {}
+                Err(err) if first_error.is_none() => first_error = Some(err),
+                Err(_) => {}
+            }
+        }
+        for handle in handles {
+            if let Err(err) = handle
+                .join()
+                .map_err(|_| SerialCollationError::WorkerPanic)?
+                && first_error.is_none()
+            {
+                first_error = Some(err);
+            }
+        }
+        Ok::<_, SerialCollationError>(())
+    })?;
+    final_buckets.direct_record_id_highwater =
+        next_direct_record.load(Ordering::Relaxed).saturating_sub(1);
+    if let Some(err) = first_error {
+        return Err(err);
+    }
+    Ok(direct_local_unitigs)
+}
+
+fn map_local_unitig_bucket<const K: usize, F, W>(
+    inputs: &ExternalDiscontinuityInputs<K>,
+    bucket: &LocalUnitigBucketEntry,
+    path_info_by_unitig: Vec<DenseLocalPathInfo>,
+    max_unitig_bucket_mask: usize,
+    writers: &mut W,
+    emit_direct: &mut F,
+) -> Result<(), SerialCollationError>
+where
+    F: FnMut(&[u8], &[UnitigColor]) -> Result<(), SerialCollationError>,
+    W: MaterializedRecordSink,
+{
+    let unitig_file =
+        File::open(&bucket.unitig_path).map_err(|source| SerialCollationError::Io {
+            path: bucket.unitig_path.clone(),
+            source,
+        })?;
+    let label_file = File::open(&bucket.label_path).map_err(|source| SerialCollationError::Io {
+        path: bucket.label_path.clone(),
+        source,
+    })?;
+    let mut unitig_input = BufReader::with_capacity(1024 * 1024, unitig_file);
+    let mut label_input = BufReader::with_capacity(4 * 1024 * 1024, label_file);
+    let mut color_input = bucket
+        .color_runs
+        .as_ref()
+        .map(|sidecar| sidecar.reader_at(0))
+        .transpose()?;
+    let mut label = Vec::new();
+    let mut colors = Vec::new();
+    let mut discard = vec![0u8; 64 * 1024];
+
+    for (unitig_index, dense_record) in path_info_by_unitig.into_iter().enumerate() {
+        let unitig = read_discontinuity_unitig_from_reader::<K>(
+            &mut unitig_input,
+            &bucket.unitig_path,
+            true,
+        )?;
+        let has_colors = if let Some(reader) = color_input.as_mut() {
+            reader.read_next_into(&mut colors)?;
+            true
+        } else {
+            false
+        };
+        if let Some(record) = dense_record.to_record(unitig_index) {
+            label.resize(unitig.label_len as usize, 0);
+            label_input
+                .read_exact(&mut label)
+                .map_err(|source| SerialCollationError::Io {
+                    path: bucket.label_path.clone(),
+                    source,
+                })?;
+            let max_bucket = stitched_coord_bucket(record.path_id, max_unitig_bucket_mask);
+            write_external_materialized_record(
+                writers,
+                max_bucket,
+                &record,
+                &label,
+                has_colors.then_some(colors.as_slice()),
+            )?;
+        } else if unitig.left_exit().is_none() && unitig.right_exit().is_none() {
+            label.resize(unitig.label_len as usize, 0);
+            label_input
+                .read_exact(&mut label)
+                .map_err(|source| SerialCollationError::Io {
+                    path: bucket.label_path.clone(),
+                    source,
+                })?;
+            let reverse = reverse_complement_is_less(&label);
+            if reverse {
+                let reversed_label = reverse_complement_label(&label);
+                let reversed_colors = if has_colors && !colors.is_empty() {
+                    reverse_color_runs(&colors, (unitig.label_len as usize - K + 1) as u32)
+                } else {
+                    Vec::new()
+                };
+                emit_direct(&reversed_label, &reversed_colors)?;
+            } else {
+                let direct_colors = if has_colors { colors.as_slice() } else { &[] };
+                emit_direct(&label, direct_colors)?;
+            }
+        } else {
+            read_and_discard_exact(
+                &mut label_input,
+                &bucket.label_path,
+                &mut discard,
+                unitig.label_len as u64,
+            )?;
+        }
+    }
+    let _ = inputs;
+    Ok(())
 }
 
 #[allow(dead_code)]
@@ -7833,6 +9064,7 @@ fn write_external_cpp_path_info_materialized_coord_buckets_bucketed<const K: usi
     });
     Ok(ExternalCppPathInfoMaterialized {
         manifest,
+        retained: Vec::new(),
         direct_local_unitigs: 0,
         direct_local_unitigs_complete: false,
     })
@@ -7955,6 +9187,7 @@ fn write_external_cpp_path_info_materialized_coord_buckets_streaming<const K: us
         )?;
         return Ok(ExternalCppPathInfoMaterialized {
             manifest,
+            retained: Vec::new(),
             direct_local_unitigs: 0,
             direct_local_unitigs_complete: false,
         });
@@ -7969,6 +9202,7 @@ fn write_external_cpp_path_info_materialized_coord_buckets_streaming<const K: us
         input: BufReader::with_capacity(1024 * 1024, unitig_file),
         path: inputs.unitig_path.clone(),
         remaining: inputs.unitigs,
+        compact_unitigs: inputs.compact_unitigs,
     };
     let label_file = File::open(&inputs.label_path).map_err(|source| SerialCollationError::Io {
         path: inputs.label_path.clone(),
@@ -8019,6 +9253,7 @@ fn write_external_cpp_path_info_materialized_coord_buckets_streaming<const K: us
 
     Ok(ExternalCppPathInfoMaterialized {
         manifest: writers.finish()?,
+        retained: Vec::new(),
         direct_local_unitigs,
         direct_local_unitigs_complete: true,
     })
@@ -10279,11 +11514,12 @@ fn write_external_stitched_path_info_range(
 
 fn ranges_per_path_info_bucket(range_count: usize, workers: usize) -> usize {
     let target_buckets = range_count.div_ceil(STITCH_PATH_INFO_BUCKET_TARGET).max(1);
-    let max_open_buckets = MAX_OPEN_STITCH_PATH_INFO_WRITERS
-        .checked_div(workers.max(1))
-        .unwrap_or(1)
-        .max(1);
-    let bucket_count = target_buckets.min(max_open_buckets).max(1);
+    // Range-bucket writers are shared across workers, so the descriptor limit
+    // applies to the global bucket set rather than independently per worker.
+    // Dividing it by worker count produced multi-gigabyte sort batches at
+    // HumGut scale.
+    let _ = workers;
+    let bucket_count = target_buckets.min(MAX_OPEN_STITCH_PATH_INFO_WRITERS).max(1);
     range_count.div_ceil(bucket_count).max(1)
 }
 
@@ -10295,6 +11531,41 @@ fn external_range_id_for_unitig(
     let range_id = range_id.checked_sub(1)?;
     let range = ranges.get(range_id)?;
     (unitig_index < range.start_unitig + range.unitigs).then_some(range_id)
+}
+
+struct ExternalRangeIndex {
+    page_starts: Vec<usize>,
+}
+
+impl ExternalRangeIndex {
+    const PAGE_SHIFT: usize = 16;
+
+    fn new(ranges: &[ExternalLocalUnitigRange]) -> Self {
+        let unitigs = ranges
+            .last()
+            .map_or(0, |range| range.start_unitig + range.unitigs);
+        let page_count = unitigs.div_ceil(1 << Self::PAGE_SHIFT);
+        let mut page_starts = Vec::with_capacity(page_count);
+        let mut range_id = 0;
+        for page in 0..page_count {
+            let unitig = page << Self::PAGE_SHIFT;
+            while range_id + 1 < ranges.len() && ranges[range_id + 1].start_unitig <= unitig {
+                range_id += 1;
+            }
+            page_starts.push(range_id);
+        }
+        Self { page_starts }
+    }
+
+    #[inline(always)]
+    fn find(&self, ranges: &[ExternalLocalUnitigRange], unitig_index: usize) -> Option<usize> {
+        let mut range_id = *self.page_starts.get(unitig_index >> Self::PAGE_SHIFT)?;
+        while range_id + 1 < ranges.len() && ranges[range_id + 1].start_unitig <= unitig_index {
+            range_id += 1;
+        }
+        let range = ranges.get(range_id)?;
+        (unitig_index < range.start_unitig + range.unitigs).then_some(range_id)
+    }
 }
 
 fn materialize_external_stitched_coord_buckets_from_path_info<const K: usize>(
@@ -10442,7 +11713,7 @@ fn materialize_external_stitched_coord_range_group<const K: usize>(
     let mut unitig_input = BufReader::with_capacity(1024 * 1024, unitig_file);
     unitig_input
         .seek(SeekFrom::Start(
-            (start_unitig * std::mem::size_of::<DiscontinuityUnitig<K>>()) as u64,
+            (start_unitig * external_unitig_record_len::<K>(inputs.compact_unitigs)) as u64,
         ))
         .map_err(|source| SerialCollationError::Io {
             path: inputs.unitig_path.clone(),
@@ -10463,8 +11734,11 @@ fn materialize_external_stitched_coord_range_group<const K: usize>(
     let mut discard = vec![0u8; 64 * 1024];
 
     for record in &path_info {
-        let unitig: DiscontinuityUnitig<K> =
-            read_discontinuity_unitig_from_reader(&mut unitig_input, &inputs.unitig_path)?;
+        let unitig: DiscontinuityUnitig<K> = read_discontinuity_unitig_from_reader(
+            &mut unitig_input,
+            &inputs.unitig_path,
+            inputs.compact_unitigs,
+        )?;
         if let Some(record) = record {
             label.resize(unitig.label_len as usize, 0);
             label_input
@@ -10518,21 +11792,29 @@ fn materialize_external_stitched_coord_range_group_from_records<const K: usize>(
         .ok_or_else(|| SerialCollationError::MalformedCoordBucket(inputs.unitig_path.clone()))?;
 
     let mut path_info = path_info_records.to_vec();
-    path_info.sort_unstable_by_key(|record| record.unitig_index);
-    for pair in path_info.windows(2) {
-        if pair[0].unitig_index == pair[1].unitig_index {
-            return Err(SerialCollationError::MalformedCoordBucket(
-                inputs.unitig_path.clone(),
-            ));
-        }
-    }
-    for record in &path_info {
+    let empty_record = StitchedCoordRecord {
+        path_id: 0,
+        rank: 0,
+        unitig_index: u32::MAX,
+        reverse: false,
+        is_cycle: false,
+    };
+    let mut path_info_by_unitig = vec![empty_record; unitig_span];
+    let expected_record_count = path_info.len();
+    for record in path_info.drain(..) {
         let unitig_index = record.unitig_index as usize;
         if unitig_index < start_unitig || unitig_index >= end_unitig {
             return Err(SerialCollationError::MalformedCoordBucket(
                 inputs.unitig_path.clone(),
             ));
         }
+        let slot = &mut path_info_by_unitig[unitig_index - start_unitig];
+        if slot.unitig_index != u32::MAX {
+            return Err(SerialCollationError::MalformedCoordBucket(
+                inputs.unitig_path.clone(),
+            ));
+        }
+        *slot = record;
     }
 
     let unitig_file =
@@ -10543,7 +11825,7 @@ fn materialize_external_stitched_coord_range_group_from_records<const K: usize>(
     let mut unitig_input = BufReader::with_capacity(1024 * 1024, unitig_file);
     unitig_input
         .seek(SeekFrom::Start(
-            (start_unitig * std::mem::size_of::<DiscontinuityUnitig<K>>()) as u64,
+            (start_unitig * external_unitig_record_len::<K>(inputs.compact_unitigs)) as u64,
         ))
         .map_err(|source| SerialCollationError::Io {
             path: inputs.unitig_path.clone(),
@@ -10562,13 +11844,15 @@ fn materialize_external_stitched_coord_range_group_from_records<const K: usize>(
         })?;
     let mut label = Vec::new();
     let mut discard = vec![0u8; 64 * 1024];
-    let mut record_idx = 0usize;
+    let mut record_count = 0usize;
     for unitig_index in start_unitig..end_unitig {
-        let unitig: DiscontinuityUnitig<K> =
-            read_discontinuity_unitig_from_reader(&mut unitig_input, &inputs.unitig_path)?;
-        let record = path_info
-            .get(record_idx)
-            .filter(|record| record.unitig_index as usize == unitig_index);
+        let unitig: DiscontinuityUnitig<K> = read_discontinuity_unitig_from_reader(
+            &mut unitig_input,
+            &inputs.unitig_path,
+            inputs.compact_unitigs,
+        )?;
+        let dense_record = &path_info_by_unitig[unitig_index - start_unitig];
+        let record = (dense_record.unitig_index != u32::MAX).then_some(dense_record);
         if let Some(record) = record {
             label.resize(unitig.label_len as usize, 0);
             label_input
@@ -10579,7 +11863,7 @@ fn materialize_external_stitched_coord_range_group_from_records<const K: usize>(
                 })?;
             let bucket_id = stitched_coord_bucket(record.path_id, bucket_mask);
             writers.write_materialized_record(bucket_id, record, &label)?;
-            record_idx += 1;
+            record_count += 1;
         } else {
             read_and_discard_exact(
                 &mut label_input,
@@ -10589,7 +11873,7 @@ fn materialize_external_stitched_coord_range_group_from_records<const K: usize>(
             )?;
         }
     }
-    if record_idx != path_info.len() {
+    if record_count != expected_record_count {
         return Err(SerialCollationError::MalformedCoordBucket(
             inputs.unitig_path.clone(),
         ));
@@ -10608,7 +11892,31 @@ fn map_external_cpp_path_info_range_bucket<const K: usize, F, W>(
     emit_direct_local: &mut F,
 ) -> Result<(), SerialCollationError>
 where
-    F: FnMut(Vec<u8>) -> Result<(), SerialCollationError>,
+    F: FnMut(FinalUnitigRecord) -> Result<(), SerialCollationError>,
+    W: MaterializedRecordSink,
+{
+    map_external_cpp_path_info_range_bucket_owned(
+        inputs,
+        bucket_mask,
+        ranges_per_bucket,
+        path_info_bucket_id,
+        path_info_records.to_vec(),
+        writers,
+        emit_direct_local,
+    )
+}
+
+fn map_external_cpp_path_info_range_bucket_owned<const K: usize, F, W>(
+    inputs: &ExternalDiscontinuityInputs<K>,
+    bucket_mask: usize,
+    ranges_per_bucket: usize,
+    path_info_bucket_id: usize,
+    mut path_info: Vec<StitchedCoordRecord>,
+    writers: &mut W,
+    emit_direct_local: &mut F,
+) -> Result<(), SerialCollationError>
+where
+    F: FnMut(FinalUnitigRecord) -> Result<(), SerialCollationError>,
     W: MaterializedRecordSink,
 {
     let range_start = path_info_bucket_id
@@ -10616,7 +11924,7 @@ where
         .ok_or_else(|| SerialCollationError::MalformedCoordBucket(inputs.unitig_path.clone()))?;
     let range_end = (range_start + ranges_per_bucket).min(inputs.ranges.len());
     let Some(first_range) = inputs.ranges.get(range_start) else {
-        if path_info_records.is_empty() {
+        if path_info.is_empty() {
             return Ok(());
         }
         return Err(SerialCollationError::MalformedCoordBucket(
@@ -10633,7 +11941,6 @@ where
         .checked_sub(start_unitig)
         .ok_or_else(|| SerialCollationError::MalformedCoordBucket(inputs.unitig_path.clone()))?;
 
-    let mut path_info = path_info_records.to_vec();
     path_info.sort_unstable_by_key(|record| record.unitig_index);
     for pair in path_info.windows(2) {
         if pair[0].unitig_index == pair[1].unitig_index {
@@ -10659,7 +11966,7 @@ where
     let mut unitig_input = BufReader::with_capacity(1024 * 1024, unitig_file);
     unitig_input
         .seek(SeekFrom::Start(
-            (start_unitig * std::mem::size_of::<DiscontinuityUnitig<K>>()) as u64,
+            (start_unitig * external_unitig_record_len::<K>(inputs.compact_unitigs)) as u64,
         ))
         .map_err(|source| SerialCollationError::Io {
             path: inputs.unitig_path.clone(),
@@ -10684,14 +11991,40 @@ where
         .as_ref()
         .map(|sidecar| sidecar.reader_at(first_range.color_start))
         .transpose()?;
+    let mut colors = Vec::new();
+    let mut current_range = range_start;
 
     for unitig_index in start_unitig..end_unitig {
-        let unitig: DiscontinuityUnitig<K> =
-            read_discontinuity_unitig_from_reader(&mut unitig_input, &inputs.unitig_path)?;
-        let colors = color_reader
-            .as_mut()
-            .map(|reader| reader.read_next())
-            .transpose()?;
+        if inputs
+            .ranges
+            .get(current_range)
+            .is_some_and(|range| range.start_unitig == unitig_index)
+        {
+            let range = &inputs.ranges[current_range];
+            label_input
+                .seek(SeekFrom::Start(range.label_start))
+                .map_err(|source| SerialCollationError::Io {
+                    path: inputs.label_path.clone(),
+                    source,
+                })?;
+            color_reader = inputs
+                .color_runs
+                .as_ref()
+                .map(|sidecar| sidecar.reader_at(range.color_start))
+                .transpose()?;
+            current_range += 1;
+        }
+        let unitig: DiscontinuityUnitig<K> = read_discontinuity_unitig_from_reader(
+            &mut unitig_input,
+            &inputs.unitig_path,
+            inputs.compact_unitigs,
+        )?;
+        let has_colors = if let Some(reader) = color_reader.as_mut() {
+            reader.read_next_into(&mut colors)?;
+            true
+        } else {
+            false
+        };
         let record = path_info
             .get(record_idx)
             .filter(|record| record.unitig_index as usize == unitig_index);
@@ -10709,7 +12042,7 @@ where
                 bucket_id,
                 record,
                 &label,
-                colors.as_deref(),
+                has_colors.then_some(colors.as_slice()),
             )?;
             record_idx += 1;
         } else if unitig.left_exit().is_none() && unitig.right_exit().is_none() {
@@ -10720,9 +12053,25 @@ where
                     path: inputs.label_path.clone(),
                     source,
                 })?;
-            if inputs.color_runs.is_none() {
-                emit_direct_local(canonical_label(label.clone()))?;
+            let reverse = reverse_complement_is_less(&label);
+            let label = if reverse {
+                reverse_complement_label(&label)
+            } else {
+                label.clone()
+            };
+            let mut direct_colors = if has_colors {
+                std::mem::take(&mut colors)
+            } else {
+                Vec::new()
+            };
+            if reverse && !direct_colors.is_empty() {
+                direct_colors =
+                    reverse_color_runs(&direct_colors, (unitig.label_len as usize - K + 1) as u32);
             }
+            emit_direct_local(FinalUnitigRecord {
+                label,
+                colors: direct_colors,
+            })?;
         } else {
             read_and_discard_exact(
                 &mut label_input,
@@ -10862,7 +12211,15 @@ impl MaterializedRecordSink for MaterializedStitchedCoordShardWriters<'_> {
 struct SharedMaterializedWriters<'a> {
     coord_dir: &'a Path,
     writers: Vec<Mutex<Option<MaterializedStitchedCoordShardWriter>>>,
+    retained: Vec<Mutex<Vec<PendingMaterializedBucket>>>,
     keep_open: bool,
+}
+
+#[derive(Default)]
+struct PendingMaterializedBucket {
+    records: Vec<LoadedMaterializedStitchedCoordRecord>,
+    labels: Vec<u8>,
+    colors: Vec<UnitigColor>,
 }
 
 impl<'a> SharedMaterializedWriters<'a> {
@@ -10870,16 +12227,32 @@ impl<'a> SharedMaterializedWriters<'a> {
         Self {
             coord_dir,
             writers: (0..bucket_count).map(|_| Mutex::new(None)).collect(),
+            retained: (0..bucket_count).map(|_| Mutex::new(Vec::new())).collect(),
             keep_open: raise_open_file_limit(),
         }
+    }
+
+    fn retain_batch(
+        &self,
+        bucket_id: usize,
+        batch: &mut PendingMaterializedBucket,
+    ) -> Result<(), SerialCollationError> {
+        if batch.records.is_empty() {
+            return Ok(());
+        }
+        self.retained[bucket_id]
+            .lock()
+            .map_err(|_| SerialCollationError::WorkerPanic)?
+            .push(std::mem::take(batch));
+        Ok(())
     }
 
     fn write_batch(
         &self,
         bucket_id: usize,
-        records: &mut Vec<(StitchedCoordRecord, Vec<u8>)>,
+        batch: &mut PendingMaterializedBucket,
     ) -> Result<(), SerialCollationError> {
-        if records.is_empty() {
+        if batch.records.is_empty() {
             return Ok(());
         }
         let mut writer = self.writers[bucket_id]
@@ -10894,9 +12267,7 @@ impl<'a> SharedMaterializedWriters<'a> {
         }
         let writer = writer.as_mut().expect("global writer was just created");
         writer.ensure_open()?;
-        for (record, label) in records.drain(..) {
-            writer.write_record(&record, &label)?;
-        }
+        writer.write_pending_batch(batch)?;
         if !self.keep_open {
             writer.flush_and_close()?;
         }
@@ -10929,7 +12300,7 @@ impl<'a> SharedMaterializedWriters<'a> {
         Ok(())
     }
 
-    fn finish(self) -> Result<Vec<MaterializedStitchedCoordBucketEntry>, SerialCollationError> {
+    fn finish(self) -> Result<MaterializedStitchedCoordBuckets, SerialCollationError> {
         let mut manifest = Vec::new();
         for writer in self.writers {
             if let Some(writer) = writer
@@ -10939,13 +12310,27 @@ impl<'a> SharedMaterializedWriters<'a> {
                 manifest.push(writer.finish()?);
             }
         }
-        Ok(manifest)
+        let retained = self
+            .retained
+            .into_iter()
+            .map(|bucket| {
+                bucket
+                    .into_inner()
+                    .map_err(|_| SerialCollationError::WorkerPanic)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(MaterializedStitchedCoordBuckets { manifest, retained })
     }
+}
+
+struct MaterializedStitchedCoordBuckets {
+    manifest: Vec<MaterializedStitchedCoordBucketEntry>,
+    retained: Vec<Vec<PendingMaterializedBucket>>,
 }
 
 struct SharedMaterializedBatch<'a, 'b> {
     shared: &'a SharedMaterializedWriters<'b>,
-    buckets: Vec<Vec<(StitchedCoordRecord, Vec<u8>)>>,
+    buckets: Vec<PendingMaterializedBucket>,
     bucket_bytes: Vec<usize>,
 }
 
@@ -10955,7 +12340,9 @@ impl<'a, 'b> SharedMaterializedBatch<'a, 'b> {
     fn new(shared: &'a SharedMaterializedWriters<'b>, bucket_count: usize) -> Self {
         Self {
             shared,
-            buckets: (0..bucket_count).map(|_| Vec::new()).collect(),
+            buckets: (0..bucket_count)
+                .map(|_| PendingMaterializedBucket::default())
+                .collect(),
             bucket_bytes: vec![0; bucket_count],
         }
     }
@@ -10963,7 +12350,7 @@ impl<'a, 'b> SharedMaterializedBatch<'a, 'b> {
     fn finish(mut self) -> Result<(), SerialCollationError> {
         for bucket_id in 0..self.buckets.len() {
             self.shared
-                .write_batch(bucket_id, &mut self.buckets[bucket_id])?;
+                .retain_batch(bucket_id, &mut self.buckets[bucket_id])?;
         }
         Ok(())
     }
@@ -10984,7 +12371,19 @@ impl MaterializedRecordSink for SharedMaterializedBatch<'_, '_> {
         label: &[u8],
     ) -> Result<(), SerialCollationError> {
         self.bucket_bytes[bucket_id] += label.len() + STITCH_COORD_RECORD_LEN as usize;
-        self.buckets[bucket_id].push((*record, label.to_vec()));
+        let bucket = &mut self.buckets[bucket_id];
+        let label_offset = bucket.labels.len() as u64;
+        bucket.labels.extend_from_slice(label);
+        bucket.records.push(LoadedMaterializedStitchedCoordRecord {
+            path_id: record.path_id,
+            rank: record.rank,
+            label_offset,
+            label_len: label.len() as u32,
+            reverse: record.reverse,
+            is_cycle: record.is_cycle,
+            color_start: u32::MAX,
+            color_count: 0,
+        });
         if self.bucket_bytes[bucket_id] >= Self::FLUSH_BYTES {
             self.shared
                 .write_batch(bucket_id, &mut self.buckets[bucket_id])?;
@@ -11000,9 +12399,32 @@ impl MaterializedRecordSink for SharedMaterializedBatch<'_, '_> {
         label: &[u8],
         colors: &[UnitigColor],
     ) -> Result<(), SerialCollationError> {
-        self.finish_bucket(bucket_id)?;
-        self.shared
-            .write_colored_record(bucket_id, record, label, colors)
+        let color_count = u32::try_from(colors.len()).map_err(|_| {
+            SerialCollationError::MalformedCoordBucket(self.shared.coord_dir.to_path_buf())
+        })?;
+        let bucket = &mut self.buckets[bucket_id];
+        let label_offset = bucket.labels.len() as u64;
+        let color_start = bucket.colors.len() as u32;
+        bucket.labels.extend_from_slice(label);
+        bucket.colors.extend_from_slice(colors);
+        bucket.records.push(LoadedMaterializedStitchedCoordRecord {
+            path_id: record.path_id,
+            rank: record.rank,
+            label_offset,
+            label_len: label.len() as u32,
+            reverse: record.reverse,
+            is_cycle: record.is_cycle,
+            color_start,
+            color_count,
+        });
+        self.bucket_bytes[bucket_id] += label.len()
+            + STITCH_COORD_RECORD_LEN as usize
+            + std::mem::size_of::<u32>()
+            + colors.len() * std::mem::size_of::<u64>();
+        if self.bucket_bytes[bucket_id] >= Self::FLUSH_BYTES {
+            self.finish_bucket(bucket_id)?;
+        }
+        Ok(())
     }
 }
 
@@ -11264,6 +12686,8 @@ impl MaterializedStitchedCoordShardWriter {
         label: &[u8],
         colors: &[UnitigColor],
     ) -> Result<(), SerialCollationError> {
+        let count = u32::try_from(colors.len())
+            .map_err(|_| SerialCollationError::MalformedCoordBucket(self.color_path.clone()))?;
         if self.color_out.is_none() {
             let file = OpenOptions::new()
                 .create(true)
@@ -11275,8 +12699,6 @@ impl MaterializedStitchedCoordShardWriter {
                 })?;
             self.color_out = Some(BufWriter::with_capacity(1024 * 1024, file));
         }
-        let count = u32::try_from(colors.len())
-            .map_err(|_| SerialCollationError::MalformedCoordBucket(self.color_path.clone()))?;
         let color_out = self
             .color_out
             .as_mut()
@@ -11296,7 +12718,7 @@ impl MaterializedStitchedCoordShardWriter {
                 })?;
         }
         let color_index = self.color_records;
-        if color_index >= 0xff_ffff {
+        if color_index >= 0x3fff_ffff {
             return Err(SerialCollationError::MalformedCoordBucket(
                 self.color_path.clone(),
             ));
@@ -11304,6 +12726,153 @@ impl MaterializedStitchedCoordShardWriter {
         self.color_runs += u64::from(count);
         self.color_records += 1;
         self.write_record_with_color_index(record, label, color_index)
+    }
+
+    fn write_encoded_colored_record(
+        &mut self,
+        record: &StitchedCoordRecord,
+        label: &[u8],
+        count: u32,
+        encoded_colors: &[u8],
+    ) -> Result<(), SerialCollationError> {
+        if encoded_colors.len() != count as usize * std::mem::size_of::<u64>() {
+            return Err(SerialCollationError::MalformedCoordBucket(
+                self.color_path.clone(),
+            ));
+        }
+        if self.color_out.is_none() {
+            let file = OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&self.color_path)
+                .map_err(|source| SerialCollationError::Io {
+                    path: self.color_path.clone(),
+                    source,
+                })?;
+            self.color_out = Some(BufWriter::with_capacity(1024 * 1024, file));
+        }
+        let color_out = self
+            .color_out
+            .as_mut()
+            .expect("color writer was just created");
+        color_out
+            .write_all(&count.to_le_bytes())
+            .map_err(|source| SerialCollationError::Io {
+                path: self.color_path.clone(),
+                source,
+            })?;
+        color_out
+            .write_all(encoded_colors)
+            .map_err(|source| SerialCollationError::Io {
+                path: self.color_path.clone(),
+                source,
+            })?;
+        let color_index = self.color_records;
+        if color_index >= 0x3fff_ffff {
+            return Err(SerialCollationError::MalformedCoordBucket(
+                self.color_path.clone(),
+            ));
+        }
+        self.color_runs += u64::from(count);
+        self.color_records += 1;
+        self.write_record_with_color_index(record, label, color_index)
+    }
+
+    fn write_pending_batch(
+        &mut self,
+        batch: &mut PendingMaterializedBucket,
+    ) -> Result<(), SerialCollationError> {
+        let mut colored_records = 0u32;
+        let mut color_runs = 0u64;
+        for pending in &batch.records {
+            let color_index = if pending.color_start == u32::MAX {
+                u32::MAX
+            } else {
+                let index = self
+                    .color_records
+                    .checked_add(colored_records)
+                    .ok_or_else(|| {
+                        SerialCollationError::MalformedCoordBucket(self.color_path.clone())
+                    })?;
+                if index >= 0x3fff_ffff {
+                    return Err(SerialCollationError::MalformedCoordBucket(
+                        self.color_path.clone(),
+                    ));
+                }
+                colored_records += 1;
+                color_runs += u64::from(pending.color_count);
+                index
+            };
+            self.record_buffer
+                .extend_from_slice(&encoded_materialized_stitched_coord_record(
+                    MaterializedStitchedCoordRecord {
+                        path_id: pending.path_id,
+                        rank: pending.rank,
+                        label_offset: self.label_bytes + pending.label_offset,
+                        label_len: pending.label_len,
+                        reverse: pending.reverse,
+                        is_cycle: pending.is_cycle,
+                        color_index,
+                    },
+                ));
+        }
+
+        self.label_out
+            .as_mut()
+            .expect("label writer is open")
+            .write_all(&batch.labels)
+            .map_err(|source| SerialCollationError::Io {
+                path: self.label_path.clone(),
+                source,
+            })?;
+        if !batch.colors.is_empty() {
+            if self.color_out.is_none() {
+                let file = OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(&self.color_path)
+                    .map_err(|source| SerialCollationError::Io {
+                        path: self.color_path.clone(),
+                        source,
+                    })?;
+                self.color_out = Some(BufWriter::with_capacity(1024 * 1024, file));
+            }
+            let color_out = self
+                .color_out
+                .as_mut()
+                .expect("color writer was just created");
+            for pending in &batch.records {
+                if pending.color_start == u32::MAX {
+                    continue;
+                }
+                color_out
+                    .write_all(&pending.color_count.to_le_bytes())
+                    .map_err(|source| SerialCollationError::Io {
+                        path: self.color_path.clone(),
+                        source,
+                    })?;
+                let start = pending.color_start as usize;
+                for color in &batch.colors[start..start + pending.color_count as usize] {
+                    color_out
+                        .write_all(&color.raw().to_le_bytes())
+                        .map_err(|source| SerialCollationError::Io {
+                            path: self.color_path.clone(),
+                            source,
+                        })?;
+                }
+            }
+        }
+        self.records += batch.records.len() as u64;
+        self.label_bytes += batch.labels.len() as u64;
+        self.color_records += colored_records;
+        self.color_runs += color_runs;
+        batch.records.clear();
+        batch.labels.clear();
+        batch.colors.clear();
+        if self.record_buffer.len() >= STITCH_COORD_RECORD_WRITE_BUFFER {
+            self.flush_record_buffer()?;
+        }
+        Ok(())
     }
 
     fn flush_record_buffer(&mut self) -> Result<(), SerialCollationError> {
@@ -11398,24 +12967,33 @@ struct StitchedCoordShardWriters<'a> {
 struct ConcurrentStitchedCoordWriters<'a> {
     coord_dir: &'a Path,
     writers: Vec<Mutex<Option<StitchedCoordShardWriter>>>,
+    worker_buffers: Vec<UnsafeCell<Vec<Option<Vec<StitchedCoordRecord>>>>>,
 }
 
+// A Rayon worker exclusively accesses the buffer at its worker index. The final
+// slot is used by the serial expansion work, and finish runs after the pool joins.
+unsafe impl Sync for ConcurrentStitchedCoordWriters<'_> {}
+
 impl<'a> ConcurrentStitchedCoordWriters<'a> {
-    fn new(coord_dir: &'a Path, bucket_count: usize) -> Self {
+    fn new(coord_dir: &'a Path, bucket_count: usize, workers: usize) -> Self {
         Self {
             coord_dir,
             writers: (0..bucket_count).map(|_| Mutex::new(None)).collect(),
+            worker_buffers: (0..workers.max(1) + 1)
+                .map(|_| {
+                    let mut buckets = Vec::with_capacity(bucket_count);
+                    buckets.resize_with(bucket_count, || None);
+                    UnsafeCell::new(buckets)
+                })
+                .collect(),
         }
     }
 
-    fn write_path_records(
+    fn flush_records(
         &self,
         bucket_id: usize,
         records: &[StitchedCoordRecord],
     ) -> Result<(), SerialCollationError> {
-        if records.is_empty() {
-            return Ok(());
-        }
         let mut writer = self.writers[bucket_id]
             .lock()
             .map_err(|_| SerialCollationError::WorkerPanic)?;
@@ -11433,6 +13011,38 @@ impl<'a> ConcurrentStitchedCoordWriters<'a> {
         Ok(())
     }
 
+    fn write_path_records(
+        &self,
+        bucket_id: usize,
+        records: &[StitchedCoordRecord],
+    ) -> Result<(), SerialCollationError> {
+        if records.is_empty() {
+            return Ok(());
+        }
+        let serial_slot = self.worker_buffers.len() - 1;
+        let worker_id = rayon::current_thread_index()
+            .filter(|&worker_id| worker_id < serial_slot)
+            .unwrap_or(serial_slot);
+        // SAFETY: each Rayon worker has a unique index in the expansion pool,
+        // and non-pool calls are serial and use the dedicated final slot.
+        let buckets = unsafe { &mut *self.worker_buffers[worker_id].get() };
+        let capacity = EDGE_PATH_INFO_WORKER_BUFFER
+            .div_ceil(std::mem::size_of::<StitchedCoordRecord>())
+            .max(1);
+        let buffer = buckets[bucket_id].get_or_insert_with(|| Vec::with_capacity(capacity));
+        let mut remaining = records;
+        while !remaining.is_empty() {
+            let take = (capacity - buffer.len()).min(remaining.len());
+            buffer.extend_from_slice(&remaining[..take]);
+            remaining = &remaining[take..];
+            if buffer.len() == capacity {
+                self.flush_records(bucket_id, buffer)?;
+                buffer.clear();
+            }
+        }
+        Ok(())
+    }
+
     fn write_record(
         &self,
         bucket_id: usize,
@@ -11441,17 +13051,56 @@ impl<'a> ConcurrentStitchedCoordWriters<'a> {
         self.write_path_records(bucket_id, std::slice::from_ref(&record))
     }
 
-    fn finish(self) -> Result<Vec<StitchedCoordBucketEntry>, SerialCollationError> {
-        let mut manifest = Vec::new();
-        for writer in self.writers {
-            if let Some(writer) = writer
-                .into_inner()
-                .map_err(|_| SerialCollationError::WorkerPanic)?
-            {
-                manifest.push(writer.finish()?);
+    fn finish(
+        self,
+        pool: &ThreadPool,
+    ) -> Result<Vec<StitchedCoordBucketEntry>, SerialCollationError> {
+        let bucket_count = self.writers.len();
+        let mut pending_by_bucket = (0..bucket_count)
+            .map(|_| Vec::<Vec<StitchedCoordRecord>>::new())
+            .collect::<Vec<_>>();
+        for worker in self.worker_buffers {
+            for (bucket_id, records) in worker.into_inner().into_iter().enumerate() {
+                if let Some(records) = records
+                    && !records.is_empty()
+                {
+                    pending_by_bucket[bucket_id].push(records);
+                }
             }
         }
-        Ok(manifest)
+        let writers = self
+            .writers
+            .into_iter()
+            .map(|writer| {
+                writer
+                    .into_inner()
+                    .map_err(|_| SerialCollationError::WorkerPanic)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let coord_dir = self.coord_dir;
+        let entries = pool.install(|| {
+            writers
+                .into_par_iter()
+                .zip(pending_by_bucket.into_par_iter())
+                .enumerate()
+                .map(|(bucket_id, (writer, pending))| {
+                    if writer.is_none() && pending.is_empty() {
+                        return Ok(None);
+                    }
+                    let mut writer = match writer {
+                        Some(writer) => writer,
+                        None => StitchedCoordShardWriter::create(coord_dir, 0, bucket_id)?,
+                    };
+                    for records in pending {
+                        for record in records {
+                            writer.write_record(record)?;
+                        }
+                    }
+                    writer.finish().map(Some)
+                })
+                .collect::<Result<Vec<_>, SerialCollationError>>()
+        })?;
+        Ok(entries.into_iter().flatten().collect())
     }
 }
 
@@ -11653,22 +13302,22 @@ fn floor_power_of_two(value: usize) -> usize {
 }
 
 fn final_unitig_bucket_count(threads: usize) -> usize {
-    (threads.max(1) * 128)
+    (threads.max(1) * 8)
         .next_power_of_two()
         .clamp(128, MAX_OPEN_STITCH_ENDPOINT_WRITERS)
 }
 
 fn stitched_coord_bucket(path_id: u64, bucket_mask: usize) -> usize {
-    (hash_u64(path_id, 0) as usize) & bucket_mask
+    (xxh3_64(&path_id.to_ne_bytes()) as usize) & bucket_mask
 }
 
 fn encoded_stitched_coord_record(
     record: StitchedCoordRecord,
-) -> [u8; STITCH_COORD_RECORD_LEN as usize] {
-    let mut bytes = [0u8; STITCH_COORD_RECORD_LEN as usize];
+) -> [u8; STITCH_PATH_INFO_RECORD_LEN as usize] {
+    let mut bytes = [0u8; STITCH_PATH_INFO_RECORD_LEN as usize];
     bytes[..8].copy_from_slice(&record.path_id.to_le_bytes());
     bytes[8..16].copy_from_slice(&record.rank.to_le_bytes());
-    bytes[16..24].copy_from_slice(&(record.unitig_index as u64).to_le_bytes());
+    bytes[16..20].copy_from_slice(&record.unitig_index.to_le_bytes());
     let mut flags = 0u8;
     if record.reverse {
         flags |= STITCH_COORD_REVERSE_FLAG;
@@ -11676,7 +13325,7 @@ fn encoded_stitched_coord_record(
     if record.is_cycle {
         flags |= STITCH_COORD_CYCLE_FLAG;
     }
-    bytes[24] = flags;
+    bytes[20] = flags;
     bytes
 }
 
@@ -11697,10 +13346,11 @@ fn encoded_materialized_stitched_coord_record(
     }
     bytes[28] = flags;
     let color_index = if record.color_index == u32::MAX {
-        0xff_ffff
+        0x3fff_ffff
     } else {
         record.color_index
     };
+    bytes[28] |= ((color_index >> 24) as u8) << 2;
     bytes[29] = color_index as u8;
     bytes[30] = (color_index >> 8) as u8;
     bytes[31] = (color_index >> 16) as u8;
@@ -11709,34 +13359,51 @@ fn encoded_materialized_stitched_coord_record(
 
 fn reduce_materialized_stitched_coord_bucket_files_to_final<const K: usize>(
     manifest: &[MaterializedStitchedCoordBucketEntry],
+    retained: &[Vec<PendingMaterializedBucket>],
     threads: usize,
     final_buckets: &mut FinalUnitigBucketWriters,
 ) -> Result<u64, SerialCollationError> {
-    if manifest.is_empty() {
+    if manifest.is_empty() && retained.iter().all(Vec::is_empty) {
         return Ok(0);
     }
 
-    let mut groups: Vec<Vec<MaterializedStitchedCoordBucketEntry>> = Vec::new();
+    let bucket_count = manifest
+        .iter()
+        .map(|entry| entry.bucket_id + 1)
+        .max()
+        .unwrap_or(0)
+        .max(retained.len());
+    let mut files_by_bucket = vec![Vec::new(); bucket_count];
     for entry in manifest {
-        if groups
-            .last()
-            .and_then(|group| group.first())
-            .is_some_and(|first| first.bucket_id == entry.bucket_id)
-        {
-            groups
-                .last_mut()
-                .expect("checked that a final group exists")
-                .push(entry.clone());
-        } else {
-            groups.push(vec![entry.clone()]);
-        }
+        files_by_bucket[entry.bucket_id].push(entry.clone());
     }
+    let groups = files_by_bucket
+        .into_iter()
+        .enumerate()
+        .filter(|(bucket_id, files)| {
+            !files.is_empty()
+                || retained
+                    .get(*bucket_id)
+                    .is_some_and(|tails| !tails.is_empty())
+        })
+        .collect::<Vec<_>>();
 
     let workers = threads.max(1).min(groups.len());
+    if final_buckets.direct_output.is_some() && workers > 1 {
+        return reduce_materialized_groups_to_direct_fasta::<K>(
+            &groups,
+            retained,
+            workers,
+            final_buckets,
+        );
+    }
     let mut emitted = 0u64;
     if workers == 1 {
-        for group in &groups {
-            let unitigs = reduce_materialized_stitched_coord_bucket_file_group::<K>(group)?;
+        for (bucket_id, files) in &groups {
+            let unitigs = reduce_materialized_stitched_coord_bucket_file_group_with_tails::<K>(
+                files,
+                retained.get(*bucket_id).map_or(&[], Vec::as_slice),
+            )?;
             for unitig in unitigs {
                 if unitig.colors.is_empty() {
                     final_buckets.write_label(&unitig.label)?;
@@ -11758,19 +13425,25 @@ fn reduce_materialized_stitched_coord_bucket_files_to_final<const K: usize>(
             let tx = tx.clone();
             let next_group = &next_group;
             let groups = &groups;
-            handles.push(scope.spawn(move || {
-                loop {
-                    let group_idx = next_group.fetch_add(1, Ordering::Relaxed);
-                    let Some(group) = groups.get(group_idx) else {
-                        break;
-                    };
-                    let result = reduce_materialized_stitched_coord_bucket_file_group::<K>(group);
-                    let should_stop = result.is_err();
-                    if tx.send(result).is_err() || should_stop {
-                        break;
+            handles.push(
+                scope.spawn(move || {
+                    loop {
+                        let group_idx = next_group.fetch_add(1, Ordering::Relaxed);
+                        let Some(group) = groups.get(group_idx) else {
+                            break;
+                        };
+                        let result =
+                            reduce_materialized_stitched_coord_bucket_file_group_with_tails::<K>(
+                                &group.1,
+                                retained.get(group.0).map_or(&[], Vec::as_slice),
+                            );
+                        let should_stop = result.is_err();
+                        if tx.send(result).is_err() || should_stop {
+                            break;
+                        }
                     }
-                }
-            }));
+                }),
+            );
         }
         drop(tx);
 
@@ -11813,9 +13486,303 @@ fn reduce_materialized_stitched_coord_bucket_files_to_final<const K: usize>(
     Ok(emitted)
 }
 
+struct EncodedFinalBatch {
+    bytes: Vec<u8>,
+    records: u64,
+    bases: u64,
+}
+
+struct DirectFinalBatchBuilder {
+    bytes: Vec<u8>,
+    records: u64,
+    bases: u64,
+    first_record: u64,
+}
+
+impl DirectFinalBatchBuilder {
+    fn new(first_record: u64) -> Self {
+        Self {
+            bytes: Vec::with_capacity(512 * 1024),
+            records: 0,
+            bases: 0,
+            first_record,
+        }
+    }
+
+    fn push(&mut self, label: &[u8], colors: &[UnitigColor]) {
+        self.bytes.extend_from_slice(b">utg");
+        append_decimal_u64(&mut self.bytes, self.first_record + self.records);
+        for color in colors {
+            self.bytes.push(b' ');
+            append_decimal_u64(&mut self.bytes, color.raw());
+        }
+        self.bytes.push(b'\n');
+        self.bytes.extend_from_slice(label);
+        self.bytes.push(b'\n');
+        self.records += 1;
+        self.bases += label.len() as u64;
+    }
+
+    fn finish(self) -> EncodedFinalBatch {
+        EncodedFinalBatch {
+            bytes: self.bytes,
+            records: self.records,
+            bases: self.bases,
+        }
+    }
+}
+
+fn reduce_materialized_groups_to_direct_fasta<const K: usize>(
+    groups: &[(usize, Vec<MaterializedStitchedCoordBucketEntry>)],
+    retained: &[Vec<PendingMaterializedBucket>],
+    workers: usize,
+    final_buckets: &mut FinalUnitigBucketWriters,
+) -> Result<u64, SerialCollationError> {
+    const DIRECT_FINAL_BATCH_RECORDS: usize = 4096;
+    let next_group = AtomicUsize::new(0);
+    let next_record = AtomicU64::new(final_buckets.direct_record_id_highwater + 1);
+    let (tx, rx) = mpsc::sync_channel::<Result<EncodedFinalBatch, SerialCollationError>>(2);
+    let load_ns = AtomicU64::new(0);
+    let sort_ns = AtomicU64::new(0);
+    let assemble_ns = AtomicU64::new(0);
+    let send_ns = AtomicU64::new(0);
+    let mut emitted = 0u64;
+    let write_started = Instant::now();
+    std::thread::scope(|scope| {
+        let mut handles = Vec::with_capacity(workers);
+        for _ in 0..workers {
+            let tx = tx.clone();
+            let next_group = &next_group;
+            let next_record = &next_record;
+            let load_ns = &load_ns;
+            let sort_ns = &sort_ns;
+            let assemble_ns = &assemble_ns;
+            let send_ns = &send_ns;
+            handles.push(scope.spawn(move || {
+                loop {
+                    let group_idx = next_group.fetch_add(1, Ordering::Relaxed);
+                    let Some(group) = groups.get(group_idx) else {
+                        break;
+                    };
+                    let started = Instant::now();
+                    let mut shard = load_materialized_stitched_coord_bucket_file_group_with_tails(
+                        &group.1,
+                        retained.get(group.0).map_or(&[], Vec::as_slice),
+                    )?;
+                    load_ns.fetch_add(started.elapsed().as_nanos() as u64, Ordering::Relaxed);
+                    let started = Instant::now();
+                    shard
+                        .records
+                        .sort_unstable_by_key(|record| (record.path_id, record.rank));
+                    sort_ns.fetch_add(started.elapsed().as_nanos() as u64, Ordering::Relaxed);
+                    let mut batch = None::<DirectFinalBatchBuilder>;
+                    let mut send_failed = false;
+                    let started = Instant::now();
+                    reduce_sorted_materialized_stitched_coord_bucket_with::<K, _>(
+                        &mut shard.records,
+                        &shard.labels,
+                        &shard.colors,
+                        |label, colors| {
+                            if send_failed {
+                                return;
+                            }
+                            let builder = batch.get_or_insert_with(|| {
+                                let first_record = next_record.fetch_add(
+                                    DIRECT_FINAL_BATCH_RECORDS as u64,
+                                    Ordering::Relaxed,
+                                );
+                                DirectFinalBatchBuilder::new(first_record)
+                            });
+                            builder.push(label, colors);
+                            if builder.records as usize >= DIRECT_FINAL_BATCH_RECORDS {
+                                let send_started = Instant::now();
+                                let failed = tx
+                                    .send(Ok(batch.take().expect("batch exists").finish()))
+                                    .is_err();
+                                send_ns.fetch_add(
+                                    send_started.elapsed().as_nanos() as u64,
+                                    Ordering::Relaxed,
+                                );
+                                if failed {
+                                    send_failed = true;
+                                }
+                            }
+                        },
+                    );
+                    assemble_ns.fetch_add(started.elapsed().as_nanos() as u64, Ordering::Relaxed);
+                    if send_failed {
+                        return Err(SerialCollationError::WorkerPanic);
+                    }
+                    if let Some(batch) = batch {
+                        tx.send(Ok(batch.finish()))
+                            .map_err(|_| SerialCollationError::WorkerPanic)?;
+                    }
+                }
+                Ok::<_, SerialCollationError>(())
+            }));
+        }
+        drop(tx);
+
+        let mut first_error = None;
+        for result in rx {
+            match result {
+                Ok(batch) if first_error.is_none() => {
+                    if let Err(err) =
+                        final_buckets.write_direct_batch(&batch.bytes, batch.records, batch.bases)
+                    {
+                        first_error = Some(err);
+                    } else {
+                        emitted += batch.records;
+                    }
+                }
+                Ok(_) => {}
+                Err(err) if first_error.is_none() => first_error = Some(err),
+                Err(_) => {}
+            }
+        }
+        for handle in handles {
+            let result = handle
+                .join()
+                .map_err(|_| SerialCollationError::WorkerPanic)?;
+            if let Err(err) = result
+                && first_error.is_none()
+            {
+                first_error = Some(err);
+            }
+        }
+        if let Some(err) = first_error {
+            Err(err)
+        } else {
+            Ok(())
+        }
+    })?;
+    final_buckets.direct_record_id_highwater =
+        next_record.load(Ordering::Relaxed).saturating_sub(1);
+    eprintln!(
+        "cuttlefish3-rs: path-info reduce worker detail: load {:.3}s, sort {:.3}s, assemble/encode {:.3}s, blocked send {:.3}s; reducer wall/write-drain {:.3}s",
+        load_ns.load(Ordering::Relaxed) as f64 / 1e9,
+        sort_ns.load(Ordering::Relaxed) as f64 / 1e9,
+        assemble_ns.load(Ordering::Relaxed) as f64 / 1e9,
+        send_ns.load(Ordering::Relaxed) as f64 / 1e9,
+        write_started.elapsed().as_secs_f64(),
+    );
+    Ok(emitted)
+}
+
+fn encode_final_unitig_batch(
+    unitigs: Vec<FinalUnitigRecord>,
+    first_record: u64,
+) -> EncodedFinalBatch {
+    let records = unitigs.len() as u64;
+    let bases = unitigs.iter().map(|unitig| unitig.label.len() as u64).sum();
+    let mut bytes = Vec::with_capacity(bases as usize + unitigs.len() * 32);
+    for (offset, unitig) in unitigs.into_iter().enumerate() {
+        bytes.extend_from_slice(b">utg");
+        append_decimal_u64(&mut bytes, first_record + offset as u64);
+        for color in unitig.colors {
+            bytes.push(b' ');
+            append_decimal_u64(&mut bytes, color.raw());
+        }
+        bytes.push(b'\n');
+        bytes.extend_from_slice(&unitig.label);
+        bytes.push(b'\n');
+    }
+    EncodedFinalBatch {
+        bytes,
+        records,
+        bases,
+    }
+}
+
 fn reduce_materialized_stitched_coord_bucket_file_group<const K: usize>(
     group: &[MaterializedStitchedCoordBucketEntry],
 ) -> Result<Vec<FinalUnitigRecord>, SerialCollationError> {
+    let mut shard = load_materialized_stitched_coord_bucket_file_group(group)?;
+    Ok(reduce_materialized_stitched_coord_bucket::<K>(
+        &mut shard.records,
+        &shard.labels,
+        &shard.colors,
+    ))
+}
+
+fn reduce_materialized_stitched_coord_bucket_file_group_with_tails<const K: usize>(
+    group: &[MaterializedStitchedCoordBucketEntry],
+    tails: &[PendingMaterializedBucket],
+) -> Result<Vec<FinalUnitigRecord>, SerialCollationError> {
+    let mut shard = load_materialized_stitched_coord_bucket_file_group_with_tails(group, tails)?;
+    Ok(reduce_materialized_stitched_coord_bucket::<K>(
+        &mut shard.records,
+        &shard.labels,
+        &shard.colors,
+    ))
+}
+
+fn load_materialized_stitched_coord_bucket_file_group_with_tails(
+    group: &[MaterializedStitchedCoordBucketEntry],
+    tails: &[PendingMaterializedBucket],
+) -> Result<MaterializedStitchedCoordBucket, SerialCollationError> {
+    let mut shard = if group.is_empty() {
+        MaterializedStitchedCoordBucket {
+            records: Vec::new(),
+            labels: Vec::new(),
+            colors: Vec::new(),
+        }
+    } else {
+        load_materialized_stitched_coord_bucket_file_group(group)?
+    };
+    for tail in tails {
+        append_pending_materialized_bucket(&mut shard, tail)?;
+    }
+    Ok(shard)
+}
+
+fn append_pending_materialized_bucket(
+    shard: &mut MaterializedStitchedCoordBucket,
+    tail: &PendingMaterializedBucket,
+) -> Result<(), SerialCollationError> {
+    let label_base = shard.labels.len() as u64;
+    let color_base = u32::try_from(shard.colors.len()).map_err(|_| {
+        SerialCollationError::MalformedCoordBucket(PathBuf::from("retained-materialized-bucket"))
+    })?;
+    shard.records.reserve(tail.records.len());
+    shard.labels.extend_from_slice(&tail.labels);
+    for pending in &tail.records {
+        let color_start = if pending.color_start == u32::MAX {
+            u32::MAX
+        } else {
+            color_base.checked_add(pending.color_start).ok_or_else(|| {
+                SerialCollationError::MalformedCoordBucket(PathBuf::from(
+                    "retained-materialized-bucket",
+                ))
+            })?
+        };
+        shard.records.push(LoadedMaterializedStitchedCoordRecord {
+            path_id: pending.path_id,
+            rank: pending.rank,
+            label_offset: label_base + pending.label_offset,
+            label_len: pending.label_len,
+            reverse: pending.reverse,
+            is_cycle: pending.is_cycle,
+            color_start,
+            color_count: pending.color_count,
+        });
+    }
+    shard.colors.extend_from_slice(&tail.colors);
+    Ok(())
+}
+
+fn load_materialized_stitched_coord_bucket_file_group(
+    group: &[MaterializedStitchedCoordBucketEntry],
+) -> Result<MaterializedStitchedCoordBucket, SerialCollationError> {
+    if let [entry] = group {
+        let shard = read_materialized_stitched_coord_bucket_file(entry)?;
+        remove_serial_file(&entry.coord_path)?;
+        remove_serial_file(&entry.label_path)?;
+        if let Some(path) = entry.color_path.as_ref() {
+            remove_serial_file(path)?;
+        }
+        return Ok(shard);
+    }
     let total_records = group.iter().map(|entry| entry.records).sum::<u64>();
     let total_label_bytes = group.iter().map(|entry| entry.label_bytes).sum::<u64>();
     let mut records = Vec::with_capacity(total_records as usize);
@@ -11829,13 +13796,14 @@ fn reduce_materialized_stitched_coord_bucket_file_group<const K: usize>(
         if let Some(path) = entry.color_path.as_ref() {
             remove_serial_file(path)?;
         }
-        let color_offset = colors.len() as u32;
+        let color_offset = u32::try_from(colors.len())
+            .map_err(|_| SerialCollationError::MalformedCoordBucket(entry.coord_path.clone()))?;
         for record in &mut shard.records {
             record.label_offset += label_offset;
-            if record.color_index != u32::MAX {
-                record.color_index =
+            if record.color_start != u32::MAX {
+                record.color_start =
                     record
-                        .color_index
+                        .color_start
                         .checked_add(color_offset)
                         .ok_or_else(|| {
                             SerialCollationError::MalformedCoordBucket(entry.coord_path.clone())
@@ -11846,17 +13814,17 @@ fn reduce_materialized_stitched_coord_bucket_file_group<const K: usize>(
         labels.extend(shard.labels);
         colors.extend(shard.colors);
     }
-    Ok(reduce_materialized_stitched_coord_bucket::<K>(
-        &mut records,
-        &labels,
-        &colors,
-    ))
+    Ok(MaterializedStitchedCoordBucket {
+        records,
+        labels,
+        colors,
+    })
 }
 
 struct MaterializedStitchedCoordBucket {
-    records: Vec<MaterializedStitchedCoordRecord>,
+    records: Vec<LoadedMaterializedStitchedCoordRecord>,
     labels: Vec<u8>,
-    colors: Vec<Vec<UnitigColor>>,
+    colors: Vec<UnitigColor>,
 }
 
 struct FinalUnitigRecord {
@@ -11910,19 +13878,33 @@ fn read_materialized_stitched_coord_bucket_file(
             entry.coord_path.clone(),
         ));
     }
-    let mut coord_bytes = vec![0u8; (records * STITCH_COORD_RECORD_LEN) as usize];
-    input
-        .read_exact(&mut coord_bytes)
-        .map_err(|source| SerialCollationError::Io {
-            path: entry.coord_path.clone(),
-            source,
-        })?;
+    const COORD_DECODE_CHUNK: usize = 1024 * 1024;
     let mut out = Vec::with_capacity(records as usize);
-    for chunk in coord_bytes.chunks_exact(STITCH_COORD_RECORD_LEN as usize) {
-        out.push(decoded_materialized_stitched_coord_record(
-            chunk,
-            &entry.coord_path,
-        )?);
+    let mut remaining = records as usize;
+    let mut coord_bytes = vec![0u8; COORD_DECODE_CHUNK];
+    while remaining != 0 {
+        let chunk_records = remaining.min(COORD_DECODE_CHUNK / STITCH_COORD_RECORD_LEN as usize);
+        let chunk_len = chunk_records * STITCH_COORD_RECORD_LEN as usize;
+        input
+            .read_exact(&mut coord_bytes[..chunk_len])
+            .map_err(|source| SerialCollationError::Io {
+                path: entry.coord_path.clone(),
+                source,
+            })?;
+        for chunk in coord_bytes[..chunk_len].chunks_exact(STITCH_COORD_RECORD_LEN as usize) {
+            let record = decoded_materialized_stitched_coord_record(chunk, &entry.coord_path)?;
+            out.push(LoadedMaterializedStitchedCoordRecord {
+                path_id: record.path_id,
+                rank: record.rank,
+                label_offset: record.label_offset,
+                label_len: record.label_len,
+                reverse: record.reverse,
+                is_cycle: record.is_cycle,
+                color_start: record.color_index,
+                color_count: 0,
+            });
+        }
+        remaining -= chunk_records;
     }
 
     let label_file = File::open(&entry.label_path).map_err(|source| SerialCollationError::Io {
@@ -11950,59 +13932,85 @@ fn read_materialized_stitched_coord_bucket_file(
             source,
         })?;
 
-    let mut colors = Vec::new();
+    let mut colors = Vec::with_capacity(entry.color_runs as usize);
+    let mut color_spans = Vec::<(u32, u32)>::new();
     if let Some(color_path) = &entry.color_path {
         let color_file = File::open(color_path).map_err(|source| SerialCollationError::Io {
             path: color_path.clone(),
             source,
         })?;
-        let mut color_input = BufReader::with_capacity(1024 * 1024, color_file);
         let color_records = out
             .iter()
-            .filter_map(|record| (record.color_index != u32::MAX).then_some(record.color_index))
+            .filter_map(|record| (record.color_start != u32::MAX).then_some(record.color_start))
             .max()
             .map_or(0, |index| index + 1);
-        let mut observed_runs = 0u64;
-        for _ in 0..color_records {
-            let mut count = [0u8; 4];
-            color_input
-                .read_exact(&mut count)
-                .map_err(|source| SerialCollationError::Io {
-                    path: color_path.clone(),
-                    source,
-                })?;
-            let count = u32::from_le_bytes(count);
-            let mut runs = Vec::with_capacity(count as usize);
-            for _ in 0..count {
-                let mut raw = [0u8; 8];
-                color_input
-                    .read_exact(&mut raw)
-                    .map_err(|source| SerialCollationError::Io {
-                        path: color_path.clone(),
-                        source,
-                    })?;
-                let raw = u64::from_le_bytes(raw);
-                runs.push(UnitigColor::new(
-                    (raw & 0xff_ffff) as u32,
-                    crate::state::ColorCoordinate::from_u40(raw >> 24),
-                ));
-            }
-            observed_runs += u64::from(count);
-            colors.push(runs);
-        }
-        if observed_runs != entry.color_runs
-            || !color_input
-                .fill_buf()
-                .map_err(|source| SerialCollationError::Io {
-                    path: color_path.clone(),
-                    source,
-                })?
-                .is_empty()
+        let expected_color_bytes = u64::from(color_records) * 4 + entry.color_runs * 8;
+        if color_file
+            .metadata()
+            .map_err(|source| SerialCollationError::Io {
+                path: color_path.clone(),
+                source,
+            })?
+            .len()
+            != expected_color_bytes
         {
             return Err(SerialCollationError::MalformedCoordBucket(
                 color_path.clone(),
             ));
         }
+        let mut color_input = BufReader::with_capacity(1024 * 1024, color_file);
+        let mut color_bytes = vec![0u8; expected_color_bytes as usize];
+        color_input
+            .read_exact(&mut color_bytes)
+            .map_err(|source| SerialCollationError::Io {
+                path: color_path.clone(),
+                source,
+            })?;
+        let mut cursor = 0usize;
+        let mut observed_runs = 0u64;
+        for _ in 0..color_records {
+            let count = u32::from_le_bytes(
+                color_bytes[cursor..cursor + 4]
+                    .try_into()
+                    .expect("four color-count bytes"),
+            );
+            cursor += 4;
+            let start = u32::try_from(colors.len())
+                .map_err(|_| SerialCollationError::MalformedCoordBucket(color_path.clone()))?;
+            for _ in 0..count {
+                let raw = u64::from_le_bytes(
+                    color_bytes[cursor..cursor + 8]
+                        .try_into()
+                        .expect("eight color bytes"),
+                );
+                cursor += 8;
+                colors.push(UnitigColor::new(
+                    (raw & 0xff_ffff) as u32,
+                    crate::state::ColorCoordinate::from_u40(raw >> 24),
+                ));
+            }
+            observed_runs += u64::from(count);
+            color_spans.push((start, count));
+        }
+        if observed_runs != entry.color_runs || cursor != color_bytes.len() {
+            return Err(SerialCollationError::MalformedCoordBucket(
+                color_path.clone(),
+            ));
+        }
+    }
+
+    for record in &mut out {
+        let (color_start, color_count) = if record.color_start == u32::MAX {
+            (u32::MAX, 0)
+        } else {
+            *color_spans
+                .get(record.color_start as usize)
+                .ok_or_else(|| {
+                    SerialCollationError::MalformedCoordBucket(entry.coord_path.clone())
+                })?
+        };
+        record.color_start = color_start;
+        record.color_count = color_count;
     }
 
     Ok(MaterializedStitchedCoordBucket {
@@ -12028,8 +14036,10 @@ fn decoded_materialized_stitched_coord_record(
     let mut len_bytes = [0u8; 4];
     len_bytes.copy_from_slice(&bytes[24..28]);
     let flags = bytes[28];
-    let encoded_color_index =
-        u32::from(bytes[29]) | (u32::from(bytes[30]) << 8) | (u32::from(bytes[31]) << 16);
+    let encoded_color_index = u32::from(flags >> 2) << 24
+        | u32::from(bytes[29])
+        | (u32::from(bytes[30]) << 8)
+        | (u32::from(bytes[31]) << 16);
     Ok(MaterializedStitchedCoordRecord {
         path_id,
         rank,
@@ -12037,7 +14047,7 @@ fn decoded_materialized_stitched_coord_record(
         label_len: u32::from_le_bytes(len_bytes),
         reverse: (flags & STITCH_COORD_REVERSE_FLAG) != 0,
         is_cycle: (flags & STITCH_COORD_CYCLE_FLAG) != 0,
-        color_index: if encoded_color_index == 0xff_ffff {
+        color_index: if encoded_color_index == 0x3fff_ffff {
             u32::MAX
         } else {
             encoded_color_index
@@ -12046,18 +14056,58 @@ fn decoded_materialized_stitched_coord_record(
 }
 
 fn reduce_materialized_stitched_coord_bucket<const K: usize>(
-    records: &mut [MaterializedStitchedCoordRecord],
+    records: &mut [LoadedMaterializedStitchedCoordRecord],
     labels: &[u8],
-    color_sets: &[Vec<UnitigColor>],
+    color_runs: &[UnitigColor],
 ) -> Vec<FinalUnitigRecord> {
+    let mut unitigs = Vec::new();
+    reduce_materialized_stitched_coord_bucket_with::<K, _>(
+        records,
+        labels,
+        color_runs,
+        |label, colors| {
+            unitigs.push(FinalUnitigRecord {
+                label: label.to_vec(),
+                colors: colors.to_vec(),
+            });
+        },
+    );
+    unitigs
+}
+
+fn reduce_materialized_stitched_coord_bucket_with<const K: usize, F>(
+    records: &mut [LoadedMaterializedStitchedCoordRecord],
+    labels: &[u8],
+    color_runs: &[UnitigColor],
+    emit: F,
+) where
+    F: FnMut(&[u8], &[UnitigColor]),
+{
     if records.is_empty() {
-        return Vec::new();
+        return;
     }
 
     if !materialized_stitched_coord_records_are_ordered(records) {
         records.sort_by_key(|record| (record.path_id, record.rank));
     }
-    let mut unitigs = Vec::new();
+    reduce_sorted_materialized_stitched_coord_bucket_with::<K, _>(
+        records, labels, color_runs, emit,
+    );
+}
+
+fn reduce_sorted_materialized_stitched_coord_bucket_with<const K: usize, F>(
+    records: &mut [LoadedMaterializedStitchedCoordRecord],
+    labels: &[u8],
+    color_runs: &[UnitigColor],
+    mut emit: F,
+) where
+    F: FnMut(&[u8], &[UnitigColor]),
+{
+    if records.is_empty() {
+        return;
+    }
+    let mut label = Vec::new();
+    let mut colors = Vec::new();
     let mut start = 0;
     while start < records.len() {
         let path_id = records[start].path_id;
@@ -12067,8 +14117,8 @@ fn reduce_materialized_stitched_coord_bucket<const K: usize>(
             end += 1;
         }
 
-        let mut label = Vec::new();
-        let mut colors = Vec::new();
+        label.clear();
+        colors.clear();
         if end - start == 2 && !is_cycle && records[start].rank == 0 && records[start + 1].rank == 0
         {
             for (idx, record) in records[start..end].iter().enumerate() {
@@ -12084,7 +14134,7 @@ fn reduce_materialized_stitched_coord_bucket<const K: usize>(
                     &mut colors,
                     label.len(),
                     record,
-                    color_sets,
+                    color_runs,
                     reverse,
                 );
                 append_or_init_oriented_fast::<K>(&mut label, unitig_label, reverse);
@@ -12098,7 +14148,7 @@ fn reduce_materialized_stitched_coord_bucket<const K: usize>(
                     &mut colors,
                     label.len(),
                     record,
-                    color_sets,
+                    color_runs,
                     record.reverse,
                 );
                 append_or_init_oriented_fast::<K>(&mut label, unitig_label, record.reverse);
@@ -12107,7 +14157,7 @@ fn reduce_materialized_stitched_coord_bucket<const K: usize>(
 
         if label.len() >= K {
             let colored = !colors.is_empty();
-            let label = if is_cycle && colored {
+            if is_cycle && colored {
                 label.pop();
                 let vertex_count = label.len().saturating_sub(K - 1) as u32;
                 while colors
@@ -12116,43 +14166,53 @@ fn reduce_materialized_stitched_coord_bucket<const K: usize>(
                 {
                     colors.pop();
                 }
-                label
             } else if is_cycle {
-                normalize_stitched_cycle::<K>(&label)
+                label = normalize_stitched_cycle::<K>(&label);
             } else {
                 let reverse = reverse_complement_is_less(&label);
                 if reverse && colored {
-                    colors = reverse_color_runs(&colors, (label.len() - K + 1) as u32);
+                    reverse_color_runs_in_place(&mut colors, (label.len() - K + 1) as u32);
                 }
-                canonical_label(label)
-            };
-            unitigs.push(FinalUnitigRecord { label, colors });
+                if reverse {
+                    label = reverse_complement_label(&label);
+                }
+            }
+            emit(&label, &colors);
         }
         start = end;
     }
-    unitigs
 }
 
 fn append_materialized_colors<const K: usize>(
     output: &mut Vec<UnitigColor>,
     output_label_len: usize,
-    record: &MaterializedStitchedCoordRecord,
-    color_sets: &[Vec<UnitigColor>],
+    record: &LoadedMaterializedStitchedCoordRecord,
+    color_runs: &[UnitigColor],
     reverse: bool,
 ) {
-    if record.color_index == u32::MAX {
+    if record.color_start == u32::MAX {
         return;
     }
-    let Some(runs) = color_sets.get(record.color_index as usize) else {
+    let start = record.color_start as usize;
+    let Some(runs) = color_runs.get(start..start + record.color_count as usize) else {
         return;
     };
     let unitig_vertex_count = record.label_len as usize - K + 1;
     if output.is_empty() {
-        *output = if reverse {
-            reverse_color_runs(runs, unitig_vertex_count as u32)
+        output.reserve(runs.len());
+        if reverse {
+            for index in (0..runs.len()).rev() {
+                let end = runs
+                    .get(index + 1)
+                    .map_or(unitig_vertex_count as u32, |next| next.offset());
+                output.push(UnitigColor::new(
+                    unitig_vertex_count as u32 - end,
+                    crate::state::ColorCoordinate::from_u40(runs[index].coordinate()),
+                ));
+            }
         } else {
-            runs.clone()
-        };
+            output.extend_from_slice(runs);
+        }
     } else {
         let output_vertex_count = output_label_len - K + 1;
         append_color_runs(
@@ -12166,7 +14226,7 @@ fn append_materialized_colors<const K: usize>(
 }
 
 fn materialized_stitched_coord_records_are_ordered(
-    records: &[MaterializedStitchedCoordRecord],
+    records: &[LoadedMaterializedStitchedCoordRecord],
 ) -> bool {
     records
         .windows(2)
@@ -12353,7 +14413,7 @@ fn read_stitched_coord_bucket_file(
     let expected_len = STITCH_COORD_HEADER_LEN
         .checked_add(
             records
-                .checked_mul(STITCH_COORD_RECORD_LEN)
+                .checked_mul(STITCH_PATH_INFO_RECORD_LEN)
                 .ok_or_else(|| SerialCollationError::MalformedCoordBucket(entry.path.clone()))?,
         )
         .ok_or_else(|| SerialCollationError::MalformedCoordBucket(entry.path.clone()))?;
@@ -12371,7 +14431,7 @@ fn read_stitched_coord_bucket_file(
         ));
     }
 
-    let mut coord_bytes = vec![0u8; (records * STITCH_COORD_RECORD_LEN) as usize];
+    let mut coord_bytes = vec![0u8; (records * STITCH_PATH_INFO_RECORD_LEN) as usize];
     input
         .read_exact(&mut coord_bytes)
         .map_err(|source| SerialCollationError::Io {
@@ -12379,29 +14439,113 @@ fn read_stitched_coord_bucket_file(
             source,
         })?;
     let mut out = Vec::with_capacity(records as usize);
-    for chunk in coord_bytes.chunks_exact(STITCH_COORD_RECORD_LEN as usize) {
+    for chunk in coord_bytes.chunks_exact(STITCH_PATH_INFO_RECORD_LEN as usize) {
         out.push(decoded_stitched_coord_record(chunk, &entry.path)?);
     }
     Ok(out)
+}
+
+fn read_stitched_coord_bucket_group(
+    group: &[StitchedCoordBucketEntry],
+) -> Result<Vec<StitchedCoordRecord>, SerialCollationError> {
+    if let [entry] = group {
+        return read_stitched_coord_bucket_file(entry);
+    }
+    let total_records = group.iter().map(|entry| entry.records).sum::<u64>();
+    let mut records = Vec::with_capacity(total_records as usize);
+    for entry in group {
+        records.extend(read_stitched_coord_bucket_file(entry)?);
+    }
+    Ok(records)
+}
+
+fn read_stitched_coord_bucket_group_dense(
+    group: &[StitchedCoordBucketEntry],
+    unitigs: usize,
+    unitig_path: &Path,
+) -> Result<Vec<DenseLocalPathInfo>, SerialCollationError> {
+    let mut dense = vec![DenseLocalPathInfo::EMPTY; unitigs];
+    for entry in group {
+        let file = File::open(&entry.path).map_err(|source| SerialCollationError::Io {
+            path: entry.path.clone(),
+            source,
+        })?;
+        let mut input = BufReader::with_capacity(1024 * 1024, file);
+        let mut magic = [0u8; 8];
+        read_exact_coord(&mut input, &entry.path, &mut magic)?;
+        let bucket_id = read_u64_coord(&mut input, &entry.path)? as usize;
+        let records = read_u64_coord(&mut input, &entry.path)?;
+        let _reserved = read_u64_coord(&mut input, &entry.path)?;
+        let expected_len = STITCH_COORD_HEADER_LEN
+            .checked_add(
+                records
+                    .checked_mul(STITCH_PATH_INFO_RECORD_LEN)
+                    .ok_or_else(|| {
+                        SerialCollationError::MalformedCoordBucket(entry.path.clone())
+                    })?,
+            )
+            .ok_or_else(|| SerialCollationError::MalformedCoordBucket(entry.path.clone()))?;
+        let actual_len = input
+            .get_ref()
+            .metadata()
+            .map_err(|source| SerialCollationError::Io {
+                path: entry.path.clone(),
+                source,
+            })?
+            .len();
+        if &magic != STITCH_COORD_MAGIC
+            || bucket_id != entry.bucket_id
+            || records != entry.records
+            || actual_len != expected_len
+        {
+            return Err(SerialCollationError::MalformedCoordBucket(
+                entry.path.clone(),
+            ));
+        }
+
+        let mut bytes = vec![0u8; (records * STITCH_PATH_INFO_RECORD_LEN) as usize];
+        read_exact_coord(&mut input, &entry.path, &mut bytes)?;
+        for record in bytes.chunks_exact(STITCH_PATH_INFO_RECORD_LEN as usize) {
+            let path_id = u64::from_le_bytes(record[..8].try_into().expect("path ID"));
+            let rank = u64::from_le_bytes(record[8..16].try_into().expect("path rank"));
+            let unitig_index =
+                u32::from_le_bytes(record[16..20].try_into().expect("local unitig index")) as usize;
+            let flags = record[20];
+            let Some(slot) = dense.get_mut(unitig_index) else {
+                return Err(SerialCollationError::MalformedCoordBucket(
+                    unitig_path.to_path_buf(),
+                ));
+            };
+            if slot.rank_and_flags != u64::MAX || record[21..].iter().any(|&byte| byte != 0) {
+                return Err(SerialCollationError::MalformedCoordBucket(
+                    entry.path.clone(),
+                ));
+            }
+            *slot = DenseLocalPathInfo {
+                path_id,
+                rank_and_flags: (rank << 2)
+                    | u64::from((flags & STITCH_COORD_REVERSE_FLAG) != 0)
+                    | (u64::from((flags & STITCH_COORD_CYCLE_FLAG) != 0) << 1),
+            };
+        }
+    }
+    Ok(dense)
 }
 
 fn decoded_stitched_coord_record(
     bytes: &[u8],
     path: &Path,
 ) -> Result<StitchedCoordRecord, SerialCollationError> {
-    if bytes.len() != STITCH_COORD_RECORD_LEN as usize {
+    if bytes.len() != STITCH_PATH_INFO_RECORD_LEN as usize {
         return Err(SerialCollationError::MalformedCoordBucket(
             path.to_path_buf(),
         ));
     }
     let path_id = u64::from_le_bytes(bytes[..8].try_into().expect("u64 path_id field"));
     let rank = u64::from_le_bytes(bytes[8..16].try_into().expect("u64 rank field"));
-    let unitig_index = u32::try_from(u64::from_le_bytes(
-        bytes[16..24].try_into().expect("u64 unitig field"),
-    ))
-    .map_err(|_| SerialCollationError::MalformedCoordBucket(path.to_path_buf()))?;
-    let flags = bytes[24];
-    if bytes[25..32].iter().any(|&byte| byte != 0) {
+    let unitig_index = u32::from_le_bytes(bytes[16..20].try_into().expect("u32 unitig field"));
+    let flags = bytes[20];
+    if bytes[21..].iter().any(|&byte| byte != 0) {
         return Err(SerialCollationError::MalformedCoordBucket(
             path.to_path_buf(),
         ));
@@ -13034,55 +15178,90 @@ struct ConcurrentPathInfoTable<const K: usize> {
     mask: usize,
 }
 
-#[derive(Clone, Copy)]
-struct CompactPathInfo {
-    path_id: u64,
-    rank: u64,
-    flags: u8,
-}
-
 struct CompactPathInfoSlot {
-    state: AtomicU32,
-    key: UnsafeCell<MaybeUninit<u64>>,
-    value: UnsafeCell<MaybeUninit<CompactPathInfo>>,
+    key: AtomicU64,
+    path_id: AtomicU64,
+    rank_and_flags: AtomicU64,
 }
 
-unsafe impl Sync for CompactPathInfoSlot {}
+#[derive(Clone, Copy)]
+struct CompactExpansionPathInfo {
+    path_id: u64,
+    rank_and_flags: u64,
+}
+
+impl CompactExpansionPathInfo {
+    #[inline(always)]
+    fn new(path_id: u64, rank: u64, exit_side: Side, is_cycle: bool) -> Self {
+        let flags = u64::from(exit_side == Side::Back) | (u64::from(is_cycle) << 1);
+        Self {
+            path_id,
+            rank_and_flags: (rank << 2) | flags,
+        }
+    }
+
+    #[inline(always)]
+    fn rank(self) -> u64 {
+        self.rank_and_flags >> 2
+    }
+
+    #[inline(always)]
+    fn exit_side(self) -> Side {
+        if self.rank_and_flags & 1 == 0 {
+            Side::Front
+        } else {
+            Side::Back
+        }
+    }
+
+    #[inline(always)]
+    fn is_cycle(self) -> bool {
+        self.rank_and_flags & 2 != 0
+    }
+}
 
 struct CompactPathInfoTable {
     slots: Vec<CompactPathInfoSlot>,
     mask: usize,
-    generation: AtomicU32,
+    key_mask: u64,
+    generation: AtomicU64,
 }
 
 impl CompactPathInfoTable {
-    const BUSY: u32 = 1 << 31;
-
-    fn with_max_entries(max_entries: usize) -> Self {
+    fn with_max_entries(max_entries: usize, k: usize) -> Self {
+        debug_assert!(k <= 31);
         let capacity = max_entries
             .saturating_mul(4)
             .div_ceil(3)
             .next_power_of_two()
             .max(8);
+        let key_mask = (1u64 << (2 * k)) - 1;
         Self {
             slots: (0..capacity)
                 .map(|_| CompactPathInfoSlot {
-                    state: AtomicU32::new(0),
-                    key: UnsafeCell::new(MaybeUninit::uninit()),
-                    value: UnsafeCell::new(MaybeUninit::uninit()),
+                    key: AtomicU64::new(0),
+                    path_id: AtomicU64::new(0),
+                    rank_and_flags: AtomicU64::new(0),
                 })
                 .collect(),
             mask: capacity - 1,
-            generation: AtomicU32::new(1),
+            key_mask,
+            generation: AtomicU64::new(0),
         }
     }
 
     fn clear(&self) {
-        let previous = self.generation.fetch_add(1, Ordering::Relaxed);
-        assert!(
-            previous < Self::BUSY - 1,
-            "path-info table generation exhausted"
-        );
+        let tag_step = self.key_mask + 1;
+        let tag_mask = !self.key_mask;
+        let current = self.generation.load(Ordering::Relaxed);
+        let mut next = current.wrapping_add(tag_step) & tag_mask;
+        if next == 0 {
+            self.slots
+                .par_iter()
+                .for_each(|slot| slot.key.store(0, Ordering::Relaxed));
+            next = tag_step;
+        }
+        self.generation.store(next, Ordering::Relaxed);
     }
 
     fn insert<const K: usize>(&self, vertex: Kmer<K>, value: PathInfo<K>) -> bool {
@@ -13095,71 +15274,84 @@ impl CompactPathInfoTable {
         )
     }
 
+    #[inline(always)]
+    fn insert_compact<const K: usize>(
+        &self,
+        vertex: Kmer<K>,
+        value: CompactExpansionPathInfo,
+    ) -> bool {
+        self.insert_raw(
+            vertex.as_u128() as u64,
+            value.path_id,
+            value.rank(),
+            value.rank_and_flags as u8 & 3,
+        )
+    }
+
+    #[inline(always)]
     fn insert_raw(&self, key: u64, path_id: u64, rank: u64, flags: u8) -> bool {
+        debug_assert!(rank <= (u64::MAX >> 2));
+        debug_assert!(flags < 4);
+        debug_assert_eq!(key & !self.key_mask, 0);
         let generation = self.generation.load(Ordering::Relaxed);
-        let mut idx = hash_u64(key, 0) as usize & self.mask;
+        let tagged_key = generation | key;
+        let mut idx = wyhash_u64(key, 0) as usize & self.mask;
         loop {
             let slot = &self.slots[idx];
-            let observed = slot.state.load(Ordering::Acquire);
-            if observed != generation
-                && observed != generation | Self::BUSY
+            let observed = slot.key.load(Ordering::Relaxed);
+            if observed == tagged_key {
+                return false;
+            }
+            if observed & !self.key_mask != generation
                 && slot
-                    .state
-                    .compare_exchange(
-                        observed,
-                        generation | Self::BUSY,
-                        Ordering::Acquire,
-                        Ordering::Relaxed,
-                    )
+                    .key
+                    .compare_exchange(observed, tagged_key, Ordering::Relaxed, Ordering::Relaxed)
                     .is_ok()
             {
-                unsafe {
-                    (*slot.key.get()).write(key);
-                    (*slot.value.get()).write(CompactPathInfo {
-                        path_id,
-                        rank,
-                        flags,
-                    });
-                }
-                slot.state.store(generation, Ordering::Release);
+                // Parallel loading only inserts values; lookups begin after the
+                // worker pool joins. Later diagonal inserts are single-threaded.
+                slot.path_id.store(path_id, Ordering::Release);
+                slot.rank_and_flags
+                    .store((rank << 2) | u64::from(flags), Ordering::Release);
                 return true;
-            }
-            if observed == generation | Self::BUSY {
-                std::hint::spin_loop();
-                continue;
-            }
-            if observed == generation && unsafe { (*slot.key.get()).assume_init() == key } {
-                return false;
             }
             idx = (idx + 1) & self.mask;
         }
     }
 
+    #[inline(always)]
     fn get<const K: usize>(&self, vertex: Kmer<K>) -> Option<PathInfo<K>> {
-        let key = vertex.as_u128() as u64;
+        let value = self.get_compact(vertex)?;
+        Some(PathInfo {
+            path_id: Kmer::from_bits(value.path_id as u128),
+            rank: value.rank(),
+            exit_side: value.exit_side(),
+            is_cycle: value.is_cycle(),
+        })
+    }
+
+    #[inline(always)]
+    fn get_compact<const K: usize>(&self, vertex: Kmer<K>) -> Option<CompactExpansionPathInfo> {
+        self.get_compact_raw(vertex.as_u128() as u64)
+    }
+
+    #[inline(always)]
+    fn get_compact_raw(&self, key: u64) -> Option<CompactExpansionPathInfo> {
         let generation = self.generation.load(Ordering::Relaxed);
-        let mut idx = vertex.hash64(0) as usize & self.mask;
+        let tagged_key = generation | key;
+        let mut idx = wyhash_u64(key, 0) as usize & self.mask;
         loop {
             let slot = &self.slots[idx];
-            let observed = slot.state.load(Ordering::Acquire);
-            if observed != generation && observed != generation | Self::BUSY {
+            let observed = slot.key.load(Ordering::Relaxed);
+            if observed & !self.key_mask != generation {
                 return None;
             }
-            if observed == generation | Self::BUSY {
-                std::hint::spin_loop();
-                continue;
-            }
-            if unsafe { (*slot.key.get()).assume_init() == key } {
-                let value = unsafe { (*slot.value.get()).assume_init() };
-                return Some(PathInfo {
-                    path_id: Kmer::from_bits(value.path_id as u128),
-                    rank: value.rank,
-                    exit_side: if value.flags & 1 == 0 {
-                        Side::Front
-                    } else {
-                        Side::Back
-                    },
-                    is_cycle: value.flags & 2 != 0,
+            if observed == tagged_key {
+                let path_id = slot.path_id.load(Ordering::Acquire);
+                let rank_and_flags = slot.rank_and_flags.load(Ordering::Acquire);
+                return Some(CompactExpansionPathInfo {
+                    path_id,
+                    rank_and_flags,
                 });
             }
             idx = (idx + 1) & self.mask;
@@ -13175,7 +15367,7 @@ enum ExpansionPathInfoTable<const K: usize> {
 impl<const K: usize> ExpansionPathInfoTable<K> {
     fn with_max_entries(max_entries: usize) -> Self {
         if K <= 31 {
-            Self::Compact(CompactPathInfoTable::with_max_entries(max_entries))
+            Self::Compact(CompactPathInfoTable::with_max_entries(max_entries, K))
         } else {
             Self::Wide(ConcurrentPathInfoTable::with_max_entries(max_entries))
         }
@@ -13188,6 +15380,7 @@ impl<const K: usize> ExpansionPathInfoTable<K> {
         }
     }
 
+    #[inline(always)]
     fn insert(&self, vertex: Kmer<K>, value: PathInfo<K>) -> bool {
         match self {
             Self::Compact(table) => table.insert(vertex, value),
@@ -13195,10 +15388,27 @@ impl<const K: usize> ExpansionPathInfoTable<K> {
         }
     }
 
+    #[inline(always)]
     fn get(&self, vertex: Kmer<K>) -> Option<PathInfo<K>> {
         match self {
             Self::Compact(table) => table.get(vertex),
             Self::Wide(table) => table.get(vertex),
+        }
+    }
+
+    #[inline(always)]
+    fn get_compact(&self, vertex: Kmer<K>) -> Option<CompactExpansionPathInfo> {
+        match self {
+            Self::Compact(table) => table.get_compact(vertex),
+            Self::Wide(_) => unreachable!("compact path info is only used for k <= 31"),
+        }
+    }
+
+    #[inline(always)]
+    fn insert_compact(&self, vertex: Kmer<K>, value: CompactExpansionPathInfo) -> bool {
+        match self {
+            Self::Compact(table) => table.insert_compact(vertex, value),
+            Self::Wide(_) => unreachable!("compact path info is only used for k <= 31"),
         }
     }
 
@@ -13220,6 +15430,7 @@ impl<const K: usize> ExpansionPathInfoTable<K> {
         }
     }
 
+    #[inline(always)]
     fn insert_encoded(&self, bytes: &[u8]) -> bool {
         match self {
             Self::Compact(table) => {
@@ -13386,10 +15597,65 @@ impl<const K: usize> OwnedPartitionTables<K> {
     }
 }
 
-struct AtomicPartitionSlot<const K: usize> {
+#[derive(Clone, Copy)]
+struct CompactPartitionOtherEnd {
+    endpoint: u64,
+    weight: u64,
+    flags: u8,
+}
+
+impl CompactPartitionOtherEnd {
+    const PHI: u8 = 1 << 4;
+
+    fn pack<const K: usize>(end: PartitionOtherEnd<K>) -> Self {
+        let (endpoint, endpoint_side, phi) = match end.endpoint {
+            MatrixEndpoint::Phi => (0, Side::Front, true),
+            MatrixEndpoint::Vertex(endpoint) => {
+                (endpoint.vertex.as_u128() as u64, endpoint.side, false)
+            }
+        };
+        let mut flags = u8::from(endpoint_side == Side::Back)
+            | (u8::from(end.side_at_current == Side::Back) << 1)
+            | (u8::from(end.in_same_part) << 2)
+            | (u8::from(end.processed) << 3);
+        if phi {
+            flags |= Self::PHI;
+        }
+        Self {
+            endpoint,
+            weight: end.weight,
+            flags,
+        }
+    }
+
+    fn unpack<const K: usize>(self) -> PartitionOtherEnd<K> {
+        let side = |bit| {
+            if self.flags & bit == 0 {
+                Side::Front
+            } else {
+                Side::Back
+            }
+        };
+        PartitionOtherEnd {
+            endpoint: if self.flags & Self::PHI != 0 {
+                MatrixEndpoint::Phi
+            } else {
+                MatrixEndpoint::Vertex(DiscontinuityEndpoint {
+                    vertex: Kmer::from_bits(self.endpoint as u128),
+                    side: side(1),
+                })
+            },
+            side_at_current: side(1 << 1),
+            weight: self.weight,
+            in_same_part: self.flags & (1 << 2) != 0,
+            processed: self.flags & (1 << 3) != 0,
+        }
+    }
+}
+
+struct AtomicPartitionSlot {
     key: AtomicU64,
-    locked: AtomicBool,
-    value: UnsafeCell<MaybeUninit<PartitionOtherEnd<K>>>,
+    value: UnsafeCell<MaybeUninit<CompactPartitionOtherEnd>>,
 }
 
 struct FlatPartitionTable<const K: usize> {
@@ -13499,15 +15765,22 @@ impl<const K: usize> FlatPartitionTable<K> {
     }
 }
 
-unsafe impl<const K: usize> Sync for AtomicPartitionSlot<K> {}
+unsafe impl Sync for AtomicPartitionSlot {}
 
 struct AtomicPartitionTable<const K: usize> {
-    slots: Vec<AtomicPartitionSlot<K>>,
+    slots: Vec<AtomicPartitionSlot>,
+    locks: Vec<AtomicBool>,
     mask: usize,
 }
 
 impl<const K: usize> AtomicPartitionTable<K> {
     const EMPTY: u64 = u64::MAX;
+    const HASH_SEED: u64 = 0xAAAA_AAAA_5555_5555;
+
+    #[inline(always)]
+    fn index(&self, vertex: Kmer<K>) -> usize {
+        vertex.hash64(Self::HASH_SEED) as usize & self.mask
+    }
 
     #[allow(dead_code)]
     fn with_max_entries(max_entries: usize) -> Self {
@@ -13520,10 +15793,10 @@ impl<const K: usize> AtomicPartitionTable<K> {
             slots: (0..capacity)
                 .map(|_| AtomicPartitionSlot {
                     key: AtomicU64::new(Self::EMPTY),
-                    locked: AtomicBool::new(false),
                     value: UnsafeCell::new(MaybeUninit::uninit()),
                 })
                 .collect(),
+            locks: (0..capacity).map(|_| AtomicBool::new(false)).collect(),
             mask: capacity - 1,
         }
     }
@@ -13540,22 +15813,6 @@ impl<const K: usize> AtomicPartitionTable<K> {
         });
     }
 
-    #[inline]
-    fn lock(slot: &AtomicPartitionSlot<K>) {
-        while slot
-            .locked
-            .compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed)
-            .is_err()
-        {
-            std::hint::spin_loop();
-        }
-    }
-
-    #[inline]
-    fn unlock(slot: &AtomicPartitionSlot<K>) {
-        slot.locked.store(false, Ordering::Release);
-    }
-
     fn absorb(
         &self,
         vertex: Kmer<K>,
@@ -13566,17 +15823,23 @@ impl<const K: usize> AtomicPartitionTable<K> {
     ) {
         let key = vertex.as_u128() as u64;
         debug_assert!(K <= 31 && key != Self::EMPTY);
-        let mut idx = vertex.hash64(0) as usize & self.mask;
+        let mut idx = self.index(vertex);
         loop {
             let slot = &self.slots[idx];
             let observed = slot.key.load(Ordering::Acquire);
             if observed == key {
-                Self::lock(slot);
-                if slot.key.load(Ordering::Relaxed) != key {
-                    Self::unlock(slot);
+                if self.locks[idx]
+                    .compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed)
+                    .is_err()
+                {
+                    std::hint::spin_loop();
                     continue;
                 }
-                let existing = unsafe { (*slot.value.get()).assume_init() };
+                if slot.key.load(Ordering::Acquire) != key {
+                    self.locks[idx].store(false, Ordering::Release);
+                    continue;
+                }
+                let existing = unsafe { (*slot.value.get()).assume_init() }.unpack::<K>();
                 absorb_partition_collision_outputs(
                     vertex,
                     incoming,
@@ -13590,19 +15853,102 @@ impl<const K: usize> AtomicPartitionTable<K> {
                     updated = incoming;
                 }
                 updated.processed = true;
-                unsafe { (*slot.value.get()).write(updated) };
-                Self::unlock(slot);
+                unsafe { (*slot.value.get()).write(CompactPartitionOtherEnd::pack(updated)) };
+                self.locks[idx].store(false, Ordering::Release);
                 return;
             }
             if observed == Self::EMPTY {
-                Self::lock(slot);
-                if slot.key.load(Ordering::Relaxed) == Self::EMPTY {
-                    unsafe { (*slot.value.get()).write(incoming) };
+                if self.locks[idx]
+                    .compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed)
+                    .is_err()
+                {
+                    std::hint::spin_loop();
+                    continue;
+                }
+                if slot.key.load(Ordering::Acquire) == Self::EMPTY {
+                    unsafe { (*slot.value.get()).write(CompactPartitionOtherEnd::pack(incoming)) };
                     slot.key.store(key, Ordering::Release);
-                    Self::unlock(slot);
+                    self.locks[idx].store(false, Ordering::Release);
                     return;
                 }
-                Self::unlock(slot);
+                self.locks[idx].store(false, Ordering::Release);
+                continue;
+            }
+            idx = (idx + 1) & self.mask;
+        }
+    }
+
+    fn absorb_prepared(
+        &self,
+        vertex: Kmer<K>,
+        incoming: PartitionOtherEnd<K>,
+        partition: usize,
+        vertex_partitions: usize,
+        edges: &mut Vec<PreparedBlockedEdge>,
+        meta_vertices: &mut Vec<SerialMetaVertex<K>>,
+    ) {
+        let key = vertex.as_u128() as u64;
+        debug_assert!(K <= 31 && key != Self::EMPTY);
+        let mut idx = self.index(vertex);
+        loop {
+            let slot = &self.slots[idx];
+            let observed = slot.key.load(Ordering::Acquire);
+            if observed == key {
+                if self.locks[idx]
+                    .compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed)
+                    .is_err()
+                {
+                    std::hint::spin_loop();
+                    continue;
+                }
+                if slot.key.load(Ordering::Acquire) != key {
+                    self.locks[idx].store(false, Ordering::Release);
+                    continue;
+                }
+                let existing = unsafe { (*slot.value.get()).assume_init() }.unpack::<K>();
+                if existing.endpoint.is_phi() && incoming.endpoint.is_phi() {
+                    meta_vertices.push(two_weight_meta_vertex(
+                        vertex,
+                        partition,
+                        incoming.side_at_current,
+                        incoming.weight,
+                        existing.weight,
+                        false,
+                    ));
+                } else if !existing.in_same_part {
+                    edges.push(prepare_existing_blocked_edge(
+                        join_other_ends(
+                            incoming.endpoint,
+                            existing.endpoint,
+                            incoming.weight + existing.weight,
+                        ),
+                        vertex_partitions,
+                    ));
+                }
+                let mut updated = existing;
+                if updated.in_same_part {
+                    updated = incoming;
+                }
+                updated.processed = true;
+                unsafe { (*slot.value.get()).write(CompactPartitionOtherEnd::pack(updated)) };
+                self.locks[idx].store(false, Ordering::Release);
+                return;
+            }
+            if observed == Self::EMPTY {
+                if self.locks[idx]
+                    .compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed)
+                    .is_err()
+                {
+                    std::hint::spin_loop();
+                    continue;
+                }
+                if slot.key.load(Ordering::Acquire) == Self::EMPTY {
+                    unsafe { (*slot.value.get()).write(CompactPartitionOtherEnd::pack(incoming)) };
+                    slot.key.store(key, Ordering::Release);
+                    self.locks[idx].store(false, Ordering::Release);
+                    return;
+                }
+                self.locks[idx].store(false, Ordering::Release);
                 continue;
             }
             idx = (idx + 1) & self.mask;
@@ -13619,7 +15965,7 @@ impl<const K: usize> AtomicPartitionTable<K> {
         for slot in &self.slots {
             let key = slot.key.load(Ordering::Relaxed);
             if key != Self::EMPTY {
-                let value = unsafe { (*slot.value.get()).assume_init() };
+                let value = unsafe { (*slot.value.get()).assume_init() }.unpack::<K>();
                 map.insert(Kmer::from_bits(key as u128), value);
             }
         }
@@ -13628,12 +15974,12 @@ impl<const K: usize> AtomicPartitionTable<K> {
 
     fn get(&self, vertex: Kmer<K>) -> Option<PartitionOtherEnd<K>> {
         let key = vertex.as_u128() as u64;
-        let mut idx = vertex.hash64(0) as usize & self.mask;
+        let mut idx = self.index(vertex);
         loop {
             let slot = &self.slots[idx];
             let observed = slot.key.load(Ordering::Acquire);
             if observed == key {
-                return Some(unsafe { (*slot.value.get()).assume_init() });
+                return Some(unsafe { (*slot.value.get()).assume_init() }.unpack::<K>());
             }
             if observed == Self::EMPTY {
                 return None;
@@ -13644,16 +15990,16 @@ impl<const K: usize> AtomicPartitionTable<K> {
 
     fn insert_serial(&self, vertex: Kmer<K>, value: PartitionOtherEnd<K>) {
         let key = vertex.as_u128() as u64;
-        let mut idx = vertex.hash64(0) as usize & self.mask;
+        let mut idx = self.index(vertex);
         loop {
             let slot = &self.slots[idx];
             let observed = slot.key.load(Ordering::Relaxed);
             if observed == key {
-                unsafe { (*slot.value.get()).write(value) };
+                unsafe { (*slot.value.get()).write(CompactPartitionOtherEnd::pack(value)) };
                 return;
             }
             if observed == Self::EMPTY {
-                unsafe { (*slot.value.get()).write(value) };
+                unsafe { (*slot.value.get()).write(CompactPartitionOtherEnd::pack(value)) };
                 slot.key.store(key, Ordering::Release);
                 return;
             }
@@ -13663,14 +16009,14 @@ impl<const K: usize> AtomicPartitionTable<K> {
 
     fn mark_processed(&self, vertex: Kmer<K>) {
         let key = vertex.as_u128() as u64;
-        let mut idx = vertex.hash64(0) as usize & self.mask;
+        let mut idx = self.index(vertex);
         loop {
             let slot = &self.slots[idx];
             let observed = slot.key.load(Ordering::Relaxed);
             if observed == key {
-                let mut value = unsafe { (*slot.value.get()).assume_init() };
+                let mut value = unsafe { (*slot.value.get()).assume_init() }.unpack::<K>();
                 value.processed = true;
-                unsafe { (*slot.value.get()).write(value) };
+                unsafe { (*slot.value.get()).write(CompactPartitionOtherEnd::pack(value)) };
                 return;
             }
             assert_ne!(observed, Self::EMPTY, "partition endpoint disappeared");
@@ -13779,6 +16125,7 @@ fn join_other_ends_with_phantom<const K: usize>(
         first,
         second,
         weight,
+        unitig_bucket: 0,
         unitig_index: 0,
         unitig_exit_side: Side::Back,
         phantom_unitig,
@@ -14047,6 +16394,8 @@ fn contract_local_subgraphs_into_external_inputs<const K: usize>(
     label_path: &Path,
     color_path: Option<&Path>,
 ) -> Result<ExternalDiscontinuityInputs<K>, DiscontinuityInputError> {
+    let compact_unitigs =
+        color_path.is_some() && std::env::var_os("CF3_RS_ENDPOINT_STITCH").is_none();
     let mut inputs = DiscontinuityInputs::empty(DiscontinuityInputStats {
         input_buckets: entries.len(),
         ..DiscontinuityInputStats::default()
@@ -14080,20 +16429,79 @@ fn contract_local_subgraphs_into_external_inputs<const K: usize>(
         .map_err(serial_collation_to_input_error)?;
     let mut label_offset = 0u64;
     let mut ranges = Vec::new();
+    let expected_colors = entries
+        .iter()
+        .map(|entry| entry.records)
+        .sum::<u64>()
+        .div_ceil(16)
+        .min(48 * 1024 * 1024) as usize;
     let color_repository = color_path
         .map(|path| {
             ConcurrentColorRepository::create(
                 path.with_extension("color-repository"),
                 threads.min(256),
-                entries.len() * 8,
+                expected_colors.max(entries.len() * 8),
             )
         })
         .transpose()?;
-    let mut color_run_writer = color_path.map(ColorRunSidecarWriter::create).transpose()?;
-
     let mut groups = local_bucket_groups(entries);
     groups.sort_by_key(|group| std::cmp::Reverse(group.records));
-    let workers = threads.min(groups.len().max(1));
+    // The colored sink is memory-bandwidth and allocator limited well before
+    // all hardware threads are occupied. More workers increase contention and
+    // per-worker state without reducing wall time on the full HumGut input.
+    let workers = threads
+        .min(if color_path.is_some() { 64 } else { threads })
+        .min(groups.len().max(1));
+    let local_unitig_bucket_count: usize = if compact_unitigs && workers > 1 && groups.len() >= 1024
+    {
+        1024
+    } else {
+        0
+    };
+    let local_unitig_bucket_dir = unitig_path.with_extension("local-unitig-buckets");
+    let mut local_unitig_writers = if local_unitig_bucket_count == 0 {
+        None
+    } else {
+        let _ = raise_open_file_limit();
+        if local_unitig_bucket_dir.exists() {
+            fs::remove_dir_all(&local_unitig_bucket_dir).map_err(|source| {
+                DiscontinuityInputError::Io {
+                    path: local_unitig_bucket_dir.clone(),
+                    source,
+                }
+            })?;
+        }
+        fs::create_dir_all(&local_unitig_bucket_dir).map_err(|source| {
+            DiscontinuityInputError::Io {
+                path: local_unitig_bucket_dir.clone(),
+                source,
+            }
+        })?;
+        Some(
+            (1..=local_unitig_bucket_count)
+                .map(|bucket_id| {
+                    LocalUnitigBucketWriter::create(
+                        &local_unitig_bucket_dir,
+                        bucket_id as u16,
+                        color_path.is_some(),
+                    )
+                    .map(Mutex::new)
+                })
+                .collect::<Result<Vec<_>, _>>()?,
+        )
+    };
+    let mut color_run_writer = if workers == 1 {
+        color_path.map(ColorRunSidecarWriter::create).transpose()?
+    } else {
+        None
+    };
+    let concurrent_color_runs = if workers > 1 && local_unitig_bucket_count == 0 {
+        color_path
+            .map(ConcurrentColorRunSidecarWriter::create)
+            .transpose()?
+    } else {
+        None
+    };
     let started = Instant::now();
     if groups.len() >= 1024 {
         eprintln!(
@@ -14106,10 +16514,19 @@ fn contract_local_subgraphs_into_external_inputs<const K: usize>(
 
     let mut build_elapsed = Duration::default();
     let mut contract_elapsed = Duration::default();
+    let mut sink_io_elapsed = Duration::default();
+    let mut sink_color_elapsed = Duration::default();
+    let mut sink_edge_elapsed = Duration::default();
 
     if workers == 1 {
+        let mut reusable_vertices = None;
         for (offset, group) in groups.iter().enumerate() {
-            let output = contract_local_subgraph::<K>(group, cutoff)?;
+            let output = contract_local_subgraph::<K>(
+                group,
+                cutoff,
+                color_repository.as_ref(),
+                &mut reusable_vertices,
+            )?;
             append_local_contraction_output_to_external_inputs(
                 output,
                 &mut inputs,
@@ -14125,6 +16542,7 @@ fn contract_local_subgraphs_into_external_inputs<const K: usize>(
                 color_repository.as_ref(),
                 color_run_writer.as_mut(),
                 threads,
+                compact_unitigs,
             )?;
             report_local_contraction_progress(offset + 1, groups.len(), started);
         }
@@ -14132,70 +16550,99 @@ fn contract_local_subgraphs_into_external_inputs<const K: usize>(
         let total_groups = groups.len();
         let next_group = AtomicUsize::new(0);
         let completed = Arc::new(AtomicUsize::new(0));
-        let (tx, rx) =
-            mpsc::sync_channel::<Result<LocalContractionOutput<K>, DiscontinuityInputError>>(1);
+        let sink = ConcurrentLocalOutputSink::<K> {
+            labels: labels
+                .get_ref()
+                .try_clone()
+                .map_err(|source| DiscontinuityInputError::Io {
+                    path: label_path.to_path_buf(),
+                    source,
+                })?,
+            label_path,
+            unitigs: unitigs.get_ref().try_clone().map_err(|source| {
+                DiscontinuityInputError::Io {
+                    path: unitig_path.clone(),
+                    source,
+                }
+            })?,
+            unitig_path: &unitig_path,
+            next_label: AtomicU64::new(0),
+            next_unitig: AtomicUsize::new(0),
+            weak_superkmers: AtomicU64::new(0),
+            discontinuity_exits: AtomicU64::new(0),
+            unitig_bases: AtomicU64::new(0),
+            build_nanos: AtomicU64::new(0),
+            contract_nanos: AtomicU64::new(0),
+            sink_io_nanos: AtomicU64::new(0),
+            sink_color_nanos: AtomicU64::new(0),
+            sink_edge_nanos: AtomicU64::new(0),
+            ranges: Mutex::new(Vec::with_capacity(groups.len())),
+            edge_writers: ConcurrentBlockedEdgeWriters::new(&edge_matrix),
+            color_repository: color_repository.as_ref(),
+            color_runs: concurrent_color_runs.as_ref(),
+            local_unitig_writers: local_unitig_writers.as_deref(),
+            color_workers: threads.min(256),
+            compact_unitigs,
+            marker: PhantomData,
+        };
         let worker_result = std::thread::scope(|scope| {
             let mut handles = Vec::new();
-            for _ in 0..workers {
-                let tx = tx.clone();
+            for worker_id in 0..workers {
                 let completed = Arc::clone(&completed);
                 let next_group = &next_group;
                 let groups = &groups;
+                let sink = &sink;
                 handles.push(scope.spawn(move || {
+                    let mut reusable_vertices = None;
+                    let writers_per_worker = local_unitig_bucket_count.div_ceil(workers);
+                    let bucket_start = worker_id * writers_per_worker;
+                    let bucket_end =
+                        (bucket_start + writers_per_worker).min(local_unitig_bucket_count);
+                    let mut next_bucket = bucket_start;
                     loop {
                         let group_idx = next_group.fetch_add(1, Ordering::Relaxed);
                         let Some(group) = groups.get(group_idx) else {
                             break;
                         };
-                        let output = contract_local_subgraph::<K>(group, cutoff);
+                        let output = contract_local_subgraph::<K>(
+                            group,
+                            cutoff,
+                            sink.color_repository,
+                            &mut reusable_vertices,
+                        )
+                        .and_then(|output| {
+                            let bucket_id = if bucket_start < bucket_end {
+                                let bucket = next_bucket;
+                                next_bucket += 1;
+                                if next_bucket == bucket_end {
+                                    next_bucket = bucket_start;
+                                }
+                                (bucket + 1) as u16
+                            } else {
+                                0
+                            };
+                            sink.write(output, bucket_id)
+                        });
                         let done = completed.fetch_add(1, Ordering::Relaxed) + 1;
                         report_local_contraction_progress(done, total_groups, started);
                         let should_stop = output.is_err();
-                        if tx.send(output).is_err() || should_stop {
-                            break;
+                        if should_stop {
+                            return output;
                         }
                     }
+                    Ok(())
                 }));
             }
-            drop(tx);
-
             let mut first_error = None;
-            for output in rx {
-                match output {
-                    Ok(output) => {
-                        if first_error.is_none() {
-                            if let Err(err) = append_local_contraction_output_to_external_inputs(
-                                output,
-                                &mut inputs,
-                                &mut labels,
-                                label_path,
-                                &mut unitigs,
-                                &unitig_path,
-                                &mut label_offset,
-                                &mut ranges,
-                                &mut edge_matrix,
-                                &mut build_elapsed,
-                                &mut contract_elapsed,
-                                color_repository.as_ref(),
-                                color_run_writer.as_mut(),
-                                threads,
-                            ) {
-                                first_error = Some(err);
-                            }
-                        }
-                    }
-                    Err(err) => {
-                        if first_error.is_none() {
-                            first_error = Some(err);
-                        }
-                    }
-                }
-            }
-
             for handle in handles {
-                handle
+                let result = handle
                     .join()
                     .map_err(|_| DiscontinuityInputError::WorkerPanic)?;
+                if let Err(err) = result
+                    && first_error.is_none()
+                {
+                    first_error = Some(err);
+                }
             }
 
             if let Some(err) = first_error {
@@ -14205,6 +16652,23 @@ fn contract_local_subgraphs_into_external_inputs<const K: usize>(
             }
         });
         worker_result?;
+        sink.edge_writers
+            .finish_into(&mut edge_matrix)
+            .map_err(serial_collation_to_input_error)?;
+        inputs.stats.weak_superkmers = sink.weak_superkmers.load(Ordering::Relaxed);
+        inputs.stats.local_unitigs = sink.next_unitig.load(Ordering::Relaxed) as u64;
+        inputs.stats.discontinuity_exits = sink.discontinuity_exits.load(Ordering::Relaxed);
+        inputs.stats.unitig_bases = sink.unitig_bases.load(Ordering::Relaxed);
+        build_elapsed = Duration::from_nanos(sink.build_nanos.load(Ordering::Relaxed));
+        contract_elapsed = Duration::from_nanos(sink.contract_nanos.load(Ordering::Relaxed));
+        sink_io_elapsed = Duration::from_nanos(sink.sink_io_nanos.load(Ordering::Relaxed));
+        sink_color_elapsed = Duration::from_nanos(sink.sink_color_nanos.load(Ordering::Relaxed));
+        sink_edge_elapsed = Duration::from_nanos(sink.sink_edge_nanos.load(Ordering::Relaxed));
+        ranges = sink
+            .ranges
+            .into_inner()
+            .map_err(|_| DiscontinuityInputError::WorkerPanic)?;
+        ranges.sort_by_key(|range| range.start_unitig);
     }
 
     eprintln!(
@@ -14212,6 +16676,14 @@ fn contract_local_subgraphs_into_external_inputs<const K: usize>(
         build_elapsed.as_secs_f64(),
         contract_elapsed.as_secs_f64()
     );
+    if workers > 1 {
+        eprintln!(
+            "cuttlefish3-rs: local sink worker time: label/unitig I/O {:.3}s, color resolve/write {:.3}s, edge/range emission {:.3}s",
+            sink_io_elapsed.as_secs_f64(),
+            sink_color_elapsed.as_secs_f64(),
+            sink_edge_elapsed.as_secs_f64(),
+        );
+    }
 
     labels
         .flush()
@@ -14230,8 +16702,15 @@ fn contract_local_subgraphs_into_external_inputs<const K: usize>(
     edge_matrix
         .flush_all_with_threads(threads)
         .map_err(serial_collation_to_input_error)?;
-    let color_runs = color_run_writer
-        .map(ColorRunSidecarWriter::finish)
+    let color_runs = match (color_run_writer, concurrent_color_runs) {
+        (Some(writer), None) => Some(writer.finish()?),
+        (None, Some(writer)) => Some(writer.finish()?),
+        (None, None) => None,
+        (Some(_), Some(_)) => unreachable!("color writers are mutually exclusive"),
+    };
+    let local_unitig_buckets = local_unitig_writers
+        .take()
+        .map(|writers| finish_local_unitig_writers(writers, workers))
         .transpose()?;
     let color_repository = color_repository
         .map(|repository| repository.finish())
@@ -14240,9 +16719,11 @@ fn contract_local_subgraphs_into_external_inputs<const K: usize>(
         unitig_path,
         label_path: label_path.to_path_buf(),
         unitigs: usize::try_from(inputs.stats.local_unitigs).unwrap_or(usize::MAX),
+        compact_unitigs,
         ranges,
         edge_matrix: Some(edge_matrix),
         color_runs,
+        local_unitig_buckets,
         color_repository,
         stats: inputs.stats,
     })
@@ -14275,6 +16756,7 @@ fn append_local_contraction_output_to_external_inputs<const K: usize>(
     color_repository: Option<&ConcurrentColorRepository>,
     mut color_run_writer: Option<&mut ColorRunSidecarWriter>,
     threads: usize,
+    compact_unitigs: bool,
 ) -> Result<(), DiscontinuityInputError> {
     inputs.stats.weak_superkmers += output.weak_superkmers;
     let start_unitig = usize::try_from(inputs.stats.local_unitigs).unwrap_or(usize::MAX);
@@ -14309,7 +16791,7 @@ fn append_local_contraction_output_to_external_inputs<const K: usize>(
             u64::from(unitig.left_exit().is_some()) + u64::from(unitig.right_exit().is_some());
         inputs.stats.unitig_bases += unitig.label_len as u64;
         unitig.label_start += *label_offset;
-        write_discontinuity_unitig_record(unitigs, unitig_path, &unitig)?;
+        write_discontinuity_unitig_record(unitigs, unitig_path, &unitig, compact_unitigs)?;
         if let Some(writer) = color_run_writer.as_deref_mut() {
             let runs = output_colors
                 .as_mut()
@@ -14320,9 +16802,13 @@ fn append_local_contraction_output_to_external_inputs<const K: usize>(
             let colors = runs
                 .into_iter()
                 .map(|run| {
-                    repository
-                        .resolve_or_insert(run.color_hash, &run.sources, worker)
-                        .map(|coordinate| UnitigColor::new(run.offset, coordinate))
+                    if let Some(coordinate) = run.coordinate {
+                        Ok(UnitigColor::new(run.offset, coordinate))
+                    } else {
+                        repository
+                            .resolve_or_insert(run.color_hash, &run.sources, worker)
+                            .map(|coordinate| UnitigColor::new(run.offset, coordinate))
+                    }
                 })
                 .collect::<Result<Vec<_>, ColorError>>()?;
             writer.write_unitig(&colors)?;
@@ -14344,7 +16830,19 @@ fn write_discontinuity_unitig_record<const K: usize>(
     out: &mut BufWriter<File>,
     path: &Path,
     unitig: &DiscontinuityUnitig<K>,
+    compact: bool,
 ) -> Result<(), DiscontinuityInputError> {
+    if compact {
+        let mut bytes = [0u8; 8];
+        bytes[..4].copy_from_slice(&unitig.label_len.to_le_bytes());
+        bytes[4] = unitig.flags;
+        return out
+            .write_all(&bytes)
+            .map_err(|source| DiscontinuityInputError::Io {
+                path: path.to_path_buf(),
+                source,
+            });
+    }
     let mut stored = MaybeUninit::<DiscontinuityUnitig<K>>::zeroed();
     unsafe {
         let ptr = stored.as_mut_ptr();
@@ -14378,6 +16876,218 @@ struct LocalContractionOutput<const K: usize> {
     color_runs: Option<Vec<Vec<LocalUnitigColorRun>>>,
 }
 
+struct ConcurrentLocalOutputSink<'a, const K: usize> {
+    labels: File,
+    label_path: &'a Path,
+    unitigs: File,
+    unitig_path: &'a Path,
+    next_label: AtomicU64,
+    next_unitig: AtomicUsize,
+    weak_superkmers: AtomicU64,
+    discontinuity_exits: AtomicU64,
+    unitig_bases: AtomicU64,
+    build_nanos: AtomicU64,
+    contract_nanos: AtomicU64,
+    sink_io_nanos: AtomicU64,
+    sink_color_nanos: AtomicU64,
+    sink_edge_nanos: AtomicU64,
+    ranges: Mutex<Vec<ExternalLocalUnitigRange>>,
+    edge_writers: ConcurrentBlockedEdgeWriters,
+    color_repository: Option<&'a ConcurrentColorRepository>,
+    color_runs: Option<&'a ConcurrentColorRunSidecarWriter>,
+    local_unitig_writers: Option<&'a [Mutex<LocalUnitigBucketWriter>]>,
+    color_workers: usize,
+    compact_unitigs: bool,
+    marker: PhantomData<[(); K]>,
+}
+
+impl<'a, const K: usize> ConcurrentLocalOutputSink<'a, K> {
+    fn write(
+        &self,
+        mut output: LocalContractionOutput<K>,
+        unitig_bucket: u16,
+    ) -> Result<(), DiscontinuityInputError> {
+        let io_started = Instant::now();
+        let output_unitigs = output.unitigs.len();
+        let unitig_base = self
+            .next_unitig
+            .fetch_add(output_unitigs, Ordering::Relaxed);
+        let label_base = self
+            .next_label
+            .fetch_add(output.labels.len() as u64, Ordering::Relaxed);
+
+        let bucket_local = unitig_bucket != 0;
+        if !bucket_local {
+            self.labels
+                .write_all_at(&output.labels, label_base)
+                .map_err(|source| DiscontinuityInputError::Io {
+                    path: self.label_path.to_path_buf(),
+                    source,
+                })?;
+        }
+
+        let mut encoded_unitigs = Vec::with_capacity(
+            output_unitigs * external_unitig_record_len::<K>(self.compact_unitigs),
+        );
+        let mut exits = 0u64;
+        let mut bases = 0u64;
+        for unitig in &mut output.unitigs {
+            exits +=
+                u64::from(unitig.left_exit().is_some()) + u64::from(unitig.right_exit().is_some());
+            bases += u64::from(unitig.label_len);
+            if !bucket_local {
+                unitig.label_start += label_base;
+                append_encoded_discontinuity_unitig_record(
+                    &mut encoded_unitigs,
+                    unitig,
+                    self.compact_unitigs,
+                );
+            }
+        }
+        let unitig_offset = unitig_base
+            .checked_mul(external_unitig_record_len::<K>(self.compact_unitigs))
+            .ok_or_else(|| DiscontinuityInputError::Io {
+                path: self.unitig_path.to_path_buf(),
+                source: std::io::Error::from(std::io::ErrorKind::FileTooLarge),
+            })? as u64;
+        if !bucket_local {
+            self.unitigs
+                .write_all_at(&encoded_unitigs, unitig_offset)
+                .map_err(|source| DiscontinuityInputError::Io {
+                    path: self.unitig_path.to_path_buf(),
+                    source,
+                })?;
+        }
+        self.sink_io_nanos.fetch_add(
+            io_started.elapsed().as_nanos().min(u128::from(u64::MAX)) as u64,
+            Ordering::Relaxed,
+        );
+
+        let color_started = Instant::now();
+        let resolved_colors = if self.color_runs.is_some() || self.local_unitig_writers.is_some() {
+            let repository = self
+                .color_repository
+                .ok_or(DiscontinuityInputError::MissingColorRuns)?;
+            let raw_runs = output
+                .color_runs
+                .take()
+                .ok_or(DiscontinuityInputError::MissingColorRuns)?;
+            if raw_runs.len() != output_unitigs {
+                return Err(DiscontinuityInputError::MissingColorRuns);
+            }
+            let worker = output.index % self.color_workers;
+            Some(
+                raw_runs
+                    .into_iter()
+                    .map(|runs| {
+                        runs.into_iter()
+                            .map(|run| {
+                                if let Some(coordinate) = run.coordinate {
+                                    Ok(UnitigColor::new(run.offset, coordinate))
+                                } else {
+                                    repository
+                                        .resolve_or_insert(run.color_hash, &run.sources, worker)
+                                        .map(|coordinate| UnitigColor::new(run.offset, coordinate))
+                                }
+                            })
+                            .collect::<Result<Vec<_>, ColorError>>()
+                    })
+                    .collect::<Result<Vec<_>, ColorError>>()?,
+            )
+        } else {
+            None
+        };
+        let color_start = if let Some(writer) = self.color_runs {
+            writer.write_unitigs(
+                resolved_colors
+                    .as_deref()
+                    .ok_or(DiscontinuityInputError::MissingColorRuns)?,
+            )?
+        } else {
+            0
+        };
+        let local_unitig_base = if unitig_bucket != 0 {
+            let writers = self
+                .local_unitig_writers
+                .ok_or(DiscontinuityInputError::WorkerPanic)?;
+            let writer = writers
+                .get(unitig_bucket as usize - 1)
+                .ok_or(DiscontinuityInputError::WorkerPanic)?;
+            writer
+                .lock()
+                .map_err(|_| DiscontinuityInputError::WorkerPanic)?
+                .write::<K>(&output.labels, &output.unitigs, resolved_colors.as_deref())?
+        } else {
+            unitig_base
+        };
+        self.sink_color_nanos.fetch_add(
+            color_started.elapsed().as_nanos().min(u128::from(u64::MAX)) as u64,
+            Ordering::Relaxed,
+        );
+
+        let edge_started = Instant::now();
+        self.edge_writers
+            .add_prepared_edges::<K>(&mut output.matrix_edges, local_unitig_base, unitig_bucket)
+            .map_err(serial_collation_to_input_error)?;
+        if output_unitigs != 0 && !bucket_local {
+            self.ranges
+                .lock()
+                .map_err(|_| DiscontinuityInputError::WorkerPanic)?
+                .push(ExternalLocalUnitigRange {
+                    start_unitig: unitig_base,
+                    unitigs: output_unitigs,
+                    label_start: label_base,
+                    label_len: output.labels.len() as u64,
+                    color_start,
+                });
+        }
+        self.sink_edge_nanos.fetch_add(
+            edge_started.elapsed().as_nanos().min(u128::from(u64::MAX)) as u64,
+            Ordering::Relaxed,
+        );
+        self.weak_superkmers
+            .fetch_add(output.weak_superkmers, Ordering::Relaxed);
+        self.discontinuity_exits.fetch_add(exits, Ordering::Relaxed);
+        self.unitig_bases.fetch_add(bases, Ordering::Relaxed);
+        self.build_nanos.fetch_add(
+            output.build_elapsed.as_nanos().min(u128::from(u64::MAX)) as u64,
+            Ordering::Relaxed,
+        );
+        self.contract_nanos.fetch_add(
+            output.contract_elapsed.as_nanos().min(u128::from(u64::MAX)) as u64,
+            Ordering::Relaxed,
+        );
+        Ok(())
+    }
+}
+
+fn append_encoded_discontinuity_unitig_record<const K: usize>(
+    output: &mut Vec<u8>,
+    unitig: &DiscontinuityUnitig<K>,
+    compact: bool,
+) {
+    if compact {
+        output.extend_from_slice(&unitig.label_len.to_le_bytes());
+        output.push(unitig.flags);
+        output.extend_from_slice(&[0; 3]);
+        return;
+    }
+    let mut stored = MaybeUninit::<DiscontinuityUnitig<K>>::zeroed();
+    unsafe {
+        let ptr = stored.as_mut_ptr();
+        (*ptr).label_start = unitig.label_start;
+        (*ptr).left_vertex = unitig.left_vertex;
+        (*ptr).right_vertex = unitig.right_vertex;
+        (*ptr).label_len = unitig.label_len;
+        (*ptr).flags = unitig.flags;
+        let stored = stored.assume_init();
+        output.extend_from_slice(std::slice::from_raw_parts(
+            (&stored as *const DiscontinuityUnitig<K>).cast::<u8>(),
+            std::mem::size_of::<DiscontinuityUnitig<K>>(),
+        ));
+    }
+}
+
 #[derive(Debug, Clone)]
 struct LocalBucketGroup {
     index: usize,
@@ -14405,8 +17115,14 @@ fn contract_local_subgraphs<const K: usize>(
     }
     if workers == 1 {
         let mut outputs = Vec::with_capacity(groups.len());
+        let mut reusable_vertices = None;
         for (offset, group) in groups.iter().enumerate() {
-            outputs.push(contract_local_subgraph::<K>(group, cutoff)?);
+            outputs.push(contract_local_subgraph::<K>(
+                group,
+                cutoff,
+                None,
+                &mut reusable_vertices,
+            )?);
             report_local_contraction_progress(offset + 1, groups.len(), started);
         }
         return Ok(outputs);
@@ -14424,12 +17140,18 @@ fn contract_local_subgraphs<const K: usize>(
             let groups = &groups;
             handles.push(scope.spawn(move || {
                 let mut chunk_outputs = Vec::new();
+                let mut reusable_vertices = None;
                 loop {
                     let group_idx = next_group.fetch_add(1, Ordering::Relaxed);
                     let Some(group) = groups.get(group_idx) else {
                         break;
                     };
-                    chunk_outputs.push(contract_local_subgraph::<K>(group, cutoff)?);
+                    chunk_outputs.push(contract_local_subgraph::<K>(
+                        group,
+                        cutoff,
+                        None,
+                        &mut reusable_vertices,
+                    )?);
                     let done = completed.fetch_add(1, Ordering::Relaxed) + 1;
                     report_local_contraction_progress(done, total_groups, started);
                 }
@@ -14517,9 +17239,15 @@ fn report_discontinuity_contraction_progress(done: usize, total: usize, started:
 fn contract_local_subgraph<const K: usize>(
     group: &LocalBucketGroup,
     cutoff: u32,
+    color_repository: Option<&ConcurrentColorRepository>,
+    reusable_vertices: &mut Option<LocalVertexMap<K>>,
 ) -> Result<LocalContractionOutput<K>, DiscontinuityInputError> {
     let build_start = Instant::now();
-    let mut subgraph = LocalSubgraph::<K>::from_manifest_entries(&group.entries, cutoff)?;
+    let mut subgraph = LocalSubgraph::<K>::from_manifest_entries_reusing(
+        &group.entries,
+        cutoff,
+        reusable_vertices.take(),
+    )?;
     let build_elapsed = build_start.elapsed();
     let weak_superkmers = subgraph.stats.weak_superkmers;
     let graph_id = subgraph.graph_id;
@@ -14529,9 +17257,18 @@ fn contract_local_subgraph<const K: usize>(
     let contract_start = Instant::now();
     let mut color_runs = None;
     let local_unitigs = if subgraph.colored {
-        let colored = subgraph.contract_colored(&group.entries)?;
-        color_runs = Some(colored.iter().map(|unitig| unitig.colors.clone()).collect());
-        colored.into_iter().map(|unitig| unitig.unitig).collect()
+        let repository = color_repository.ok_or(DiscontinuityInputError::MissingColorRuns)?;
+        let colored = subgraph.contract_colored_resolved(
+            &group.entries,
+            repository,
+            group.index % repository.worker_count(),
+        )?;
+        let (unitigs, runs) = colored
+            .into_iter()
+            .map(|unitig| (unitig.unitig, unitig.colors))
+            .unzip();
+        color_runs = Some(runs);
+        unitigs
     } else {
         subgraph.contract_compact()?
     };
@@ -14571,6 +17308,7 @@ fn contract_local_subgraph<const K: usize>(
         matrix_edges,
         color_runs,
     };
+    *reusable_vertices = Some(subgraph.into_vertex_map());
     if !keep_intermediates() {
         for entry in &group.entries {
             match fs::remove_file(&entry.path) {
@@ -14639,3 +17377,121 @@ impl std::fmt::Display for DiscontinuityInputError {
 }
 
 impl std::error::Error for DiscontinuityInputError {}
+
+#[cfg(test)]
+mod materialized_record_tests {
+    use super::*;
+
+    #[test]
+    fn stitched_path_info_record_uses_compact_external_layout() {
+        let record = StitchedCoordRecord {
+            path_id: 17,
+            rank: 23,
+            unitig_index: u32::MAX - 1,
+            reverse: true,
+            is_cycle: true,
+        };
+        let encoded = encoded_stitched_coord_record(record);
+        assert_eq!(encoded.len(), 24);
+        assert_eq!(
+            decoded_stitched_coord_record(&encoded, Path::new("test.scb")).unwrap(),
+            record
+        );
+    }
+
+    #[test]
+    fn compact_path_info_table_survives_collisions_and_generation_wraps() {
+        let table = CompactPathInfoTable::with_max_entries(6, 31);
+        assert_eq!(std::mem::size_of::<CompactPathInfoSlot>(), 24);
+
+        let mut first_by_bucket = [None; 8];
+        let (first, second) = (0u64..)
+            .find_map(|key| {
+                let bucket = wyhash_u64(key, 0) as usize & 7;
+                if let Some(first) = first_by_bucket[bucket] {
+                    Some((first, key))
+                } else {
+                    first_by_bucket[bucket] = Some(key);
+                    None
+                }
+            })
+            .unwrap();
+
+        for generation in 0..10u64 {
+            table.clear();
+            assert!(table.get::<31>(Kmer::from_bits(first as u128)).is_none());
+            let first_info = PathInfo {
+                path_id: Kmer::from_bits((100 + generation) as u128),
+                rank: 10 + generation,
+                exit_side: Side::Front,
+                is_cycle: false,
+            };
+            let second_info = PathInfo {
+                path_id: Kmer::from_bits((200 + generation) as u128),
+                rank: 20 + generation,
+                exit_side: Side::Back,
+                is_cycle: true,
+            };
+            assert!(table.insert::<31>(Kmer::from_bits(first as u128), first_info));
+            assert!(table.insert::<31>(Kmer::from_bits(second as u128), second_info));
+            assert!(!table.insert::<31>(Kmer::from_bits(first as u128), first_info));
+            assert_eq!(
+                table.get::<31>(Kmer::from_bits(first as u128)),
+                Some(first_info)
+            );
+            assert_eq!(
+                table.get::<31>(Kmer::from_bits(second as u128)),
+                Some(second_info)
+            );
+        }
+    }
+
+    #[test]
+    fn materialized_color_index_uses_thirty_bits() {
+        for color_index in [0, 0xff_ffff, 0x100_0000, 0x3fff_fffe, u32::MAX] {
+            let record = MaterializedStitchedCoordRecord {
+                path_id: 17,
+                rank: 23,
+                label_offset: 41,
+                label_len: 59,
+                reverse: true,
+                is_cycle: true,
+                color_index,
+            };
+            let encoded = encoded_materialized_stitched_coord_record(record);
+            let decoded = decoded_materialized_stitched_coord_record(
+                &encoded,
+                Path::new("materialized-record-test"),
+            )
+            .unwrap();
+            assert_eq!(decoded, record);
+        }
+    }
+
+    #[test]
+    fn paged_external_range_index_matches_binary_search() {
+        let mut ranges = Vec::new();
+        let mut start = 0;
+        for (index, unitigs) in [1, 17, 65_535, 2, 131_073, 4096, 70_000]
+            .into_iter()
+            .enumerate()
+        {
+            ranges.push(ExternalLocalUnitigRange {
+                start_unitig: start,
+                unitigs,
+                label_start: index as u64,
+                label_len: 0,
+                color_start: 0,
+            });
+            start += unitigs;
+        }
+        let index = ExternalRangeIndex::new(&ranges);
+        for unitig in 0..start {
+            assert_eq!(
+                index.find(&ranges, unitig),
+                external_range_id_for_unitig(&ranges, unitig)
+            );
+        }
+        assert_eq!(index.find(&ranges, start), None);
+    }
+}

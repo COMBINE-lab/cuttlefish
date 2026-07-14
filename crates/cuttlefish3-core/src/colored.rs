@@ -64,7 +64,7 @@ pub fn build_colored_from_buckets<const K: usize>(
     let final_dir = work_dir.join(format!("{output_name}.cf3rs.final-unitigs"));
     let stats = SerialUncoloredCollator::collate_external_stitched_to_fasta_with_threads_in_dir(
         &mut inputs,
-        params.threads,
+        params.threads.min(64),
         &coord_dir,
         &final_dir,
         &output_path,

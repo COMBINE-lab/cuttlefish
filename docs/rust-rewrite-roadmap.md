@@ -4,6 +4,18 @@ This is the working backlog for bringing the Rust implementation to Cuttlefish 3
 
 ## Current checkpoint
 
+- The production colored and uncolored paths are end-to-end, parallel, and
+  external-memory.
+- On the 1000-genome HumGut2 colored benchmark, Rust completes in 19.92 seconds
+  with 13,840,356 KiB peak RSS versus C++ at 20.60 seconds and 17,234,540 KiB.
+  Counts and all 40,370,131 strand-normalized unitigs match exactly.
+- Colored partitioning now uses C++-style source barriers and atlas collation,
+  with in-place worker-stream partitioning and bounded long-lived consumers.
+- Local contraction emits directly into a blocked discontinuity edge matrix;
+  contraction, expansion, mapping, and reduction follow C++ phase ordering.
+- See `docs/rust-rewrite-performance.md` for architecture decisions, commands,
+  measurements, and the scale-validation protocol.
+
 - Uncolored Rust output matches C++ normalized FASTA on:
   - `data/refs2.fa`, `k=7`, `l=3`
   - `data/compat-small.fa`, `k=7`, `l=3`

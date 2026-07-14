@@ -14,6 +14,12 @@ fn mum(a: u64, b: u64) -> u64 {
 }
 
 #[inline]
+fn mum_parts(a: u64, b: u64) -> (u64, u64) {
+    let product = (a as u128).wrapping_mul(b as u128);
+    (product as u64, (product >> 64) as u64)
+}
+
+#[inline]
 fn mix(a: u64, b: u64) -> u64 {
     mum(a ^ WY_SALT[0], b ^ WY_SALT[1])
 }
@@ -111,11 +117,28 @@ pub fn hash_u64(value: u64, seed: u64) -> u64 {
     mum(h ^ WY_SALT[3], h.rotate_left(32) ^ WY_SALT[0])
 }
 
+// Exact len=8 specialization of the wyhash version used by C++ minimizers.
+#[inline]
+pub fn wyhash_u64(value: u64, mut seed: u64) -> u64 {
+    seed ^= mum(seed ^ WY_SALT[0], WY_SALT[1]);
+    let a = value.rotate_left(32) ^ WY_SALT[1];
+    let b = value ^ seed;
+    let (a, b) = mum_parts(a, b);
+    mum(a ^ WY_SALT[0] ^ 8, b ^ WY_SALT[1])
+}
+
 #[inline]
 pub fn hash_two_u64(first: u64, second: u64) -> u64 {
     let h = mix(first, first.rotate_left(32));
     let h = mix(h ^ second, second.rotate_left(32));
     mum(h ^ WY_SALT[3], h.rotate_left(32) ^ WY_SALT[0])
+}
+
+#[inline]
+pub fn fast_u64_hash(value: u64, seed: u64) -> u64 {
+    let value = value ^ seed;
+    let mixed = (value ^ (value >> 23)).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    mixed ^ (mixed >> 29)
 }
 
 #[cfg(test)]
@@ -150,5 +173,16 @@ mod tests {
                 assert_eq!(hash_two_u64(first, second), hasher.finish());
             }
         }
+    }
+
+    #[test]
+    fn wyhash_u64_matches_cpp_minimizer_hash() {
+        assert_eq!(wyhash_u64(0, 0), 7_824_564_342_066_666_581);
+        assert_eq!(wyhash_u64(1, 0), 17_550_070_827_293_468_892);
+        assert_eq!(wyhash_u64(42, 0), 7_038_757_716_059_073_700);
+        assert_eq!(
+            wyhash_u64(0x1234_5678_9abc_def0, 0),
+            6_800_848_065_093_387_582
+        );
     }
 }

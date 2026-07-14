@@ -18,10 +18,11 @@ const COMPRESSED_BLOCK_HEADER_LEN: usize = 12;
 const MAX_SOURCE_ID: u32 = 0x1f_ffff;
 const MAX_OPEN_BUCKET_WRITERS: usize = 512;
 const MAX_PENDING_BUCKET_BYTES: usize = 1024 * 1024;
-// Pending bytes are private to every partition worker. The shared atlas performs
-// the actual 64 KiB coalescing, so a 128 MiB allowance here multiplied memory by
-// the thread count without reducing physical bucket flushes.
-const MAX_TOTAL_PENDING_BYTES: usize = 16 * 1024 * 1024;
+// Keep a colored source window coalesced in worker-local atlas buffers. C++
+// retains roughly this amount per active worker set; the larger cap avoids
+// repeatedly scanning every graph bucket merely to move tiny fragments into
+// the shared atlas.
+const MAX_TOTAL_PENDING_BYTES: usize = 128 * 1024 * 1024;
 const ATLAS_GRAPH_COUNT: usize = 128;
 const SUBGRAPH_CHUNK_BYTES: usize = 64 * 1024;
 
@@ -63,6 +64,7 @@ pub struct SharedBucketSink {
 pub struct SharedBucketEmitter {
     sink: Arc<SharedBucketSink>,
     pending: Vec<PendingBucket>,
+    colored_pending: Vec<PendingColoredAtlas>,
     pending_bytes: usize,
 }
 
@@ -76,6 +78,12 @@ struct BucketFileMeta {
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 struct PendingBucket {
     records: u64,
+    bytes: Vec<u8>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+struct PendingColoredAtlas {
+    graph_ids: Vec<u16>,
     bytes: Vec<u8>,
 }
 
@@ -140,6 +148,15 @@ pub struct BucketPackedRecord {
     pub words: Vec<u64>,
 }
 
+pub(crate) struct BorrowedBucketPackedRecord<'a> {
+    pub graph_id: usize,
+    pub len: usize,
+    pub source_id: Option<u32>,
+    pub left_discontinuous: bool,
+    pub right_discontinuous: bool,
+    pub words: &'a [u64],
+}
+
 pub struct BucketReader {
     path: PathBuf,
     file: BufReader<File>,
@@ -148,6 +165,7 @@ pub struct BucketReader {
     block_attrs: Vec<u8>,
     block_labels: Vec<u8>,
     block_interleaved: Vec<u8>,
+    compressed_block: Vec<u8>,
     block_records: usize,
     block_record: usize,
 }
@@ -170,6 +188,7 @@ impl BucketReader {
             block_attrs: Vec::new(),
             block_labels: Vec::new(),
             block_interleaved: Vec::new(),
+            compressed_block: Vec::new(),
             block_records: 0,
             block_record: 0,
         })
@@ -212,8 +231,8 @@ impl BucketReader {
             return Ok(false);
         }
 
-        let mut fixed = [0u8; 8];
-        let fixed_len = if self.header.colored { 8 } else { 4 };
+        let mut fixed = [0u8; 4];
+        let fixed_len = if self.header.colored { 4 } else { 2 };
         if self.header.compressed {
             if self.block_record == self.block_records {
                 self.read_compressed_block()?;
@@ -235,23 +254,11 @@ impl BucketReader {
                     source,
                 })?;
         }
-        let (packed_attr, record_graph_id) = if self.header.colored {
-            (
-                u32::from_le_bytes(fixed[0..4].try_into().unwrap()),
-                u16::from_le_bytes(fixed[4..6].try_into().unwrap()) as usize,
-            )
+        let packed_attr = if self.header.colored {
+            u32::from_le_bytes(fixed[0..4].try_into().unwrap())
         } else {
-            (
-                u16::from_le_bytes(fixed[0..2].try_into().unwrap()) as u32,
-                u16::from_le_bytes(fixed[2..4].try_into().unwrap()) as usize,
-            )
+            u16::from_le_bytes(fixed[0..2].try_into().unwrap()) as u32
         };
-        if record_graph_id != self.header.graph_id {
-            return Err(BucketError::RecordGraphMismatch {
-                expected: self.header.graph_id,
-                got: record_graph_id,
-            });
-        }
 
         record.words.clear();
         record.words.resize(self.header.label_words, 0);
@@ -278,7 +285,7 @@ impl BucketReader {
             .header
             .colored
             .then_some((packed_attr >> 10) & MAX_SOURCE_ID);
-        record.graph_id = record_graph_id;
+        record.graph_id = self.header.graph_id;
         record.len = len;
         record.source_id = source_id;
         record.left_discontinuous = (packed_attr & (1 << 8)) != 0;
@@ -323,26 +330,14 @@ impl BucketReader {
             })?;
 
         for chunk in payload.chunks_exact(record_size) {
-            let (packed_attr, record_graph_id, words_start) = if self.header.colored {
-                (
-                    u32::from_le_bytes(chunk[0..4].try_into().unwrap()),
-                    u16::from_le_bytes(chunk[4..6].try_into().unwrap()) as usize,
-                    8,
-                )
+            let (packed_attr, words_start) = if self.header.colored {
+                (u32::from_le_bytes(chunk[0..4].try_into().unwrap()), 4)
             } else {
                 (
                     u16::from_le_bytes(chunk[0..2].try_into().unwrap()) as u32,
-                    u16::from_le_bytes(chunk[2..4].try_into().unwrap()) as usize,
-                    4,
+                    2,
                 )
             };
-            if record_graph_id != self.header.graph_id {
-                return Err(BucketError::RecordGraphMismatch {
-                    expected: self.header.graph_id,
-                    got: record_graph_id,
-                }
-                .into());
-            }
 
             record.words.clear();
             record.words.reserve(self.header.label_words);
@@ -358,7 +353,7 @@ impl BucketReader {
                 .header
                 .colored
                 .then_some((packed_attr >> 10) & MAX_SOURCE_ID);
-            record.graph_id = record_graph_id;
+            record.graph_id = self.header.graph_id;
             record.len = len;
             record.source_id = source_id;
             record.left_discontinuous = (packed_attr & (1 << 8)) != 0;
@@ -366,6 +361,92 @@ impl BucketReader {
 
             self.records_read += 1;
             f(record)?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn try_for_each_borrowed_packed_record<E, F>(&mut self, mut f: F) -> Result<(), E>
+    where
+        E: From<BucketError>,
+        F: FnMut(BorrowedBucketPackedRecord<'_>) -> Result<(), E>,
+    {
+        if !self.header.compressed {
+            let mut record = BucketPackedRecord::default();
+            return self.try_for_each_packed_record(&mut record, |record| {
+                f(BorrowedBucketPackedRecord {
+                    graph_id: record.graph_id,
+                    len: record.len,
+                    source_id: record.source_id,
+                    left_discontinuous: record.left_discontinuous,
+                    right_discontinuous: record.right_discontinuous,
+                    words: &record.words,
+                })
+            });
+        }
+        if self.header.label_words > 4 {
+            return Err(E::from(BucketError::MalformedRecord));
+        }
+
+        let fixed_len = if self.header.colored { 4 } else { 2 };
+        while self.records_read < self.header.records {
+            if self.block_record == self.block_records {
+                self.read_compressed_block().map_err(E::from)?;
+            }
+            let record_index = self.block_record;
+            let (packed_attr, words_bytes) = if self.header.interleaved_compression {
+                let record_len = record_size(self.header.colored, self.header.label_words);
+                let start = record_index * record_len;
+                let attr = if self.header.colored {
+                    u32::from_le_bytes(self.block_interleaved[start..start + 4].try_into().unwrap())
+                } else {
+                    u16::from_le_bytes(self.block_interleaved[start..start + 2].try_into().unwrap())
+                        as u32
+                };
+                (
+                    attr,
+                    &self.block_interleaved[start + fixed_len..start + record_len],
+                )
+            } else {
+                let attr_start = record_index * fixed_len;
+                let attr = if self.header.colored {
+                    u32::from_le_bytes(
+                        self.block_attrs[attr_start..attr_start + 4]
+                            .try_into()
+                            .unwrap(),
+                    )
+                } else {
+                    u16::from_le_bytes(
+                        self.block_attrs[attr_start..attr_start + 2]
+                            .try_into()
+                            .unwrap(),
+                    ) as u32
+                };
+                let words_start = record_index * self.header.label_words * 8;
+                (
+                    attr,
+                    &self.block_labels[words_start..words_start + self.header.label_words * 8],
+                )
+            };
+            let mut words = [0u64; 4];
+            for (word, bytes) in words[..self.header.label_words]
+                .iter_mut()
+                .zip(words_bytes.chunks_exact(8))
+            {
+                *word = u64::from_le_bytes(bytes.try_into().unwrap());
+            }
+            self.records_read += 1;
+            self.block_record += 1;
+            f(BorrowedBucketPackedRecord {
+                graph_id: self.header.graph_id,
+                len: (packed_attr & 0xff) as usize,
+                source_id: self
+                    .header
+                    .colored
+                    .then_some((packed_attr >> 10) & MAX_SOURCE_ID),
+                left_discontinuous: packed_attr & (1 << 8) != 0,
+                right_discontinuous: packed_attr & (1 << 9) != 0,
+                words: &words[..self.header.label_words],
+            })?;
         }
         Ok(())
     }
@@ -397,21 +478,21 @@ impl BucketReader {
         if records > remaining {
             return Err(BucketError::MalformedRecord);
         }
-        let mut compressed = vec![0u8; attr_bytes + label_bytes];
+        self.compressed_block.resize(attr_bytes + label_bytes, 0);
         self.file
-            .read_exact(&mut compressed)
+            .read_exact(&mut self.compressed_block)
             .map_err(|source| BucketError::Io {
                 path: self.path.clone(),
                 source,
             })?;
-        let fixed_len = if self.header.colored { 8 } else { 4 };
+        let fixed_len = if self.header.colored { 4 } else { 2 };
         if self.header.interleaved_compression {
             self.block_interleaved.resize(
                 records * record_size(self.header.colored, self.header.label_words),
                 0,
             );
             let decoded = lz4_flex::block::decompress_into(
-                &compressed[..attr_bytes],
+                &self.compressed_block[..attr_bytes],
                 &mut self.block_interleaved,
             )
             .map_err(|_| BucketError::MalformedRecord)?;
@@ -425,12 +506,16 @@ impl BucketReader {
         self.block_attrs.resize(records * fixed_len, 0);
         self.block_labels
             .resize(records * self.header.label_words * 8, 0);
-        let decoded_attrs =
-            lz4_flex::block::decompress_into(&compressed[..attr_bytes], &mut self.block_attrs)
-                .map_err(|_| BucketError::MalformedRecord)?;
-        let decoded_labels =
-            lz4_flex::block::decompress_into(&compressed[attr_bytes..], &mut self.block_labels)
-                .map_err(|_| BucketError::MalformedRecord)?;
+        let decoded_attrs = lz4_flex::block::decompress_into(
+            &self.compressed_block[..attr_bytes],
+            &mut self.block_attrs,
+        )
+        .map_err(|_| BucketError::MalformedRecord)?;
+        let decoded_labels = lz4_flex::block::decompress_into(
+            &self.compressed_block[attr_bytes..],
+            &mut self.block_labels,
+        )
+        .map_err(|_| BucketError::MalformedRecord)?;
         if decoded_attrs != self.block_attrs.len() || decoded_labels != self.block_labels.len() {
             return Err(BucketError::MalformedRecord);
         }
@@ -918,7 +1003,18 @@ impl SharedBucketSink {
     pub fn emitter(self: &Arc<Self>) -> SharedBucketEmitter {
         SharedBucketEmitter {
             sink: Arc::clone(self),
-            pending: vec![PendingBucket::default(); self.graph_count],
+            pending: if self.colored {
+                Vec::new()
+            } else {
+                vec![PendingBucket::default(); self.graph_count]
+            },
+            colored_pending: if self.colored {
+                (0..self.atlases.len())
+                    .map(|_| PendingColoredAtlas::default())
+                    .collect()
+            } else {
+                Vec::new()
+            },
             pending_bytes: 0,
         }
     }
@@ -954,6 +1050,47 @@ impl SharedBucketSink {
             &mut flush_stats,
         )?;
         self.record_flush_stats(flush_stats, started.elapsed());
+        Ok(())
+    }
+
+    fn append_colored_atlas(
+        &self,
+        atlas_id: usize,
+        pending: PendingColoredAtlas,
+    ) -> Result<(), BucketError> {
+        if pending.bytes.is_empty() {
+            return Ok(());
+        }
+        let record_len = record_size(true, self.label_words);
+        if pending.graph_ids.len() * record_len != pending.bytes.len() {
+            return Err(BucketError::MalformedRecord);
+        }
+        let mut atlas = self.atlases[atlas_id]
+            .lock()
+            .map_err(|_| BucketError::WorkerPanic)?;
+        for (&graph_id, record) in pending
+            .graph_ids
+            .iter()
+            .zip(pending.bytes.chunks_exact(record_len))
+        {
+            let graph_id = usize::from(graph_id);
+            let Some(local_graph_id) = graph_id.checked_sub(atlas.first_graph_id) else {
+                return Err(BucketError::InvalidGraphId(graph_id));
+            };
+            let Some(file) = atlas.files.get_mut(local_graph_id) else {
+                return Err(BucketError::InvalidGraphId(graph_id));
+            };
+            file.total_records = file
+                .total_records
+                .checked_add(1)
+                .ok_or(BucketError::TooManyRecords)?;
+            file.buffer_records = file
+                .buffer_records
+                .checked_add(1)
+                .ok_or(BucketError::TooManyRecords)?;
+            file.buffer.extend_from_slice(record);
+        }
+        atlas.buffered_bytes += pending.bytes.len();
         Ok(())
     }
 
@@ -1005,6 +1142,128 @@ impl SharedBucketSink {
                                 true,
                                 &mut stats,
                             )?;
+                        }
+                    }
+                    Ok::<_, BucketError>(stats.calls)
+                }));
+            }
+            let mut calls = 0u64;
+            for handle in handles {
+                calls += handle.join().map_err(|_| BucketError::WorkerPanic)??;
+            }
+            Ok::<_, BucketError>(calls)
+        })?;
+        self.record_flush_stats(
+            SharedBucketFlushStats { calls: flush_calls },
+            started.elapsed(),
+        );
+        Ok(())
+    }
+
+    pub fn flush_colored_emitters(
+        &self,
+        emitters: Vec<SharedBucketEmitter>,
+        source_min: u32,
+        source_max: u32,
+    ) -> Result<(), BucketError> {
+        if !self.colored || source_min > source_max {
+            return Err(BucketError::MalformedRecord);
+        }
+
+        let emitter_count = emitters.len();
+        let mut pending_by_atlas = (0..self.atlases.len())
+            .map(|_| Vec::with_capacity(emitter_count))
+            .collect::<Vec<Vec<PendingColoredAtlas>>>();
+        for emitter in emitters {
+            if !std::ptr::eq(Arc::as_ptr(&emitter.sink), self) {
+                return Err(BucketError::MalformedRecord);
+            }
+            if !emitter.pending.is_empty()
+                || emitter.colored_pending.len() != pending_by_atlas.len()
+            {
+                return Err(BucketError::MalformedRecord);
+            }
+            for (atlas_id, pending) in emitter.colored_pending.into_iter().enumerate() {
+                if !pending.bytes.is_empty() {
+                    pending_by_atlas[atlas_id].push(pending);
+                }
+            }
+        }
+
+        let started = Instant::now();
+        let record_len = record_size(true, self.label_words);
+        // Keep atlas consumers long-lived so their per-graph compression
+        // buffers are reused across atlases. One thread per atlas leaves the
+        // same transient allocation stranded in scores of allocator arenas.
+        let workers = self.workers.min(16).min(pending_by_atlas.len().max(1));
+        let chunk_size = pending_by_atlas.len().div_ceil(workers);
+        let flush_calls = std::thread::scope(|scope| {
+            let mut handles = Vec::with_capacity(workers);
+            for (chunk_id, atlas_work) in pending_by_atlas.chunks_mut(chunk_size).enumerate() {
+                handles.push(scope.spawn(move || {
+                    let mut stats = SharedBucketFlushStats::default();
+                    let first_atlas = chunk_id * chunk_size;
+                    for (offset, worker_buckets) in atlas_work.iter_mut().enumerate() {
+                        let atlas_id = first_atlas + offset;
+                        sort_colored_atlas_workers_in_place(
+                            worker_buckets,
+                            record_len,
+                            source_min,
+                            source_max,
+                        )?;
+                        let mut atlas = self.atlases[atlas_id]
+                            .lock()
+                            .map_err(|_| BucketError::WorkerPanic)?;
+                        let mut cursors = vec![0usize; worker_buckets.len()];
+                        for source in source_min..=source_max {
+                            for (pending, cursor) in worker_buckets.iter().zip(cursors.iter_mut()) {
+                                while *cursor < pending.graph_ids.len() {
+                                    let record_start = *cursor * record_len;
+                                    let record =
+                                        &pending.bytes[record_start..record_start + record_len];
+                                    let record_source = u32::from_le_bytes(
+                                        record[..4].try_into().expect("colored attribute"),
+                                    ) >> 10;
+                                    if record_source != source {
+                                        break;
+                                    }
+                                    append_colored_atlas_record(
+                                        &mut atlas,
+                                        pending.graph_ids[*cursor],
+                                        record,
+                                    )?;
+                                    *cursor += 1;
+                                }
+                            }
+                        }
+                        if cursors
+                            .iter()
+                            .zip(worker_buckets.iter())
+                            .any(|(&cursor, pending)| cursor != pending.graph_ids.len())
+                        {
+                            return Err(BucketError::MalformedRecord);
+                        }
+                        atlas.buffered_bytes += worker_buckets
+                            .iter()
+                            .map(|pending| pending.bytes.len())
+                            .sum::<usize>();
+                        for local_graph_id in 0..atlas.files.len() {
+                            atlas.flush_subgraph(
+                                local_graph_id,
+                                &self.bucket_dir,
+                                self.k,
+                                self.minimizer_len,
+                                self.graph_count,
+                                true,
+                                self.label_words,
+                                true,
+                                &mut stats,
+                            )?;
+                            // This consumes the complete colored emitter set, so these
+                            // buffers will not be reused. Releasing their capacity here
+                            // avoids retaining every uncompressed subgraph bucket while
+                            // the remaining worker atlas chunks are still resident.
+                            atlas.files[local_graph_id].buffer = Vec::new();
                         }
                     }
                     Ok::<_, BucketError>(stats.calls)
@@ -1129,6 +1388,99 @@ impl SharedBucketSink {
             Ordering::Relaxed,
         );
     }
+}
+
+fn sort_colored_atlas_workers_in_place(
+    worker_buckets: &mut Vec<PendingColoredAtlas>,
+    record_len: usize,
+    source_min: u32,
+    source_max: u32,
+) -> Result<(), BucketError> {
+    for pending in worker_buckets.iter_mut() {
+        if pending.graph_ids.len() * record_len != pending.bytes.len() {
+            return Err(BucketError::MalformedRecord);
+        }
+        if pending.graph_ids.is_empty() || source_min == source_max {
+            continue;
+        }
+        let source_count = usize::try_from(source_max - source_min + 1)
+            .map_err(|_| BucketError::MalformedRecord)?;
+        let mut counts = vec![0usize; source_count];
+        for record in pending.bytes.chunks_exact(record_len) {
+            let attr = u32::from_le_bytes(record[..4].try_into().expect("colored attribute"));
+            let source = attr >> 10;
+            if source < source_min || source > source_max {
+                return Err(BucketError::MalformedRecord);
+            }
+            counts[(source - source_min) as usize] += 1;
+        }
+        let mut starts = vec![0usize; source_count];
+        let mut prefix = 0usize;
+        for (start, count) in starts.iter_mut().zip(counts.iter()) {
+            *start = prefix;
+            prefix += *count;
+        }
+        debug_assert_eq!(prefix, pending.graph_ids.len());
+        let mut next = starts.clone();
+        for bucket in 0..source_count {
+            let end = starts[bucket] + counts[bucket];
+            while next[bucket] < end {
+                let record_index = next[bucket];
+                let record_start = record_index * record_len;
+                let source = (u32::from_le_bytes(
+                    pending.bytes[record_start..record_start + 4]
+                        .try_into()
+                        .expect("colored attribute"),
+                ) >> 10)
+                    .checked_sub(source_min)
+                    .ok_or(BucketError::MalformedRecord)? as usize;
+                if source >= source_count {
+                    return Err(BucketError::MalformedRecord);
+                }
+                if source == bucket {
+                    next[bucket] += 1;
+                    continue;
+                }
+                let destination = next[source];
+                if destination >= starts[source] + counts[source] {
+                    return Err(BucketError::MalformedRecord);
+                }
+                pending.graph_ids.swap(record_index, destination);
+                for byte in 0..record_len {
+                    pending
+                        .bytes
+                        .swap(record_start + byte, destination * record_len + byte);
+                }
+                next[source] += 1;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn append_colored_atlas_record(
+    atlas: &mut SharedBucketAtlas,
+    graph_id: u16,
+    record: &[u8],
+) -> Result<(), BucketError> {
+    let graph_id = usize::from(graph_id);
+    let local_graph_id = graph_id
+        .checked_sub(atlas.first_graph_id)
+        .ok_or(BucketError::InvalidGraphId(graph_id))?;
+    let file = atlas
+        .files
+        .get_mut(local_graph_id)
+        .ok_or(BucketError::InvalidGraphId(graph_id))?;
+    file.total_records = file
+        .total_records
+        .checked_add(1)
+        .ok_or(BucketError::TooManyRecords)?;
+    file.buffer_records = file
+        .buffer_records
+        .checked_add(1)
+        .ok_or(BucketError::TooManyRecords)?;
+    file.buffer.extend_from_slice(record);
+    Ok(())
 }
 
 fn sort_colored_payload_by_source(
@@ -1310,49 +1662,81 @@ impl SharedBucketEmitter {
         };
         let graph_id = superkmer.graph_id;
         let record_len = record_size(self.sink.colored, self.sink.label_words);
-        let pending = &mut self.pending[graph_id];
-        pending.records = pending
-            .records
-            .checked_add(1)
-            .ok_or(BucketError::TooManyRecords)?;
-        if !self.sink.colored && !check_bases {
-            append_uncolored_record_valid(
-                &mut pending.bytes,
-                attr as u16,
-                graph_id as u16,
-                seq,
-                self.sink.label_words,
-            )?;
-        } else if check_bases {
-            append_record(
-                &mut pending.bytes,
-                attr,
-                graph_id,
-                seq,
-                self.sink.label_words,
-                self.sink.colored,
-            )?;
+        if self.sink.colored {
+            let atlas_id = graph_id / ATLAS_GRAPH_COUNT;
+            let pending = &mut self.colored_pending[atlas_id];
+            pending.graph_ids.push(graph_id as u16);
+            if check_bases {
+                append_record(
+                    &mut pending.bytes,
+                    attr,
+                    graph_id,
+                    seq,
+                    self.sink.label_words,
+                    true,
+                )?;
+            } else {
+                append_record_valid(
+                    &mut pending.bytes,
+                    attr,
+                    graph_id,
+                    seq,
+                    self.sink.label_words,
+                    true,
+                )?;
+            }
         } else {
-            append_record_valid(
-                &mut pending.bytes,
-                attr,
-                graph_id,
-                seq,
-                self.sink.label_words,
-                self.sink.colored,
-            )?;
+            let pending = &mut self.pending[graph_id];
+            pending.records = pending
+                .records
+                .checked_add(1)
+                .ok_or(BucketError::TooManyRecords)?;
+            if !check_bases {
+                append_uncolored_record_valid(
+                    &mut pending.bytes,
+                    attr as u16,
+                    graph_id as u16,
+                    seq,
+                    self.sink.label_words,
+                )?;
+            } else {
+                append_record(
+                    &mut pending.bytes,
+                    attr,
+                    graph_id,
+                    seq,
+                    self.sink.label_words,
+                    false,
+                )?;
+            }
         }
         self.pending_bytes += record_len;
 
-        if self.pending[graph_id].bytes.len() >= MAX_PENDING_BUCKET_BYTES {
+        // A colored source window must remain worker-local until all workers
+        // have finished. Its atlas chunks are collated together by source in
+        // `flush_colored_emitters`; spilling one here would both duplicate the
+        // window in shared buffers and lose global source order. The source
+        // window in `partition` is the external-memory bound for this path.
+        if !self.sink.colored && self.pending[graph_id].bytes.len() >= MAX_PENDING_BUCKET_BYTES {
             self.flush_pending_bucket(graph_id)?;
-        } else if self.pending_bytes >= MAX_TOTAL_PENDING_BYTES {
+        } else if !self.sink.colored && self.pending_bytes >= MAX_TOTAL_PENDING_BYTES {
             self.flush_largest_pending_bucket()?;
         }
         Ok(())
     }
 
     fn flush_largest_pending_bucket(&mut self) -> Result<(), BucketError> {
+        if self.sink.colored {
+            let Some((atlas_id, _)) = self
+                .colored_pending
+                .iter()
+                .enumerate()
+                .max_by_key(|(_, pending)| pending.bytes.len())
+            else {
+                return Ok(());
+            };
+            return self.flush_pending_colored_atlas(atlas_id);
+        }
         let Some((graph_id, _)) = self
             .pending
             .iter()
@@ -1373,10 +1757,27 @@ impl SharedBucketEmitter {
         self.sink.append_bucket(graph_id, pending)
     }
 
+    fn flush_pending_colored_atlas(&mut self, atlas_id: usize) -> Result<(), BucketError> {
+        if self.colored_pending[atlas_id].bytes.is_empty() {
+            return Ok(());
+        }
+        let pending = std::mem::take(&mut self.colored_pending[atlas_id]);
+        self.pending_bytes -= pending.bytes.len();
+        self.sink.append_colored_atlas(atlas_id, pending)
+    }
+
     pub fn finish(mut self) -> Result<(), BucketError> {
-        for graph_id in 0..self.pending.len() {
-            if !self.pending[graph_id].bytes.is_empty() {
-                self.flush_pending_bucket(graph_id)?;
+        if self.sink.colored {
+            for atlas_id in 0..self.colored_pending.len() {
+                if !self.colored_pending[atlas_id].bytes.is_empty() {
+                    self.flush_pending_colored_atlas(atlas_id)?;
+                }
+            }
+        } else {
+            for graph_id in 0..self.pending.len() {
+                if !self.pending[graph_id].bytes.is_empty() {
+                    self.flush_pending_bucket(graph_id)?;
+                }
             }
         }
         Ok(())
@@ -1419,7 +1820,7 @@ pub fn write_manifest(
 fn append_record(
     out: &mut Vec<u8>,
     packed_attr: u32,
-    graph_id: usize,
+    _graph_id: usize,
     seq: &[u8],
     label_words: usize,
     colored: bool,
@@ -1437,11 +1838,8 @@ fn append_record(
 
     if colored {
         out.extend_from_slice(&packed_attr.to_le_bytes());
-        out.extend_from_slice(&(graph_id as u16).to_le_bytes());
-        out.extend_from_slice(&0u16.to_le_bytes());
     } else {
         out.extend_from_slice(&(packed_attr as u16).to_le_bytes());
-        out.extend_from_slice(&(graph_id as u16).to_le_bytes());
     }
     for &word in &words[..label_words] {
         out.extend_from_slice(&word.to_le_bytes());
@@ -1452,29 +1850,18 @@ fn append_record(
 fn append_record_valid(
     out: &mut Vec<u8>,
     packed_attr: u32,
-    graph_id: usize,
+    _graph_id: usize,
     seq: &[u8],
     label_words: usize,
     colored: bool,
 ) -> Result<(), BucketError> {
-    let mut words = [0u64; 4];
-    if label_words > words.len() {
-        return Err(BucketError::MalformedRecord);
-    }
-    for (idx, &ch) in seq.iter().enumerate() {
-        let word_idx = idx / 32;
-        let shift = 2 * (31 - (idx % 32));
-        words[word_idx] |= (valid_ascii_base_bits(ch) as u64) << shift;
-    }
+    let words = pack_valid_label(seq, label_words)?;
 
     out.reserve(record_size(colored, label_words));
     if colored {
         out.extend_from_slice(&packed_attr.to_le_bytes());
-        out.extend_from_slice(&(graph_id as u16).to_le_bytes());
-        out.extend_from_slice(&0u16.to_le_bytes());
     } else {
         out.extend_from_slice(&(packed_attr as u16).to_le_bytes());
-        out.extend_from_slice(&(graph_id as u16).to_le_bytes());
     }
     for &word in &words[..label_words] {
         out.extend_from_slice(&word.to_le_bytes());
@@ -1486,27 +1873,50 @@ fn append_record_valid(
 fn append_uncolored_record_valid(
     out: &mut Vec<u8>,
     packed_attr: u16,
-    graph_id: u16,
+    _graph_id: u16,
     seq: &[u8],
     label_words: usize,
 ) -> Result<(), BucketError> {
-    let mut words = [0u64; 4];
-    if label_words > words.len() {
-        return Err(BucketError::MalformedRecord);
-    }
-    for (idx, &ch) in seq.iter().enumerate() {
-        let word_idx = idx / 32;
-        let shift = 2 * (31 - (idx % 32));
-        words[word_idx] |= (valid_ascii_base_bits(ch) as u64) << shift;
-    }
+    let words = pack_valid_label(seq, label_words)?;
 
-    out.reserve(4 + label_words * 8);
+    out.reserve(2 + label_words * 8);
     out.extend_from_slice(&packed_attr.to_le_bytes());
-    out.extend_from_slice(&graph_id.to_le_bytes());
     for &word in &words[..label_words] {
         out.extend_from_slice(&word.to_le_bytes());
     }
     Ok(())
+}
+
+#[inline(always)]
+fn pack_valid_word_32(seq: &[u8]) -> u64 {
+    debug_assert!(seq.len() >= 32);
+    let mut word = 0u64;
+    for &base in &seq[..32] {
+        word = (word << 2) | u64::from(valid_ascii_base_bits(base));
+    }
+    word
+}
+
+#[inline]
+fn pack_valid_label(seq: &[u8], label_words: usize) -> Result<[u64; 4], BucketError> {
+    let mut words = [0u64; 4];
+    if label_words > words.len() || seq.len() > label_words * 32 {
+        return Err(BucketError::MalformedRecord);
+    }
+
+    let full_words = seq.len() / 32;
+    for word_idx in 0..full_words {
+        words[word_idx] = pack_valid_word_32(&seq[word_idx * 32..]);
+    }
+    let tail = &seq[full_words * 32..];
+    if !tail.is_empty() {
+        let mut word = 0u64;
+        for &base in tail {
+            word = (word << 2) | u64::from(valid_ascii_base_bits(base));
+        }
+        words[full_words] = word << (2 * (32 - tail.len()));
+    }
+    Ok(words)
 }
 
 struct BucketFile {
@@ -1725,7 +2135,7 @@ fn label_word_count(k: u16, minimizer_len: u16) -> usize {
 }
 
 fn record_size(colored: bool, label_words: usize) -> usize {
-    (if colored { 8 } else { 4 }) + label_words * 8
+    (if colored { 4 } else { 2 }) + label_words * 8
 }
 
 fn pack_uncolored_attr(len: usize, left_discontinuous: bool, right_discontinuous: bool) -> u32 {

@@ -1,10 +1,14 @@
-use crate::hash::FastBuildHasher;
+use crate::hash::{FastBuildHasher, hash_u64};
 use crate::state::{ColorCoordinate, UnitigColor};
 use scc::{HashMap as SccHashMap, hash_map::Entry as SccEntry};
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufReader, BufWriter, Read, Seek, Write};
+use std::os::unix::fs::FileExt;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{
+    Mutex,
+    atomic::{AtomicBool, AtomicU64, Ordering},
+};
 
 const COLOR_BUFFER_BYTES: usize = 128 * 1024;
 
@@ -22,6 +26,20 @@ pub fn reverse_color_runs(runs: &[UnitigColor], vertex_count: u32) -> Vec<Unitig
     reversed
 }
 
+pub fn reverse_color_runs_in_place(runs: &mut [UnitigColor], vertex_count: u32) {
+    if runs.is_empty() {
+        return;
+    }
+    runs.reverse();
+    for index in (1..runs.len()).rev() {
+        runs[index] = UnitigColor::new(
+            vertex_count - runs[index - 1].offset(),
+            ColorCoordinate::from_u40(runs[index].coordinate()),
+        );
+    }
+    runs[0] = UnitigColor::new(0, ColorCoordinate::from_u40(runs[0].coordinate()));
+}
+
 pub fn append_color_runs(
     output: &mut Vec<UnitigColor>,
     output_vertex_count: u32,
@@ -29,24 +47,38 @@ pub fn append_color_runs(
     unitig_vertex_count: u32,
     reverse: bool,
 ) {
-    let oriented = if reverse {
-        reverse_color_runs(runs, unitig_vertex_count)
+    if reverse {
+        output.reserve(runs.len());
+        for index in (0..runs.len()).rev() {
+            if index == runs.len() - 1
+                && output
+                    .last()
+                    .is_some_and(|left| left.coordinate() == runs[index].coordinate())
+            {
+                continue;
+            }
+            let end = runs
+                .get(index + 1)
+                .map_or(unitig_vertex_count, |next| next.offset());
+            output.push(UnitigColor::new(
+                output_vertex_count + unitig_vertex_count - end - 1,
+                ColorCoordinate::from_u40(runs[index].coordinate()),
+            ));
+        }
     } else {
-        runs.to_vec()
-    };
-    let mut start = 0usize;
-    if output
-        .last()
-        .zip(oriented.first())
-        .is_some_and(|(left, right)| left.coordinate() == right.coordinate())
-    {
-        start = 1;
-    }
-    for run in &oriented[start..] {
-        output.push(UnitigColor::new(
-            output_vertex_count + run.offset() - 1,
-            ColorCoordinate::from_u40(run.coordinate()),
-        ));
+        let start = usize::from(
+            output
+                .last()
+                .zip(runs.first())
+                .is_some_and(|(left, right)| left.coordinate() == right.coordinate()),
+        );
+        output.reserve(runs.len().saturating_sub(start));
+        for run in &runs[start..] {
+            output.push(UnitigColor::new(
+                output_vertex_count + run.offset() - 1,
+                ColorCoordinate::from_u40(run.coordinate()),
+            ));
+        }
     }
 }
 
@@ -127,8 +159,10 @@ impl ColorRunSidecarWriter {
 
     pub fn write_unitig(&mut self, colors: &[UnitigColor]) -> Result<(), ColorError> {
         let count = u32::try_from(colors.len()).map_err(|_| ColorError::TooManyColorRuns)?;
+        let mut encoded_count = Vec::with_capacity(5);
+        append_varint_u32(&mut encoded_count, count);
         self.runs
-            .write_all(&count.to_le_bytes())
+            .write_all(&encoded_count)
             .map_err(|source| ColorError::Io {
                 path: self.run_path.clone(),
                 source,
@@ -141,7 +175,7 @@ impl ColorRunSidecarWriter {
                     source,
                 })?;
         }
-        self.run_bytes += 4 + u64::from(count) * 8;
+        self.run_bytes += encoded_count.len() as u64 + u64::from(count) * 8;
         self.run_count += u64::from(count);
         self.unitigs += 1;
         Ok(())
@@ -160,6 +194,80 @@ impl ColorRunSidecarWriter {
             run_path: self.run_path,
             unitigs: self.unitigs,
             runs: self.run_count,
+        })
+    }
+}
+
+pub struct ConcurrentColorRunSidecarWriter {
+    run_path: PathBuf,
+    runs: File,
+    run_bytes: AtomicU64,
+    run_count: AtomicU64,
+    unitigs: AtomicU64,
+}
+
+impl ConcurrentColorRunSidecarWriter {
+    pub fn create(path_prefix: impl AsRef<Path>) -> Result<Self, ColorError> {
+        let run_path = path_prefix.as_ref().with_extension("color-runs");
+        let runs = OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .read(true)
+            .write(true)
+            .open(&run_path)
+            .map_err(|source| ColorError::Io {
+                path: run_path.clone(),
+                source,
+            })?;
+        Ok(Self {
+            run_path,
+            runs,
+            run_bytes: AtomicU64::new(0),
+            run_count: AtomicU64::new(0),
+            unitigs: AtomicU64::new(0),
+        })
+    }
+
+    pub fn write_unitigs(&self, unitigs: &[Vec<UnitigColor>]) -> Result<u64, ColorError> {
+        let run_count = unitigs.iter().map(Vec::len).sum::<usize>();
+        let byte_len = unitigs
+            .len()
+            .checked_mul(5)
+            .and_then(|bytes| bytes.checked_add(run_count.checked_mul(8)?))
+            .ok_or(ColorError::TooManyColorRuns)?;
+        let mut encoded = Vec::with_capacity(byte_len);
+        for colors in unitigs {
+            let count = u32::try_from(colors.len()).map_err(|_| ColorError::TooManyColorRuns)?;
+            append_varint_u32(&mut encoded, count);
+            for color in colors {
+                encoded.extend_from_slice(&color.raw().to_le_bytes());
+            }
+        }
+        let offset = self
+            .run_bytes
+            .fetch_add(encoded.len() as u64, Ordering::Relaxed);
+        self.runs
+            .write_all_at(&encoded, offset)
+            .map_err(|source| ColorError::Io {
+                path: self.run_path.clone(),
+                source,
+            })?;
+        self.run_count
+            .fetch_add(run_count as u64, Ordering::Relaxed);
+        self.unitigs
+            .fetch_add(unitigs.len() as u64, Ordering::Relaxed);
+        Ok(offset)
+    }
+
+    pub fn finish(self) -> Result<ColorRunSidecar, ColorError> {
+        self.runs.sync_data().map_err(|source| ColorError::Io {
+            path: self.run_path.clone(),
+            source,
+        })?;
+        Ok(ColorRunSidecar {
+            run_path: self.run_path,
+            unitigs: self.unitigs.load(Ordering::Relaxed),
+            runs: self.run_count.load(Ordering::Relaxed),
         })
     }
 }
@@ -210,15 +318,18 @@ pub struct ColorRunStreamReader {
 
 impl ColorRunStreamReader {
     pub fn read_next(&mut self) -> Result<Vec<UnitigColor>, ColorError> {
-        let mut count = [0u8; 4];
-        self.input
-            .read_exact(&mut count)
-            .map_err(|source| ColorError::Io {
-                path: self.path.clone(),
-                source,
-            })?;
-        let count = u32::from_le_bytes(count);
-        let mut colors = Vec::with_capacity(count as usize);
+        let mut colors = Vec::new();
+        self.read_next_into(&mut colors)?;
+        Ok(colors)
+    }
+
+    pub fn read_next_into(&mut self, colors: &mut Vec<UnitigColor>) -> Result<(), ColorError> {
+        let count = read_varint(&mut self.input).map_err(|source| ColorError::Io {
+            path: self.path.clone(),
+            source,
+        })?;
+        colors.clear();
+        colors.reserve(count as usize);
         for _ in 0..count {
             let mut raw = [0u8; 8];
             self.input
@@ -233,14 +344,138 @@ impl ColorRunStreamReader {
                 ColorCoordinate::from_u40(raw >> 24),
             ));
         }
-        Ok(colors)
+        Ok(())
     }
 }
 
 pub struct ConcurrentColorRepository {
     dir: PathBuf,
-    table: SccHashMap<u64, ColorCoordinate, FastBuildHasher>,
+    table: AtomicColorTable,
+    overflow: SccHashMap<u64, ColorCoordinate, FastBuildHasher>,
     workers: Vec<Mutex<ColorWorkerWriter>>,
+}
+
+struct AtomicColorSlot {
+    state: AtomicU64,
+    key: AtomicU64,
+    value: AtomicU64,
+}
+
+struct AtomicColorTable {
+    slots: Vec<AtomicColorSlot>,
+    mask: usize,
+    saturated: AtomicBool,
+}
+
+enum AtomicColorEntry<'a> {
+    Occupied(ColorCoordinate),
+    Vacant(&'a AtomicColorSlot),
+    Full,
+}
+
+impl AtomicColorTable {
+    const EMPTY: u64 = 0;
+    const BUSY: u64 = 1;
+
+    fn with_expected_entries(expected: usize) -> Self {
+        let capacity = expected
+            .max(8)
+            .saturating_mul(4)
+            .div_ceil(3)
+            .next_power_of_two()
+            .min(64 * 1024 * 1024);
+        Self {
+            slots: (0..capacity)
+                .map(|_| AtomicColorSlot {
+                    state: AtomicU64::new(Self::EMPTY),
+                    key: AtomicU64::new(0),
+                    value: AtomicU64::new(0),
+                })
+                .collect(),
+            mask: capacity - 1,
+            saturated: AtomicBool::new(false),
+        }
+    }
+
+    #[inline]
+    fn entry(&self, key: u64) -> AtomicColorEntry<'_> {
+        let hash = hash_u64(key, 0);
+        let tag = hash.wrapping_add(2).max(2);
+        let mut index = hash as usize & self.mask;
+        for _ in 0..self.slots.len() {
+            let slot = &self.slots[index];
+            let mut state = slot.state.load(Ordering::Acquire);
+            while state == Self::BUSY {
+                std::hint::spin_loop();
+                state = slot.state.load(Ordering::Acquire);
+            }
+            if state == Self::EMPTY {
+                if slot
+                    .state
+                    .compare_exchange(
+                        Self::EMPTY,
+                        Self::BUSY,
+                        Ordering::Acquire,
+                        Ordering::Relaxed,
+                    )
+                    .is_ok()
+                {
+                    slot.key.store(key, Ordering::Relaxed);
+                    return AtomicColorEntry::Vacant(slot);
+                }
+                continue;
+            }
+            if state == tag && slot.key.load(Ordering::Relaxed) == key {
+                return AtomicColorEntry::Occupied(ColorCoordinate::from_u40(
+                    slot.value.load(Ordering::Relaxed),
+                ));
+            }
+            index = (index + 1) & self.mask;
+        }
+        self.saturated.store(true, Ordering::Release);
+        AtomicColorEntry::Full
+    }
+
+    #[inline]
+    fn get(&self, key: u64) -> Option<ColorCoordinate> {
+        let hash = hash_u64(key, 0);
+        let tag = hash.wrapping_add(2).max(2);
+        let mut index = hash as usize & self.mask;
+        for _ in 0..self.slots.len() {
+            let slot = &self.slots[index];
+            let mut state = slot.state.load(Ordering::Acquire);
+            while state == Self::BUSY {
+                std::hint::spin_loop();
+                state = slot.state.load(Ordering::Acquire);
+            }
+            if state == Self::EMPTY {
+                return None;
+            }
+            if state == tag && slot.key.load(Ordering::Relaxed) == key {
+                return Some(ColorCoordinate::from_u40(
+                    slot.value.load(Ordering::Relaxed),
+                ));
+            }
+            index = (index + 1) & self.mask;
+        }
+        None
+    }
+
+    fn publish(slot: &AtomicColorSlot, coordinate: ColorCoordinate) {
+        let key = slot.key.load(Ordering::Relaxed);
+        let tag = hash_u64(key, 0).wrapping_add(2).max(2);
+        slot.value.store(coordinate.as_u40(), Ordering::Relaxed);
+        slot.state.store(tag, Ordering::Release);
+    }
+
+    fn abort(slot: &AtomicColorSlot) {
+        slot.state.store(Self::EMPTY, Ordering::Release);
+    }
+
+    #[inline]
+    fn is_saturated(&self) -> bool {
+        self.saturated.load(Ordering::Acquire)
+    }
 }
 
 struct ColorWorkerWriter {
@@ -249,6 +484,10 @@ struct ColorWorkerWriter {
 }
 
 impl ConcurrentColorRepository {
+    pub(crate) fn worker_count(&self) -> usize {
+        self.workers.len()
+    }
+
     pub fn create(
         dir: impl AsRef<Path>,
         workers: usize,
@@ -282,10 +521,8 @@ impl ConcurrentColorRepository {
         }
         Ok(Self {
             dir,
-            table: SccHashMap::with_capacity_and_hasher(
-                expected_colors.max(8),
-                FastBuildHasher::default(),
-            ),
+            table: AtomicColorTable::with_expected_entries(expected_colors),
+            overflow: SccHashMap::with_capacity_and_hasher(8, FastBuildHasher::default()),
             workers: worker_writers,
         })
     }
@@ -296,35 +533,78 @@ impl ConcurrentColorRepository {
         sources: &[u32],
         worker: usize,
     ) -> Result<ColorCoordinate, ColorError> {
-        if sources.is_empty() || !sources.windows(2).all(|pair| pair[0] < pair[1]) {
+        if sources.is_empty() {
+            return self.get(color_hash).ok_or(ColorError::MalformedSourceSet);
+        }
+        if !sources.windows(2).all(|pair| pair[0] < pair[1]) {
             return Err(ColorError::MalformedSourceSet);
         }
         if worker >= self.workers.len() {
             return Err(ColorError::InvalidWorkerCount(worker + 1));
         }
-        match self.table.entry_sync(color_hash) {
-            SccEntry::Occupied(entry) => Ok(*entry.get()),
-            SccEntry::Vacant(entry) => {
+        match self.table.entry(color_hash) {
+            AtomicColorEntry::Occupied(coordinate) => Ok(coordinate),
+            AtomicColorEntry::Vacant(slot) => {
                 let mut writer = self.workers[worker]
                     .lock()
                     .map_err(|_| ColorError::PoisonedWriter)?;
                 let index = writer.records;
-                write_source_set(&mut writer.output, sources).map_err(|source| ColorError::Io {
-                    path: color_worker_path(&self.dir, worker),
-                    source,
-                })?;
-                writer.records = writer
-                    .records
-                    .checked_add(1)
-                    .ok_or(ColorError::TooManyColors)?;
+                if let Err(source) = write_source_set(&mut writer.output, sources) {
+                    AtomicColorTable::abort(slot);
+                    return Err(ColorError::Io {
+                        path: color_worker_path(&self.dir, worker),
+                        source,
+                    });
+                }
+                let Some(next_records) = writer.records.checked_add(1) else {
+                    AtomicColorTable::abort(slot);
+                    return Err(ColorError::TooManyColors);
+                };
+                writer.records = next_records;
                 let coordinate = ColorCoordinate::discovered(worker as u64, index as u64);
-                entry.insert_entry(coordinate);
+                AtomicColorTable::publish(slot, coordinate);
                 Ok(coordinate)
             }
+            AtomicColorEntry::Full => match self.overflow.entry_sync(color_hash) {
+                SccEntry::Occupied(entry) => Ok(*entry.get()),
+                SccEntry::Vacant(entry) => {
+                    let mut writer = self.workers[worker]
+                        .lock()
+                        .map_err(|_| ColorError::PoisonedWriter)?;
+                    let index = writer.records;
+                    write_source_set(&mut writer.output, sources).map_err(|source| {
+                        ColorError::Io {
+                            path: color_worker_path(&self.dir, worker),
+                            source,
+                        }
+                    })?;
+                    writer.records = writer
+                        .records
+                        .checked_add(1)
+                        .ok_or(ColorError::TooManyColors)?;
+                    let coordinate = ColorCoordinate::discovered(worker as u64, index as u64);
+                    entry.insert_entry(coordinate);
+                    Ok(coordinate)
+                }
+            },
         }
     }
 
+    pub fn get(&self, color_hash: u64) -> Option<ColorCoordinate> {
+        self.table.get(color_hash).or_else(|| {
+            self.table.is_saturated().then(|| {
+                self.overflow
+                    .read_sync(&color_hash, |_, coordinate| *coordinate)
+            })?
+        })
+    }
+
     pub fn finish(&self) -> Result<ColorRepositoryManifest, ColorError> {
+        eprintln!(
+            "cuttlefish3-rs: color repository table capacity {}, overflow entries {}",
+            self.table.slots.len(),
+            self.overflow.len()
+        );
         let mut records = Vec::with_capacity(self.workers.len());
         for (worker, writer) in self.workers.iter().enumerate() {
             let mut writer = writer.lock().map_err(|_| ColorError::PoisonedWriter)?;
@@ -471,6 +751,14 @@ fn write_varint(output: &mut impl Write, mut value: u32) -> std::io::Result<()> 
         value >>= 7;
     }
     output.write_all(&[value as u8])
+}
+
+fn append_varint_u32(output: &mut Vec<u8>, mut value: u32) {
+    while value >= 0x80 {
+        output.push(((value as u8) & 0x7f) | 0x80);
+        value >>= 7;
+    }
+    output.push(value as u8);
 }
 
 fn read_varint(input: &mut impl Read) -> std::io::Result<u32> {

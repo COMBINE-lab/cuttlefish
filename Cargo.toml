@@ -10,3 +10,7 @@ resolver = "2"
 edition = "2024"
 license = "BSD-3-Clause"
 rust-version = "1.85"
+
+[profile.release]
+codegen-units = 8
+panic = "abort"

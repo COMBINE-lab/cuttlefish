@@ -1,6 +1,6 @@
 use crate::Side;
 use crate::dna::Base;
-use crate::hash::hash_u64;
+use xxhash_rust::xxh3::xxh3_64;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct EdgeFrequency {
@@ -35,22 +35,21 @@ impl EdgeFrequency {
     pub fn edge_at(&self, side: Side, cutoff: u32) -> Base {
         let side_off = Self::side_offset(side);
         let packed = (self.packed >> side_off) & 0xffff;
-        let mut seen = None;
-        for b in 0..4 {
-            if ((packed >> (4 * b)) & Self::MAX) >= cutoff {
-                if seen.is_some() {
-                    return Base::N;
-                }
-                seen = Some(match b {
-                    0 => Base::A,
-                    1 => Base::C,
-                    2 => Base::G,
-                    3 => Base::T,
-                    _ => unreachable!(),
-                });
-            }
+        let edge_a = u32::from((packed & 0x000f) >= cutoff);
+        let edge_c = u32::from(((packed >> 4) & 0x000f) >= cutoff);
+        let edge_g = u32::from(((packed >> 8) & 0x000f) >= cutoff);
+        let edge_t = u32::from(((packed >> 12) & 0x000f) >= cutoff);
+        match edge_a + edge_c + edge_g + edge_t {
+            0 => Base::E,
+            1 => match edge_c + 2 * edge_g + 3 * edge_t {
+                0 => Base::A,
+                1 => Base::C,
+                2 => Base::G,
+                3 => Base::T,
+                _ => unreachable!(),
+            },
+            _ => Base::N,
         }
-        seen.unwrap_or(Base::E)
     }
 
     #[inline]
@@ -87,6 +86,7 @@ impl VertexState {
     const SOURCE_SHIFT: u32 = 11;
     const SOURCE_MASK: u32 = 0x1F_FFFF << Self::SOURCE_SHIFT;
 
+    #[inline(always)]
     pub fn update_edges(&mut self, front: Base, back: Base) {
         if front != Base::E {
             self.edges.add_edge(Side::Front, front);
@@ -149,11 +149,17 @@ impl VertexState {
             != 0
     }
 
+    #[inline(always)]
     pub fn add_source(&mut self, source: u32) {
+        self.add_source_hashed(source, source_hash(source));
+    }
+
+    #[inline(always)]
+    pub fn add_source_hashed(&mut self, source: u32, source_hash: u64) {
         assert!(source <= 0x1F_FFFF);
         let last = (self.flags & Self::SOURCE_MASK) >> Self::SOURCE_SHIFT;
         if source != last {
-            self.color_hash = hash_combine(self.color_hash, source_hash(source));
+            self.color_hash = hash_combine(self.color_hash, source_hash);
             self.flags = (self.flags & !Self::SOURCE_MASK) | (source << Self::SOURCE_SHIFT);
         }
     }
@@ -166,15 +172,13 @@ impl VertexState {
 
 #[inline]
 pub fn source_hash(source: u32) -> u64 {
-    hash_u64(source as u64, 0)
+    debug_assert!(source > 0 && source < (1 << 21));
+    xxh3_64(&source.to_le_bytes()[..3])
 }
 
 #[inline]
 pub fn hash_combine(lhs: u64, rhs: u64) -> u64 {
     lhs ^ rhs
-        .wrapping_add(0x9E37_79B9_7F4A_7C15)
-        .wrapping_add(lhs << 6)
-        .wrapping_add(lhs >> 2)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

@@ -1,5 +1,5 @@
 use crate::dna::Base;
-use crate::hash::hash_u64;
+use crate::hash::wyhash_u64;
 use crate::kmer::Kmer;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -14,7 +14,7 @@ impl Minimizer {
     fn candidate(lmer: u64, offset: usize, seed: u64) -> Self {
         Self {
             lmer,
-            hash: hash_u64(lmer, seed),
+            hash: wyhash_u64(lmer, seed),
             offset,
         }
     }
@@ -91,7 +91,7 @@ mod tests {
             let lmer = encode_lmer_ascii(&b"ACGTACGT"[off..off + 3]).unwrap();
             let cand = Minimizer {
                 lmer,
-                hash: hash_u64(lmer, 0),
+                hash: wyhash_u64(lmer, 0),
                 offset: off,
             };
             assert!(m <= cand);

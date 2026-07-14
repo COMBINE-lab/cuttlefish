@@ -1,12 +1,13 @@
 use crate::buckets::{BucketEmitStats, SharedBucketEmitter, SharedBucketSink};
 use crate::dna::{ascii_base_bits, valid_ascii_base_bits};
-use crate::hash::hash_u64;
+use crate::hash::{hash_u64, wyhash_u64};
 use crate::input::{
     BorrowedSequenceFragment, InputError, expand_input_paths, parse_fragments,
     parse_fragments_borrowed,
 };
 use crate::params::{BuildParams, ParamError};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
 
@@ -145,7 +146,7 @@ pub fn emit_weak_superkmer_buckets<const K: usize>(
                     for fragment in &batch.fragments {
                         let seq = &batch.bases[fragment.offset..fragment.offset + fragment.len];
                         let fragment_started = Instant::now();
-                        emit_fragment_seq_weak_superkmer_buckets::<K>(
+                        emit_fragment_seq_weak_superkmer_buckets::<K, PartitionRunError>(
                             params,
                             graph_count,
                             fragment.source_id,
@@ -218,6 +219,7 @@ pub fn emit_weak_superkmer_buckets<const K: usize>(
     let bucket_finish_started = Instant::now();
     let bucket_stats = sink.finish()?;
     let bucket_finish_elapsed = bucket_finish_started.elapsed();
+    populate_emitted_graph_histogram(&mut stats, &bucket_stats)?;
 
     Ok(PartitionEmissionStats {
         partition: stats,
@@ -235,102 +237,85 @@ fn emit_colored_weak_superkmer_buckets<const K: usize>(
     graph_count: usize,
     paths: &[PathBuf],
 ) -> Result<PartitionEmissionStats, PartitionRunError> {
-    const SOURCE_WINDOW_MAX: usize = 32;
+    // Keep enough sources in flight to balance uneven genome sizes and amortize
+    // atlas collation. Source IDs remain contiguous within a window, so the
+    // stable counting collation used by colored buckets is unchanged.
+    const SOURCE_WINDOW_MAX: usize = 1024;
 
     let sink = SharedBucketSink::create(params, graph_count)?;
     let mut stats = PartitionStats::new(graph_count);
     let mut worker_elapsed = Duration::ZERO;
     let mut parse_elapsed = Duration::ZERO;
 
-    for (window_index, window) in paths
-        .chunks(params.threads.max(1).min(SOURCE_WINDOW_MAX))
-        .enumerate()
-    {
-        let source_start = window_index * params.threads.max(1).min(SOURCE_WINDOW_MAX);
-        let workers = params.threads.max(1).min(window.len().max(1));
-        let mut batch_txs = Vec::with_capacity(workers);
-        let mut batch_rxs = Vec::with_capacity(workers);
-        for _ in 0..workers {
-            let (tx, rx) = mpsc::sync_channel::<PartitionFragmentBatch>(4);
-            batch_txs.push(tx);
-            batch_rxs.push(rx);
-        }
-
+    for (window_index, window) in paths.chunks(SOURCE_WINDOW_MAX).enumerate() {
+        let source_start = window_index * SOURCE_WINDOW_MAX;
         let parse_started = Instant::now();
+        let mut work_order = (0..window.len()).collect::<Vec<_>>();
+        work_order.sort_unstable_by_key(|&offset| {
+            std::cmp::Reverse(window[offset].metadata().map_or(0, |meta| meta.len()))
+        });
+        let next_source = AtomicUsize::new(0);
+        let workers = params.threads.clamp(1, 64).min(window.len());
+        let mut emitters = Vec::with_capacity(workers);
         std::thread::scope(|scope| {
             let mut handles = Vec::new();
-            for rx in batch_rxs {
+            for _ in 0..workers {
                 let sink = Arc::clone(&sink);
+                let next_source = &next_source;
+                let work_order = &work_order;
                 handles.push(scope.spawn(move || {
                     let mut worker_stats = PartitionStats::new(graph_count);
                     let mut elapsed = Duration::ZERO;
+                    let mut input_files = 0usize;
+                    let mut records = 0u64;
                     let mut buckets = sink.emitter();
-                    while let Ok(batch) = rx.recv() {
-                        for fragment in &batch.fragments {
-                            let seq = &batch.bases[fragment.offset..fragment.offset + fragment.len];
-                            let started = Instant::now();
-                            emit_fragment_seq_weak_superkmer_buckets::<K>(
-                                params,
-                                graph_count,
-                                fragment.source_id,
-                                seq,
-                                &mut buckets,
-                                &mut worker_stats,
-                            )?;
-                            elapsed += started.elapsed();
-                        }
-                    }
-                    buckets.finish()?;
-                    Ok::<_, PartitionRunError>(PartitionWorkerOutput {
-                        stats: worker_stats,
-                        elapsed,
-                    })
-                }));
-            }
-
-            let mut producers = Vec::new();
-            for (offset, path) in window.iter().enumerate() {
-                let source_id = u32::try_from(source_start + offset + 1)
-                    .map_err(|_| PartitionRunError::TooManySources)?;
-                let txs = batch_txs.clone();
-                producers.push(scope.spawn(move || {
-                    let mut batch = PartitionFragmentBatch::new();
-                    let mut next_worker = offset % txs.len();
-                    let records =
-                        parse_fragments_borrowed(path, source_id, K + 1, |fragment| {
-                            batch.push(fragment);
-                            if batch.fragments.len() >= PARTITION_FRAGMENT_BATCH
-                                || batch.bases.len() >= PARTITION_BATCH_BASES
-                            {
-                                txs[next_worker].send(std::mem::take(&mut batch)).map_err(
-                                    |_| InputError::Partition(PartitionError::WorkerDisconnected),
+                    loop {
+                        let order_idx = next_source.fetch_add(1, Ordering::Relaxed);
+                        let Some(&offset) = work_order.get(order_idx) else {
+                            break;
+                        };
+                        let source_id = u32::try_from(source_start + offset + 1)
+                            .map_err(|_| PartitionRunError::TooManySources)?;
+                        records += parse_fragments_borrowed(
+                            &window[offset],
+                            source_id,
+                            K + 1,
+                            |fragment| {
+                                let started = Instant::now();
+                                emit_fragment_seq_weak_superkmer_buckets::<K, InputError>(
+                                    params,
+                                    graph_count,
+                                    fragment.source_id,
+                                    fragment.seq,
+                                    &mut buckets,
+                                    &mut worker_stats,
                                 )?;
-                                next_worker = (next_worker + 1) % txs.len();
-                            }
-                            Ok(())
-                        })?;
-                    if !batch.fragments.is_empty() {
-                        txs[next_worker].send(batch).map_err(|_| {
-                            InputError::Partition(PartitionError::WorkerDisconnected)
-                        })?;
+                                elapsed += started.elapsed();
+                                Ok(())
+                            },
+                        )?;
+                        input_files += 1;
                     }
-                    Ok::<_, InputError>(records)
+                    Ok::<_, PartitionRunError>((
+                        records,
+                        input_files,
+                        PartitionWorkerOutput {
+                            stats: worker_stats,
+                            elapsed,
+                        },
+                        buckets,
+                    ))
                 }));
-            }
-            drop(batch_txs);
-
-            for producer in producers {
-                stats.records += producer
-                    .join()
-                    .map_err(|_| PartitionRunError::WorkerPanic)??;
-                stats.input_files += 1;
             }
             for handle in handles {
-                let output = handle
+                let (records, input_files, output, buckets) = handle
                     .join()
                     .map_err(|_| PartitionRunError::WorkerPanic)??;
+                stats.records += records;
+                stats.input_files += input_files;
                 worker_elapsed += output.elapsed;
                 stats.merge_from(&output.stats);
+                emitters.push(buckets);
             }
             Ok::<_, PartitionRunError>(())
         })?;
@@ -340,13 +325,14 @@ fn emit_colored_weak_superkmer_buckets<const K: usize>(
             u32::try_from(source_start + 1).map_err(|_| PartitionRunError::TooManySources)?;
         let source_max = u32::try_from(source_start + window.len())
             .map_err(|_| PartitionRunError::TooManySources)?;
-        sink.flush_colored_window(source_min, source_max)?;
+        sink.flush_colored_emitters(emitters, source_min, source_max)?;
     }
 
     let (bucket_flushes, bucket_flush_elapsed) = sink.flush_stats();
     let bucket_finish_started = Instant::now();
     let bucket_stats = sink.finish()?;
     let bucket_finish_elapsed = bucket_finish_started.elapsed();
+    populate_emitted_graph_histogram(&mut stats, &bucket_stats)?;
     Ok(PartitionEmissionStats {
         partition: stats,
         buckets: bucket_stats,
@@ -383,17 +369,20 @@ impl Default for PartitionFragmentBatch {
     }
 }
 
-fn emit_fragment_seq_weak_superkmer_buckets<const K: usize>(
+fn emit_fragment_seq_weak_superkmer_buckets<const K: usize, E>(
     params: &BuildParams,
     graph_count: usize,
     source_id: u32,
     seq: &[u8],
     buckets: &mut SharedBucketEmitter,
     stats: &mut PartitionStats,
-) -> Result<(), PartitionRunError> {
+) -> Result<(), E>
+where
+    E: From<PartitionError> + From<crate::buckets::BucketError>,
+{
     stats.fragments += 1;
     stats.fragment_bases += seq.len() as u64;
-    for_each_valid_weak_superkmer::<K, PartitionRunError, _>(
+    for_each_valid_weak_superkmer::<K, E, _>(
         seq,
         params.minimizer_len as usize,
         graph_count,
@@ -402,10 +391,20 @@ fn emit_fragment_seq_weak_superkmer_buckets<const K: usize>(
             buckets.add_valid(&sk, sk.sequence(seq))?;
             stats.weak_superkmers += 1;
             stats.weak_superkmer_bases += sk.len as u64;
-            stats.graph_histogram[sk.graph_id] += 1;
             Ok(())
         },
     )?;
+    Ok(())
+}
+
+fn populate_emitted_graph_histogram(
+    stats: &mut PartitionStats,
+    buckets: &BucketEmitStats,
+) -> Result<(), PartitionRunError> {
+    stats.graph_histogram.fill(0);
+    for entry in crate::buckets::read_manifest(&buckets.bucket_dir)? {
+        stats.graph_histogram[entry.graph_id] = entry.records;
+    }
     Ok(())
 }
 
@@ -710,7 +709,7 @@ fn reset_min_window(hashes: &[u64], prefix_min: &mut [u64], ring_size: usize, pi
 
 #[inline(always)]
 fn canonical_lmer_hash(fwd: u64, rev: u64) -> u64 {
-    hash_u64(fwd, 0).min(hash_u64(rev, 0))
+    wyhash_u64(fwd, 0).min(wyhash_u64(rev, 0))
 }
 
 #[inline(always)]

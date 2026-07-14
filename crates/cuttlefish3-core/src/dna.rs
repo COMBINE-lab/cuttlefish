@@ -95,7 +95,7 @@ pub const fn ascii_base_bits(byte: u8) -> Option<u8> {
 
 #[inline]
 pub const fn valid_ascii_base_bits(byte: u8) -> u8 {
-    ASCII_BASE_BITS[byte as usize] & 0b11
+    ((byte >> 2) ^ (byte >> 1)) & 0b11
 }
 
 #[inline]

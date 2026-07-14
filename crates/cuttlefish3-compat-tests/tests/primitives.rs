@@ -834,6 +834,7 @@ fn serial_expansion_seeds_meta_vertices_and_propagates_final_edges() {
         first: MatrixEndpoint::Vertex(low),
         second: MatrixEndpoint::Vertex(mid),
         weight: 1,
+        unitig_bucket: 0,
         unitig_index: 42,
         unitig_exit_side: Side::Back,
         phantom_unitig: None,
@@ -1055,8 +1056,8 @@ fn builds_serial_edge_matrix_from_fixture_discontinuity_inputs() {
         collated.stats.input_path_infos,
         expanded.stats.edge_path_infos
     );
-    assert_eq!(collated.stats.direct_local_unitigs, 2);
-    assert_eq!(collated.stats.stitched_discontinuity_unitigs, 1);
+    assert_eq!(collated.stats.direct_local_unitigs, 1);
+    assert_eq!(collated.stats.stitched_discontinuity_unitigs, 2);
     assert_eq!(collated.unitigs, expected_collated);
 
     let _ = fs::remove_dir_all(emitted.buckets.bucket_dir);

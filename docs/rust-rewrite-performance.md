@@ -12,7 +12,7 @@ of constructing a global in-memory de Bruijn graph.
 
 1. Input records are parsed without copying sequence fragments. Rolling packed
    k-mers and the C++ wyhash minimizer specialization produce weak super-kmers.
-2. Colored partitioning processes a bounded window of 2048 sources. Files are
+2. Colored partitioning processes a bounded window of 4096 sources. Files are
    scheduled largest-first across at most 64 scan workers. Each worker retains
    atlas-local records until the source barrier.
 3. A 128-subgraph atlas is source-partitioned in place. Sixteen long-lived
@@ -273,6 +273,19 @@ seconds, process wall time from 127.73 to 126.20 seconds, and peak RSS from
 Unchanged blocked contraction and expansion were slower in the accepted 10,000
 genome run, absorbing most of the 8.17-second local-stage gain; those phases
 are the next profiling target.
+
+Colored atlas windows were subsequently increased from 2,048 to 4,096 sources.
+Worker-atlas tails already drain at 64 KiB after each source, so the larger
+window does not change that memory bound; it removes two of five all-atlas tail
+barriers on the 10,000-genome input. An unbounded-window experiment improved
+5,000-genome partitioning but was rejected at 10,000 genomes because broader
+source mixing enlarged compressed buckets by 2.6% and slowed local contraction.
+The 4,096-source compromise kept bucket growth to 0.27%, reduced partitioning
+from 10.35 to 9.84 seconds, local contraction from 55.41 to 53.57 seconds, and
+process wall time from 126.20 to 121.69 seconds. Peak RSS remained effectively
+flat at 15,699,600 KiB and the exact 277,146,851-unitig /
+16,550,721,590-base result was preserved. Against the matched 114.63-second C++
+run, the remaining colored gap is 7.06 seconds (6.2%).
 
 The Rust command was:
 

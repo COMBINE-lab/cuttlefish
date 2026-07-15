@@ -348,13 +348,10 @@ fn emit_colored_weak_superkmer_buckets<const K: usize>(
     graph_count: usize,
     paths: &[PathBuf],
 ) -> Result<PartitionEmissionStats, PartitionRunError> {
-    // Keep enough sources in flight to balance uneven genome sizes and amortize
-    // atlas collation. Source IDs remain contiguous within a window, so the
-    // stable counting collation used by colored buckets is unchanged.
-    // Two thousand bacterial sources fit comfortably below the reference
-    // implementation's atlas RSS while reducing repeated all-graph collation
-    // barriers on larger colored collections.
-    const SOURCE_WINDOW_MAX: usize = 2048;
+    // Worker-atlas tails drain after every source, so their 64 KiB threshold is
+    // the memory bound. A moderate source range amortizes all-atlas tail
+    // barriers without losing the compression locality of bounded collation.
+    const SOURCE_WINDOW_MAX: usize = 4096;
 
     let sink = SharedBucketSink::create(params, graph_count)?;
     let mut stats = PartitionStats::new(graph_count);

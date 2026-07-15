@@ -48,7 +48,7 @@ cargo install --path crates/cuttlefish3-cli
 ```
 
 The default build uses jemalloc. The system allocator and mimalloc are also
-available:
+available (but generally will not perform as well):
 
 ```bash
 cargo build --release -p cuttlefish3-cli --no-default-features

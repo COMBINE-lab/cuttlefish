@@ -234,6 +234,7 @@ impl ColorCoordinate {
     }
 }
 
+#[repr(transparent)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct UnitigColor(u64);
 

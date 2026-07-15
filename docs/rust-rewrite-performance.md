@@ -238,6 +238,18 @@ comparison confirmed that all 179,767,076 unitigs match C++ topology. The
 color-offset rebasing, and the generated two-source fixture passes
 source-derived color validation.
 
+Colored materialized buckets now match C++'s coordinate/color split: the
+24-byte coordinate stores both the color offset and count, while the color
+sidecar is one contiguous native `UnitigColor` array. The earlier Rust format
+wrote an extra count word per colored coordinate and reconstructed spans while
+loading. On 5,000 genomes, raw color arrays reduced mapping from 4.74 to 4.29
+seconds, reduction from 3.67 to 3.34 seconds, graph construction from 69.00 to
+67.41 seconds, and filesystem output by about 2.8 GB. Process wall time was
+73.75 seconds and peak RSS was 14,387,348 KiB, versus C++ at 73.28 seconds and
+29,495,880 KiB. The run emitted the exact 179,767,076 unitigs and
+11,337,993,544 bases; the 1,000-genome topology and source-derived colored
+fixture also pass.
+
 The 5,000-genome topology can be compared exactly with bounded memory:
 
 ```bash

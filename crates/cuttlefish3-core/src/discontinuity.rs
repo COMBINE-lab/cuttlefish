@@ -7425,6 +7425,7 @@ struct MaterializedStitchedCoordRecord {
     reverse: bool,
     is_cycle: bool,
     color_index: u32,
+    color_count: u32,
 }
 
 #[repr(C)]
@@ -7481,11 +7482,6 @@ impl LoadedMaterializedStitchedCoordRecord {
                 .expect("materialized color count fits C++ uni_len_t"),
             flags: u16::from(reverse) * Self::REVERSE_FLAG | u16::from(is_cycle) * Self::CYCLE_FLAG,
         }
-    }
-
-    fn set_color_count(&mut self, color_count: u32) {
-        self.color_count =
-            u16::try_from(color_count).expect("materialized color count fits C++ uni_len_t");
     }
 }
 
@@ -12880,7 +12876,15 @@ struct MaterializedStitchedCoordShardWriter {
     records: u64,
     label_bytes: u64,
     color_runs: u64,
-    color_records: u32,
+}
+
+#[inline]
+fn unitig_colors_as_bytes(colors: &[UnitigColor]) -> &[u8] {
+    // UnitigColor is repr(transparent) over u64; materialized buckets use the
+    // same native little-endian private layout as their coordinate records.
+    unsafe {
+        std::slice::from_raw_parts(colors.as_ptr().cast::<u8>(), std::mem::size_of_val(colors))
+    }
 }
 
 impl MaterializedStitchedCoordShardWriter {
@@ -12923,7 +12927,6 @@ impl MaterializedStitchedCoordShardWriter {
             records: 0,
             label_bytes: 0,
             color_runs: 0,
-            color_records: 0,
         })
     }
 
@@ -12973,7 +12976,7 @@ impl MaterializedStitchedCoordShardWriter {
         record: &StitchedCoordRecord,
         label: &[u8],
     ) -> Result<(), SerialCollationError> {
-        self.write_record_with_color_index(record, label, u32::MAX)
+        self.write_record_with_color_index(record, label, u32::MAX, 0)
     }
 
     fn write_record_with_color_index(
@@ -12981,6 +12984,7 @@ impl MaterializedStitchedCoordShardWriter {
         record: &StitchedCoordRecord,
         label: &[u8],
         color_index: u32,
+        color_count: u32,
     ) -> Result<(), SerialCollationError> {
         let label_len = u32::try_from(label.len())
             .map_err(|_| SerialCollationError::MalformedCoordBucket(self.coord_path.clone()))?;
@@ -12994,6 +12998,7 @@ impl MaterializedStitchedCoordShardWriter {
                     reverse: record.reverse,
                     is_cycle: record.is_cycle,
                     color_index,
+                    color_count,
                 },
             ));
         if self.record_buffer.len() >= STITCH_COORD_RECORD_WRITE_BUFFER {
@@ -13036,28 +13041,20 @@ impl MaterializedStitchedCoordShardWriter {
             .as_mut()
             .expect("color writer was just created");
         color_out
-            .write_all(&count.to_le_bytes())
+            .write_all(unitig_colors_as_bytes(colors))
             .map_err(|source| SerialCollationError::Io {
                 path: self.color_path.clone(),
                 source,
             })?;
-        for color in colors {
-            color_out
-                .write_all(&color.raw().to_le_bytes())
-                .map_err(|source| SerialCollationError::Io {
-                    path: self.color_path.clone(),
-                    source,
-                })?;
-        }
-        let color_index = self.color_records;
+        let color_index = u32::try_from(self.color_runs)
+            .map_err(|_| SerialCollationError::MalformedCoordBucket(self.color_path.clone()))?;
         if color_index >= 0x3fff_ffff {
             return Err(SerialCollationError::MalformedCoordBucket(
                 self.color_path.clone(),
             ));
         }
         self.color_runs += u64::from(count);
-        self.color_records += 1;
-        self.write_record_with_color_index(record, label, color_index)
+        self.write_record_with_color_index(record, label, color_index, count)
     }
 
     fn write_encoded_colored_record(
@@ -13088,53 +13085,41 @@ impl MaterializedStitchedCoordShardWriter {
             .as_mut()
             .expect("color writer was just created");
         color_out
-            .write_all(&count.to_le_bytes())
-            .map_err(|source| SerialCollationError::Io {
-                path: self.color_path.clone(),
-                source,
-            })?;
-        color_out
             .write_all(encoded_colors)
             .map_err(|source| SerialCollationError::Io {
                 path: self.color_path.clone(),
                 source,
             })?;
-        let color_index = self.color_records;
+        let color_index = u32::try_from(self.color_runs)
+            .map_err(|_| SerialCollationError::MalformedCoordBucket(self.color_path.clone()))?;
         if color_index >= 0x3fff_ffff {
             return Err(SerialCollationError::MalformedCoordBucket(
                 self.color_path.clone(),
             ));
         }
         self.color_runs += u64::from(count);
-        self.color_records += 1;
-        self.write_record_with_color_index(record, label, color_index)
+        self.write_record_with_color_index(record, label, color_index, count)
     }
 
     fn write_pending_batch(
         &mut self,
         batch: &mut PendingMaterializedBucket,
     ) -> Result<(), SerialCollationError> {
-        let mut colored_records = 0u32;
-        let mut color_runs = 0u64;
+        let color_base = u32::try_from(self.color_runs)
+            .map_err(|_| SerialCollationError::MalformedCoordBucket(self.color_path.clone()))?;
         for pending in &batch.records {
             let color_index = if pending.color_start == u32::MAX {
                 u32::MAX
             } else {
-                let index = self
-                    .color_records
-                    .checked_add(colored_records)
-                    .ok_or_else(|| {
-                        SerialCollationError::MalformedCoordBucket(self.color_path.clone())
-                    })?;
-                if index >= 0x3fff_ffff {
-                    return Err(SerialCollationError::MalformedCoordBucket(
-                        self.color_path.clone(),
-                    ));
-                }
-                colored_records += 1;
-                color_runs += u64::from(pending.color_count());
-                index
+                color_base.checked_add(pending.color_start).ok_or_else(|| {
+                    SerialCollationError::MalformedCoordBucket(self.color_path.clone())
+                })?
             };
+            if color_index != u32::MAX && color_index >= 0x3fff_ffff {
+                return Err(SerialCollationError::MalformedCoordBucket(
+                    self.color_path.clone(),
+                ));
+            }
             self.record_buffer
                 .extend_from_slice(&encoded_materialized_stitched_coord_record(
                     MaterializedStitchedCoordRecord {
@@ -13145,6 +13130,7 @@ impl MaterializedStitchedCoordShardWriter {
                         reverse: pending.reverse(),
                         is_cycle: pending.is_cycle(),
                         color_index,
+                        color_count: pending.color_count(),
                     },
                 ));
         }
@@ -13173,31 +13159,16 @@ impl MaterializedStitchedCoordShardWriter {
                 .color_out
                 .as_mut()
                 .expect("color writer was just created");
-            for pending in &batch.records {
-                if pending.color_start == u32::MAX {
-                    continue;
-                }
-                color_out
-                    .write_all(&pending.color_count().to_le_bytes())
-                    .map_err(|source| SerialCollationError::Io {
-                        path: self.color_path.clone(),
-                        source,
-                    })?;
-                let start = pending.color_start as usize;
-                for color in &batch.colors[start..start + pending.color_count() as usize] {
-                    color_out
-                        .write_all(&color.raw().to_le_bytes())
-                        .map_err(|source| SerialCollationError::Io {
-                            path: self.color_path.clone(),
-                            source,
-                        })?;
-                }
-            }
+            color_out
+                .write_all(unitig_colors_as_bytes(&batch.colors))
+                .map_err(|source| SerialCollationError::Io {
+                    path: self.color_path.clone(),
+                    source,
+                })?;
         }
         self.records += batch.records.len() as u64;
         self.label_bytes += batch.labels.len() as u64;
-        self.color_records += colored_records;
-        self.color_runs += color_runs;
+        self.color_runs += batch.colors.len() as u64;
         batch.records.clear();
         batch.labels.clear();
         batch.colors.clear();
@@ -13677,6 +13648,11 @@ fn encoded_materialized_stitched_coord_record(
     bytes[18..20].copy_from_slice(
         &u16::try_from(record.label_len)
             .expect("materialized label length fits C++ uni_len_t")
+            .to_le_bytes(),
+    );
+    bytes[20..22].copy_from_slice(
+        &u16::try_from(record.color_count)
+            .expect("materialized color count fits C++ uni_len_t")
             .to_le_bytes(),
     );
     let mut flags = 0u16;
@@ -14413,19 +14389,15 @@ fn append_materialized_stitched_coord_bucket_file(
             .set_len(label_record_base + entry.label_bytes as usize)
     };
 
+    let color_base = u32::try_from(bucket.colors.len())
+        .map_err(|_| SerialCollationError::MalformedCoordBucket(entry.coord_path.clone()))?;
     bucket.colors.reserve(entry.color_runs as usize);
-    let mut color_spans = Vec::<(u32, u32)>::new();
     if let Some(color_path) = &entry.color_path {
         let mut color_file = File::open(color_path).map_err(|source| SerialCollationError::Io {
             path: color_path.clone(),
             source,
         })?;
-        let color_records = bucket.records[record_base..]
-            .iter()
-            .filter_map(|record| (record.color_start != u32::MAX).then_some(record.color_start))
-            .max()
-            .map_or(0, |index| index + 1);
-        let expected_color_bytes = u64::from(color_records) * 4 + entry.color_runs * 8;
+        let expected_color_bytes = entry.color_runs * std::mem::size_of::<UnitigColor>() as u64;
         if color_file
             .metadata()
             .map_err(|source| SerialCollationError::Io {
@@ -14439,10 +14411,10 @@ fn append_materialized_stitched_coord_bucket_file(
                 color_path.clone(),
             ));
         }
-        let mut color_bytes = Vec::<u8>::with_capacity(expected_color_bytes as usize);
+        let color_record_base = bucket.colors.len();
         let uninitialized_colors = unsafe {
             std::slice::from_raw_parts_mut(
-                color_bytes.spare_capacity_mut().as_mut_ptr().cast::<u8>(),
+                bucket.colors.spare_capacity_mut().as_mut_ptr().cast::<u8>(),
                 expected_color_bytes as usize,
             )
         };
@@ -14452,39 +14424,13 @@ fn append_materialized_stitched_coord_bucket_file(
                 path: color_path.clone(),
                 source,
             })?;
-        // SAFETY: read_exact initialized the entire encoded color buffer.
-        unsafe { color_bytes.set_len(expected_color_bytes as usize) };
-        let mut cursor = 0usize;
-        let mut observed_runs = 0u64;
-        for _ in 0..color_records {
-            let count = u32::from_le_bytes(
-                color_bytes[cursor..cursor + 4]
-                    .try_into()
-                    .expect("four color-count bytes"),
-            );
-            cursor += 4;
-            let start = u32::try_from(bucket.colors.len())
-                .map_err(|_| SerialCollationError::MalformedCoordBucket(color_path.clone()))?;
-            for _ in 0..count {
-                let raw = u64::from_le_bytes(
-                    color_bytes[cursor..cursor + 8]
-                        .try_into()
-                        .expect("eight color bytes"),
-                );
-                cursor += 8;
-                bucket.colors.push(UnitigColor::new(
-                    (raw & 0xff_ffff) as u32,
-                    crate::state::ColorCoordinate::from_u40(raw >> 24),
-                ));
-            }
-            observed_runs += u64::from(count);
-            color_spans.push((start, count));
-        }
-        if observed_runs != entry.color_runs || cursor != color_bytes.len() {
-            return Err(SerialCollationError::MalformedCoordBucket(
-                color_path.clone(),
-            ));
-        }
+        // SAFETY: UnitigColor is transparent over u64 and read_exact
+        // initialized every byte of each native private-format record.
+        unsafe {
+            bucket
+                .colors
+                .set_len(color_record_base + entry.color_runs as usize)
+        };
     }
 
     for record in &mut bucket.records[record_base..] {
@@ -14492,17 +14438,17 @@ fn append_materialized_stitched_coord_bucket_file(
             .label_offset
             .checked_add(label_base)
             .ok_or_else(|| SerialCollationError::MalformedCoordBucket(entry.label_path.clone()))?;
-        let (color_start, color_count) = if record.color_start == u32::MAX {
-            (u32::MAX, 0)
-        } else {
-            *color_spans
-                .get(record.color_start as usize)
-                .ok_or_else(|| {
-                    SerialCollationError::MalformedCoordBucket(entry.coord_path.clone())
-                })?
-        };
-        record.color_start = color_start;
-        record.set_color_count(color_count);
+        if record.color_start != u32::MAX {
+            let color_end = u64::from(record.color_start) + u64::from(record.color_count());
+            if color_end > entry.color_runs {
+                return Err(SerialCollationError::MalformedCoordBucket(
+                    entry.coord_path.clone(),
+                ));
+            }
+            record.color_start = color_base.checked_add(record.color_start).ok_or_else(|| {
+                SerialCollationError::MalformedCoordBucket(entry.coord_path.clone())
+            })?;
+        }
     }
 
     Ok(())
@@ -14522,6 +14468,7 @@ fn decoded_materialized_stitched_coord_record(
     let color_index = u32::from_le_bytes(bytes[12..16].try_into().expect("u32 color index field"));
     let rank = u16::from_le_bytes(bytes[16..18].try_into().expect("u16 rank field"));
     let label_len = u16::from_le_bytes(bytes[18..20].try_into().expect("u16 label length field"));
+    let color_count = u16::from_le_bytes(bytes[20..22].try_into().expect("u16 color count field"));
     let flags = u16::from_le_bytes(bytes[22..24].try_into().expect("u16 flags field"));
     Ok(MaterializedStitchedCoordRecord {
         path_id,
@@ -14531,6 +14478,7 @@ fn decoded_materialized_stitched_coord_record(
         reverse: flags & LoadedMaterializedStitchedCoordRecord::REVERSE_FLAG != 0,
         is_cycle: flags & LoadedMaterializedStitchedCoordRecord::CYCLE_FLAG != 0,
         color_index,
+        color_count: u32::from(color_count),
     })
 }
 
@@ -18148,6 +18096,7 @@ mod materialized_record_tests {
                 reverse: true,
                 is_cycle: true,
                 color_index,
+                color_count: 61,
             };
             let encoded = encoded_materialized_stitched_coord_record(record);
             assert_eq!(encoded.len(), 24);
@@ -18193,6 +18142,18 @@ mod materialized_record_tests {
 
         let first = make_entry(0, 11, b"ACGT", 3);
         let second = make_entry(1, 29, b"TTAA", 5);
+        assert_eq!(
+            std::fs::metadata(first.color_path.as_ref().unwrap())
+                .unwrap()
+                .len(),
+            std::mem::size_of::<UnitigColor>() as u64
+        );
+        assert_eq!(
+            std::fs::metadata(second.color_path.as_ref().unwrap())
+                .unwrap()
+                .len(),
+            std::mem::size_of::<UnitigColor>() as u64
+        );
         let mut bucket = MaterializedStitchedCoordBucket::default();
         append_materialized_stitched_coord_bucket_file(&first, &mut bucket).unwrap();
         append_materialized_stitched_coord_bucket_file(&second, &mut bucket).unwrap();

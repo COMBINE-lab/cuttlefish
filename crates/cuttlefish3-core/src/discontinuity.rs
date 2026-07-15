@@ -1386,14 +1386,15 @@ fn encode_discontinuity_edge<const K: usize>(edge: &DiscontinuityEdge<K>) -> [u8
         };
         bytes[..8].copy_from_slice(&endpoint_bits(edge.first).to_le_bytes());
         bytes[8..16].copy_from_slice(&endpoint_bits(edge.second).to_le_bytes());
-        bytes[16..24].copy_from_slice(&edge.weight.to_le_bytes());
+        let weight = u16::try_from(edge.weight).expect("discontinuity edge weight fits u16");
+        bytes[16..18].copy_from_slice(&weight.to_le_bytes());
         let unitig_index = if edge.unitig_index == usize::MAX {
             u32::MAX
         } else {
             u32::try_from(edge.unitig_index).expect("local unitig index fits compact edge")
         };
-        bytes[24..28].copy_from_slice(&unitig_index.to_le_bytes());
-        bytes[28] = u8::from(
+        bytes[18..22].copy_from_slice(&unitig_index.to_le_bytes());
+        bytes[22] = u8::from(
             matches!(edge.first, MatrixEndpoint::Vertex(endpoint) if endpoint.side == Side::Back),
         ) | (u8::from(
             matches!(edge.second, MatrixEndpoint::Vertex(endpoint) if endpoint.side == Side::Back),
@@ -1401,7 +1402,7 @@ fn encode_discontinuity_edge<const K: usize>(edge: &DiscontinuityEdge<K>) -> [u8
             | (u8::from(edge.unitig_exit_side == Side::Back) << 2)
             | (u8::from(edge.swapped) << 3)
             | (u8::from(edge.phantom_unitig.is_some()) << 4);
-        bytes[29..31].copy_from_slice(&edge.unitig_bucket.to_le_bytes());
+        bytes[23..25].copy_from_slice(&edge.unitig_bucket.to_le_bytes());
         return bytes;
     }
     let kmer_bytes = discontinuity_edge_kmer_bytes::<K>();
@@ -1449,7 +1450,7 @@ fn decode_discontinuity_edge<const K: usize>(bytes: &[u8]) -> DiscontinuityEdge<
         let read_u64 = |range: std::ops::Range<usize>| {
             u64::from_le_bytes(bytes[range].try_into().expect("eight-byte edge field"))
         };
-        let flags = bytes[28];
+        let flags = bytes[22];
         let endpoint = |bits: u64, side_bit: u8| {
             if bits == u64::MAX {
                 MatrixEndpoint::Phi
@@ -1466,7 +1467,7 @@ fn decode_discontinuity_edge<const K: usize>(bytes: &[u8]) -> DiscontinuityEdge<
         };
         let first = endpoint(read_u64(0..8), 1);
         let second = endpoint(read_u64(8..16), 2);
-        let raw_unitig = u32::from_le_bytes(bytes[24..28].try_into().unwrap());
+        let raw_unitig = u32::from_le_bytes(bytes[18..22].try_into().unwrap());
         let phantom_unitig = if flags & (1 << 4) == 0 {
             None
         } else {
@@ -1479,8 +1480,8 @@ fn decode_discontinuity_edge<const K: usize>(bytes: &[u8]) -> DiscontinuityEdge<
         return DiscontinuityEdge {
             first,
             second,
-            weight: read_u64(16..24),
-            unitig_bucket: u16::from_le_bytes(bytes[29..31].try_into().unwrap()),
+            weight: u64::from(u16::from_le_bytes(bytes[16..18].try_into().unwrap())),
+            unitig_bucket: u16::from_le_bytes(bytes[23..25].try_into().unwrap()),
             unitig_index: if raw_unitig == u32::MAX {
                 usize::MAX
             } else {
@@ -1551,7 +1552,7 @@ fn decode_partition_incoming<const K: usize>(
         if second == u64::MAX {
             return None;
         }
-        let flags = bytes[28];
+        let flags = bytes[22];
         let endpoint = if first == u64::MAX {
             MatrixEndpoint::Phi
         } else {
@@ -1573,7 +1574,7 @@ fn decode_partition_incoming<const K: usize>(
                 } else {
                     Side::Back
                 },
-                weight: u64::from_le_bytes(bytes[16..24].try_into().unwrap()),
+                weight: u64::from(u16::from_le_bytes(bytes[16..18].try_into().unwrap())),
                 in_same_part: false,
                 processed: false,
             },
@@ -1621,7 +1622,7 @@ const fn discontinuity_edge_kmer_bytes<const K: usize>() -> usize {
 #[inline]
 const fn discontinuity_edge_record_len<const K: usize>() -> usize {
     if K <= 31 {
-        31
+        25
     } else {
         3 * discontinuity_edge_kmer_bytes::<K>() + 24
     }
@@ -1630,7 +1631,7 @@ const fn discontinuity_edge_record_len<const K: usize>() -> usize {
 #[inline]
 const fn blocked_edge_unitig_offset<const K: usize>() -> usize {
     if K <= 31 {
-        24
+        18
     } else {
         2 * (discontinuity_edge_kmer_bytes::<K>() + 2) + 8
     }
@@ -1661,11 +1662,7 @@ fn add_unitig_base_to_encoded_edge<const K: usize>(
 
 #[inline]
 fn set_encoded_edge_unitig_bucket<const K: usize>(bytes: &mut [u8; 72], bucket: u16) {
-    let offset = if K <= 31 {
-        29
-    } else {
-        discontinuity_edge_record_len::<K>() - 2
-    };
+    let offset = discontinuity_edge_record_len::<K>() - 2;
     bytes[offset..offset + 2].copy_from_slice(&bucket.to_le_bytes());
 }
 
@@ -16034,7 +16031,7 @@ impl<const K: usize> OwnedPartitionTables<K> {
 #[derive(Clone, Copy)]
 struct CompactPartitionOtherEnd {
     endpoint: u64,
-    weight: u64,
+    weight: u16,
     flags: u8,
 }
 
@@ -16057,7 +16054,7 @@ impl CompactPartitionOtherEnd {
         }
         Self {
             endpoint,
-            weight: end.weight,
+            weight: u16::try_from(end.weight).expect("partition edge weight fits u16"),
             flags,
         }
     }
@@ -16080,7 +16077,7 @@ impl CompactPartitionOtherEnd {
                 })
             },
             side_at_current: side(1 << 1),
-            weight: self.weight,
+            weight: u64::from(self.weight),
             in_same_part: self.flags & (1 << 2) != 0,
             processed: self.flags & (1 << 3) != 0,
         }
@@ -17925,6 +17922,34 @@ impl std::error::Error for DiscontinuityInputError {}
 #[cfg(test)]
 mod materialized_record_tests {
     use super::*;
+
+    #[test]
+    fn compact_discontinuity_edge_uses_cpp_widths() {
+        let edge = DiscontinuityEdge::<31> {
+            first: MatrixEndpoint::Vertex(DiscontinuityEndpoint {
+                vertex: Kmer::from_bits(0x1234),
+                side: Side::Back,
+            }),
+            second: MatrixEndpoint::Vertex(DiscontinuityEndpoint {
+                vertex: Kmer::from_bits(0x5678),
+                side: Side::Front,
+            }),
+            weight: 65_534,
+            unitig_bucket: 1_023,
+            unitig_index: u32::MAX as usize - 1,
+            unitig_exit_side: Side::Back,
+            phantom_unitig: None,
+            swapped: true,
+        };
+
+        assert_eq!(discontinuity_edge_record_len::<31>(), 25);
+        assert_eq!(blocked_edge_unitig_offset::<31>(), 18);
+        let mut encoded = encode_discontinuity_edge(&edge);
+        assert_eq!(decode_discontinuity_edge::<31>(&encoded[..25]), edge);
+
+        set_encoded_edge_unitig_bucket::<31>(&mut encoded, 511);
+        assert_eq!(decode_discontinuity_edge::<31>(&encoded[..25]).unitig_bucket, 511);
+    }
 
     #[test]
     fn stitched_path_info_record_uses_compact_external_layout() {

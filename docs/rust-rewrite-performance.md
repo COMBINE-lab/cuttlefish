@@ -190,6 +190,19 @@ same 1,000-genome binary and input took 19.74 s and 13,380,700 KiB, versus
 experimental build feature; it is 19.7% slower and uses 29.2% more memory on
 this workload.
 
+For `k <= 31`, blocked discontinuity edges now use the reference widths:
+two 64-bit endpoints, a 16-bit weight, a 32-bit local-unitig coordinate, one
+flags byte, and a 16-bit coordinate-bucket ID. This reduces each external edge
+record from 31 to 25 bytes. The contraction table likewise stores its weight
+as `u16`, reducing an atomic slot from 32 to 24 bytes. On 1,000 genomes the
+change reduced graph construction from 15.176 to 14.640 seconds and
+contraction from 2.848 to 2.707 seconds while preserving all 40,370,131
+strand-normalized unitigs. The 5,000-genome run remained exact and reduced
+peak RSS from 15,211,244 to 14,388,616 KiB; its 69.65-second wall time was
+effectively flat on a noisy shared host, so the layout is retained for its
+lower external I/O and memory footprint rather than claiming a scale runtime
+win from that single sample.
+
 The 5,000-genome topology can be compared exactly with bounded memory:
 
 ```bash

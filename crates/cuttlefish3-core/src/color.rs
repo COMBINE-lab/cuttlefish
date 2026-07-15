@@ -1,3 +1,10 @@
+//! Positional colors and the external color repository.
+//!
+//! A unitig stores runs of [`UnitigColor`] values. Each run refers to a
+//! deduplicated source set in a [`ConcurrentColorRepository`]. Coordinates are
+//! compact and repository-local; callers should use the manifest rather than
+//! interpreting coordinate bits directly.
+
 use crate::hash::{FastBuildHasher, hash_u64};
 use crate::state::{ColorCoordinate, UnitigColor};
 use scc::{HashMap as SccHashMap, hash_map::Entry as SccEntry};

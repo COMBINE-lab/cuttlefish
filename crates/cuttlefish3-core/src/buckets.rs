@@ -1,3 +1,10 @@
+//! External weak-super-k-mer bucket storage.
+//!
+//! Writers use the same 128-subgraph atlas hierarchy as Cuttlefish 3. Worker
+//! buffers are drained in source/worker order, and open files are bounded so a
+//! build does not require one descriptor per subgraph. The on-disk format is a
+//! private, versioned Rust format and may be compressed with LZ4 blocks.
+
 use crate::dna::{Base, ascii_base_bits, valid_ascii_base_bits};
 use crate::params::BuildParams;
 use crate::partition::WeakSuperKmer;
@@ -111,6 +118,7 @@ struct SharedBucketFlushStats {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+/// Manifest entry for one physical weak-super-k-mer bucket file.
 pub struct BucketManifestEntry {
     pub graph_id: usize,
     pub records: u64,
@@ -118,6 +126,7 @@ pub struct BucketManifestEntry {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+/// Versioned parameters decoded from a bucket file header.
 pub struct BucketHeader {
     pub k: u16,
     pub minimizer_len: u16,
@@ -131,6 +140,7 @@ pub struct BucketHeader {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
+/// Decoded weak-super-k-mer record with an ASCII label.
 pub struct BucketRecord {
     pub graph_id: usize,
     pub len: usize,
@@ -141,6 +151,7 @@ pub struct BucketRecord {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
+/// Decoded weak-super-k-mer record retaining its packed two-bit label.
 pub struct BucketPackedRecord {
     pub graph_id: usize,
     pub len: usize,
@@ -159,6 +170,7 @@ pub(crate) struct BorrowedBucketPackedRecord<'a> {
     pub words: &'a [u64],
 }
 
+/// Streaming reader for one versioned weak-super-k-mer bucket.
 pub struct BucketReader {
     path: PathBuf,
     file: BufReader<File>,
@@ -527,6 +539,7 @@ impl BucketReader {
     }
 }
 
+/// Iterator over decoded records from a [`BucketReader`].
 pub struct BucketRecords {
     reader: BucketReader,
 }
@@ -539,6 +552,7 @@ impl Iterator for BucketRecords {
     }
 }
 
+/// Reads and validates `manifest.tsv` from a bucket directory.
 pub fn read_manifest(
     bucket_dir: impl AsRef<Path>,
 ) -> Result<Vec<BucketManifestEntry>, BucketError> {

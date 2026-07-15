@@ -1,3 +1,8 @@
+//! FASTA/FASTQ input discovery and zero-copy fragment parsing.
+//!
+//! Parsers split records at non-ACGT symbols. Borrowed callbacks are preferred
+//! by the production partitioner so sequence data does not need to be copied.
+
 use crate::dna::is_dna_ascii;
 use crate::params::BuildParams;
 use flate2::read::MultiGzDecoder;

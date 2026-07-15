@@ -1,3 +1,10 @@
+//! Build configuration and phase-local resource planning.
+//!
+//! [`BuildParams::threads`] is an upper bound. When `max_memory_gb` is set,
+//! partition, local contraction, and post-local processing independently lower
+//! concurrency according to replicated state estimates. The limit is soft:
+//! workload-sized shared tables can impose a higher minimum RSS.
+
 use crate::{
     DEFAULT_CUTOFF_READS, DEFAULT_CUTOFF_REFS, DEFAULT_GMTIG_BUCKETS, DEFAULT_K,
     DEFAULT_LMTIG_BUCKETS, DEFAULT_MINIMIZER_LEN, DEFAULT_VERTEX_PARTITIONS, GraphInput, MAX_K,
@@ -15,27 +22,51 @@ const LOCAL_MEMORY_PER_WORKER: usize = 160 * 1024 * 1024;
 const POST_LOCAL_FIXED_MEMORY: usize = 4 * GIB;
 const POST_LOCAL_MEMORY_PER_WORKER: usize = 64 * 1024 * 1024;
 
+/// Configuration shared by partitioning and graph construction phases.
+///
+/// Bucket and partition counts must be powers of two. The public fields support
+/// programmatic construction, while [`BuildParams::validate`] enforces the
+/// cross-field invariants expected by the production pipeline.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BuildParams {
+    /// Whether inputs are sequencing reads or references.
     pub input: GraphInput,
+    /// Explicit sequence file paths.
     pub seqs: Vec<String>,
+    /// Files containing one input path per line.
     pub lists: Vec<String>,
+    /// Directories whose regular files are used as inputs.
     pub dirs: Vec<String>,
+    /// K-mer length. Must be odd and no greater than [`crate::MAX_K`].
     pub k: u16,
+    /// Minimizer length used for weak-super-k-mer partitioning.
     pub minimizer_len: u16,
+    /// Optional edge-frequency cutoff; input-class defaults apply when absent.
     pub cutoff: Option<u32>,
+    /// Whether to construct and emit positional colors.
     pub color: bool,
+    /// Whether weak-super-k-mer buckets use LZ4 block compression.
     pub compress_buckets: bool,
+    /// Prefix for final graph files.
     pub output_prefix: String,
+    /// Directory for external-memory intermediates.
     pub work_dir: String,
+    /// Number of blocked discontinuity-graph vertex partitions.
     pub vertex_partitions: usize,
+    /// Logical local-unitig bucket count.
     pub lmtig_buckets: usize,
+    /// Logical maximal-unitig coordinate bucket count.
     pub gmtig_buckets: usize,
+    /// Maximum worker count requested for each phase.
     pub threads: usize,
+    /// Optional soft memory budget in GiB.
+    ///
+    /// The budget controls replicated phase state and is not a hard RSS limit.
     pub max_memory_gb: Option<usize>,
 }
 
 impl BuildParams {
+    /// Constructs parameters with Cuttlefish-compatible defaults.
     pub fn new(input: GraphInput, output_prefix: String) -> Self {
         Self {
             input,
@@ -57,11 +88,13 @@ impl BuildParams {
         }
     }
 
+    /// Returns the explicit cutoff or the input-class default.
     #[inline]
     pub fn cutoff(&self) -> u32 {
         self.cutoff.unwrap_or_else(|| self.input.default_cutoff())
     }
 
+    /// Returns the soft memory budget in bytes, if configured.
     pub fn max_memory_bytes(&self) -> Option<usize> {
         self.max_memory_gb.and_then(|gb| gb.checked_mul(GIB))
     }
@@ -82,19 +115,23 @@ impl BuildParams {
         1usize << bounded.ilog2()
     }
 
+    /// Returns the partition worker count after input and memory bounds.
     pub fn partition_workers(&self, input_files: usize) -> usize {
         self.memory_bounded_workers(PARTITION_FIXED_MEMORY, PARTITION_MEMORY_PER_WORKER)
             .min(input_files.max(1))
     }
 
+    /// Returns the memory-bounded local-contraction worker count.
     pub fn local_workers(&self) -> usize {
         self.memory_bounded_workers(LOCAL_FIXED_MEMORY, LOCAL_MEMORY_PER_WORKER)
     }
 
+    /// Returns the memory-bounded discontinuity/collation worker count.
     pub fn post_local_workers(&self) -> usize {
         self.memory_bounded_workers(POST_LOCAL_FIXED_MEMORY, POST_LOCAL_MEMORY_PER_WORKER)
     }
 
+    /// Validates input, graph dimensions, and resource parameters.
     pub fn validate(&self) -> Result<(), ParamError> {
         if self.seqs.is_empty() && self.lists.is_empty() && self.dirs.is_empty() {
             return Err(ParamError::NoInput);

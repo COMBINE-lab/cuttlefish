@@ -1,3 +1,10 @@
+//! Local subgraph construction and contraction.
+//!
+//! Each weak-super-k-mer bucket is converted to a dense vertex-state table and
+//! contracted independently. The map is reused between buckets to amortize
+//! allocation. Emitted unitigs retain only discontinuity endpoints, labels,
+//! and optional positional colors needed by the global external pipeline.
+
 use crate::Side;
 #[cfg(test)]
 use crate::buckets::BucketRecord;

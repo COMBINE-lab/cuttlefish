@@ -1,3 +1,9 @@
+//! Weak-super-k-mer partitioning and bucket emission.
+//!
+//! The production partitioner dynamically schedules size-sorted inputs, scans
+//! packed rolling windows, and drains worker-local 128-subgraph atlas chunks to
+//! [`crate::buckets`]. Graph IDs are stable across colored and uncolored paths.
+
 use crate::buckets::{BucketEmitStats, SharedBucketEmitter, SharedBucketSink};
 use crate::dna::{ascii_base_bits, valid_ascii_base_bits};
 use crate::hash::{hash_u64, wyhash_u64};
@@ -15,6 +21,9 @@ const PARTITION_FRAGMENT_BATCH: usize = 16 * 1024;
 const PARTITION_BATCH_BASES: usize = 8 * 1024 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+/// A weak super-k-mer assigned to one local subgraph.
+///
+/// `offset` and `len` address a fragment supplied to [`partition_fragment`].
 pub struct WeakSuperKmer {
     pub graph_id: usize,
     pub offset: usize,
@@ -25,6 +34,7 @@ pub struct WeakSuperKmer {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+/// Aggregate parser and weak-super-k-mer partitioning counts.
 pub struct PartitionStats {
     pub input_files: usize,
     pub records: u64,
@@ -36,6 +46,7 @@ pub struct PartitionStats {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+/// Partition counts, external bucket manifest, and phase timings.
 pub struct PartitionEmissionStats {
     pub partition: PartitionStats,
     pub buckets: BucketEmitStats,

@@ -1,3 +1,9 @@
+//! End-to-end colored graph construction.
+//!
+//! This module is the high-level colored build driver. It connects partition
+//! buckets to local contraction, external discontinuity processing, FASTA
+//! emission, and color-repository metadata.
+
 use crate::color::ColorError;
 use crate::discontinuity::{
     DiscontinuityInputError, SerialCollationError, SerialUncoloredCollator,
@@ -10,6 +16,7 @@ use crate::params::BuildParams;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
+/// Summary of a completed colored graph build.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ColoredBuildStats {
     pub input_buckets: usize,
@@ -20,6 +27,11 @@ pub struct ColoredBuildStats {
     pub color_repository: PathBuf,
 }
 
+/// Builds a colored compacted de Bruijn graph from emitted partition buckets.
+///
+/// `K` must equal `params.k`. The output FASTA is written beside
+/// `params.output_prefix`; external intermediates are written under
+/// `params.work_dir` and removed unless intermediate retention is enabled.
 pub fn build_colored_from_buckets<const K: usize>(
     params: &BuildParams,
     bucket_dir: impl AsRef<Path>,

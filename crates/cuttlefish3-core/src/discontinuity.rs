@@ -1,3 +1,28 @@
+//! External discontinuity-graph contraction, expansion, and unitig collation.
+//!
+//! Local subgraphs emit unitigs whose discontinuity endpoints form a blocked
+//! external edge matrix. The production algorithm contracts matrix partitions
+//! from high to low, expands path information in the reverse dependency order,
+//! maps local labels into maximal-unitig coordinate buckets, and reduces each
+//! bucket directly to FASTA.
+//!
+//! # Performance invariants
+//!
+//! - Matrix, path-info, label, and color streams remain external-memory data.
+//! - Packed records have compile-time size assertions; layout changes require
+//!   full compatibility and scale benchmarks.
+//! - Worker pools are phase-local and bounded by the user resource policy.
+//! - Coordinate fanout adapts to live file-descriptor availability.
+//!
+//! The file is organized in the same conceptual phases as Cuttlefish 3. See
+//! `docs/rust-rewrite-modules.md` for the extraction boundaries used to split
+//! this implementation safely over time.
+
+mod resource;
+
+use resource::{current_open_file_count, open_file_limit};
+pub use resource::{report_process_memory, trim_process_allocations};
+
 use crate::DEFAULT_VERTEX_PARTITIONS;
 use crate::Side;
 use crate::buckets::{BucketError, BucketManifestEntry, read_manifest};
@@ -54,6 +79,9 @@ fn remove_serial_file(path: &Path) -> Result<(), SerialCollationError> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+/// In-memory local-unitig input used by reference and compatibility paths.
+///
+/// Production-scale builds use [`ExternalDiscontinuityInputs`] instead.
 pub struct DiscontinuityInputs<const K: usize> {
     pub unitigs: Vec<DiscontinuityUnitig<K>>,
     labels: Vec<u8>,
@@ -61,6 +89,10 @@ pub struct DiscontinuityInputs<const K: usize> {
 }
 
 #[derive(Debug)]
+/// External-memory handoff from local contraction to global collation.
+///
+/// Labels, colors, unitigs, and blocked edges remain on disk. The object owns
+/// their manifests and removes phase intermediates as they are consumed.
 pub struct ExternalDiscontinuityInputs<const K: usize> {
     unitig_path: PathBuf,
     label_path: PathBuf,
@@ -244,87 +276,8 @@ struct ExternalLabelRef {
     label_len: u32,
 }
 
-#[cfg(all(target_os = "linux", target_env = "gnu"))]
-unsafe extern "C" {
-    fn malloc_trim(pad: usize) -> i32;
-    fn getrlimit(resource: i32, limits: *mut RLimit) -> i32;
-}
-
-#[cfg(all(target_os = "linux", target_env = "gnu"))]
-#[repr(C)]
-struct RLimit {
-    current: u64,
-    maximum: u64,
-}
-
-#[cfg(all(target_os = "linux", target_env = "gnu"))]
-fn open_file_limit() -> usize {
-    const RLIMIT_NOFILE: i32 = 7;
-    unsafe {
-        let mut limits = RLimit {
-            current: 0,
-            maximum: 0,
-        };
-        if getrlimit(RLIMIT_NOFILE, &mut limits) != 0 {
-            return 1024;
-        }
-        usize::try_from(limits.current).unwrap_or(usize::MAX)
-    }
-}
-
-#[cfg(target_os = "linux")]
-fn current_open_file_count() -> usize {
-    fs::read_dir("/proc/self/fd")
-        .map(|entries| entries.count())
-        .unwrap_or(3)
-}
-
-#[cfg(not(target_os = "linux"))]
-fn current_open_file_count() -> usize {
-    3
-}
-
-#[cfg(not(all(target_os = "linux", target_env = "gnu")))]
-fn open_file_limit() -> usize {
-    1024
-}
-
-pub fn trim_process_allocations() {
-    #[cfg(all(target_os = "linux", target_env = "gnu"))]
-    unsafe {
-        let _ = malloc_trim(0);
-    }
-}
-
-pub fn report_process_memory(label: &str) {
-    if std::env::var_os("CF3_RS_PROFILE_RSS").is_none() {
-        return;
-    }
-    let Ok(status) = std::fs::read_to_string("/proc/self/status") else {
-        return;
-    };
-    let mut rss_kib = None;
-    let mut hwm_kib = None;
-    for line in status.lines() {
-        if let Some(value) = line.strip_prefix("VmRSS:") {
-            rss_kib = parse_status_kib(value);
-        } else if let Some(value) = line.strip_prefix("VmHWM:") {
-            hwm_kib = parse_status_kib(value);
-        }
-    }
-    if let (Some(rss), Some(hwm)) = (rss_kib, hwm_kib) {
-        eprintln!("cuttlefish3-rs: rss {label}: current {rss} KiB, peak {hwm} KiB");
-    }
-}
-
-fn parse_status_kib(value: &str) -> Option<u64> {
-    value
-        .split_whitespace()
-        .next()
-        .and_then(|value| value.parse::<u64>().ok())
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+/// Counts collected while converting local bucket graphs to discontinuity input.
 pub struct DiscontinuityInputStats {
     pub input_buckets: usize,
     pub weak_superkmers: u64,
@@ -1880,6 +1833,10 @@ pub struct SerialContractionStats {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 struct EndpointKey<const K: usize>(MatrixEndpoint<K>);
 
+/// Contracts discontinuity-graph partitions in Cuttlefish's high-to-low order.
+///
+/// The name is retained for API compatibility; production methods use
+/// phase-local parallel workers and a blocked external matrix.
 pub struct SerialDiscontinuityContractor;
 
 struct PartitionColumnScan<const K: usize> {
@@ -4174,6 +4131,7 @@ impl SerialDiscontinuityContractor {
     }
 }
 
+/// Expands contracted meta-vertices into path information for local unitigs.
 pub struct SerialDiscontinuityExpander;
 
 impl SerialDiscontinuityExpander {
@@ -5365,6 +5323,10 @@ impl SerialDiscontinuityExpander {
     }
 }
 
+/// Maps expanded path information and reduces maximal-unitig coordinate buckets.
+///
+/// Despite the historical name, this collator handles both uncolored and
+/// colored external inputs.
 pub struct SerialUncoloredCollator;
 
 impl SerialUncoloredCollator {
@@ -16835,6 +16797,10 @@ pub fn emit_uncolored_discontinuity_inputs_with_threads_in_dir<const K: usize>(
     )
 }
 
+/// Contracts uncolored local bucket graphs directly into external streams.
+///
+/// This is the production local-contraction entry point. `threads` must be
+/// nonzero, and `label_path` identifies the external label stream.
 pub fn emit_uncolored_external_discontinuity_inputs_with_threads_in_dir<const K: usize>(
     bucket_dir: impl AsRef<Path>,
     cutoff: u32,
@@ -16857,6 +16823,10 @@ pub fn emit_uncolored_external_discontinuity_inputs_with_threads_in_dir<const K:
     )
 }
 
+/// Contracts colored local bucket graphs directly into external streams.
+///
+/// Color runs are coalesced with local-unitig metadata and source sets are
+/// deduplicated into the concurrent color repository.
 pub fn emit_colored_external_discontinuity_inputs_with_threads_in_dir<const K: usize>(
     bucket_dir: impl AsRef<Path>,
     cutoff: u32,
@@ -17115,6 +17085,7 @@ fn contract_local_subgraphs_into_external_inputs<const K: usize>(
                 cutoff,
                 color_repository.as_ref(),
                 &mut reusable_vertices,
+                color_repository.is_none(),
             )?;
             append_local_contraction_output_to_external_inputs(
                 &mut trivial_output,
@@ -17211,6 +17182,7 @@ fn contract_local_subgraphs_into_external_inputs<const K: usize>(
                             cutoff,
                             sink.color_repository,
                             &mut reusable_vertices,
+                            sink.color_repository.is_none(),
                         )
                         .and_then(|output| sink.write(output, bucket_id));
                         let done = completed.fetch_add(1, Ordering::Relaxed) + 1;
@@ -17754,6 +17726,7 @@ fn contract_local_subgraphs<const K: usize>(
                 cutoff,
                 None,
                 &mut reusable_vertices,
+                false,
             )?);
             report_local_contraction_progress(offset + 1, groups.len(), started);
         }
@@ -17783,6 +17756,7 @@ fn contract_local_subgraphs<const K: usize>(
                         cutoff,
                         None,
                         &mut reusable_vertices,
+                        false,
                     )?);
                     let done = completed.fetch_add(1, Ordering::Relaxed) + 1;
                     report_local_contraction_progress(done, total_groups, started);
@@ -17882,6 +17856,7 @@ fn contract_local_subgraph<const K: usize>(
     cutoff: u32,
     color_repository: Option<&ConcurrentColorRepository>,
     reusable_vertices: &mut Option<LocalVertexMap<K>>,
+    emit_trivial_fasta: bool,
 ) -> Result<LocalContractionOutput<K>, DiscontinuityInputError> {
     let build_start = Instant::now();
     let mut subgraph = LocalSubgraph::<K>::from_manifest_entries_reusing(
@@ -17901,7 +17876,7 @@ fn contract_local_subgraph<const K: usize>(
     let mut trivial_unitigs = 0u64;
     let mut trivial_bases = 0u64;
     let mut matrix_edges = Vec::new();
-    let mut emit_unitig = |unitig: LocalUnitig<K>, emit_trivial: bool| {
+    let mut emit_unitig = |unitig: LocalUnitig<K>| {
         let left_exit = unitig
             .left_exit
             .map(|(vertex, side)| DiscontinuityEndpoint { vertex, side });
@@ -17909,7 +17884,7 @@ fn contract_local_subgraph<const K: usize>(
             .right_exit
             .map(|(vertex, side)| DiscontinuityEndpoint { vertex, side });
 
-        if emit_trivial && left_exit.is_none() && right_exit.is_none() {
+        if emit_trivial_fasta && left_exit.is_none() && right_exit.is_none() {
             let label = canonical_label(unitig.label);
             trivial_fasta.extend_from_slice(b">0\n");
             trivial_fasta.extend_from_slice(&label);
@@ -17941,11 +17916,11 @@ fn contract_local_subgraph<const K: usize>(
             &group.entries,
             repository,
             group.index % repository.worker_count(),
-            |unitig| emit_unitig(unitig, false),
+            &mut emit_unitig,
         )?;
         color_runs = Some(runs);
     } else {
-        subgraph.contract_compact_with(|unitig| emit_unitig(unitig, true))?;
+        subgraph.contract_compact_with(emit_unitig)?;
     }
     let contract_elapsed = contract_start.elapsed();
 

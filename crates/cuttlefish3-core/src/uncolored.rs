@@ -1,3 +1,9 @@
+//! End-to-end uncolored graph construction.
+//!
+//! The production entry point streams local contraction into the external
+//! discontinuity pipeline. A global in-memory contractor remains available
+//! only as a debug/reference implementation.
+
 use crate::Side;
 use crate::buckets::{BucketError, BucketReader, read_manifest};
 use crate::discontinuity::{
@@ -18,6 +24,7 @@ use std::time::Instant;
 
 type FastHashMap<K, V> = HashMap<K, V, FastBuildHasher>;
 
+/// Summary of a completed uncolored graph build.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UncoloredBuildStats {
     pub input_buckets: usize,
@@ -29,6 +36,10 @@ pub struct UncoloredBuildStats {
     pub output_path: PathBuf,
 }
 
+/// Builds an uncolored compacted de Bruijn graph from partition buckets.
+///
+/// The external-memory path is used unless the debug contractor environment
+/// switch is explicitly enabled.
 pub fn build_uncolored_from_buckets<const K: usize>(
     params: &BuildParams,
     bucket_dir: impl AsRef<Path>,

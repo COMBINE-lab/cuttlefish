@@ -1,3 +1,8 @@
+//! Packed canonical k-mer primitives.
+//!
+//! [`Kmer`] stores up to 63 bases in two words and uses the same one-word
+//! wyhash specialization as the C++ implementation for `K <= 31`.
+
 use crate::dna::Base;
 use crate::hash::{hash_bytes, wyhash_u64};
 use std::hash::{Hash, Hasher};
@@ -27,6 +32,11 @@ const fn ascii_quad_table() -> [u32; 256] {
 
 const ASCII_QUADS: [u32; 256] = ascii_quad_table();
 
+/// A two-bit packed DNA k-mer of compile-time length `K`.
+///
+/// Bases are ordered from most significant to least significant bits in the
+/// logical value. The representation is internal; use the provided conversion
+/// and orientation methods rather than depending on word layout.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Kmer<const K: usize> {

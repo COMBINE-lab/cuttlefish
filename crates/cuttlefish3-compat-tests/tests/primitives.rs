@@ -83,7 +83,7 @@ fn normalized_uncolored_fixture(
 }
 
 #[test]
-fn colored_external_local_contraction_emits_resolvable_color_runs() {
+fn colored_bucket_local_runs_resolve_after_external_collation() {
     let root = scratch_prefix("colored-external-local");
     let _ = fs::remove_dir_all(&root);
     fs::create_dir_all(&root).unwrap();
@@ -103,7 +103,7 @@ fn colored_external_local_contraction_emits_resolvable_color_runs() {
     params.work_dir = root.display().to_string();
     params.seqs = vec![first.display().to_string(), second.display().to_string()];
     let emitted = emit_weak_superkmer_buckets::<7>(&params, DEFAULT_SUBGRAPH_COUNT).unwrap();
-    let inputs = emit_colored_external_discontinuity_inputs_with_threads_in_dir::<7>(
+    let mut inputs = emit_colored_external_discontinuity_inputs_with_threads_in_dir::<7>(
         &emitted.buckets.bucket_dir,
         1,
         2,
@@ -111,22 +111,32 @@ fn colored_external_local_contraction_emits_resolvable_color_runs() {
         root.join("local.colors"),
     )
     .unwrap();
-    let sidecar = inputs.color_runs().unwrap();
-    let repository = inputs.color_repository().unwrap();
-    assert_eq!(sidecar.unitigs, inputs.unitig_count() as u64);
-    assert!(sidecar.runs > 0);
-    for unitig in 0..sidecar.unitigs {
-        for run in sidecar.read_unitig(unitig).unwrap() {
-            let sources = repository
-                .read_color(cuttlefish3_core::state::ColorCoordinate::from_u40(
-                    run.coordinate(),
-                ))
-                .unwrap();
+    let repository = inputs.color_repository().unwrap().clone();
+    let output_path = root.join("colored.fa");
+    SerialUncoloredCollator::collate_external_stitched_to_fasta_with_threads_in_dir(
+        &mut inputs,
+        2,
+        &root.join("stitch-coords"),
+        &root.join("final-unitigs"),
+        &output_path,
+    )
+    .unwrap();
+
+    let fasta = fs::read_to_string(output_path).unwrap();
+    let mut runs = 0usize;
+    for header in fasta.lines().filter(|line| line.starts_with('>')) {
+        assert_eq!(header.split_whitespace().next(), Some(">0"));
+        for encoded_run in header.split_whitespace().skip(1) {
+            let raw = encoded_run.parse::<u64>().unwrap();
+            let coordinate = cuttlefish3_core::state::ColorCoordinate::from_u40(raw >> 24);
+            let sources = repository.read_color(coordinate).unwrap();
             assert!(!sources.is_empty());
             assert!(sources.windows(2).all(|pair| pair[0] < pair[1]));
             assert!(sources.iter().all(|&source| source == 1 || source == 2));
+            runs += 1;
         }
     }
+    assert!(runs > 0);
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -1141,7 +1151,7 @@ fn builds_uncolored_fasta_from_emitted_buckets() {
     assert_eq!(built.output_path, fasta_path);
 
     let fasta = fs::read_to_string(&built.output_path).unwrap();
-    assert!(fasta.starts_with(">utg1\n"));
+    assert!(fasta.starts_with(">0\n"));
     let labels: Vec<_> = fasta
         .lines()
         .filter(|line| !line.starts_with('>'))

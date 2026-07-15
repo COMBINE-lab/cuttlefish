@@ -1,3 +1,9 @@
+//! Compact vertex state and colored-coordinate representations.
+//!
+//! These types are used in the hottest local-contraction tables. Their sizes
+//! and bit allocations are deliberate; avoid adding fields without measuring
+//! memory bandwidth and peak RSS at scale.
+
 use crate::Side;
 use crate::dna::Base;
 use xxhash_rust::xxh3::xxh3_64;
@@ -182,6 +188,10 @@ pub fn hash_combine(lhs: u64, rhs: u64) -> u64 {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+/// Compact location of a deduplicated source set in the color repository.
+///
+/// Published coordinates use 8 worker bits and 32 worker-local index bits.
+/// The high bit is reserved for concurrent insertion state.
 pub struct ColorCoordinate(u64);
 
 impl ColorCoordinate {
@@ -236,24 +246,33 @@ impl ColorCoordinate {
 
 #[repr(transparent)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// A packed positional color run.
+///
+/// The low 24 bits hold a unitig vertex offset and the upper 40 bits hold a
+/// [`ColorCoordinate`]. This transparent 64-bit layout is written directly to
+/// private intermediate streams.
 pub struct UnitigColor(u64);
 
 impl UnitigColor {
+    /// Packs a run starting at `offset` and referring to `coord`.
     pub fn new(offset: u32, coord: ColorCoordinate) -> Self {
         assert!(offset <= 0xFF_FFFF);
         Self((coord.as_u40() << 24) | offset as u64)
     }
 
+    /// Returns the zero-based vertex offset where this color run begins.
     #[inline]
     pub fn offset(self) -> u32 {
         (self.0 & 0xFF_FFFF) as u32
     }
 
+    /// Returns the raw 40-bit color-repository coordinate.
     #[inline]
     pub fn coordinate(self) -> u64 {
         self.0 >> 24
     }
 
+    /// Returns the complete packed representation.
     #[inline]
     pub fn raw(self) -> u64 {
         self.0

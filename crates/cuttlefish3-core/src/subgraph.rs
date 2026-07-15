@@ -346,6 +346,12 @@ struct PendingColoredContraction<const K: usize> {
     source_sets: Vec<Vec<u32>>,
 }
 
+struct PendingColoredData {
+    runs: Vec<Vec<PendingColorRun>>,
+    representative_indices: HashMap<u64, usize, FastBuildHasher>,
+    source_sets: Vec<Vec<u32>>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct UnitigWalk<const K: usize> {
     label: Vec<u8>,
@@ -693,6 +699,13 @@ impl<const K: usize> LocalSubgraph<K> {
         self.contract_internal(false)
     }
 
+    pub(crate) fn contract_compact_with<F>(&mut self, emit: F) -> Result<(), LocalSubgraphError>
+    where
+        F: FnMut(LocalUnitig<K>),
+    {
+        self.contract_internal_with(false, emit)
+    }
+
     pub fn contract_colored(
         &mut self,
         entries: &[BucketManifestEntry],
@@ -740,14 +753,21 @@ impl<const K: usize> LocalSubgraph<K> {
             .collect()
     }
 
-    pub(crate) fn contract_colored_resolved(
+    pub(crate) fn contract_colored_resolved_with<F>(
         &mut self,
         entries: &[BucketManifestEntry],
         repository: &ConcurrentColorRepository,
         worker: usize,
-    ) -> Result<(Vec<LocalUnitig<K>>, Vec<Vec<UnitigColor>>), LocalSubgraphError> {
-        let pending =
-            self.contract_colored_impl(entries, |color_hash| repository.get(color_hash))?;
+        emit: F,
+    ) -> Result<Vec<Vec<UnitigColor>>, LocalSubgraphError>
+    where
+        F: FnMut(LocalUnitig<K>),
+    {
+        let pending = self.contract_colored_impl_with(
+            entries,
+            |color_hash| repository.get(color_hash),
+            emit,
+        )?;
         let mut color_runs = Vec::with_capacity(pending.runs.len());
         for runs in pending.runs {
             let mut packed = Vec::with_capacity(runs.len());
@@ -768,7 +788,7 @@ impl<const K: usize> LocalSubgraph<K> {
             }
             color_runs.push(packed);
         }
-        Ok((pending.unitigs, color_runs))
+        Ok(color_runs)
     }
 
     fn contract_colored_impl<F>(
@@ -779,12 +799,32 @@ impl<const K: usize> LocalSubgraph<K> {
     where
         F: Fn(u64) -> Option<ColorCoordinate>,
     {
+        let mut unitigs = Vec::new();
+        let pending = self
+            .contract_colored_impl_with(entries, color_is_known, |unitig| unitigs.push(unitig))?;
+        Ok(PendingColoredContraction {
+            unitigs,
+            runs: pending.runs,
+            representative_indices: pending.representative_indices,
+            source_sets: pending.source_sets,
+        })
+    }
+
+    fn contract_colored_impl_with<F, G>(
+        &mut self,
+        entries: &[BucketManifestEntry],
+        color_is_known: F,
+        mut emit: G,
+    ) -> Result<PendingColoredData, LocalSubgraphError>
+    where
+        F: Fn(u64) -> Option<ColorCoordinate>,
+        G: FnMut(LocalUnitig<K>),
+    {
         if !self.colored {
             return Err(LocalSubgraphError::MalformedRecord);
         }
         let mut representative_indices = HashMap::<u64, usize, FastBuildHasher>::default();
         let mut representatives = Vec::<Kmer<K>>::new();
-        let mut unitigs = Vec::new();
         let mut unitig_hash_runs = Vec::new();
         let mut back_walk = UnitigWalk::default();
         let mut front_walk = UnitigWalk::default();
@@ -800,7 +840,7 @@ impl<const K: usize> LocalSubgraph<K> {
                     v_hat,
                     state,
                     &color_is_known,
-                    &mut unitigs,
+                    &mut emit,
                     &mut unitig_hash_runs,
                     &mut representative_indices,
                     &mut representatives,
@@ -821,7 +861,7 @@ impl<const K: usize> LocalSubgraph<K> {
                     v_hat,
                     state,
                     &color_is_known,
-                    &mut unitigs,
+                    &mut emit,
                     &mut unitig_hash_runs,
                     &mut representative_indices,
                     &mut representatives,
@@ -844,8 +884,7 @@ impl<const K: usize> LocalSubgraph<K> {
         }
         normalize_source_sets(&mut source_sets);
 
-        Ok(PendingColoredContraction {
-            unitigs,
+        Ok(PendingColoredData {
             runs: unitig_hash_runs,
             representative_indices,
             source_sets,
@@ -853,12 +892,12 @@ impl<const K: usize> LocalSubgraph<K> {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn contract_colored_vertex<F>(
+    fn contract_colored_vertex<F, G>(
         &mut self,
         v_hat: Kmer<K>,
         state: VertexState,
         color_is_known: &F,
-        unitigs: &mut Vec<LocalUnitig<K>>,
+        emit: &mut G,
         unitig_hash_runs: &mut Vec<Vec<PendingColorRun>>,
         representative_indices: &mut HashMap<u64, usize, FastBuildHasher>,
         representatives: &mut Vec<Kmer<K>>,
@@ -867,6 +906,7 @@ impl<const K: usize> LocalSubgraph<K> {
     ) -> Result<(), LocalSubgraphError>
     where
         F: Fn(u64) -> Option<ColorCoordinate>,
+        G: FnMut(LocalUnitig<K>),
     {
         if state.is_visited() {
             return Ok(());
@@ -944,7 +984,7 @@ impl<const K: usize> LocalSubgraph<K> {
                 offset += 1;
             }
         }
-        unitigs.push(unitig);
+        emit(unitig);
         unitig_hash_runs.push(runs);
         Ok(())
     }
@@ -954,6 +994,18 @@ impl<const K: usize> LocalSubgraph<K> {
         collect_vertices: bool,
     ) -> Result<Vec<LocalUnitig<K>>, LocalSubgraphError> {
         let mut unitigs = Vec::new();
+        self.contract_internal_with(collect_vertices, |unitig| unitigs.push(unitig))?;
+        Ok(unitigs)
+    }
+
+    fn contract_internal_with<F>(
+        &mut self,
+        collect_vertices: bool,
+        mut emit: F,
+    ) -> Result<(), LocalSubgraphError>
+    where
+        F: FnMut(LocalUnitig<K>),
+    {
         let mut back_walk = UnitigWalk::default();
         let mut front_walk = UnitigWalk::default();
         if let Some(vertex_count) = self.vertices.dense_len()
@@ -968,7 +1020,7 @@ impl<const K: usize> LocalSubgraph<K> {
                     v_hat,
                     state,
                     collect_vertices,
-                    &mut unitigs,
+                    &mut emit,
                     &mut back_walk,
                     &mut front_walk,
                 )?;
@@ -986,25 +1038,28 @@ impl<const K: usize> LocalSubgraph<K> {
                     v_hat,
                     state,
                     collect_vertices,
-                    &mut unitigs,
+                    &mut emit,
                     &mut back_walk,
                     &mut front_walk,
                 )?;
             }
         }
 
-        Ok(unitigs)
+        Ok(())
     }
 
-    fn contract_vertex(
+    fn contract_vertex<F>(
         &mut self,
         v_hat: Kmer<K>,
         state: VertexState,
         collect_vertices: bool,
-        unitigs: &mut Vec<LocalUnitig<K>>,
+        emit: &mut F,
         back_walk: &mut UnitigWalk<K>,
         front_walk: &mut UnitigWalk<K>,
-    ) -> Result<(), LocalSubgraphError> {
+    ) -> Result<(), LocalSubgraphError>
+    where
+        F: FnMut(LocalUnitig<K>),
+    {
         if state.is_visited() {
             return Ok(());
         }
@@ -1028,7 +1083,7 @@ impl<const K: usize> LocalSubgraph<K> {
             self.stats.discontinuity_exits +=
                 u64::from(unitig.left_exit.is_some()) + u64::from(unitig.right_exit.is_some());
         }
-        unitigs.push(unitig);
+        emit(unitig);
         Ok(())
     }
 

@@ -10,7 +10,7 @@ use crate::dna::{Base, complement_ascii};
 use crate::hash::{FastBuildHasher, hash_bytes, hash_u64, wyhash_u64};
 use crate::kmer::Kmer;
 use crate::state::{UnitigColor, VertexState};
-use crate::subgraph::{LocalSubgraph, LocalSubgraphError, LocalVertexMap};
+use crate::subgraph::{LocalSubgraph, LocalSubgraphError, LocalUnitig, LocalVertexMap};
 use leapfrog::LeapMap;
 use rayon::prelude::*;
 use rayon::{ThreadPool, ThreadPoolBuilder};
@@ -16934,8 +16934,8 @@ fn contract_local_subgraphs_into_external_inputs<const K: usize>(
             )
         })
         .transpose()?;
-    let mut groups = local_bucket_groups(entries);
-    groups.sort_by_key(|group| std::cmp::Reverse(group.records));
+    let mut groups = local_bucket_groups(entries)?;
+    groups.sort_by_key(|group| std::cmp::Reverse((group.stored_bytes, group.graph_id)));
     let workers = threads.min(groups.len().max(1));
     let local_unitig_bucket_count: usize = if compact_unitigs && workers > 1 && groups.len() >= 1024
     {
@@ -17150,9 +17150,11 @@ fn contract_local_subgraphs_into_external_inputs<const K: usize>(
             }
         });
         worker_result?;
+        let edge_finish_started = Instant::now();
         sink.edge_writers
             .finish_into(&mut edge_matrix)
             .map_err(serial_collation_to_input_error)?;
+        let edge_finish_elapsed = edge_finish_started.elapsed();
         inputs.stats.weak_superkmers = sink.weak_superkmers.load(Ordering::Relaxed);
         inputs.stats.local_unitigs = sink.next_unitig.load(Ordering::Relaxed) as u64;
         trivial_unitigs = sink.trivial_unitigs.load(Ordering::Relaxed);
@@ -17171,6 +17173,10 @@ fn contract_local_subgraphs_into_external_inputs<const K: usize>(
             .into_inner()
             .map_err(|_| DiscontinuityInputError::WorkerPanic)?;
         ranges.sort_by_key(|range| range.start_unitig);
+        eprintln!(
+            "cuttlefish3-rs: local edge-writer finalization {:.3}s",
+            edge_finish_elapsed.as_secs_f64()
+        );
     }
 
     eprintln!(
@@ -17187,6 +17193,7 @@ fn contract_local_subgraphs_into_external_inputs<const K: usize>(
         );
     }
 
+    let stream_finish_started = Instant::now();
     labels
         .flush()
         .map_err(|source| DiscontinuityInputError::Io {
@@ -17210,19 +17217,35 @@ fn contract_local_subgraphs_into_external_inputs<const K: usize>(
     edge_matrix
         .flush_all_with_threads(threads)
         .map_err(serial_collation_to_input_error)?;
+    let stream_finish_elapsed = stream_finish_started.elapsed();
+    let color_runs_started = Instant::now();
     let color_runs = match (color_run_writer, concurrent_color_runs) {
         (Some(writer), None) => Some(writer.finish()?),
         (None, Some(writer)) => Some(writer.finish()?),
         (None, None) => None,
         (Some(_), Some(_)) => unreachable!("color writers are mutually exclusive"),
     };
+    let color_runs_elapsed = color_runs_started.elapsed();
+    let unitig_buckets_started = Instant::now();
     let local_unitig_buckets = local_unitig_writers
         .take()
         .map(|writers| finish_local_unitig_writers(writers, workers))
         .transpose()?;
+    let unitig_buckets_elapsed = unitig_buckets_started.elapsed();
+    let color_repository_started = Instant::now();
     let color_repository = color_repository
         .map(|repository| repository.finish())
         .transpose()?;
+    let color_repository_elapsed = color_repository_started.elapsed();
+    if workers > 1 {
+        eprintln!(
+            "cuttlefish3-rs: local finalization detail: streams/matrix {:.3}s, color runs {:.3}s, unitig buckets {:.3}s, color repository {:.3}s",
+            stream_finish_elapsed.as_secs_f64(),
+            color_runs_elapsed.as_secs_f64(),
+            unitig_buckets_elapsed.as_secs_f64(),
+            color_repository_elapsed.as_secs_f64(),
+        );
+    }
     let trivial_fasta = if trivial_unitigs == 0 {
         let _ = fs::remove_file(&trivial_path);
         None
@@ -17609,7 +17632,7 @@ fn append_encoded_discontinuity_unitig_record<const K: usize>(
 struct LocalBucketGroup {
     index: usize,
     graph_id: usize,
-    records: u64,
+    stored_bytes: u64,
     entries: Vec<BucketManifestEntry>,
 }
 
@@ -17618,8 +17641,8 @@ fn contract_local_subgraphs<const K: usize>(
     cutoff: u32,
     threads: usize,
 ) -> Result<Vec<LocalContractionOutput<K>>, DiscontinuityInputError> {
-    let mut groups = local_bucket_groups(entries);
-    groups.sort_by_key(|group| std::cmp::Reverse(group.records));
+    let mut groups = local_bucket_groups(entries)?;
+    groups.sort_by_key(|group| std::cmp::Reverse((group.stored_bytes, group.graph_id)));
     let workers = threads.min(groups.len().max(1));
     let started = Instant::now();
     if groups.len() >= 1024 {
@@ -17704,7 +17727,9 @@ fn contract_local_subgraphs<const K: usize>(
     Ok(outputs)
 }
 
-fn local_bucket_groups(entries: &[BucketManifestEntry]) -> Vec<LocalBucketGroup> {
+fn local_bucket_groups(
+    entries: &[BucketManifestEntry],
+) -> Result<Vec<LocalBucketGroup>, DiscontinuityInputError> {
     let mut by_graph = BTreeMap::<usize, Vec<BucketManifestEntry>>::new();
     for entry in entries {
         by_graph
@@ -17717,13 +17742,20 @@ fn local_bucket_groups(entries: &[BucketManifestEntry]) -> Vec<LocalBucketGroup>
         .into_iter()
         .enumerate()
         .map(|(index, (graph_id, entries))| {
-            let records = entries.iter().map(|entry| entry.records).sum();
-            LocalBucketGroup {
+            let stored_bytes = entries.iter().try_fold(0u64, |bytes, entry| {
+                fs::metadata(&entry.path)
+                    .map(|metadata| bytes.saturating_add(metadata.len()))
+                    .map_err(|source| DiscontinuityInputError::Io {
+                        path: entry.path.clone(),
+                        source,
+                    })
+            })?;
+            Ok(LocalBucketGroup {
                 index,
                 graph_id,
-                records,
+                stored_bytes,
                 entries,
-            }
+            })
         })
         .collect()
 }
@@ -17773,22 +17805,11 @@ fn contract_local_subgraph<const K: usize>(
 
     let contract_start = Instant::now();
     let mut color_runs = None;
-    let local_unitigs = if subgraph.colored {
-        let repository = color_repository.ok_or(DiscontinuityInputError::MissingColorRuns)?;
-        let (unitigs, runs) = subgraph.contract_colored_resolved(
-            &group.entries,
-            repository,
-            group.index % repository.worker_count(),
-        )?;
-        color_runs = Some(runs);
-        unitigs
-    } else {
-        subgraph.contract_compact()?
-    };
     let mut trivial_fasta = Vec::new();
     let mut trivial_unitigs = 0u64;
     let mut trivial_bases = 0u64;
-    for unitig in local_unitigs {
+    let mut matrix_edges = Vec::new();
+    let mut emit_unitig = |unitig: LocalUnitig<K>, emit_trivial: bool| {
         let left_exit = unitig
             .left_exit
             .map(|(vertex, side)| DiscontinuityEndpoint { vertex, side });
@@ -17796,16 +17817,17 @@ fn contract_local_subgraph<const K: usize>(
             .right_exit
             .map(|(vertex, side)| DiscontinuityEndpoint { vertex, side });
 
-        if !subgraph.colored && left_exit.is_none() && right_exit.is_none() {
+        if emit_trivial && left_exit.is_none() && right_exit.is_none() {
             let label = canonical_label(unitig.label);
             trivial_fasta.extend_from_slice(b">0\n");
             trivial_fasta.extend_from_slice(&label);
             trivial_fasta.push(b'\n');
             trivial_unitigs += 1;
             trivial_bases += label.len() as u64;
-            continue;
+            return;
         }
 
+        let unitig_index = inputs.unitigs.len();
         inputs.push_unitig(OwnedDiscontinuityUnitig {
             graph_id,
             label: unitig.label,
@@ -17813,16 +17835,27 @@ fn contract_local_subgraph<const K: usize>(
             right_exit,
             is_cycle: unitig.is_cycle,
         });
+        if let Some(edge) = prepare_unitig_blocked_edge(
+            &inputs.unitigs[unitig_index],
+            unitig_index,
+            DEFAULT_VERTEX_PARTITIONS,
+        ) {
+            matrix_edges.push(edge);
+        }
+    };
+    if subgraph.colored {
+        let repository = color_repository.ok_or(DiscontinuityInputError::MissingColorRuns)?;
+        let runs = subgraph.contract_colored_resolved_with(
+            &group.entries,
+            repository,
+            group.index % repository.worker_count(),
+            |unitig| emit_unitig(unitig, false),
+        )?;
+        color_runs = Some(runs);
+    } else {
+        subgraph.contract_compact_with(|unitig| emit_unitig(unitig, true))?;
     }
     let contract_elapsed = contract_start.elapsed();
-    let matrix_edges = inputs
-        .unitigs
-        .iter()
-        .enumerate()
-        .filter_map(|(unitig_index, unitig)| {
-            prepare_unitig_blocked_edge(unitig, unitig_index, DEFAULT_VERTEX_PARTITIONS)
-        })
-        .collect();
 
     let output = LocalContractionOutput {
         index: group.index,

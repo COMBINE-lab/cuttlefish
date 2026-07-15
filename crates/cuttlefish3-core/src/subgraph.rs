@@ -6,7 +6,7 @@ use crate::color::{ColorError, ConcurrentColorRepository};
 use crate::dna::Base;
 use crate::hash::{FastBuildHasher, fast_u64_hash, hash_two_u64};
 use crate::kmer::{Kmer, KmerError};
-use crate::state::{ColorCoordinate, VertexState, source_hash};
+use crate::state::{ColorCoordinate, UnitigColor, VertexState, source_hash};
 use hashbrown::HashMap;
 use hashbrown::HashTable;
 use hashbrown::hash_map::RawEntryMut;
@@ -335,6 +335,15 @@ pub struct LocalUnitigColorRun {
 pub struct ColoredLocalUnitig<const K: usize> {
     pub unitig: LocalUnitig<K>,
     pub colors: Vec<LocalUnitigColorRun>,
+}
+
+type PendingColorRun = (u32, u64, Option<ColorCoordinate>);
+
+struct PendingColoredContraction<const K: usize> {
+    unitigs: Vec<LocalUnitig<K>>,
+    runs: Vec<Vec<PendingColorRun>>,
+    representative_indices: HashMap<u64, usize, FastBuildHasher>,
+    source_sets: Vec<Vec<u32>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -699,7 +708,36 @@ impl<const K: usize> LocalSubgraph<K> {
     where
         F: Fn(u64) -> Option<ColorCoordinate>,
     {
-        self.contract_colored_impl(entries, color_is_known, None)
+        let pending = self.contract_colored_impl(entries, color_is_known)?;
+        pending
+            .unitigs
+            .into_iter()
+            .zip(pending.runs)
+            .map(|(unitig, runs)| {
+                let colors = runs
+                    .into_iter()
+                    .map(|(offset, color_hash, coordinate)| {
+                        let sources = match coordinate {
+                            Some(_) => Vec::new(),
+                            None => {
+                                let &index = pending
+                                    .representative_indices
+                                    .get(&color_hash)
+                                    .ok_or(LocalSubgraphError::MissingVertex)?;
+                                pending.source_sets[index].clone()
+                            }
+                        };
+                        Ok(LocalUnitigColorRun {
+                            offset,
+                            color_hash,
+                            coordinate,
+                            sources,
+                        })
+                    })
+                    .collect::<Result<Vec<_>, LocalSubgraphError>>()?;
+                Ok(ColoredLocalUnitig { unitig, colors })
+            })
+            .collect()
     }
 
     pub(crate) fn contract_colored_resolved(
@@ -707,27 +745,37 @@ impl<const K: usize> LocalSubgraph<K> {
         entries: &[BucketManifestEntry],
         repository: &ConcurrentColorRepository,
         worker: usize,
-    ) -> Result<Vec<ColoredLocalUnitig<K>>, LocalSubgraphError> {
-        let mut resolve = |color_hash: u64, sources: &[u32]| {
-            repository
-                .resolve_or_insert(color_hash, sources, worker)
-                .map_err(LocalSubgraphError::Color)
-        };
-        self.contract_colored_impl(
-            entries,
-            |color_hash| repository.get(color_hash),
-            Some(&mut resolve),
-        )
+    ) -> Result<(Vec<LocalUnitig<K>>, Vec<Vec<UnitigColor>>), LocalSubgraphError> {
+        let pending =
+            self.contract_colored_impl(entries, |color_hash| repository.get(color_hash))?;
+        let mut color_runs = Vec::with_capacity(pending.runs.len());
+        for runs in pending.runs {
+            let mut packed = Vec::with_capacity(runs.len());
+            for (offset, color_hash, coordinate) in runs {
+                let coordinate = match coordinate {
+                    Some(coordinate) => coordinate,
+                    None => {
+                        let &index = pending
+                            .representative_indices
+                            .get(&color_hash)
+                            .ok_or(LocalSubgraphError::MissingVertex)?;
+                        repository
+                            .resolve_or_insert(color_hash, &pending.source_sets[index], worker)
+                            .map_err(LocalSubgraphError::Color)?
+                    }
+                };
+                packed.push(UnitigColor::new(offset, coordinate));
+            }
+            color_runs.push(packed);
+        }
+        Ok((pending.unitigs, color_runs))
     }
 
     fn contract_colored_impl<F>(
         &mut self,
         entries: &[BucketManifestEntry],
         color_is_known: F,
-        mut resolve_color: Option<
-            &mut dyn FnMut(u64, &[u32]) -> Result<ColorCoordinate, LocalSubgraphError>,
-        >,
-    ) -> Result<Vec<ColoredLocalUnitig<K>>, LocalSubgraphError>
+    ) -> Result<PendingColoredContraction<K>, LocalSubgraphError>
     where
         F: Fn(u64) -> Option<ColorCoordinate>,
     {
@@ -796,39 +844,12 @@ impl<const K: usize> LocalSubgraph<K> {
         }
         normalize_source_sets(&mut source_sets);
 
-        unitigs
-            .into_iter()
-            .zip(unitig_hash_runs)
-            .map(|(unitig, runs)| {
-                let colors = runs
-                    .into_iter()
-                    .map(|(offset, color_hash, coordinate)| {
-                        let (coordinate, sources) = match coordinate {
-                            Some(coordinate) => (Some(coordinate), Vec::new()),
-                            None => {
-                                let &index = representative_indices
-                                    .get(&color_hash)
-                                    .ok_or(LocalSubgraphError::MissingVertex)?;
-                                match resolve_color.as_deref_mut() {
-                                    Some(resolve) => (
-                                        Some(resolve(color_hash, &source_sets[index])?),
-                                        Vec::new(),
-                                    ),
-                                    None => (None, source_sets[index].clone()),
-                                }
-                            }
-                        };
-                        Ok(LocalUnitigColorRun {
-                            offset,
-                            color_hash,
-                            coordinate,
-                            sources,
-                        })
-                    })
-                    .collect::<Result<Vec<_>, LocalSubgraphError>>()?;
-                Ok(ColoredLocalUnitig { unitig, colors })
-            })
-            .collect()
+        Ok(PendingColoredContraction {
+            unitigs,
+            runs: unitig_hash_runs,
+            representative_indices,
+            source_sets,
+        })
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -838,7 +859,7 @@ impl<const K: usize> LocalSubgraph<K> {
         state: VertexState,
         color_is_known: &F,
         unitigs: &mut Vec<LocalUnitig<K>>,
-        unitig_hash_runs: &mut Vec<Vec<(u32, u64, Option<ColorCoordinate>)>>,
+        unitig_hash_runs: &mut Vec<Vec<PendingColorRun>>,
         representative_indices: &mut HashMap<u64, usize, FastBuildHasher>,
         representatives: &mut Vec<Kmer<K>>,
         back_walk: &mut UnitigWalk<K>,

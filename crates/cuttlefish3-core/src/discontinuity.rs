@@ -10,7 +10,7 @@ use crate::dna::{Base, complement_ascii};
 use crate::hash::{FastBuildHasher, hash_bytes, hash_u64, wyhash_u64};
 use crate::kmer::Kmer;
 use crate::state::{UnitigColor, VertexState};
-use crate::subgraph::{LocalSubgraph, LocalSubgraphError, LocalUnitigColorRun, LocalVertexMap};
+use crate::subgraph::{LocalSubgraph, LocalSubgraphError, LocalVertexMap};
 use leapfrog::LeapMap;
 use rayon::prelude::*;
 use rayon::{ThreadPool, ThreadPoolBuilder};
@@ -17075,7 +17075,6 @@ fn contract_local_subgraphs_into_external_inputs<const K: usize>(
             color_repository: color_repository.as_ref(),
             color_runs: concurrent_color_runs.as_ref(),
             local_unitig_writers: local_unitig_writers.as_deref(),
-            color_workers: threads.min(256),
             compact_unitigs,
             trivial_output: trivial_output.get_ref().try_clone().map_err(|source| {
                 DiscontinuityInputError::Io {
@@ -17279,9 +17278,9 @@ fn append_local_contraction_output_to_external_inputs<const K: usize>(
     edge_matrix: &mut BlockedEdgeMatrix<K>,
     build_elapsed: &mut Duration,
     contract_elapsed: &mut Duration,
-    color_repository: Option<&ConcurrentColorRepository>,
+    _color_repository: Option<&ConcurrentColorRepository>,
     mut color_run_writer: Option<&mut ColorRunSidecarWriter>,
-    threads: usize,
+    _threads: usize,
     compact_unitigs: bool,
 ) -> Result<(), DiscontinuityInputError> {
     trivial_output
@@ -17333,21 +17332,7 @@ fn append_local_contraction_output_to_external_inputs<const K: usize>(
                 .as_mut()
                 .and_then(Iterator::next)
                 .ok_or(DiscontinuityInputError::MissingColorRuns)?;
-            let worker = output.index % threads.min(256);
-            let repository = color_repository.ok_or(DiscontinuityInputError::MissingColorRuns)?;
-            let colors = runs
-                .into_iter()
-                .map(|run| {
-                    if let Some(coordinate) = run.coordinate {
-                        Ok(UnitigColor::new(run.offset, coordinate))
-                    } else {
-                        repository
-                            .resolve_or_insert(run.color_hash, &run.sources, worker)
-                            .map(|coordinate| UnitigColor::new(run.offset, coordinate))
-                    }
-                })
-                .collect::<Result<Vec<_>, ColorError>>()?;
-            writer.write_unitig(&colors)?;
+            writer.write_unitig(&runs)?;
         }
     }
     if output_colors
@@ -17409,7 +17394,7 @@ struct LocalContractionOutput<const K: usize> {
     unitigs: Vec<DiscontinuityUnitig<K>>,
     labels: Vec<u8>,
     matrix_edges: Vec<PreparedBlockedEdge>,
-    color_runs: Option<Vec<Vec<LocalUnitigColorRun>>>,
+    color_runs: Option<Vec<Vec<UnitigColor>>>,
     trivial_fasta: Vec<u8>,
     trivial_unitigs: u64,
     trivial_bases: u64,
@@ -17435,7 +17420,6 @@ struct ConcurrentLocalOutputSink<'a, const K: usize> {
     color_repository: Option<&'a ConcurrentColorRepository>,
     color_runs: Option<&'a ConcurrentColorRunSidecarWriter>,
     local_unitig_writers: Option<&'a [Mutex<LocalUnitigBucketWriter>]>,
-    color_workers: usize,
     compact_unitigs: bool,
     trivial_output: File,
     trivial_path: &'a Path,
@@ -17524,35 +17508,14 @@ impl<'a, const K: usize> ConcurrentLocalOutputSink<'a, K> {
 
         let color_started = Instant::now();
         let resolved_colors = if self.color_repository.is_some() {
-            let repository = self
-                .color_repository
-                .ok_or(DiscontinuityInputError::MissingColorRuns)?;
-            let raw_runs = output
+            let runs = output
                 .color_runs
                 .take()
                 .ok_or(DiscontinuityInputError::MissingColorRuns)?;
-            if raw_runs.len() != output_unitigs {
+            if runs.len() != output_unitigs {
                 return Err(DiscontinuityInputError::MissingColorRuns);
             }
-            let worker = output.index % self.color_workers;
-            Some(
-                raw_runs
-                    .into_iter()
-                    .map(|runs| {
-                        runs.into_iter()
-                            .map(|run| {
-                                if let Some(coordinate) = run.coordinate {
-                                    Ok(UnitigColor::new(run.offset, coordinate))
-                                } else {
-                                    repository
-                                        .resolve_or_insert(run.color_hash, &run.sources, worker)
-                                        .map(|coordinate| UnitigColor::new(run.offset, coordinate))
-                                }
-                            })
-                            .collect::<Result<Vec<_>, ColorError>>()
-                    })
-                    .collect::<Result<Vec<_>, ColorError>>()?,
-            )
+            Some(runs)
         } else {
             None
         };
@@ -17817,15 +17780,11 @@ fn contract_local_subgraph<const K: usize>(
     let mut color_runs = None;
     let local_unitigs = if subgraph.colored {
         let repository = color_repository.ok_or(DiscontinuityInputError::MissingColorRuns)?;
-        let colored = subgraph.contract_colored_resolved(
+        let (unitigs, runs) = subgraph.contract_colored_resolved(
             &group.entries,
             repository,
             group.index % repository.worker_count(),
         )?;
-        let (unitigs, runs) = colored
-            .into_iter()
-            .map(|unitig| (unitig.unitig, unitig.colors))
-            .unzip();
         color_runs = Some(runs);
         unitigs
     } else {

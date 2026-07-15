@@ -259,6 +259,21 @@ python3 scripts/compare_colored_fasta.py \
   --topology-only --external-work-dir /scratch3/tmp/cf3-compare -k 31
 ```
 
+Colored local contraction now resolves source sets directly into the final
+8-byte `UnitigColor` coordinate runs. The production path no longer builds a
+source-bearing `LocalUnitigColorRun` vector for every local unitig and then
+allocates a second vector to repack it in the output sink; that richer form is
+retained only by the test/helper API. On 5,000 HumGut2 genomes, local
+contraction fell from 33.04 to 31.07 seconds and peak RSS from 14,229,424 to
+14,067,268 KiB. On 10,000 genomes, local contraction fell from 63.57 to 55.41
+seconds, process wall time from 127.73 to 126.20 seconds, and peak RSS from
+16,102,060 to 15,674,340 KiB. The run preserved the exact 277,146,851-unitig /
+16,550,721,590-base result. The 1,000-genome external comparator matched all
+40,370,131 strand-normalized C++ unitigs, and all core color/source tests pass.
+Unchanged blocked contraction and expansion were slower in the accepted 10,000
+genome run, absorbing most of the 8.17-second local-stage gain; those phases
+are the next profiling target.
+
 The Rust command was:
 
 ```bash

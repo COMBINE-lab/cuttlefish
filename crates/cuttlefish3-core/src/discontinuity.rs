@@ -4723,52 +4723,94 @@ impl SerialDiscontinuityExpander {
             non_diagonal_elapsed += phase_started.elapsed();
 
             let phase_started = Instant::now();
-            let mut original_records = (0..bucket_count)
-                .map(|_| Vec::<StitchedCoordRecord>::new())
-                .collect::<Vec<_>>();
-            for edge in diagonal_block {
-                if edge.weight != 1 {
-                    continue;
-                }
-                let (MatrixEndpoint::Vertex(x), MatrixEndpoint::Vertex(y)) =
-                    (edge.first, edge.second)
-                else {
-                    continue;
-                };
-                if K <= 31 {
-                    let Some(x_info) = map.get_compact(x.vertex) else {
-                        unresolved_edges += 1;
-                        continue;
-                    };
-                    let y_info = Self::infer_compact(x_info, x.side, y.side, edge.weight);
-                    push_compact_edge_path_record_to_range_buffers(
-                        edge,
-                        compact_edge_path_info(edge, x_info, y_info),
-                        ranges,
-                        &range_index,
-                        ranges_per_bucket,
-                        &mut original_records,
-                        &mut phantom_records,
-                        error_path,
-                    )?;
-                } else {
-                    let Some(x_info) = map.get(x.vertex) else {
-                        unresolved_edges += 1;
-                        continue;
-                    };
-                    let y_info = Self::infer(x_info, x.side, y.side, edge.weight);
-                    push_edge_path_record_to_range_buffers(
-                        edge,
-                        edge_path_info(edge, x_info, y_info),
-                        ranges,
-                        &range_index,
-                        ranges_per_bucket,
-                        &mut original_records,
-                        &mut phantom_records,
-                        error_path,
-                    )?;
-                }
-                edge_path_infos += 1;
+            let diagonal_records_per_chunk =
+                (1024 * 1024 / std::mem::size_of::<DiscontinuityEdge<K>>()).max(1);
+            let diagonal_outputs = expansion_pool.install(|| {
+                diagonal_block
+                    .par_chunks(diagonal_records_per_chunk)
+                    .map(|edges| {
+                        let mut records = (0..bucket_count)
+                            .map(|_| None::<Vec<StitchedCoordRecord>>)
+                            .collect::<Vec<_>>();
+                        let mut used_buckets = Vec::new();
+                        let mut phantoms = Vec::new();
+                        let mut local_unresolved = 0u64;
+                        let mut local_emitted = 0u64;
+                        for edge in edges {
+                            if edge.weight != 1 {
+                                continue;
+                            }
+                            let (MatrixEndpoint::Vertex(x), MatrixEndpoint::Vertex(y)) =
+                                (edge.first, edge.second)
+                            else {
+                                continue;
+                            };
+                            let record = if K <= 31 {
+                                let Some(x_info) = map.get_compact(x.vertex) else {
+                                    local_unresolved += 1;
+                                    continue;
+                                };
+                                let y_info =
+                                    Self::infer_compact(x_info, x.side, y.side, edge.weight);
+                                stitched_record_from_compact_edge_path_info(
+                                    edge,
+                                    compact_edge_path_info(edge, x_info, y_info),
+                                    error_path,
+                                )?
+                            } else {
+                                let Some(x_info) = map.get(x.vertex) else {
+                                    local_unresolved += 1;
+                                    continue;
+                                };
+                                let y_info = Self::infer(x_info, x.side, y.side, edge.weight);
+                                stitched_record_from_edge_path_info(
+                                    edge,
+                                    edge_path_info(edge, x_info, y_info),
+                                    error_path,
+                                )?
+                            };
+                            if let Some(phantom) = edge.phantom_unitig {
+                                phantoms.push((record, phantom));
+                            } else {
+                                let bucket_id = edge_path_info_bucket(
+                                    edge,
+                                    ranges,
+                                    &range_index,
+                                    ranges_per_bucket,
+                                )
+                                .ok_or_else(|| {
+                                    SerialCollationError::MalformedCoordBucket(
+                                        error_path.to_path_buf(),
+                                    )
+                                })?;
+                                let bucket = &mut records[bucket_id];
+                                if bucket.is_none() {
+                                    *bucket = Some(Vec::new());
+                                    used_buckets.push(bucket_id);
+                                }
+                                bucket
+                                    .as_mut()
+                                    .expect("edge bucket was just initialized")
+                                    .push(record);
+                            }
+                            local_emitted += 1;
+                        }
+                        for bucket_id in used_buckets {
+                            edge_writers.write_path_records(
+                                bucket_id,
+                                records[bucket_id]
+                                    .as_deref()
+                                    .expect("used edge bucket is initialized"),
+                            )?;
+                        }
+                        Ok::<_, SerialCollationError>((phantoms, local_unresolved, local_emitted))
+                    })
+                    .collect::<Result<Vec<_>, SerialCollationError>>()
+            })?;
+            for (phantoms, local_unresolved, local_emitted) in diagonal_outputs {
+                phantom_records.extend(phantoms);
+                unresolved_edges += local_unresolved;
+                edge_path_infos += local_emitted;
             }
 
             let phi_block = &matrix.blocks[matrix.block_index(0, partition)];
@@ -4880,9 +4922,6 @@ impl SerialDiscontinuityExpander {
                     unresolved_edges += local_unresolved;
                     edge_path_infos += local_emitted;
                 }
-            }
-            for (bucket_id, records) in original_records.iter().enumerate() {
-                edge_writers.write_path_records(bucket_id, records)?;
             }
             original_edge_elapsed += phase_started.elapsed();
         }
@@ -8355,32 +8394,59 @@ fn read_vertex_path_info_bucket_into<const K: usize>(
         ));
     }
     if K <= 31 {
-        let phase = Instant::now();
-        let empty = CompactVertexPathInfoRecord {
-            vertex: 0,
-            path_id: 0,
-            rank_and_flags: 0,
-        };
-        let mut records = vec![empty; byte_len / record_len];
-        let bytes =
-            unsafe { std::slice::from_raw_parts_mut(records.as_mut_ptr().cast::<u8>(), byte_len) };
-        File::open(&path)
-            .and_then(|mut file| file.read_exact(bytes))
-            .map_err(|source| SerialCollationError::Io {
-                path: path.clone(),
-                source,
-            })?;
-        *read_elapsed += phase.elapsed();
         let records_per_chunk = (1024 * 1024 / record_len).max(1);
-        let phase = Instant::now();
-        pool.install(|| {
-            records.par_chunks(records_per_chunk).for_each(|block| {
-                for record in block {
-                    map.insert_compact_record(*record);
-                }
-            });
-        });
-        *insert_elapsed += phase.elapsed();
+        let record_count = byte_len / record_len;
+        let next_record = AtomicUsize::new(0);
+        let file = File::open(&path).map_err(|source| SerialCollationError::Io {
+            path: path.clone(),
+            source,
+        })?;
+        let worker_count = pool.current_num_threads().max(1).min(record_count.max(1));
+        let worker_times = pool.install(|| {
+            (0..worker_count)
+                .into_par_iter()
+                .map(|_| {
+                    let empty = CompactVertexPathInfoRecord {
+                        vertex: 0,
+                        path_id: 0,
+                        rank_and_flags: 0,
+                    };
+                    let mut records = vec![empty; records_per_chunk];
+                    let mut read_time = Duration::default();
+                    let mut insert_time = Duration::default();
+                    loop {
+                        let start = next_record.fetch_add(records_per_chunk, Ordering::Relaxed);
+                        if start >= record_count {
+                            break;
+                        }
+                        let count = records_per_chunk.min(record_count - start);
+                        let bytes = unsafe {
+                            std::slice::from_raw_parts_mut(
+                                records.as_mut_ptr().cast::<u8>(),
+                                count * record_len,
+                            )
+                        };
+                        let started = Instant::now();
+                        file.read_exact_at(bytes, (start * record_len) as u64)
+                            .map_err(|source| SerialCollationError::Io {
+                                path: path.clone(),
+                                source,
+                            })?;
+                        read_time += started.elapsed();
+                        let started = Instant::now();
+                        for &record in &records[..count] {
+                            map.insert_compact_record(record);
+                        }
+                        insert_time += started.elapsed();
+                    }
+                    Ok::<_, SerialCollationError>((read_time, insert_time))
+                })
+                .collect::<Result<Vec<_>, SerialCollationError>>()
+        })?;
+        let total_read = worker_times.iter().map(|times| times.0).sum::<Duration>();
+        let total_insert = worker_times.iter().map(|times| times.1).sum::<Duration>();
+        *read_elapsed += total_read / worker_count as u32;
+        *insert_elapsed += total_insert / worker_count as u32;
         return Ok(());
     }
     let phase = Instant::now();
@@ -14488,7 +14554,7 @@ fn reduce_sorted_materialized_stitched_coord_bucket_with<const K: usize, F>(
                     reverse_color_runs_in_place(&mut colors, (label.len() - K + 1) as u32);
                 }
                 if reverse {
-                    label = reverse_complement_label(&label);
+                    reverse_complement_label_in_place(&mut label);
                 }
             }
             emit(&label, &colors);
@@ -15179,6 +15245,23 @@ fn append_or_init_oriented_fast<const K: usize>(label: &mut Vec<u8>, next: &[u8]
     label.reserve(next.len().saturating_sub(start));
     for &base in next[..next.len() - start].iter().rev() {
         label.push(complement_ascii(base));
+    }
+}
+
+#[inline]
+fn reverse_complement_label_in_place(label: &mut [u8]) {
+    let mut left = 0;
+    let mut right = label.len();
+    while left < right {
+        right -= 1;
+        if left == right {
+            label[left] = complement_ascii(label[left]);
+            break;
+        }
+        let left_base = label[left];
+        label[left] = complement_ascii(label[right]);
+        label[right] = complement_ascii(left_base);
+        left += 1;
     }
 }
 
@@ -17842,6 +17925,15 @@ mod materialized_record_tests {
             decoded_stitched_coord_record(&encoded, Path::new("test.scb")).unwrap(),
             record
         );
+    }
+
+    #[test]
+    fn in_place_reverse_complement_matches_allocating_version() {
+        for label in [b"".as_slice(), b"A", b"AC", b"ACG", b"AACGTT"] {
+            let mut in_place = label.to_vec();
+            reverse_complement_label_in_place(&mut in_place);
+            assert_eq!(in_place, reverse_complement_label(label));
+        }
     }
 
     #[test]

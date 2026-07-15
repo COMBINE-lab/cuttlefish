@@ -217,6 +217,15 @@ also completed without a width overflow and emitted the exact 40,370,131
 unitigs and 2,726,597,540 bases in 17.42 seconds of graph time with 12,478,300
 KiB peak RSS.
 
+Diagonal contraction now preserves its endpoint hash-table allocation across
+all 128 partitions, matching the lifetime of C++'s
+`ankerl::unordered_dense` workspace. Reconstructing and reserving a new Rust
+table per partition was insignificant at 1,000 genomes but costly at scale.
+On 5,000 genomes, reuse reduced measured diagonal compression from about 3.9
+to 2.93 seconds and total discontinuity contraction to 8.65 seconds. The run
+retained the exact 119,303,739 meta-vertex and 713,577,963 expanded path-info
+counts and produced the exact final unitig/base totals.
+
 The 5,000-genome topology can be compared exactly with bounded memory:
 
 ```bash

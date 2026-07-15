@@ -1899,13 +1899,20 @@ impl SerialDiscontinuityContractor {
         matrix: &SerialEdgeMatrix<K>,
         partition: usize,
     ) -> DiagonalCompression<K> {
+        let mut ends = FastHashMap::with_hasher(FastBuildHasher::default());
+        Self::compress_diagonal_block_with_ends(matrix, partition, &mut ends)
+    }
+
+    fn compress_diagonal_block_with_ends<const K: usize>(
+        matrix: &SerialEdgeMatrix<K>,
+        partition: usize,
+        ends: &mut FastHashMap<Kmer<K>, DiagonalOtherEnd<K>>,
+    ) -> DiagonalCompression<K> {
         assert!(partition > 0 && partition < matrix.partition_count());
 
         let diagonal_edges = matrix.block(partition, partition);
-        let mut ends = FastHashMap::<Kmer<K>, DiagonalOtherEnd<K>>::with_capacity_and_hasher(
-            diagonal_edges.len().saturating_mul(2),
-            FastBuildHasher::default(),
-        );
+        ends.clear();
+        ends.reserve(diagonal_edges.len().saturating_mul(2));
         let mut expansion_edges = Vec::with_capacity(diagonal_edges.len());
         let mut meta_vertices = Vec::new();
         let mut isolated_cordless_cycles = 0u64;
@@ -2040,7 +2047,7 @@ impl SerialDiscontinuityContractor {
         }
 
         let mut compressed_edges = Vec::new();
-        for (&vertex, &end) in &ends {
+        for (&vertex, &end) in ends.iter() {
             if end.is_phi {
                 continue;
             }
@@ -2606,6 +2613,7 @@ impl SerialDiscontinuityContractor {
         partition: usize,
         threads: usize,
         table: &AtomicPartitionTable<K>,
+        diagonal_ends: &mut FastHashMap<Kmer<K>, DiagonalOtherEnd<K>>,
         pool: &ThreadPool,
         timings: &mut BlockedContractTimings,
     ) -> Result<(PartitionContraction<K>, u64), SerialCollationError> {
@@ -2745,7 +2753,11 @@ impl SerialDiscontinuityContractor {
                 },
                 || {
                     let diagonal_started = Instant::now();
-                    let diagonal = Self::compress_diagonal_block(diagonal_matrix, partition);
+                    let diagonal = Self::compress_diagonal_block_with_ends(
+                        diagonal_matrix,
+                        partition,
+                        diagonal_ends,
+                    );
                     (diagonal, diagonal_started.elapsed())
                 },
             )
@@ -3770,6 +3782,8 @@ impl SerialDiscontinuityContractor {
         let mut meta_vertices_per_partition = vec![0usize; partition_count];
         let mut reusable_table =
             FastHashMap::<Kmer<K>, PartitionOtherEnd<K>>::with_hasher(FastBuildHasher::default());
+        let mut diagonal_ends =
+            FastHashMap::<Kmer<K>, DiagonalOtherEnd<K>>::with_hasher(FastBuildHasher::default());
         let mut column = SerialEdgeMatrix::new(working.vertex_partitions)
             .map_err(|_| SerialCollationError::MalformedCoordBucket(working.dir.clone()))?;
         let max_partition_vertices = (1..partition_count)
@@ -3823,6 +3837,7 @@ impl SerialDiscontinuityContractor {
                     partition,
                     threads,
                     table,
+                    &mut diagonal_ends,
                     &contraction_pool,
                     &mut direct_timings,
                 )?

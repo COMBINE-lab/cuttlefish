@@ -15680,8 +15680,10 @@ impl CompactPathInfoTable {
     fn with_max_entries(max_entries: usize, k: usize) -> Self {
         debug_assert!(k <= 31);
         let capacity = max_entries
-            .saturating_mul(4)
-            .div_ceil(3)
+            // Match C++'s expansion map sizing. Expansion performs several
+            // lookups per edge, so its 50% maximum load is materially faster
+            // than the denser contraction-table sizing at scale.
+            .saturating_mul(2)
             .next_power_of_two()
             .max(8);
         let key_mask = (1u64 << (2 * k)) - 1;
@@ -15931,11 +15933,7 @@ impl<const K: usize> ConcurrentPathInfoTable<K> {
     const BUSY: u64 = 1;
 
     fn with_max_entries(max_entries: usize) -> Self {
-        let capacity = max_entries
-            .saturating_mul(4)
-            .div_ceil(3)
-            .next_power_of_two()
-            .max(8);
+        let capacity = max_entries.saturating_mul(2).next_power_of_two().max(8);
         Self {
             slots: (0..capacity)
                 .map(|_| PathInfoSlot {
@@ -18042,11 +18040,12 @@ mod materialized_record_tests {
     fn compact_path_info_table_survives_collisions_and_generation_wraps() {
         let table = CompactPathInfoTable::with_max_entries(6, 31);
         assert_eq!(std::mem::size_of::<CompactPathInfoSlot>(), 32);
+        assert_eq!(table.slots.len(), 16);
 
-        let mut first_by_bucket = [None; 8];
+        let mut first_by_bucket = vec![None; table.slots.len()];
         let (first, second) = (0u64..)
             .find_map(|key| {
-                let bucket = wyhash_u64(key, 0) as usize & 7;
+                let bucket = wyhash_u64(key, 0) as usize & table.mask;
                 if let Some(first) = first_by_bucket[bucket] {
                     Some((first, key))
                 } else {

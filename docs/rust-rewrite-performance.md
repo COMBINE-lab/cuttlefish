@@ -287,6 +287,20 @@ flat at 15,699,600 KiB and the exact 277,146,851-unitig /
 16,550,721,590-base result was preserved. Against the matched 114.63-second C++
 run, the remaining colored gap is 7.06 seconds (6.2%).
 
+The colored local scheduler no longer applies its historical 64-worker cap.
+That cap addressed allocator and sink contention in the older source-bearing
+color-run path, but direct packed color resolution and bucketed local output
+removed those bottlenecks. In a paired 10,000-genome run with 256 requested
+threads, Rust local contraction fell from 53.57 to 34.61 seconds and total
+process wall time fell from 121.69 to 99.59 seconds. Peak RSS increased from
+15,699,600 to 25,846,328 KiB, still 62% below the paired C++ peak of
+68,087,012 KiB. C++ completed in 109.51 seconds, so Rust was 9.1% faster on
+the paired run. Rust and C++ produced the same 1,100,356,370 local unitigs,
+182,024,288 meta-vertices, 1,005,346,617 expanded path-info records, and final
+277,146,851-unitig / 16,550,721,590-base result. The 1,000-genome external
+comparator also matched all 40,370,131 strand-normalized unitigs under the
+256-worker scheduler.
+
 The Rust command was:
 
 ```bash

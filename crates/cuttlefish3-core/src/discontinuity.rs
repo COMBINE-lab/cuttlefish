@@ -16936,12 +16936,7 @@ fn contract_local_subgraphs_into_external_inputs<const K: usize>(
         .transpose()?;
     let mut groups = local_bucket_groups(entries);
     groups.sort_by_key(|group| std::cmp::Reverse(group.records));
-    // The colored sink is memory-bandwidth and allocator limited well before
-    // all hardware threads are occupied. More workers increase contention and
-    // per-worker state without reducing wall time on the full HumGut input.
-    let workers = threads
-        .min(if color_path.is_some() { 64 } else { threads })
-        .min(groups.len().max(1));
+    let workers = threads.min(groups.len().max(1));
     let local_unitig_bucket_count: usize = if compact_unitigs && workers > 1 && groups.len() >= 1024
     {
         1024

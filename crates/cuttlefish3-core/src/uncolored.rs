@@ -422,8 +422,8 @@ fn write_fasta(path: &Path, unitigs: &[Vec<u8>]) -> Result<(), UncoloredBuildErr
     })?;
     let mut out = BufWriter::new(file);
 
-    for (idx, label) in unitigs.iter().enumerate() {
-        writeln!(out, ">utg{}", idx + 1).map_err(|source| UncoloredBuildError::Io {
+    for label in unitigs {
+        writeln!(out, ">0").map_err(|source| UncoloredBuildError::Io {
             path: path.to_path_buf(),
             source,
         })?;

@@ -6202,9 +6202,8 @@ impl FinalUnitigBucketWriters {
             .expect("direct output path exists")
             .clone();
         let out = self.direct_output.as_mut().expect("direct output exists");
-        let mut header = Vec::with_capacity(64 + colors.len() * 12);
-        header.extend_from_slice(b">utg");
-        append_decimal_u64(&mut header, self.direct_record_id_highwater);
+        let mut header = Vec::with_capacity(4 + colors.len() * 12);
+        header.extend_from_slice(b">0");
         for color in colors {
             header.push(b' ');
             append_decimal_u64(&mut header, color.raw());
@@ -6452,8 +6451,7 @@ fn reduce_final_unitig_buckets_to_fasta(
             let label = &bytes[label_start..label_start + label_len];
             emitted += 1;
             bases += label.len() as u64;
-            fasta_buffer.extend_from_slice(b">utg");
-            append_decimal_u64(&mut fasta_buffer, emitted);
+            fasta_buffer.extend_from_slice(b">0");
             for color in &bucket.colors[color_start..color_start + color_count] {
                 fasta_buffer.push(b' ');
                 append_decimal_u64(&mut fasta_buffer, color.raw());
@@ -9074,6 +9072,7 @@ fn map_local_unitig_buckets_to_max_unitig_buckets<const K: usize>(
             handles.push(scope.spawn(move || {
                 let mut writers =
                     SharedMaterializedBatch::new(shared_writers, max_unitig_bucket_mask + 1);
+                let mut path_info = Vec::new();
                 let mut direct_batch = None::<DirectFinalBatchBuilder>;
                 let mut emit_direct =
                     |label: &[u8], colors: &[UnitigColor]| -> Result<(), SerialCollationError> {
@@ -9094,15 +9093,16 @@ fn map_local_unitig_buckets_to_max_unitig_buckets<const K: usize>(
                     let Some(bucket) = local_buckets.get(bucket_index) else {
                         break;
                     };
-                    let path_info = read_stitched_coord_bucket_group_dense(
+                    read_stitched_coord_bucket_group_dense(
                         &groups[bucket_index],
                         bucket.unitigs,
                         &bucket.unitig_path,
+                        &mut path_info,
                     )?;
                     map_local_unitig_bucket::<K, _, _>(
                         inputs,
                         bucket,
-                        path_info,
+                        &path_info,
                         max_unitig_bucket_mask,
                         &mut writers,
                         &mut emit_direct,
@@ -9154,7 +9154,7 @@ fn map_local_unitig_buckets_to_max_unitig_buckets<const K: usize>(
 fn map_local_unitig_bucket<const K: usize, F, W>(
     inputs: &ExternalDiscontinuityInputs<K>,
     bucket: &LocalUnitigBucketEntry,
-    path_info_by_unitig: Vec<DenseLocalPathInfo>,
+    path_info_by_unitig: &[DenseLocalPathInfo],
     max_unitig_bucket_mask: usize,
     writers: &mut W,
     emit_direct: &mut F,
@@ -9183,7 +9183,7 @@ where
     let mut colors = Vec::new();
     let mut discard = vec![0u8; 64 * 1024];
 
-    for (unitig_index, dense_record) in path_info_by_unitig.into_iter().enumerate() {
+    for (unitig_index, &dense_record) in path_info_by_unitig.iter().enumerate() {
         let unitig = read_discontinuity_unitig_from_reader::<K>(
             &mut unitig_input,
             &bucket.unitig_path,
@@ -12643,7 +12643,9 @@ struct SharedMaterializedBatch<'a, 'b> {
 }
 
 impl<'a, 'b> SharedMaterializedBatch<'a, 'b> {
-    const FLUSH_BYTES: usize = 64 * 1024;
+    // Match C++ Unitig_Coord_Bucket_Concurrent: keep worker-local collation
+    // tails small so the 1024-way map does not retain gigabytes before reduce.
+    const FLUSH_BYTES: usize = 8 * 1024;
 
     fn new(shared: &'a SharedMaterializedWriters<'b>, bucket_count: usize) -> Self {
         Self {
@@ -13805,22 +13807,19 @@ struct DirectFinalBatchBuilder {
     bytes: Vec<u8>,
     records: u64,
     bases: u64,
-    first_record: u64,
 }
 
 impl DirectFinalBatchBuilder {
-    fn new(first_record: u64) -> Self {
+    fn new(_first_record: u64) -> Self {
         Self {
             bytes: Vec::with_capacity(512 * 1024),
             records: 0,
             bases: 0,
-            first_record,
         }
     }
 
     fn push(&mut self, label: &[u8], colors: &[UnitigColor]) {
-        self.bytes.extend_from_slice(b">utg");
-        append_decimal_u64(&mut self.bytes, self.first_record + self.records);
+        self.bytes.extend_from_slice(b">0");
         for color in colors {
             self.bytes.push(b' ');
             append_decimal_u64(&mut self.bytes, color.raw());
@@ -14053,14 +14052,13 @@ fn write_encoded_final_batch_at(
 
 fn encode_final_unitig_batch(
     unitigs: Vec<FinalUnitigRecord>,
-    first_record: u64,
+    _first_record: u64,
 ) -> EncodedFinalBatch {
     let records = unitigs.len() as u64;
     let bases = unitigs.iter().map(|unitig| unitig.label.len() as u64).sum();
     let mut bytes = Vec::with_capacity(bases as usize + unitigs.len() * 32);
-    for (offset, unitig) in unitigs.into_iter().enumerate() {
-        bytes.extend_from_slice(b">utg");
-        append_decimal_u64(&mut bytes, first_record + offset as u64);
+    for unitig in unitigs {
+        bytes.extend_from_slice(b">0");
         for color in unitig.colors {
             bytes.push(b' ');
             append_decimal_u64(&mut bytes, color.raw());
@@ -14235,21 +14233,31 @@ struct FinalUnitigRecord {
 fn read_materialized_stitched_coord_bucket_file(
     entry: &MaterializedStitchedCoordBucketEntry,
 ) -> Result<MaterializedStitchedCoordBucket, SerialCollationError> {
-    let file = File::open(&entry.coord_path).map_err(|source| SerialCollationError::Io {
+    let mut file = File::open(&entry.coord_path).map_err(|source| SerialCollationError::Io {
         path: entry.coord_path.clone(),
         source,
     })?;
-    let mut input = BufReader::with_capacity(1024 * 1024, file);
-    let mut magic = [0u8; 8];
-    read_exact_coord(&mut input, &entry.coord_path, &mut magic)?;
-    if &magic != MATERIALIZED_STITCH_COORD_MAGIC {
+    let actual_len = file
+        .metadata()
+        .map_err(|source| SerialCollationError::Io {
+            path: entry.coord_path.clone(),
+            source,
+        })?
+        .len();
+    let mut header = [0u8; STITCH_COORD_HEADER_LEN as usize];
+    file.read_exact(&mut header)
+        .map_err(|source| SerialCollationError::Io {
+            path: entry.coord_path.clone(),
+            source,
+        })?;
+    if &header[..8] != MATERIALIZED_STITCH_COORD_MAGIC {
         return Err(SerialCollationError::MalformedCoordBucket(
             entry.coord_path.clone(),
         ));
     }
-    let bucket_id = read_u64_coord(&mut input, &entry.coord_path)? as usize;
-    let records = read_u64_coord(&mut input, &entry.coord_path)?;
-    let label_bytes = read_u64_coord(&mut input, &entry.coord_path)?;
+    let bucket_id = u64::from_le_bytes(header[8..16].try_into().expect("bucket ID")) as usize;
+    let records = u64::from_le_bytes(header[16..24].try_into().expect("record count"));
+    let label_bytes = u64::from_le_bytes(header[24..32].try_into().expect("label bytes"));
     if bucket_id != entry.bucket_id || records != entry.records || label_bytes != entry.label_bytes
     {
         return Err(SerialCollationError::MalformedCoordBucket(
@@ -14265,40 +14273,32 @@ fn read_materialized_stitched_coord_bucket_file(
                 })?,
         )
         .ok_or_else(|| SerialCollationError::MalformedCoordBucket(entry.coord_path.clone()))?;
-    let actual_len = input
-        .get_ref()
-        .metadata()
-        .map_err(|source| SerialCollationError::Io {
-            path: entry.coord_path.clone(),
-            source,
-        })?
-        .len();
     if actual_len != expected_len {
         return Err(SerialCollationError::MalformedCoordBucket(
             entry.coord_path.clone(),
         ));
     }
-    let empty_record =
-        LoadedMaterializedStitchedCoordRecord::new(0, 0, 0, 0, false, false, u32::MAX, 0);
-    let mut out = vec![empty_record; records as usize];
+    let mut out = Vec::<LoadedMaterializedStitchedCoordRecord>::with_capacity(records as usize);
     // The private bucket format is the native little-endian in-memory layout.
     let coord_bytes = unsafe {
         std::slice::from_raw_parts_mut(
-            out.as_mut_ptr().cast::<u8>(),
-            out.len() * std::mem::size_of::<LoadedMaterializedStitchedCoordRecord>(),
+            out.spare_capacity_mut().as_mut_ptr().cast::<u8>(),
+            records as usize * std::mem::size_of::<LoadedMaterializedStitchedCoordRecord>(),
         )
     };
-    input
-        .read_exact(coord_bytes)
+    file.read_exact(coord_bytes)
         .map_err(|source| SerialCollationError::Io {
             path: entry.coord_path.clone(),
             source,
         })?;
+    // SAFETY: read_exact initialized every byte of each native POD record.
+    unsafe { out.set_len(records as usize) };
 
-    let label_file = File::open(&entry.label_path).map_err(|source| SerialCollationError::Io {
-        path: entry.label_path.clone(),
-        source,
-    })?;
+    let mut label_file =
+        File::open(&entry.label_path).map_err(|source| SerialCollationError::Io {
+            path: entry.label_path.clone(),
+            source,
+        })?;
     let actual_label_len = label_file
         .metadata()
         .map_err(|source| SerialCollationError::Io {
@@ -14311,19 +14311,26 @@ fn read_materialized_stitched_coord_bucket_file(
             entry.label_path.clone(),
         ));
     }
-    let mut label_input = BufReader::with_capacity(1024 * 1024, label_file);
-    let mut labels = vec![0u8; entry.label_bytes as usize];
-    label_input
-        .read_exact(&mut labels)
+    let mut labels = Vec::<u8>::with_capacity(entry.label_bytes as usize);
+    let uninitialized_labels = unsafe {
+        std::slice::from_raw_parts_mut(
+            labels.spare_capacity_mut().as_mut_ptr().cast::<u8>(),
+            entry.label_bytes as usize,
+        )
+    };
+    label_file
+        .read_exact(uninitialized_labels)
         .map_err(|source| SerialCollationError::Io {
             path: entry.label_path.clone(),
             source,
         })?;
+    // SAFETY: read_exact initialized the entire requested label buffer.
+    unsafe { labels.set_len(entry.label_bytes as usize) };
 
     let mut colors = Vec::with_capacity(entry.color_runs as usize);
     let mut color_spans = Vec::<(u32, u32)>::new();
     if let Some(color_path) = &entry.color_path {
-        let color_file = File::open(color_path).map_err(|source| SerialCollationError::Io {
+        let mut color_file = File::open(color_path).map_err(|source| SerialCollationError::Io {
             path: color_path.clone(),
             source,
         })?;
@@ -14346,14 +14353,21 @@ fn read_materialized_stitched_coord_bucket_file(
                 color_path.clone(),
             ));
         }
-        let mut color_input = BufReader::with_capacity(1024 * 1024, color_file);
-        let mut color_bytes = vec![0u8; expected_color_bytes as usize];
-        color_input
-            .read_exact(&mut color_bytes)
+        let mut color_bytes = Vec::<u8>::with_capacity(expected_color_bytes as usize);
+        let uninitialized_colors = unsafe {
+            std::slice::from_raw_parts_mut(
+                color_bytes.spare_capacity_mut().as_mut_ptr().cast::<u8>(),
+                expected_color_bytes as usize,
+            )
+        };
+        color_file
+            .read_exact(uninitialized_colors)
             .map_err(|source| SerialCollationError::Io {
                 path: color_path.clone(),
                 source,
             })?;
+        // SAFETY: read_exact initialized the entire encoded color buffer.
+        unsafe { color_bytes.set_len(expected_color_bytes as usize) };
         let mut cursor = 0usize;
         let mut observed_runs = 0u64;
         for _ in 0..color_records {
@@ -14843,8 +14857,10 @@ fn read_stitched_coord_bucket_group_dense(
     group: &[StitchedCoordBucketEntry],
     unitigs: usize,
     unitig_path: &Path,
-) -> Result<Vec<DenseLocalPathInfo>, SerialCollationError> {
-    let mut dense = vec![DenseLocalPathInfo::EMPTY; unitigs];
+    dense: &mut Vec<DenseLocalPathInfo>,
+) -> Result<(), SerialCollationError> {
+    dense.clear();
+    dense.resize(unitigs, DenseLocalPathInfo::EMPTY);
     for entry in group {
         let file = File::open(&entry.path).map_err(|source| SerialCollationError::Io {
             path: entry.path.clone(),
@@ -14909,7 +14925,7 @@ fn read_stitched_coord_bucket_group_dense(
             };
         }
     }
-    Ok(dense)
+    Ok(())
 }
 
 fn decoded_stitched_coord_record(
@@ -17797,7 +17813,7 @@ fn contract_local_subgraph<const K: usize>(
 
         if !subgraph.colored && left_exit.is_none() && right_exit.is_none() {
             let label = canonical_label(unitig.label);
-            trivial_fasta.extend_from_slice(b">utg\n");
+            trivial_fasta.extend_from_slice(b">0\n");
             trivial_fasta.extend_from_slice(&label);
             trivial_fasta.push(b'\n');
             trivial_unitigs += 1;

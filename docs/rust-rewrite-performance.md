@@ -301,6 +301,29 @@ the paired run. Rust and C++ produced the same 1,100,356,370 local unitigs,
 comparator also matched all 40,370,131 strand-normalized unitigs under the
 256-worker scheduler.
 
+Local contraction now emits each completed unitig directly into the local
+output representation instead of first retaining every `LocalUnitig` and then
+making a second pass to classify unitigs and prepare blocked edges. Colored
+contraction retains only the compact pending color runs needed for resolution.
+Subgraph groups are scheduled by compressed bytes, matching the C++
+longest-bucket-first policy more closely than the previous logical-record
+ordering. On the 5,000-genome uncolored workload, direct emission reduced local
+contraction from 14.64 to 12.54 seconds and preserved all 179,767,076 canonical
+unitigs. A repeated colored run completed in 68.25 seconds and 22,119,004 KiB
+RSS, versus C++ at 73.28 seconds and 29,495,880 KiB.
+
+The post-local graph has a measured parallelism crossover. With 1,188,492,662
+uncolored discontinuity exits, using 64 workers for the blocked
+contraction/expansion/collation path reduced the 5,000-genome process time from
+69.06 to 56.41 seconds and RSS from 22,302,284 to 18,897,360 KiB. C++ required
+61.70 seconds and 26,122,016 KiB. At the full-corpus 2,840,034,051-exit scale,
+64 workers regressed Rust from 169.11 to 182.77 seconds. The uncolored driver
+therefore uses at most 64 post-local workers below two billion exits and honors
+the requested count above that threshold. Both sides of the policy emit the
+same topology: the 5,000-genome 64-worker run matched all 179,767,076 unitigs,
+and the full 256-worker run matched all 567,570,784 unitigs against the colored
+path.
+
 The Rust command was:
 
 ```bash
@@ -338,8 +361,29 @@ paths separately. For every rung:
    validate source-derived colors on a tractable subset as well.
 7. Report process wall time and peak RSS, not selective phase timers.
 
-Historical full-corpus Rust runs on all 31,225 genomes produced 567,570,784
-unitigs and 31,235,773,275 bases. The best pre-parity implementation took
-8:40.59 and 22,354,288 KiB RSS. These runs establish scale correctness counts,
-but not current performance parity because they predate the final atlas design
-and no matched C++ timing log was retained.
+The authoritative full-corpus comparisons used all 31,225 genomes, `k=31`,
+minimizer length 12, reference mode, 256 requested threads, and paired runs on
+`/scratch3/tmp`. The direct-emission colored path completed in 3:18.25 with
+37,574,892 KiB peak RSS; C++ completed in 3:47.25 with 88,006,804 KiB peak
+RSS. Rust was 12.8% faster and used 57.3% less peak memory. The direct-emission
+uncolored path completed in 2:49.11 with 42,467,428 KiB peak RSS; C++ completed
+in 3:12.36 with 62,787,908 KiB peak RSS. Rust was 12.1% faster and used 32.4%
+less peak memory.
+
+Both Rust modes produced 1,987,425,531 local unitigs, 1,780,367,364 blocked
+edges, 360,512,617 meta-vertices, 1,780,691,705 expanded path-info records, and
+the final 567,570,784 unitigs / 31,235,773,275 bases. The native external-memory
+comparator streamed both full FASTA files and matched all 567,570,784
+strand-normalized unitigs with zero one-sided records. The 1,000-genome
+source-derived fixture supplies the corresponding color-content check.
+
+Repeated full C++ runs were not topology-deterministic at high thread counts;
+an experimental slot-lock change reduced but did not eliminate that mismatch
+and was not retained. Full-scale Rust colored/uncolored equality is therefore
+the deterministic topology gate, while tractable matched C++ runs remain the
+cross-implementation topology gate.
+
+The best pre-parity full-corpus Rust implementation took 8:40.59 and
+22,354,288 KiB RSS. The current direct packed-color path is 2.63 times faster;
+its higher peak memory is the deliberate consequence of honoring all 256
+requested local workers rather than applying the obsolete 64-worker cap.

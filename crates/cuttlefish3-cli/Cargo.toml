@@ -9,6 +9,10 @@ rust-version.workspace = true
 name = "cuttlefish3-rs"
 path = "src/main.rs"
 
+[[bin]]
+name = "cf3-compare-fasta"
+path = "src/compare_fasta.rs"
+
 [features]
 default = ["jemalloc"]
 jemalloc = ["dep:tikv-jemallocator"]

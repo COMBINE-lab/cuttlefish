@@ -52,7 +52,8 @@ def canonical_unitig(seq, k):
     if len(seq) > k and seq[: k - 1] == seq[-(k - 1) :]:
         body = seq[: len(seq) - k + 1]
         body = min(minimal_rotation(body), minimal_rotation(reverse_complement(body)))
-        return body + body[: k - 1]
+        overlap = (body * ((k - 2) // len(body) + 1))[: k - 1]
+        return body + overlap
     return canonical(seq)
 
 

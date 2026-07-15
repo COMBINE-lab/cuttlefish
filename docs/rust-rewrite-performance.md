@@ -226,6 +226,18 @@ to 2.93 seconds and total discontinuity contraction to 8.65 seconds. The run
 retained the exact 119,303,739 meta-vertex and 713,577,963 expanded path-info
 counts and produced the exact final unitig/base totals.
 
+Path-info reduction now retains one materialized coordinate, label, and color
+buffer per worker and grows each buffer only to that worker's largest group.
+This mirrors the reference reducer's max-bucket workspaces and removes repeated
+allocation and initialization for every group. On the 5,000-genome uncolored
+workload, reduction fell from 5.11 to 2.88 seconds and graph construction took
+61.93 seconds, compared with 61.70 seconds for C++. An external canonical
+comparison confirmed that all 179,767,076 unitigs match C++ topology. The
+1,000-genome colored workload completed in 16.44 seconds and emitted the exact
+40,370,131 unitigs and 2,726,597,540 bases. Multi-shard tests cover label and
+color-offset rebasing, and the generated two-source fixture passes
+source-derived color validation.
+
 The 5,000-genome topology can be compared exactly with bounded memory:
 
 ```bash

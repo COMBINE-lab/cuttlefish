@@ -7,7 +7,7 @@ use std::os::unix::fs::FileExt;
 use std::path::{Path, PathBuf};
 use std::sync::{
     Mutex,
-    atomic::{AtomicBool, AtomicU64, Ordering},
+    atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
 };
 
 const COLOR_BUFFER_BYTES: usize = 128 * 1024;
@@ -364,6 +364,9 @@ struct AtomicColorSlot {
 struct AtomicColorTable {
     slots: Vec<AtomicColorSlot>,
     mask: usize,
+    entries: AtomicUsize,
+    saturation_entries: usize,
+    active_insertions: AtomicUsize,
     saturated: AtomicBool,
 }
 
@@ -393,12 +396,25 @@ impl AtomicColorTable {
                 })
                 .collect(),
             mask: capacity - 1,
+            entries: AtomicUsize::new(0),
+            saturation_entries: capacity * 3 / 4,
+            active_insertions: AtomicUsize::new(0),
             saturated: AtomicBool::new(false),
         }
     }
 
     #[inline]
     fn entry(&self, key: u64) -> AtomicColorEntry<'_> {
+        // Stop populating the fixed primary table before probe chains become
+        // pathological. Existing keys are checked there before overflow.
+        if self.saturated.load(Ordering::Acquire) {
+            return AtomicColorEntry::Full;
+        }
+        self.active_insertions.fetch_add(1, Ordering::AcqRel);
+        if self.saturated.load(Ordering::Acquire) {
+            self.active_insertions.fetch_sub(1, Ordering::Release);
+            return AtomicColorEntry::Full;
+        }
         let hash = hash_u64(key, 0);
         let tag = hash.wrapping_add(2).max(2);
         let mut index = hash as usize & self.mask;
@@ -426,6 +442,7 @@ impl AtomicColorTable {
                 continue;
             }
             if state == tag && slot.key.load(Ordering::Relaxed) == key {
+                self.active_insertions.fetch_sub(1, Ordering::Release);
                 return AtomicColorEntry::Occupied(ColorCoordinate::from_u40(
                     slot.value.load(Ordering::Relaxed),
                 ));
@@ -433,6 +450,7 @@ impl AtomicColorTable {
             index = (index + 1) & self.mask;
         }
         self.saturated.store(true, Ordering::Release);
+        self.active_insertions.fetch_sub(1, Ordering::Release);
         AtomicColorEntry::Full
     }
 
@@ -461,20 +479,31 @@ impl AtomicColorTable {
         None
     }
 
-    fn publish(slot: &AtomicColorSlot, coordinate: ColorCoordinate) {
+    fn publish(&self, slot: &AtomicColorSlot, coordinate: ColorCoordinate) {
         let key = slot.key.load(Ordering::Relaxed);
         let tag = hash_u64(key, 0).wrapping_add(2).max(2);
         slot.value.store(coordinate.as_u40(), Ordering::Relaxed);
         slot.state.store(tag, Ordering::Release);
+        if self.entries.fetch_add(1, Ordering::AcqRel) + 1 >= self.saturation_entries {
+            self.saturated.store(true, Ordering::Release);
+        }
+        self.active_insertions.fetch_sub(1, Ordering::Release);
     }
 
-    fn abort(slot: &AtomicColorSlot) {
+    fn abort(&self, slot: &AtomicColorSlot) {
         slot.state.store(Self::EMPTY, Ordering::Release);
+        self.active_insertions.fetch_sub(1, Ordering::Release);
     }
 
     #[inline]
     fn is_saturated(&self) -> bool {
         self.saturated.load(Ordering::Acquire)
+    }
+
+    fn wait_until_quiescent(&self) {
+        while self.active_insertions.load(Ordering::Acquire) != 0 {
+            std::hint::spin_loop();
+        }
     }
 }
 
@@ -550,47 +579,56 @@ impl ConcurrentColorRepository {
                     .map_err(|_| ColorError::PoisonedWriter)?;
                 let index = writer.records;
                 if let Err(source) = write_source_set(&mut writer.output, sources) {
-                    AtomicColorTable::abort(slot);
+                    self.table.abort(slot);
                     return Err(ColorError::Io {
                         path: color_worker_path(&self.dir, worker),
                         source,
                     });
                 }
                 let Some(next_records) = writer.records.checked_add(1) else {
-                    AtomicColorTable::abort(slot);
+                    self.table.abort(slot);
                     return Err(ColorError::TooManyColors);
                 };
                 writer.records = next_records;
                 let coordinate = ColorCoordinate::discovered(worker as u64, index as u64);
-                AtomicColorTable::publish(slot, coordinate);
+                self.table.publish(slot, coordinate);
                 Ok(coordinate)
             }
-            AtomicColorEntry::Full => match self.overflow.entry_sync(color_hash) {
-                SccEntry::Occupied(entry) => Ok(*entry.get()),
-                SccEntry::Vacant(entry) => {
-                    let mut writer = self.workers[worker]
-                        .lock()
-                        .map_err(|_| ColorError::PoisonedWriter)?;
-                    let index = writer.records;
-                    write_source_set(&mut writer.output, sources).map_err(|source| {
-                        ColorError::Io {
-                            path: color_worker_path(&self.dir, worker),
-                            source,
-                        }
-                    })?;
-                    writer.records = writer
-                        .records
-                        .checked_add(1)
-                        .ok_or(ColorError::TooManyColors)?;
-                    let coordinate = ColorCoordinate::discovered(worker as u64, index as u64);
-                    entry.insert_entry(coordinate);
-                    Ok(coordinate)
+            AtomicColorEntry::Full => {
+                self.table.wait_until_quiescent();
+                if let Some(coordinate) = self.table.get(color_hash) {
+                    return Ok(coordinate);
                 }
-            },
+                match self.overflow.entry_sync(color_hash) {
+                    SccEntry::Occupied(entry) => Ok(*entry.get()),
+                    SccEntry::Vacant(entry) => {
+                        let mut writer = self.workers[worker]
+                            .lock()
+                            .map_err(|_| ColorError::PoisonedWriter)?;
+                        let index = writer.records;
+                        write_source_set(&mut writer.output, sources).map_err(|source| {
+                            ColorError::Io {
+                                path: color_worker_path(&self.dir, worker),
+                                source,
+                            }
+                        })?;
+                        writer.records = writer
+                            .records
+                            .checked_add(1)
+                            .ok_or(ColorError::TooManyColors)?;
+                        let coordinate = ColorCoordinate::discovered(worker as u64, index as u64);
+                        entry.insert_entry(coordinate);
+                        Ok(coordinate)
+                    }
+                }
+            }
         }
     }
 
     pub fn get(&self, color_hash: u64) -> Option<ColorCoordinate> {
+        if self.table.is_saturated() {
+            self.table.wait_until_quiescent();
+        }
         self.table.get(color_hash).or_else(|| {
             self.table.is_saturated().then(|| {
                 self.overflow
@@ -813,6 +851,32 @@ mod tests {
     use super::*;
 
     #[test]
+    fn saturated_atomic_table_bypasses_full_table_probes() {
+        let table = AtomicColorTable::with_expected_entries(8);
+        for key in 0..table.saturation_entries as u64 {
+            match table.entry(key) {
+                AtomicColorEntry::Vacant(slot) => {
+                    table.publish(slot, ColorCoordinate::discovered(0, key));
+                }
+                AtomicColorEntry::Occupied(_) | AtomicColorEntry::Full => {
+                    panic!("primary color table saturated before all slots were populated")
+                }
+            }
+        }
+        assert!(matches!(
+            table.entry(table.saturation_entries as u64),
+            AtomicColorEntry::Full
+        ));
+        assert!(table.is_saturated());
+
+        // A saturated table must no longer wait on or scan primary slots.
+        table.slots[0]
+            .state
+            .store(AtomicColorTable::BUSY, Ordering::Relaxed);
+        assert!(matches!(table.entry(u64::MAX), AtomicColorEntry::Full));
+    }
+
+    #[test]
     fn repository_deduplicates_hashes_and_round_trips_sparse_sets() {
         let dir = std::env::temp_dir().join(format!(
             "cf3-color-repo-{}-{:?}",
@@ -836,6 +900,38 @@ mod tests {
         let manifest_text = fs::read_to_string(dir.join("manifest.tsv")).unwrap();
         assert!(manifest_text.contains("000.colors"));
         assert!(!manifest_text.contains(&dir.display().to_string()));
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn repository_deduplicates_across_primary_overflow_handoff() {
+        let dir = std::env::temp_dir().join(format!(
+            "cf3-color-overflow-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let repository = ConcurrentColorRepository::create(&dir, 2, 8).unwrap();
+        let mut coordinates = Vec::new();
+        for key in 0..24u64 {
+            coordinates.push(
+                repository
+                    .resolve_or_insert(key, &[key as u32 + 1], key as usize % 2)
+                    .unwrap(),
+            );
+        }
+        assert!(repository.table.is_saturated());
+        for key in 0..24u64 {
+            assert_eq!(
+                repository
+                    .resolve_or_insert(key, &[key as u32 + 1], (key as usize + 1) % 2)
+                    .unwrap(),
+                coordinates[key as usize]
+            );
+        }
+        let manifest = repository.finish().unwrap();
+        for (key, coordinate) in coordinates.into_iter().enumerate() {
+            assert_eq!(manifest.read_color(coordinate).unwrap(), [key as u32 + 1]);
+        }
         fs::remove_dir_all(dir).unwrap();
     }
 

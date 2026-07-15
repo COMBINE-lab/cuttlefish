@@ -9,6 +9,12 @@ rust-version.workspace = true
 name = "cuttlefish3-rs"
 path = "src/main.rs"
 
+[features]
+default = ["jemalloc"]
+jemalloc = ["dep:tikv-jemallocator"]
+mimalloc = ["dep:mimalloc"]
+
 [dependencies]
 cuttlefish3-core = { path = "../cuttlefish3-core" }
-tikv-jemallocator = "0.5.4"
+mimalloc = { version = "0.1.48", optional = true }
+tikv-jemallocator = { version = "0.5.4", optional = true }

@@ -240,7 +240,10 @@ fn emit_uncolored_windowed_weak_superkmer_buckets<const K: usize>(
     graph_count: usize,
     paths: &[PathBuf],
 ) -> Result<PartitionEmissionStats, PartitionRunError> {
-    const SOURCE_WINDOW_MAX: usize = 2048;
+    // Uncolored atlas chunks drain at 64 KiB, so source windows are not a
+    // memory bound. Keep the full source set available to the dynamic
+    // scheduler, as in the reference uncolored partitioner.
+    const SOURCE_WINDOW_MAX: usize = usize::MAX;
 
     let sink = SharedBucketSink::create(params, graph_count)?;
     let mut stats = PartitionStats::new(graph_count);

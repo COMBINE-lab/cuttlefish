@@ -170,6 +170,26 @@ slower during that shared-system run, so it is not a valid total-time A/B
 against the earlier 78.70 s result. Keeping all 16,384 bucket descriptors open
 was tested and rejected: partitioning regressed to 6.53 s.
 
+The uncolored partitioner now uses the same bounded hierarchy as the C++
+atlas: each worker retains one interleaved 64 KiB chunk per atlas, including
+the destination graph ID, and drains records into 64 KiB subgraph buffers.
+This replaces the graph-separated source-window representation, which created
+over one million independently growing vectors at 64 workers. With the memory
+bound moved to worker-atlas chunks, uncolored inputs use one globally balanced
+source range rather than 2,048-source windows. On 5,000 genomes partitioning
+took 3.943 s versus 3.838 s for C++, and partition peak RSS was 3.50 GB. The
+complete Rust run took 69.16 s and 15,211,244 KiB peak RSS, produced the exact
+179,767,076-unitig / 11,337,993,544-base totals, and remained 12.1% slower than
+the 61.70 s C++ baseline while using 41.8% less peak memory. On the 1,000-genome
+control, it completed in 16.49 s and 10,355,644 KiB; all 40,370,131
+strand-normalized unitigs matched C++ exactly.
+
+The CLI uses jemalloc by default. A feature-controlled mimalloc A/B on the
+same 1,000-genome binary and input took 19.74 s and 13,380,700 KiB, versus
+16.49 s and 10,355,644 KiB with jemalloc. Mimalloc is retained only as an
+experimental build feature; it is 19.7% slower and uses 29.2% more memory on
+this workload.
+
 The 5,000-genome topology can be compared exactly with bounded memory:
 
 ```bash

@@ -9,8 +9,16 @@ use cuttlefish3_core::uncolored::{UncoloredBuildError, build_uncolored_from_buck
 use cuttlefish3_core::{DEFAULT_SUBGRAPH_COUNT, GraphInput, MAX_K, configure_global_parallelism};
 use std::time::Instant;
 
+#[cfg(all(feature = "jemalloc", feature = "mimalloc"))]
+compile_error!("allocator features `jemalloc` and `mimalloc` are mutually exclusive");
+
+#[cfg(feature = "jemalloc")]
 #[global_allocator]
 static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+
+#[cfg(feature = "mimalloc")]
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 fn main() {
     std::process::exit(match run(std::env::args().skip(1)) {

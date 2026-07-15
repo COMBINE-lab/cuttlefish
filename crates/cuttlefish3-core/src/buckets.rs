@@ -64,6 +64,7 @@ pub struct SharedBucketSink {
 pub struct SharedBucketEmitter {
     sink: Arc<SharedBucketSink>,
     pending: Vec<PendingBucket>,
+    uncolored_pending: Vec<PendingColoredAtlas>,
     colored_pending: Vec<PendingColoredAtlas>,
     pending_bytes: usize,
     deferred_uncolored: bool,
@@ -1012,10 +1013,17 @@ impl SharedBucketSink {
     fn make_emitter(self: &Arc<Self>, deferred_uncolored: bool) -> SharedBucketEmitter {
         SharedBucketEmitter {
             sink: Arc::clone(self),
-            pending: if self.colored {
+            pending: if self.colored || deferred_uncolored {
                 Vec::new()
             } else {
                 vec![PendingBucket::default(); self.graph_count]
+            },
+            uncolored_pending: if !self.colored && deferred_uncolored {
+                (0..self.atlases.len())
+                    .map(|_| PendingColoredAtlas::default())
+                    .collect()
+            } else {
+                Vec::new()
             },
             colored_pending: if self.colored {
                 (0..self.atlases.len())
@@ -1035,15 +1043,15 @@ impl SharedBucketSink {
     ) -> Result<(), BucketError> {
         let started = Instant::now();
         let mut by_atlas = (0..self.atlases.len())
-            .map(|_| Mutex::new(Vec::<(usize, PendingBucket)>::new()))
+            .map(|_| Mutex::new(Vec::<PendingColoredAtlas>::new()))
             .collect::<Vec<_>>();
-        for emitter in emitters {
-            for (graph_id, pending) in emitter.pending.into_iter().enumerate() {
+        for mut emitter in emitters {
+            for (atlas_id, pending) in emitter.uncolored_pending.drain(..).enumerate() {
                 if !pending.bytes.is_empty() {
-                    by_atlas[graph_id / ATLAS_GRAPH_COUNT]
+                    by_atlas[atlas_id]
                         .get_mut()
                         .map_err(|_| BucketError::WorkerPanic)?
-                        .push((graph_id % ATLAS_GRAPH_COUNT, pending));
+                        .push(pending);
                 }
             }
         }
@@ -1065,13 +1073,13 @@ impl SharedBucketSink {
                         if pending.is_empty() {
                             continue;
                         }
+                        let mut stats = SharedBucketFlushStats::default();
+                        for chunk in pending {
+                            self.append_uncolored_atlas_inner(atlas_id, chunk, &mut stats)?;
+                        }
                         let mut atlas = self.atlases[atlas_id]
                             .lock()
                             .map_err(|_| BucketError::WorkerPanic)?;
-                        for (local_graph_id, bucket) in pending {
-                            atlas.append_bucket(local_graph_id, bucket)?;
-                        }
-                        let mut stats = SharedBucketFlushStats::default();
                         atlas.flush_all(
                             &self.bucket_dir,
                             self.k,
@@ -1094,6 +1102,75 @@ impl SharedBucketSink {
             Ok::<_, BucketError>(calls)
         })?;
         self.record_flush_stats(SharedBucketFlushStats { calls }, started.elapsed());
+        Ok(())
+    }
+
+    fn append_uncolored_atlas(
+        &self,
+        atlas_id: usize,
+        pending: PendingColoredAtlas,
+    ) -> Result<(), BucketError> {
+        let started = Instant::now();
+        let mut stats = SharedBucketFlushStats::default();
+        self.append_uncolored_atlas_inner(atlas_id, pending, &mut stats)?;
+        self.record_flush_stats(stats, started.elapsed());
+        Ok(())
+    }
+
+    fn append_uncolored_atlas_inner(
+        &self,
+        atlas_id: usize,
+        pending: PendingColoredAtlas,
+        stats: &mut SharedBucketFlushStats,
+    ) -> Result<(), BucketError> {
+        if pending.bytes.is_empty() {
+            return Ok(());
+        }
+        let record_len = record_size(false, self.label_words);
+        if pending.graph_ids.len() * record_len != pending.bytes.len() {
+            return Err(BucketError::MalformedRecord);
+        }
+        let mut atlas = self.atlases[atlas_id]
+            .lock()
+            .map_err(|_| BucketError::WorkerPanic)?;
+        for (&graph_id, record) in pending
+            .graph_ids
+            .iter()
+            .zip(pending.bytes.chunks_exact(record_len))
+        {
+            let graph_id = usize::from(graph_id);
+            let Some(local_graph_id) = graph_id.checked_sub(atlas.first_graph_id) else {
+                return Err(BucketError::InvalidGraphId(graph_id));
+            };
+            let Some(file) = atlas.files.get_mut(local_graph_id) else {
+                return Err(BucketError::InvalidGraphId(graph_id));
+            };
+            file.total_records = file
+                .total_records
+                .checked_add(1)
+                .ok_or(BucketError::TooManyRecords)?;
+            file.buffer_records = file
+                .buffer_records
+                .checked_add(1)
+                .ok_or(BucketError::TooManyRecords)?;
+            file.buffer.extend_from_slice(record);
+        }
+        atlas.buffered_bytes += pending.bytes.len();
+        for local_graph_id in 0..atlas.files.len() {
+            if atlas.files[local_graph_id].buffer.len() >= SUBGRAPH_CHUNK_BYTES {
+                atlas.flush_subgraph(
+                    local_graph_id,
+                    &self.bucket_dir,
+                    self.k,
+                    self.minimizer_len,
+                    self.graph_count,
+                    false,
+                    self.label_words,
+                    self.compress_buckets,
+                    stats,
+                )?;
+            }
+        }
         Ok(())
     }
 
@@ -1794,28 +1871,52 @@ impl SharedBucketEmitter {
                 )?;
             }
         } else {
-            let pending = &mut self.pending[graph_id];
-            pending.records = pending
-                .records
-                .checked_add(1)
-                .ok_or(BucketError::TooManyRecords)?;
-            if !check_bases {
-                append_uncolored_record_valid(
-                    &mut pending.bytes,
-                    attr as u16,
-                    graph_id as u16,
-                    seq,
-                    self.sink.label_words,
-                )?;
+            if self.deferred_uncolored {
+                let atlas_id = graph_id / ATLAS_GRAPH_COUNT;
+                let pending = &mut self.uncolored_pending[atlas_id];
+                pending.graph_ids.push(graph_id as u16);
+                if !check_bases {
+                    append_uncolored_record_valid(
+                        &mut pending.bytes,
+                        attr as u16,
+                        graph_id as u16,
+                        seq,
+                        self.sink.label_words,
+                    )?;
+                } else {
+                    append_record(
+                        &mut pending.bytes,
+                        attr,
+                        graph_id,
+                        seq,
+                        self.sink.label_words,
+                        false,
+                    )?;
+                }
             } else {
-                append_record(
-                    &mut pending.bytes,
-                    attr,
-                    graph_id,
-                    seq,
-                    self.sink.label_words,
-                    false,
-                )?;
+                let pending = &mut self.pending[graph_id];
+                pending.records = pending
+                    .records
+                    .checked_add(1)
+                    .ok_or(BucketError::TooManyRecords)?;
+                if !check_bases {
+                    append_uncolored_record_valid(
+                        &mut pending.bytes,
+                        attr as u16,
+                        graph_id as u16,
+                        seq,
+                        self.sink.label_words,
+                    )?;
+                } else {
+                    append_record(
+                        &mut pending.bytes,
+                        attr,
+                        graph_id,
+                        seq,
+                        self.sink.label_words,
+                        false,
+                    )?;
+                }
             }
         }
         self.pending_bytes += record_len;
@@ -1825,7 +1926,12 @@ impl SharedBucketEmitter {
         // `flush_colored_emitters`; spilling one here would both duplicate the
         // window in shared buffers and lose global source order. The source
         // window in `partition` is the external-memory bound for this path.
-        if !self.sink.colored
+        if self.deferred_uncolored {
+            let atlas_id = graph_id / ATLAS_GRAPH_COUNT;
+            if self.uncolored_pending[atlas_id].bytes.len() >= SUBGRAPH_CHUNK_BYTES {
+                self.flush_pending_uncolored_atlas(atlas_id)?;
+            }
+        } else if !self.sink.colored
             && !self.deferred_uncolored
             && self.pending[graph_id].bytes.len() >= MAX_PENDING_BUCKET_BYTES
         {
@@ -1880,11 +1986,26 @@ impl SharedBucketEmitter {
         self.sink.append_colored_atlas(atlas_id, pending)
     }
 
+    fn flush_pending_uncolored_atlas(&mut self, atlas_id: usize) -> Result<(), BucketError> {
+        if self.uncolored_pending[atlas_id].bytes.is_empty() {
+            return Ok(());
+        }
+        let pending = std::mem::take(&mut self.uncolored_pending[atlas_id]);
+        self.pending_bytes -= pending.bytes.len();
+        self.sink.append_uncolored_atlas(atlas_id, pending)
+    }
+
     pub fn finish(mut self) -> Result<(), BucketError> {
         if self.sink.colored {
             for atlas_id in 0..self.colored_pending.len() {
                 if !self.colored_pending[atlas_id].bytes.is_empty() {
                     self.flush_pending_colored_atlas(atlas_id)?;
+                }
+            }
+        } else if self.deferred_uncolored {
+            for atlas_id in 0..self.uncolored_pending.len() {
+                if !self.uncolored_pending[atlas_id].bytes.is_empty() {
+                    self.flush_pending_uncolored_atlas(atlas_id)?;
                 }
             }
         } else {
@@ -2460,6 +2581,62 @@ impl std::error::Error for BucketError {}
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn deferred_uncolored_atlas_chunks_preserve_graph_buckets() {
+        let dir = std::env::temp_dir().join(format!(
+            "cf3-uncolored-atlas-bucket-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        let mut params = BuildParams::new(crate::GraphInput::References, "test".to_string());
+        params.k = 31;
+        params.minimizer_len = 15;
+        params.vertex_partitions = 1;
+        params.threads = 2;
+        params.work_dir = dir.to_string_lossy().into_owned();
+        let sink = SharedBucketSink::create(&params, ATLAS_GRAPH_COUNT + 1).unwrap();
+        let expected = [(0, b'A'), (7, b'C'), (ATLAS_GRAPH_COUNT, b'G')];
+        let mut emitters = Vec::new();
+        for repeat in 0..2 {
+            let mut emitter = sink.deferred_uncolored_emitter();
+            for &(graph_id, base) in &expected {
+                for _ in 0..(repeat + 1) {
+                    emitter
+                        .add_valid(
+                            &WeakSuperKmer {
+                                graph_id,
+                                offset: 0,
+                                len: 31,
+                                source_id: None,
+                                left_discontinuous: false,
+                                right_discontinuous: false,
+                            },
+                            &[base; 31],
+                        )
+                        .unwrap();
+                }
+            }
+            emitters.push(emitter);
+        }
+        sink.flush_uncolored_emitters(emitters).unwrap();
+        let stats = sink.finish().unwrap();
+
+        for &(graph_id, base) in &expected {
+            let path = stats.bucket_dir.join(format!("{graph_id:05}.wsk"));
+            let mut reader = BucketReader::open(&path).unwrap();
+            let mut record = BucketRecord::default();
+            let mut count = 0;
+            while reader.next_record_into(&mut record).unwrap() {
+                assert_eq!(record.graph_id, graph_id);
+                assert_eq!(record.label, vec![base; 31]);
+                count += 1;
+            }
+            assert_eq!(count, 3);
+        }
+        fs::remove_dir_all(dir).unwrap();
+    }
 
     #[test]
     fn colored_atlas_windows_preserve_global_source_order() {

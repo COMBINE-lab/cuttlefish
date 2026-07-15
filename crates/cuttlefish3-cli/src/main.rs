@@ -6,7 +6,10 @@ use cuttlefish3_core::partition::{
     PartitionEmissionStats, PartitionRunError, emit_weak_superkmer_buckets,
 };
 use cuttlefish3_core::uncolored::{UncoloredBuildError, build_uncolored_from_buckets};
-use cuttlefish3_core::{DEFAULT_SUBGRAPH_COUNT, GraphInput, MAX_K, configure_global_parallelism};
+use cuttlefish3_core::{
+    DEFAULT_SUBGRAPH_COUNT, GraphInput, MAX_K, configure_global_parallelism, default_threads,
+    default_work_dir,
+};
 use std::time::Instant;
 
 #[cfg(all(feature = "jemalloc", feature = "mimalloc"))]
@@ -220,6 +223,9 @@ where
             "--min-len" => raw.minimizer_len = Some(parse_value("--min-len", &mut args)?),
             "-c" | "--cutoff" => raw.cutoff = Some(parse_value("--cutoff", &mut args)?),
             "-t" | "--threads" => raw.threads = Some(parse_value("--threads", &mut args)?),
+            "-m" | "--max-memory" => {
+                raw.max_memory_gb = Some(parse_value("--max-memory", &mut args)?)
+            }
             "-o" | "--output" => raw.output = Some(take_value("--output", &mut args)?),
             "-w" | "--work-dir" => raw.work_dir = Some(take_value("--work-dir", &mut args)?),
             "--read" => raw.read = true,
@@ -238,6 +244,9 @@ where
             }
             _ if arg.starts_with("--threads=") => {
                 raw.threads = Some(parse_inline(&arg, "--threads=")?)
+            }
+            _ if arg.starts_with("--max-memory=") => {
+                raw.max_memory_gb = Some(parse_inline(&arg, "--max-memory=")?)
             }
             _ if arg.starts_with("--output=") => raw.output = Some(arg[9..].to_string()),
             _ if arg.starts_with("--work-dir=") => raw.work_dir = Some(arg[11..].to_string()),
@@ -271,6 +280,7 @@ where
     params.cutoff = raw.cutoff;
     params.color = raw.color;
     params.compress_buckets = raw.compress_buckets;
+    params.max_memory_gb = raw.max_memory_gb;
     if let Some(threads) = raw.threads {
         params.threads = threads;
     }
@@ -290,6 +300,7 @@ struct RawBuild {
     minimizer_len: Option<u16>,
     cutoff: Option<u32>,
     threads: Option<usize>,
+    max_memory_gb: Option<usize>,
     output: Option<String>,
     work_dir: Option<String>,
     read: bool,
@@ -341,6 +352,8 @@ fn print_top_help() {
 }
 
 fn print_build_help() {
+    let work_dir = default_work_dir();
+    let threads = default_threads();
     println!(
         "Efficiently construct the (colored) compacted de Bruijn graph from reference sequences or sequencing reads."
     );
@@ -354,8 +367,9 @@ fn print_build_help() {
     println!("  -k, --kmer-len <arg>  k-mer length (default: 31; odd <= {MAX_K})");
     println!("      --min-len <arg>   minimizer length (default: 12)");
     println!("  -o, --output <arg>    output file prefix");
-    println!("  -w, --work-dir <arg>  working directory (default: /scratch3/tmp)");
-    println!("  -t, --threads <arg>   worker threads for parallel phases (default: 1)");
+    println!("  -w, --work-dir <arg>  working directory (default: {work_dir})");
+    println!("  -t, --threads <arg>   worker threads for parallel phases (default: {threads})");
+    println!("  -m, --max-memory <arg> soft maximum memory budget in GiB");
     println!("      --read            construct a compacted read de Bruijn graph");
     println!("      --ref             construct a compacted reference de Bruijn graph");
     println!("  -c, --cutoff <arg>    frequency cutoff for (k + 1)-mers");

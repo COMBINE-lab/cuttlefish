@@ -12,13 +12,13 @@ of constructing a global in-memory de Bruijn graph.
 
 1. Input records are parsed without copying sequence fragments. Rolling packed
    k-mers and the C++ wyhash minimizer specialization produce weak super-kmers.
-2. Colored partitioning processes a bounded window of 4096 sources. Files are
-   scheduled largest-first across at most 64 scan workers. Each worker retains
-   atlas-local records until the source barrier.
-3. A 128-subgraph atlas is source-partitioned in place. Sixteen long-lived
-   consumers merge the sorted worker streams and reuse compression buffers.
-   This avoids a second full counting-sort allocation and avoids leaving one
-   compression allocation in every worker arena.
+2. Partitioning size-sorts the complete source set and schedules it dynamically
+   across the requested workers, matching the C++ partitioner. Each colored
+   worker drains its atlas tails after a source; uncolored workers defer atlas
+   tails until the source set is exhausted.
+3. A 128-subgraph atlas is source-partitioned in place. The active worker pool
+   drains worker-atlas chunks directly in worker order, matching the reference
+   handoff and avoiding a second full counting-sort allocation.
 4. Compressed buckets are decoded through borrowed packed records. Local
    subgraphs use a dense state arena indexed by a fast, non-adversarial hash
    table, then emit compact local-unitig, label, color-run, and blocked-edge
@@ -36,18 +36,94 @@ The binary layouts are Rust-specific where a smaller or cheaper representation
 is available; phase boundaries and dependency ordering remain equivalent to
 C++.
 
+## Adaptive resource policy
+
+The Rust CLI derives its work directory from `std::env::temp_dir()` and, like
+C++, defaults to one quarter of the available hardware threads (with an
+eight-thread fallback when the host count is unavailable). `--threads` is an
+upper bound used by every production phase; there are no dataset-size
+crossovers or fixed 64-worker caps.
+
+`-m, --max-memory <GiB>` is a Rust-only soft memory budget; the current C++
+Cuttlefish 3 CLI has no corresponding option. It reduces partition,
+local-contraction, and post-local concurrency according to their replicated
+state estimates. Memory-induced worker reductions are rounded down to leave
+headroom for workload-sized shared tables.
+Largest-bucket graph tables, output buffers, and the colored repository impose
+a workload-dependent minimum, so this option is not an RSS hard limit.
+An explicit budget that admits every requested worker preserves the exact
+request, including non-power-of-two counts. Only a phase whose estimate exceeds
+the budget is rounded down. A regression test covers 96 requested workers at
+both 24 GiB (96/96/96 workers) and 12 GiB (96/32/96 workers).
+
+On the 1000-genome HumGut2 control, every point below produced 40,370,131
+unitigs and 2,726,597,540 bases. Wall time and peak RSS were measured on the
+same host and local filesystem:
+
+| mode | threads | C++ wall | Rust wall | Rust/C++ | C++ RSS KiB | Rust RSS KiB |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| uncolored | 32 | 19.81 s | 20.67 s | 1.043 | 9,260,764 | 9,258,312 |
+| uncolored | 64 | 17.70 s | 18.62 s | 1.052 | 12,754,100 | 9,689,004 |
+| uncolored | 128 | 21.50 s | 22.05 s | 1.026 | 17,995,892 | 10,495,064 |
+| uncolored | 256 | 31.33 s | 22.35 s | 0.713 | 25,856,860 | 15,981,980 |
+| colored | 32 | 23.03 s | 23.34 s | 1.013 | 9,964,708 | 10,100,644 |
+| colored | 64 | 21.81 s | 19.93 s | 0.914 | 17,229,760 | 12,262,212 |
+| colored | 128 | 24.31 s | 22.38 s | 0.921 | 31,056,452 | 20,184,668 |
+| colored | 256 | 35.85 s | 25.50 s | 0.711 | 37,863,660 | 23,918,524 |
+
+Uncolored is within 5.2% or faster throughout this matrix. Colored is within
+1.3% at 32 threads and faster at 64, 128, and 256 threads. The colored result
+uses C++-style direct worker-tail handoff: final worker-atlas tails retain
+worker order instead of undergoing an extra Rust-only source counting sort.
+
+The current soft-memory checks used 256 requested threads and the 1000-genome
+HumGut2 control. Correct output was preserved at every point tested:
+
+| mode | budget | partition/local/post workers | wall | peak RSS KiB |
+| --- | ---: | ---: | ---: | ---: |
+| uncolored | 8 GiB | 128/16/64 | 21.11 s | 7,958,716 |
+| colored | 8 GiB | 128/16/64 | 25.63 s | 8,651,520 |
+| colored | 16 GiB | 256/64/128 | 19.72 s | 14,657,080 |
+
+Additional non-power-of-two controls used 96 requested threads. They catch a
+previous policy bug which rounded 96 to 64 merely because `--max-memory` was
+present, even when the estimate admitted all requested workers:
+
+| mode | budget | partition/local/post workers | implementation | wall | peak RSS KiB |
+| --- | ---: | ---: | --- | ---: | ---: |
+| colored | none | 96/96/96 | C++ | 21.19 s | 23,838,576 |
+| colored | 24 GiB | 96/96/96 | Rust | 18.63 s | 8,592,332 |
+| colored | 12 GiB | 96/32/96 | Rust | 20.29 s | 7,540,308 |
+| uncolored | none | 96/96/96 | C++ | 18.04 s | 16,139,028 |
+| uncolored | 12 GiB | 96/32/96 | Rust | 17.43 s | 7,350,200 |
+
+All four Rust controls emitted 40,370,131 unitigs and 2,726,597,540 bases.
+The 12 GiB controls remain faster than C++ despite deliberately reducing only
+local contraction to 32 workers. The external strand-normalizing comparator
+also matched all 40,370,131 unitigs from the colored 12 GiB run to C++.
+
+The colored 8 GiB run exceeds the requested value by 5.6%; its shared color
+table and largest graph tables are not reducible by lowering worker count.
+Uncolored remains below the requested limit. These checks validate budget
+adaptation, not C++ memory-limit parity because Cuttlefish 3 exposes no such
+limit.
+
 ## Engineering decisions
 
 - Use phase-local bounded worker pools. The compact `k <= 31` path does not keep
   an idle global Rayon pool competing with explicit phase workers.
 - Use fast deterministic hash functions for packed integer keys. Rust's default
   collision-resistant hasher is intentionally not used in graph hot paths.
+- Grow worker-local graph maps from observed insertions and reuse them across
+  subgraphs, matching the reference. There is no HumGut-derived vertices-per-
+  weak-super-kmer preallocation factor.
 - Keep labels, colors, edges, and path information external. Memory is bounded
   by the largest active bucket/table/window rather than total graph size.
-- Preserve source order at the atlas barrier. Spilling worker fragments before
-  the barrier both duplicates memory and breaks colored source collation.
-- Reuse buffers on long-lived workers. Limiting atlas consumers to 16 lowers
-  allocator-arena high-water usage without reducing scan parallelism.
+- Preserve the C++ atlas order. Overflowed worker fragments and final worker
+  tails are appended directly; the production path performs no extra global
+  source counting sort.
+- Use the active worker pool for atlas draining and bucket finalization, as the
+  reference does; no Rust-only 16- or 4-worker cap remains.
 - Compare unitigs after canonicalizing strand. A maximal unitig may legally be
   emitted in forward or reverse-complement orientation.
 
@@ -76,26 +152,65 @@ path-info counts also matched exactly.
 | path | implementation | wall time | peak RSS |
 | --- | --- | ---: | ---: |
 | colored | C++ | 73.28 s | 29,495,880 KiB |
-| colored | Rust, 2048-source windows | 78.70 s | 25,006,660 KiB |
+| colored | Rust, direct worker tails | 75.89 s | 14,228,856 KiB |
 | uncolored | C++ | 61.70 s | 26,122,016 KiB |
-| uncolored | Rust, deferred atlas emission | 84.84 s | 32,879,540 KiB |
+| uncolored | Rust, deferred atlas emission | 64.17 s | 14,231,404 KiB |
 
-Colored Rust is 7.4% slower and uses 15.2% less memory at this rung. This is
-near parity, not strict time parity. Uncolored scale parity is not achieved:
-the deferred worker-local atlas path reduced partitioning from 10.64 s to
-6.59 s and bucket flushes to 49,152, but the measured process remained 37.5%
-slower and used 25.9% more memory. Its largest deficits are the local graph
-construction, blocked contraction/expansion, and final path-info map/reduce
-phases. Enabling
-the optional uncolored LZ4 bucket format reduced bucket bytes but did not fix
-the deficit (82.59 s, 36,949,396 KiB), because it emits many small compressed
-blocks. Do not cite the 1,000-genome result as evidence of uncolored scale
-parity.
+Colored Rust is 3.6% slower and uses 51.8% less memory at this rung. Uncolored
+Rust is 4.0% slower and uses 45.5% less memory. Both satisfy the current 5%
+scale-parity gate while preserving exact unitig and base counts.
 
 At 1,000 genomes the same deferred atlas path completed in 18.81 s and used
 13,893,160 KiB, versus 16.32 s and 23,481,744 KiB for C++. Partitioning took
 1.62 s and performed exactly 16,384 flushes. This confirms the partition
 optimization independently of the noisier downstream 5,000-genome phases.
+
+### Current high-thread acceptance
+
+The latest 5,000-genome runs used the same local filesystem and a process file
+limit of 1,024 for Rust. C++ required a limit of 65,536. Rust preserves C++'s
+1,024 maximal-unitig coordinate buckets when descriptors permit it and reduces
+the fanout from the live descriptor count otherwise. Local contraction applies
+the same accounting to its unitig buckets, weak-super-kmer readers, color
+writers, and transient blocked-edge appends.
+
+| mode | threads | C++ wall | Rust wall | Rust/C++ | C++ RSS KiB | Rust RSS KiB |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| uncolored | 128 | 63.10 s | 60.94 s | 0.966 | 30,692,100 | 25,799,636 |
+| uncolored | 256 | 67.66 s | 62.21 s | 0.919 | 41,323,272 | 45,648,484 |
+| colored | 128 | 73.14 s | 73.21 s | 1.001 | 42,448,572 | 47,550,812 |
+| colored | 256 | 79.56 s | 71.20 s | 0.895 | 59,645,080 | 51,103,548 |
+
+Rust is within 0.1% or faster at every high-thread point. The 256-thread
+colored Rust run emitted the exact 179,767,076 unitigs and 11,337,993,544
+bases. The 1,000-genome external comparator also matched all 40,370,131
+strand-normalized unitigs after descriptor adaptation.
+
+The 128-thread colored point was repeated immediately after its paired C++
+run because an earlier Rust sample was 7.6% slower while the host load was
+falling. The repeat was 73.21 seconds against C++'s 73.14 seconds. The
+256-thread Rust run was 10.5% faster than C++ under the same scale workload.
+
+On the 1,000-genome colored control at 256 threads, a matched descriptor A/B
+showed that adaptation is not a hidden performance tax. With `RLIMIT_NOFILE`
+1024, Rust selected 128 final coordinate buckets and completed in 20.50 seconds
+at 14,332,044 KiB RSS. With a 65,536 limit, it retained C++'s 1,024 buckets and
+completed in 21.95 seconds at 23,046,624 KiB RSS. Both emitted exact output;
+the default-limit path was 6.6% faster and used 37.8% less peak memory. C++
+still requires the raised descriptor limit on this workload.
+
+The final no-preallocation uncolored binary also produced a 74.05-second
+outlier while host load averaged 73; its unchanged post-local expansion alone
+rose by about ten seconds. An immediate repeat completed in 62.21 seconds, in
+line with the preceding 61.98-second run, while local contraction improved to
+12.12 seconds. The outlier is not used as the acceptance sample.
+
+C++ output at 128 and 256 threads is nondeterministic on this build. For
+example, the 256-thread colored run emitted 179,764,872 records, and repeated
+128-thread uncolored runs emitted different counts below the expected
+179,767,076. These C++ timings remain useful performance baselines, but their
+outputs cannot serve as high-thread correctness references. Rust's uncolored
+5,000-genome output was checked against the known-good 64-thread C++ topology.
 
 Subsequent profiling found that reverse-front local-unitig assembly compiled
 the checked ASCII base conversion into range checks and indirect jump tables.
@@ -152,13 +267,14 @@ seconds for epoch expansion and 73.32 seconds for the graph build, versus 37.84
 and 77.44 seconds with the tagged-key table. Peak RSS was 37.79 GB versus 38.13
 GB, and both runs emitted 179,767,076 unitigs and 11,337,993,544 bases.
 
-Profiling the 5,000-genome colored partition identified a different barrier.
+Earlier profiling of the 5,000-genome colored partition identified a different
+barrier.
 Rust spends about 3.6-4.2 s scanning and packing, followed by 5.8-7.3 s of
 window-level atlas collation and compression. C++ drains 64 KiB worker-local
 atlas chunks during scanning. Whole-window pipelining was rejected because it
-left partition time near 10 s and raised peak RSS to 36.2 GB. Removing source
-collation was also rejected: sorting extracted source relationships moved work
-into local contraction and increased total time.
+left partition time near 10 s and raised peak RSS to 36.2 GB. An initial attempt
+to remove source collation was rejected because it retained other Rust-only
+layout differences and moved work into local contraction.
 
 The subsequent implementation drains 64 KiB worker-atlas chunks after source
 boundaries and writes subgraph buffers once they reach 64 KiB. Exact source
@@ -274,18 +390,13 @@ Unchanged blocked contraction and expansion were slower in the accepted 10,000
 genome run, absorbing most of the 8.17-second local-stage gain; those phases
 are the next profiling target.
 
-Colored atlas windows were subsequently increased from 2,048 to 4,096 sources.
-Worker-atlas tails already drain at 64 KiB after each source, so the larger
-window does not change that memory bound; it removes two of five all-atlas tail
-barriers on the 10,000-genome input. An unbounded-window experiment improved
-5,000-genome partitioning but was rejected at 10,000 genomes because broader
-source mixing enlarged compressed buckets by 2.6% and slowed local contraction.
-The 4,096-source compromise kept bucket growth to 0.27%, reduced partitioning
-from 10.35 to 9.84 seconds, local contraction from 55.41 to 53.57 seconds, and
-process wall time from 126.20 to 121.69 seconds. Peak RSS remained effectively
-flat at 15,699,600 KiB and the exact 277,146,851-unitig /
-16,550,721,590-base result was preserved. Against the matched 114.63-second C++
-run, the remaining colored gap is 7.06 seconds (6.2%).
+The accepted colored partitioner removes source windows entirely. Inspection
+of the active C++ small-source path showed that it does not run a final source
+counting sort: overflowed worker-atlas chunks and final worker tails are
+appended in worker order. Migrating that behavior directly reduced the
+1,000-genome 64-thread run from 29.06 to 19.93 seconds and the 5,000-genome run
+from 80.73 to 75.89 seconds. The latter is within 3.6% of C++ and uses 51.8%
+less peak RSS.
 
 The colored local scheduler no longer applies its historical 64-worker cap.
 That cap addressed allocator and sink contention in the older source-bearing
@@ -312,17 +423,13 @@ contraction from 14.64 to 12.54 seconds and preserved all 179,767,076 canonical
 unitigs. A repeated colored run completed in 68.25 seconds and 22,119,004 KiB
 RSS, versus C++ at 73.28 seconds and 29,495,880 KiB.
 
-The post-local graph has a measured parallelism crossover. With 1,188,492,662
-uncolored discontinuity exits, using 64 workers for the blocked
-contraction/expansion/collation path reduced the 5,000-genome process time from
-69.06 to 56.41 seconds and RSS from 22,302,284 to 18,897,360 KiB. C++ required
-61.70 seconds and 26,122,016 KiB. At the full-corpus 2,840,034,051-exit scale,
-64 workers regressed Rust from 169.11 to 182.77 seconds. The uncolored driver
-therefore uses at most 64 post-local workers below two billion exits and honors
-the requested count above that threshold. Both sides of the policy emit the
-same topology: the 5,000-genome 64-worker run matched all 179,767,076 unitigs,
-and the full 256-worker run matched all 567,570,784 unitigs against the colored
-path.
+Earlier builds used a two-billion-exit crossover to cap post-local work at 64
+threads. That dataset-specific policy has been removed. Every unrestricted
+phase now receives the user-requested thread count, while an explicit soft
+memory budget can reduce phase concurrency. The 32/64/128/256 control matrix
+above verifies parity across thread counts; the 5,000-genome 64-thread
+uncolored run completed in 64.17 seconds versus C++ at 61.70 seconds and
+emitted the exact 179,767,076-unitig topology.
 
 The Rust command was:
 

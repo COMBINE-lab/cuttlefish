@@ -39,10 +39,12 @@ pub fn build_colored_from_buckets<const K: usize>(
 
     let local_started = Instant::now();
     report_process_memory("before colored local contraction");
+    let local_threads = params.local_workers();
+    eprintln!("cuttlefish3-rs: colored local contraction using {local_threads} worker(s)");
     let mut inputs = emit_colored_external_discontinuity_inputs_with_threads_in_dir::<K>(
         &bucket_dir,
         params.cutoff(),
-        params.threads,
+        local_threads,
         &label_path,
         &color_path,
     )?;
@@ -62,9 +64,11 @@ pub fn build_colored_from_buckets<const K: usize>(
     let output_path = PathBuf::from(format!("{}.fa", params.output_prefix));
     let coord_dir = work_dir.join(format!("{output_name}.cf3rs.stitch-coords"));
     let final_dir = work_dir.join(format!("{output_name}.cf3rs.final-unitigs"));
+    let post_local_threads = params.post_local_workers();
+    eprintln!("cuttlefish3-rs: colored collation using {post_local_threads} worker(s)");
     let stats = SerialUncoloredCollator::collate_external_stitched_to_fasta_with_threads_in_dir(
         &mut inputs,
-        params.threads.min(64),
+        post_local_threads,
         &coord_dir,
         &final_dir,
         &output_path,

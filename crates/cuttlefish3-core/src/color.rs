@@ -356,7 +356,6 @@ pub struct ConcurrentColorRepository {
 }
 
 struct AtomicColorSlot {
-    state: AtomicU64,
     key: AtomicU64,
     value: AtomicU64,
 }
@@ -377,8 +376,8 @@ enum AtomicColorEntry<'a> {
 }
 
 impl AtomicColorTable {
-    const EMPTY: u64 = 0;
-    const BUSY: u64 = 1;
+    const EMPTY_KEY: u64 = u64::MAX;
+    const PENDING_VALUE: u64 = u64::MAX;
 
     fn with_expected_entries(expected: usize) -> Self {
         let capacity = expected
@@ -390,9 +389,8 @@ impl AtomicColorTable {
         Self {
             slots: (0..capacity)
                 .map(|_| AtomicColorSlot {
-                    state: AtomicU64::new(Self::EMPTY),
-                    key: AtomicU64::new(0),
-                    value: AtomicU64::new(0),
+                    key: AtomicU64::new(Self::EMPTY_KEY),
+                    value: AtomicU64::new(Self::PENDING_VALUE),
                 })
                 .collect(),
             mask: capacity - 1,
@@ -405,6 +403,9 @@ impl AtomicColorTable {
 
     #[inline]
     fn entry(&self, key: u64) -> AtomicColorEntry<'_> {
+        if key == Self::EMPTY_KEY {
+            return AtomicColorEntry::Full;
+        }
         // Stop populating the fixed primary table before probe chains become
         // pathological. Existing keys are checked there before overflow.
         if self.saturated.load(Ordering::Acquire) {
@@ -416,36 +417,28 @@ impl AtomicColorTable {
             return AtomicColorEntry::Full;
         }
         let hash = hash_u64(key, 0);
-        let tag = hash.wrapping_add(2).max(2);
         let mut index = hash as usize & self.mask;
         for _ in 0..self.slots.len() {
             let slot = &self.slots[index];
-            let mut state = slot.state.load(Ordering::Acquire);
-            while state == Self::BUSY {
-                std::hint::spin_loop();
-                state = slot.state.load(Ordering::Acquire);
-            }
-            if state == Self::EMPTY {
+            let observed = slot.key.load(Ordering::Acquire);
+            if observed == Self::EMPTY_KEY {
                 if slot
-                    .state
-                    .compare_exchange(
-                        Self::EMPTY,
-                        Self::BUSY,
-                        Ordering::Acquire,
-                        Ordering::Relaxed,
-                    )
+                    .key
+                    .compare_exchange(Self::EMPTY_KEY, key, Ordering::AcqRel, Ordering::Relaxed)
                     .is_ok()
                 {
-                    slot.key.store(key, Ordering::Relaxed);
                     return AtomicColorEntry::Vacant(slot);
                 }
                 continue;
             }
-            if state == tag && slot.key.load(Ordering::Relaxed) == key {
+            if observed == key {
+                let mut value = slot.value.load(Ordering::Acquire);
+                while value == Self::PENDING_VALUE {
+                    std::hint::spin_loop();
+                    value = slot.value.load(Ordering::Acquire);
+                }
                 self.active_insertions.fetch_sub(1, Ordering::Release);
-                return AtomicColorEntry::Occupied(ColorCoordinate::from_u40(
-                    slot.value.load(Ordering::Relaxed),
-                ));
+                return AtomicColorEntry::Occupied(ColorCoordinate::from_u40(value));
             }
             index = (index + 1) & self.mask;
         }
@@ -456,23 +449,24 @@ impl AtomicColorTable {
 
     #[inline]
     fn get(&self, key: u64) -> Option<ColorCoordinate> {
+        if key == Self::EMPTY_KEY {
+            return None;
+        }
         let hash = hash_u64(key, 0);
-        let tag = hash.wrapping_add(2).max(2);
         let mut index = hash as usize & self.mask;
         for _ in 0..self.slots.len() {
             let slot = &self.slots[index];
-            let mut state = slot.state.load(Ordering::Acquire);
-            while state == Self::BUSY {
-                std::hint::spin_loop();
-                state = slot.state.load(Ordering::Acquire);
-            }
-            if state == Self::EMPTY {
+            let observed = slot.key.load(Ordering::Acquire);
+            if observed == Self::EMPTY_KEY {
                 return None;
             }
-            if state == tag && slot.key.load(Ordering::Relaxed) == key {
-                return Some(ColorCoordinate::from_u40(
-                    slot.value.load(Ordering::Relaxed),
-                ));
+            if observed == key {
+                let mut value = slot.value.load(Ordering::Acquire);
+                while value == Self::PENDING_VALUE {
+                    std::hint::spin_loop();
+                    value = slot.value.load(Ordering::Acquire);
+                }
+                return Some(ColorCoordinate::from_u40(value));
             }
             index = (index + 1) & self.mask;
         }
@@ -480,10 +474,7 @@ impl AtomicColorTable {
     }
 
     fn publish(&self, slot: &AtomicColorSlot, coordinate: ColorCoordinate) {
-        let key = slot.key.load(Ordering::Relaxed);
-        let tag = hash_u64(key, 0).wrapping_add(2).max(2);
-        slot.value.store(coordinate.as_u40(), Ordering::Relaxed);
-        slot.state.store(tag, Ordering::Release);
+        slot.value.store(coordinate.as_u40(), Ordering::Release);
         if self.entries.fetch_add(1, Ordering::AcqRel) + 1 >= self.saturation_entries {
             self.saturated.store(true, Ordering::Release);
         }
@@ -491,7 +482,8 @@ impl AtomicColorTable {
     }
 
     fn abort(&self, slot: &AtomicColorSlot) {
-        slot.state.store(Self::EMPTY, Ordering::Release);
+        slot.value.store(Self::PENDING_VALUE, Ordering::Relaxed);
+        slot.key.store(Self::EMPTY_KEY, Ordering::Release);
         self.active_insertions.fetch_sub(1, Ordering::Release);
     }
 
@@ -630,10 +622,8 @@ impl ConcurrentColorRepository {
             self.table.wait_until_quiescent();
         }
         self.table.get(color_hash).or_else(|| {
-            self.table.is_saturated().then(|| {
-                self.overflow
-                    .read_sync(&color_hash, |_, coordinate| *coordinate)
-            })?
+            self.overflow
+                .read_sync(&color_hash, |_, coordinate| *coordinate)
         })
     }
 
@@ -791,6 +781,38 @@ fn write_varint(output: &mut impl Write, mut value: u32) -> std::io::Result<()> 
     output.write_all(&[value as u8])
 }
 
+pub(crate) fn write_unitig_color_runs(
+    output: &mut impl Write,
+    colors: &[UnitigColor],
+) -> std::io::Result<()> {
+    let count = u32::try_from(colors.len())
+        .map_err(|_| std::io::Error::from(std::io::ErrorKind::InvalidInput))?;
+    write_varint(output, count)?;
+    for color in colors {
+        output.write_all(&color.raw().to_le_bytes())?;
+    }
+    Ok(())
+}
+
+pub(crate) fn read_unitig_color_runs(
+    input: &mut impl Read,
+    colors: &mut Vec<UnitigColor>,
+) -> std::io::Result<()> {
+    let count = read_varint(input)?;
+    colors.clear();
+    colors.reserve(count as usize);
+    for _ in 0..count {
+        let mut raw = [0u8; 8];
+        input.read_exact(&mut raw)?;
+        let raw = u64::from_le_bytes(raw);
+        colors.push(UnitigColor::new(
+            (raw & 0xff_ffff) as u32,
+            ColorCoordinate::from_u40(raw >> 24),
+        ));
+    }
+    Ok(())
+}
+
 fn append_varint_u32(output: &mut Vec<u8>, mut value: u32) {
     while value >= 0x80 {
         output.push(((value as u8) & 0x7f) | 0x80);
@@ -849,10 +871,12 @@ impl std::error::Error for ColorError {}
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
 
     #[test]
     fn saturated_atomic_table_bypasses_full_table_probes() {
         let table = AtomicColorTable::with_expected_entries(8);
+        assert_eq!(std::mem::size_of::<AtomicColorSlot>(), 16);
         for key in 0..table.saturation_entries as u64 {
             match table.entry(key) {
                 AtomicColorEntry::Vacant(slot) => {
@@ -871,9 +895,39 @@ mod tests {
 
         // A saturated table must no longer wait on or scan primary slots.
         table.slots[0]
-            .state
-            .store(AtomicColorTable::BUSY, Ordering::Relaxed);
+            .value
+            .store(AtomicColorTable::PENDING_VALUE, Ordering::Relaxed);
         assert!(matches!(table.entry(u64::MAX), AtomicColorEntry::Full));
+    }
+
+    #[test]
+    fn atomic_table_publishes_one_value_to_concurrent_duplicates() {
+        let table = Arc::new(AtomicColorTable::with_expected_entries(8));
+        let coordinates = std::thread::scope(|scope| {
+            let mut handles = Vec::new();
+            for _ in 0..16 {
+                let table = Arc::clone(&table);
+                handles.push(scope.spawn(move || match table.entry(17) {
+                    AtomicColorEntry::Vacant(slot) => {
+                        let coordinate = ColorCoordinate::discovered(3, 9);
+                        table.publish(slot, coordinate);
+                        coordinate
+                    }
+                    AtomicColorEntry::Occupied(coordinate) => coordinate,
+                    AtomicColorEntry::Full => panic!("small color table unexpectedly saturated"),
+                }));
+            }
+            handles
+                .into_iter()
+                .map(|handle| handle.join().unwrap())
+                .collect::<Vec<_>>()
+        });
+        assert!(
+            coordinates
+                .iter()
+                .all(|coordinate| *coordinate == coordinates[0])
+        );
+        assert_eq!(table.entries.load(Ordering::Relaxed), 1);
     }
 
     #[test]

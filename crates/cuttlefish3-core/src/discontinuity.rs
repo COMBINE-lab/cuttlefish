@@ -4,7 +4,8 @@ use crate::buckets::{BucketError, BucketManifestEntry, read_manifest};
 use crate::color::{
     ColorError, ColorRepositoryManifest, ColorRunSidecar, ColorRunSidecarWriter,
     ConcurrentColorRepository, ConcurrentColorRunSidecarWriter, append_color_runs,
-    reverse_color_runs, reverse_color_runs_in_place,
+    read_unitig_color_runs, reverse_color_runs, reverse_color_runs_in_place,
+    write_unitig_color_runs,
 };
 use crate::dna::{Base, complement_ascii};
 use crate::hash::{FastBuildHasher, hash_bytes, hash_u64, wyhash_u64};
@@ -103,7 +104,7 @@ struct LocalUnitigBucketEntry {
     unitig_path: PathBuf,
     label_path: PathBuf,
     unitigs: usize,
-    color_runs: Option<ColorRunSidecar>,
+    colored: bool,
 }
 
 struct LocalUnitigBucketWriter {
@@ -112,7 +113,7 @@ struct LocalUnitigBucketWriter {
     label_path: PathBuf,
     unitigs: BufWriter<File>,
     labels: BufWriter<File>,
-    color_runs: Option<ColorRunSidecarWriter>,
+    colored: bool,
     unitig_count: usize,
 }
 
@@ -130,16 +131,13 @@ impl LocalUnitigBucketWriter {
                 path: label_path.clone(),
                 source,
             })?;
-        let color_runs = colored
-            .then(|| ColorRunSidecarWriter::create(dir.join(format!("{bucket_id:03}.colors"))))
-            .transpose()?;
         Ok(Self {
             bucket_id,
             unitig_path,
             label_path,
             unitigs: BufWriter::with_capacity(1024 * 1024, unitig_file),
             labels: BufWriter::with_capacity(4 * 1024 * 1024, label_file),
-            color_runs,
+            colored,
             unitig_count: 0,
         })
     }
@@ -153,6 +151,9 @@ impl LocalUnitigBucketWriter {
         if colors.is_some_and(|runs| runs.len() != unitigs.len()) {
             return Err(DiscontinuityInputError::MissingColorRuns);
         }
+        if self.colored != colors.is_some() {
+            return Err(DiscontinuityInputError::MissingColorRuns);
+        }
         let base = self.unitig_count;
         self.labels
             .write_all(labels)
@@ -162,8 +163,13 @@ impl LocalUnitigBucketWriter {
             })?;
         for (index, unitig) in unitigs.iter().enumerate() {
             write_discontinuity_unitig_record(&mut self.unitigs, &self.unitig_path, unitig, true)?;
-            if let Some(writer) = self.color_runs.as_mut() {
-                writer.write_unitig(&colors.expect("colored bucket has colors")[index])?;
+            if let Some(colors) = colors {
+                write_unitig_color_runs(&mut self.unitigs, &colors[index]).map_err(|source| {
+                    DiscontinuityInputError::Io {
+                        path: self.unitig_path.clone(),
+                        source,
+                    }
+                })?;
             }
         }
         self.unitig_count += unitigs.len();
@@ -188,10 +194,7 @@ impl LocalUnitigBucketWriter {
             unitig_path: self.unitig_path,
             label_path: self.label_path,
             unitigs: self.unitig_count,
-            color_runs: self
-                .color_runs
-                .map(ColorRunSidecarWriter::finish)
-                .transpose()?,
+            colored: self.colored,
         })
     }
 }
@@ -245,7 +248,6 @@ struct ExternalLabelRef {
 unsafe extern "C" {
     fn malloc_trim(pad: usize) -> i32;
     fn getrlimit(resource: i32, limits: *mut RLimit) -> i32;
-    fn setrlimit(resource: i32, limits: *const RLimit) -> i32;
 }
 
 #[cfg(all(target_os = "linux", target_env = "gnu"))]
@@ -256,7 +258,7 @@ struct RLimit {
 }
 
 #[cfg(all(target_os = "linux", target_env = "gnu"))]
-fn raise_open_file_limit() -> bool {
+fn open_file_limit() -> usize {
     const RLIMIT_NOFILE: i32 = 7;
     unsafe {
         let mut limits = RLimit {
@@ -264,16 +266,27 @@ fn raise_open_file_limit() -> bool {
             maximum: 0,
         };
         if getrlimit(RLIMIT_NOFILE, &mut limits) != 0 {
-            return false;
+            return 1024;
         }
-        limits.current = limits.maximum;
-        setrlimit(RLIMIT_NOFILE, &limits) == 0
+        usize::try_from(limits.current).unwrap_or(usize::MAX)
     }
 }
 
+#[cfg(target_os = "linux")]
+fn current_open_file_count() -> usize {
+    fs::read_dir("/proc/self/fd")
+        .map(|entries| entries.count())
+        .unwrap_or(3)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn current_open_file_count() -> usize {
+    3
+}
+
 #[cfg(not(all(target_os = "linux", target_env = "gnu")))]
-fn raise_open_file_limit() -> bool {
-    false
+fn open_file_limit() -> usize {
+    1024
 }
 
 pub fn trim_process_allocations() {
@@ -5796,7 +5809,7 @@ impl SerialUncoloredCollator {
             || inputs
                 .local_unitig_buckets
                 .as_ref()
-                .is_some_and(|buckets| buckets.iter().any(|bucket| bucket.color_runs.is_some()));
+                .is_some_and(|buckets| buckets.iter().any(|bucket| bucket.colored));
         let mut final_buckets = FinalUnitigBucketWriters::create_direct(output_path, colored)?;
         let mut direct_local_unitigs = 0u64;
         if let Some((path, records, bases)) = inputs.trivial_fasta.take() {
@@ -8726,9 +8739,19 @@ fn map_external_cpp_path_info_buckets_to_max_unitig_buckets<const K: usize>(
         source,
     })?;
 
-    let max_unitig_bucket_count = 1024;
+    let colored = inputs.color_runs.is_some()
+        || inputs
+            .local_unitig_buckets
+            .as_ref()
+            .is_some_and(|buckets| buckets.iter().any(|bucket| bucket.colored));
+    let (max_unitig_bucket_count, mapping_threads) = materialized_coordinate_plan(
+        open_file_limit(),
+        current_open_file_count(),
+        threads,
+        colored,
+    );
     eprintln!(
-        "cuttlefish3-rs: materializing final coordinates into {max_unitig_bucket_count} bucket(s)"
+        "cuttlefish3-rs: materializing final coordinates into {max_unitig_bucket_count} bucket(s) with {mapping_threads} mapping worker(s)"
     );
     let max_unitig_bucket_mask = max_unitig_bucket_count - 1;
     let shared_writers = SharedMaterializedWriters::new(coord_dir, max_unitig_bucket_count);
@@ -8749,7 +8772,7 @@ fn map_external_cpp_path_info_buckets_to_max_unitig_buckets<const K: usize>(
             inputs,
             local_buckets,
             path_info_manifest,
-            threads,
+            mapping_threads,
             max_unitig_bucket_mask,
             &shared_writers,
             final_buckets,
@@ -8778,7 +8801,7 @@ fn map_external_cpp_path_info_buckets_to_max_unitig_buckets<const K: usize>(
             groups[entry.bucket_id].push(entry);
         }
 
-        let workers = threads.max(1).min(groups.len().max(1));
+        let workers = mapping_threads.max(1).min(groups.len().max(1));
         if workers == 1 || groups.len() < 2 {
             let mut writers =
                 SharedMaterializedBatch::new(&shared_writers, max_unitig_bucket_count);
@@ -9181,11 +9204,6 @@ where
     })?;
     let mut unitig_input = BufReader::with_capacity(1024 * 1024, unitig_file);
     let mut label_input = BufReader::with_capacity(4 * 1024 * 1024, label_file);
-    let mut color_input = bucket
-        .color_runs
-        .as_ref()
-        .map(|sidecar| sidecar.reader_at(0))
-        .transpose()?;
     let mut label = Vec::new();
     let mut colors = Vec::new();
     let mut discard = vec![0u8; 64 * 1024];
@@ -9196,12 +9214,15 @@ where
             &bucket.unitig_path,
             true,
         )?;
-        let has_colors = if let Some(reader) = color_input.as_mut() {
-            reader.read_next_into(&mut colors)?;
-            true
-        } else {
-            false
-        };
+        let has_colors = bucket.colored;
+        if has_colors {
+            read_unitig_color_runs(&mut unitig_input, &mut colors).map_err(|source| {
+                SerialCollationError::Io {
+                    path: bucket.unitig_path.clone(),
+                    source,
+                }
+            })?;
+        }
         if let Some(record) = dense_record.to_record(unitig_index) {
             label.resize(unitig.label_len as usize, 0);
             label_input
@@ -12527,7 +12548,51 @@ struct SharedMaterializedWriters<'a> {
     coord_dir: &'a Path,
     writers: Vec<Mutex<Option<MaterializedStitchedCoordShardWriter>>>,
     retained: Vec<Mutex<Vec<PendingMaterializedBucket>>>,
-    keep_open: bool,
+    open_cache: Mutex<OpenMaterializedWriterCache>,
+}
+
+struct OpenMaterializedWriterCache {
+    open: usize,
+    limit: usize,
+    eviction_cursor: usize,
+}
+
+fn materialized_coordinate_plan(
+    file_limit: usize,
+    open_files: usize,
+    threads: usize,
+    colored: bool,
+) -> (usize, usize) {
+    let threads = threads.max(1);
+    let writer_files = if colored { 3 } else { 2 };
+    // Cuttlefish uses 1024 max-unitig buckets. Keep that fanout whenever the
+    // process limit permits it, and reduce it only to preserve all requested
+    // mapping workers. Each worker concurrently owns a unitig and label reader.
+    let mut buckets = 1024usize;
+    loop {
+        let writer_descriptors = buckets.saturating_mul(writer_files);
+        let mapping_workers = file_limit
+            .saturating_sub(open_files.saturating_add(writer_descriptors))
+            .checked_div(2)
+            .unwrap_or(0)
+            .min(threads);
+        if mapping_workers == threads || buckets == 1 {
+            return (buckets, mapping_workers.max(1));
+        }
+        buckets /= 2;
+    }
+}
+
+fn local_unitig_bucket_plan(file_limit: usize, open_files: usize, workers: usize) -> usize {
+    if workers <= 1 {
+        return 0;
+    }
+    // A contraction worker holds one weak-super-kmer reader and can transiently
+    // open one blocked-edge append file. A local bucket owns two output files.
+    let concurrent_worker_files = workers.saturating_mul(2);
+    let affordable =
+        file_limit.saturating_sub(open_files.saturating_add(concurrent_worker_files)) / 2;
+    affordable.min(workers)
 }
 
 #[derive(Default)]
@@ -12543,7 +12608,65 @@ impl<'a> SharedMaterializedWriters<'a> {
             coord_dir,
             writers: (0..bucket_count).map(|_| Mutex::new(None)).collect(),
             retained: (0..bucket_count).map(|_| Mutex::new(Vec::new())).collect(),
-            keep_open: raise_open_file_limit(),
+            open_cache: Mutex::new(OpenMaterializedWriterCache {
+                open: 0,
+                limit: bucket_count.max(1),
+                eviction_cursor: 0,
+            }),
+        }
+    }
+
+    fn ensure_writer_open(
+        &self,
+        bucket_id: usize,
+        writer: &mut Option<MaterializedStitchedCoordShardWriter>,
+    ) -> Result<(), SerialCollationError> {
+        if writer.as_ref().is_some_and(|writer| writer.is_open()) {
+            return Ok(());
+        }
+        loop {
+            let mut cache = self
+                .open_cache
+                .lock()
+                .map_err(|_| SerialCollationError::WorkerPanic)?;
+            if cache.open < cache.limit {
+                if let Some(writer) = writer.as_mut() {
+                    writer.ensure_open()?;
+                } else {
+                    *writer = Some(MaterializedStitchedCoordShardWriter::create(
+                        self.coord_dir,
+                        0,
+                        bucket_id,
+                    )?);
+                }
+                cache.open += 1;
+                return Ok(());
+            }
+
+            let start = cache.eviction_cursor;
+            let mut evicted = false;
+            for offset in 0..self.writers.len() {
+                let candidate_id = (start + offset) % self.writers.len();
+                if candidate_id == bucket_id {
+                    continue;
+                }
+                let Ok(mut candidate) = self.writers[candidate_id].try_lock() else {
+                    continue;
+                };
+                if let Some(candidate) = candidate.as_mut()
+                    && candidate.is_open()
+                {
+                    candidate.flush_and_close()?;
+                    cache.open -= 1;
+                    cache.eviction_cursor = (candidate_id + 1) % self.writers.len();
+                    evicted = true;
+                    break;
+                }
+            }
+            drop(cache);
+            if !evicted {
+                std::thread::yield_now();
+            }
         }
     }
 
@@ -12573,19 +12696,9 @@ impl<'a> SharedMaterializedWriters<'a> {
         let mut writer = self.writers[bucket_id]
             .lock()
             .map_err(|_| SerialCollationError::WorkerPanic)?;
-        if writer.is_none() {
-            *writer = Some(MaterializedStitchedCoordShardWriter::create(
-                self.coord_dir,
-                0,
-                bucket_id,
-            )?);
-        }
+        self.ensure_writer_open(bucket_id, &mut writer)?;
         let writer = writer.as_mut().expect("global writer was just created");
-        writer.ensure_open()?;
         writer.write_pending_batch(batch)?;
-        if !self.keep_open {
-            writer.flush_and_close()?;
-        }
         Ok(())
     }
 
@@ -12599,19 +12712,9 @@ impl<'a> SharedMaterializedWriters<'a> {
         let mut writer = self.writers[bucket_id]
             .lock()
             .map_err(|_| SerialCollationError::WorkerPanic)?;
-        if writer.is_none() {
-            *writer = Some(MaterializedStitchedCoordShardWriter::create(
-                self.coord_dir,
-                0,
-                bucket_id,
-            )?);
-        }
+        self.ensure_writer_open(bucket_id, &mut writer)?;
         let writer = writer.as_mut().expect("global writer was just created");
-        writer.ensure_open()?;
         writer.write_colored_record(record, label, colors)?;
-        if !self.keep_open {
-            writer.flush_and_close()?;
-        }
         Ok(())
     }
 
@@ -16937,9 +17040,11 @@ fn contract_local_subgraphs_into_external_inputs<const K: usize>(
     let mut groups = local_bucket_groups(entries)?;
     groups.sort_by_key(|group| std::cmp::Reverse((group.stored_bytes, group.graph_id)));
     let workers = threads.min(groups.len().max(1));
-    let local_unitig_bucket_count: usize = if compact_unitigs && workers > 1 && groups.len() >= 1024
-    {
-        1024
+    // Each bucket is owned by one contraction worker and becomes one independent
+    // mapping task. More buckets than workers add open files and buffers without
+    // exposing any additional parallelism in either phase.
+    let local_unitig_bucket_count = if compact_unitigs && workers > 1 {
+        local_unitig_bucket_plan(open_file_limit(), current_open_file_count(), workers)
     } else {
         0
     };
@@ -16947,7 +17052,6 @@ fn contract_local_subgraphs_into_external_inputs<const K: usize>(
     let mut local_unitig_writers = if local_unitig_bucket_count == 0 {
         None
     } else {
-        let _ = raise_open_file_limit();
         if local_unitig_bucket_dir.exists() {
             fs::remove_dir_all(&local_unitig_bucket_dir).map_err(|source| {
                 DiscontinuityInputError::Io {
@@ -17092,11 +17196,11 @@ fn contract_local_subgraphs_into_external_inputs<const K: usize>(
                 let sink = &sink;
                 handles.push(scope.spawn(move || {
                     let mut reusable_vertices = None;
-                    let writers_per_worker = local_unitig_bucket_count.div_ceil(workers);
-                    let bucket_start = worker_id * writers_per_worker;
-                    let bucket_end =
-                        (bucket_start + writers_per_worker).min(local_unitig_bucket_count);
-                    let mut next_bucket = bucket_start;
+                    let bucket_id = if local_unitig_bucket_count == 0 {
+                        0
+                    } else {
+                        (worker_id % local_unitig_bucket_count + 1) as u16
+                    };
                     loop {
                         let group_idx = next_group.fetch_add(1, Ordering::Relaxed);
                         let Some(group) = groups.get(group_idx) else {
@@ -17108,19 +17212,7 @@ fn contract_local_subgraphs_into_external_inputs<const K: usize>(
                             sink.color_repository,
                             &mut reusable_vertices,
                         )
-                        .and_then(|output| {
-                            let bucket_id = if bucket_start < bucket_end {
-                                let bucket = next_bucket;
-                                next_bucket += 1;
-                                if next_bucket == bucket_end {
-                                    next_bucket = bucket_start;
-                                }
-                                (bucket + 1) as u16
-                            } else {
-                                0
-                            };
-                            sink.write(output, bucket_id)
-                        });
+                        .and_then(|output| sink.write(output, bucket_id));
                         let done = completed.fetch_add(1, Ordering::Relaxed) + 1;
                         report_local_contraction_progress(done, total_groups, started);
                         let should_stop = output.is_err();
@@ -17995,6 +18087,37 @@ mod materialized_record_tests {
             UnitigColor::new(0, crate::state::ColorCoordinate::from_u40(0)),
         );
         assert!(SharedMaterializedBatch::colored_bucket_ready(&bucket));
+    }
+
+    #[test]
+    fn materialized_coordinate_plan_respects_descriptor_budget() {
+        assert_eq!(
+            materialized_coordinate_plan(1024, 64, 128, false),
+            (256, 128)
+        );
+        assert_eq!(
+            materialized_coordinate_plan(1024, 64, 128, true),
+            (128, 128)
+        );
+        assert_eq!(
+            materialized_coordinate_plan(1024, 64, 256, false),
+            (128, 256)
+        );
+        assert_eq!(
+            materialized_coordinate_plan(1024, 64, 256, true),
+            (128, 256)
+        );
+        assert_eq!(
+            materialized_coordinate_plan(65_536, 64, 256, true),
+            (1024, 256)
+        );
+    }
+
+    #[test]
+    fn local_unitig_bucket_plan_accounts_for_concurrent_files() {
+        assert_eq!(local_unitig_bucket_plan(1024, 264, 256), 124);
+        assert_eq!(local_unitig_bucket_plan(65_536, 264, 256), 256);
+        assert_eq!(local_unitig_bucket_plan(1024, 16, 128), 128);
     }
 
     #[test]

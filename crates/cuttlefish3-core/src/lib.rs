@@ -17,16 +17,24 @@ pub const DEFAULT_K: u16 = 31;
 pub const DEFAULT_MINIMIZER_LEN: u16 = 12;
 pub const DEFAULT_CUTOFF_READS: u32 = 2;
 pub const DEFAULT_CUTOFF_REFS: u32 = 1;
-pub const DEFAULT_WORK_DIR: &str = "/scratch3/tmp";
 pub const DEFAULT_ATLAS_COUNT: usize = 128;
 pub const DEFAULT_GRAPHS_PER_ATLAS: usize = 128;
 pub const DEFAULT_SUBGRAPH_COUNT: usize = DEFAULT_ATLAS_COUNT * DEFAULT_GRAPHS_PER_ATLAS;
 pub const DEFAULT_VERTEX_PARTITIONS: usize = 128;
 pub const DEFAULT_LMTIG_BUCKETS: usize = 1024;
 pub const DEFAULT_GMTIG_BUCKETS: usize = 1024;
-pub const DEFAULT_THREADS: usize = 1;
 pub const MAX_K: u16 = 63;
 pub const MAX_MINIMIZER_LEN: u16 = 32;
+
+pub fn default_work_dir() -> String {
+    std::env::temp_dir().to_string_lossy().into_owned()
+}
+
+pub fn default_threads() -> usize {
+    std::thread::available_parallelism()
+        .map(|threads| (threads.get() / 4).max(1))
+        .unwrap_or(8)
+}
 
 pub fn configure_global_parallelism(threads: usize) -> Result<(), rayon::ThreadPoolBuildError> {
     rayon::ThreadPoolBuilder::new()

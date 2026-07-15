@@ -16,16 +16,6 @@ use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-const FULL_PARALLEL_POST_LOCAL_EXITS: u64 = 2_000_000_000;
-
-fn post_local_worker_count(requested: usize, discontinuity_exits: u64) -> usize {
-    if discontinuity_exits < FULL_PARALLEL_POST_LOCAL_EXITS {
-        requested.min(64)
-    } else {
-        requested
-    }
-}
-
 type FastHashMap<K, V> = HashMap<K, V, FastBuildHasher>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -118,10 +108,12 @@ pub fn build_uncolored_with_serial_discontinuity_pipeline<const K: usize>(
     let label_path =
         PathBuf::from(&params.work_dir).join(format!("{output_name}.cf3rs.lmtig-labels"));
     let bucket_dir = bucket_dir.as_ref().to_path_buf();
+    let local_threads = params.local_workers();
+    eprintln!("cuttlefish3-rs: local contraction using {local_threads} worker(s)");
     let mut inputs = emit_uncolored_external_discontinuity_inputs_with_threads_in_dir::<K>(
         &bucket_dir,
         params.cutoff(),
-        params.threads,
+        local_threads,
         &label_path,
     )?;
     let local_elapsed = local_start.elapsed();
@@ -151,11 +143,8 @@ pub fn build_uncolored_with_serial_discontinuity_pipeline<const K: usize>(
     let final_dir =
         PathBuf::from(&params.work_dir).join(format!("{output_name}.cf3rs.final-unitigs"));
     eprintln!("cuttlefish3-rs: writing FASTA to {}", output_path.display());
-    // Small and mid-sized edge matrices lose time to scheduler and atomic-table
-    // contention above 64 workers; full HumGut-sized matrices amortize that
-    // overhead and benefit from the requested parallelism.
-    let post_local_threads =
-        post_local_worker_count(params.threads, inputs.stats.discontinuity_exits);
+    let post_local_threads = params.post_local_workers();
+    eprintln!("cuttlefish3-rs: collation using {post_local_threads} worker(s)");
     let stats = SerialUncoloredCollator::collate_external_stitched_to_fasta_with_threads_in_dir(
         &mut inputs,
         post_local_threads,
@@ -538,21 +527,3 @@ impl std::fmt::Display for UncoloredBuildError {
 }
 
 impl std::error::Error for UncoloredBuildError {}
-
-#[cfg(test)]
-mod tests {
-    use super::{FULL_PARALLEL_POST_LOCAL_EXITS, post_local_worker_count};
-
-    #[test]
-    fn post_local_workers_follow_the_measured_scale_crossover() {
-        assert_eq!(
-            post_local_worker_count(256, FULL_PARALLEL_POST_LOCAL_EXITS - 1),
-            64
-        );
-        assert_eq!(
-            post_local_worker_count(256, FULL_PARALLEL_POST_LOCAL_EXITS),
-            256
-        );
-        assert_eq!(post_local_worker_count(32, 0), 32);
-    }
-}

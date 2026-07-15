@@ -1056,7 +1056,7 @@ impl SharedBucketSink {
             }
         }
         let next = AtomicUsize::new(0);
-        let workers = self.workers.min(16).min(self.atlases.len().max(1));
+        let workers = self.workers.min(self.atlases.len().max(1));
         let calls = std::thread::scope(|scope| {
             let mut handles = Vec::with_capacity(workers);
             for _ in 0..workers {
@@ -1336,10 +1336,8 @@ impl SharedBucketSink {
     pub fn flush_colored_emitters(
         &self,
         emitters: Vec<SharedBucketEmitter>,
-        source_min: u32,
-        source_max: u32,
     ) -> Result<(), BucketError> {
-        if !self.colored || source_min > source_max {
+        if !self.colored {
             return Err(BucketError::MalformedRecord);
         }
 
@@ -1364,11 +1362,7 @@ impl SharedBucketSink {
         }
 
         let started = Instant::now();
-        let record_len = record_size(true, self.label_words);
-        // Keep atlas consumers long-lived so their per-graph compression
-        // buffers are reused across atlases. One thread per atlas leaves the
-        // same transient allocation stranded in scores of allocator arenas.
-        let workers = self.workers.min(16).min(pending_by_atlas.len().max(1));
+        let workers = self.workers.min(pending_by_atlas.len().max(1));
         let chunk_size = pending_by_atlas.len().div_ceil(workers);
         let flush_calls = std::thread::scope(|scope| {
             let mut handles = Vec::with_capacity(workers);
@@ -1378,43 +1372,21 @@ impl SharedBucketSink {
                     let first_atlas = chunk_id * chunk_size;
                     for (offset, worker_buckets) in atlas_work.iter_mut().enumerate() {
                         let atlas_id = first_atlas + offset;
-                        sort_colored_atlas_workers_in_place(
-                            worker_buckets,
-                            record_len,
-                            source_min,
-                            source_max,
-                        )?;
                         let mut atlas = self.atlases[atlas_id]
                             .lock()
                             .map_err(|_| BucketError::WorkerPanic)?;
-                        let mut cursors = vec![0usize; worker_buckets.len()];
-                        for source in source_min..=source_max {
-                            for (pending, cursor) in worker_buckets.iter().zip(cursors.iter_mut()) {
-                                while *cursor < pending.graph_ids.len() {
-                                    let record_start = *cursor * record_len;
-                                    let record =
-                                        &pending.bytes[record_start..record_start + record_len];
-                                    let record_source = u32::from_le_bytes(
-                                        record[..4].try_into().expect("colored attribute"),
-                                    ) >> 10;
-                                    if record_source != source {
-                                        break;
-                                    }
-                                    append_colored_atlas_record(
-                                        &mut atlas,
-                                        pending.graph_ids[*cursor],
-                                        record,
-                                    )?;
-                                    *cursor += 1;
-                                }
+                        let record_len = record_size(true, self.label_words);
+                        for pending in worker_buckets.iter() {
+                            if pending.graph_ids.len() * record_len != pending.bytes.len() {
+                                return Err(BucketError::MalformedRecord);
                             }
-                        }
-                        if cursors
-                            .iter()
-                            .zip(worker_buckets.iter())
-                            .any(|(&cursor, pending)| cursor != pending.graph_ids.len())
-                        {
-                            return Err(BucketError::MalformedRecord);
+                            for (&graph_id, record) in pending
+                                .graph_ids
+                                .iter()
+                                .zip(pending.bytes.chunks_exact(record_len))
+                            {
+                                append_colored_atlas_record(&mut atlas, graph_id, record)?;
+                            }
                         }
                         atlas.buffered_bytes += worker_buckets
                             .iter()
@@ -1483,15 +1455,7 @@ impl SharedBucketSink {
         self.record_flush_stats(finish_flush_stats, finish_started.elapsed());
         let bytes_written = items.iter().map(|(_, meta)| meta.bytes_written).sum();
 
-        // Colored finalization temporarily holds an input and counting-sorted
-        // output bucket. Limit concurrent buckets until source collation moves
-        // into the atlas flush path.
-        let workers = if self.colored {
-            self.workers.min(4)
-        } else {
-            self.workers
-        }
-        .min(items.len().max(1));
+        let workers = self.workers.min(items.len().max(1));
         let mut manifest = if workers <= 1 {
             let mut manifest = Vec::with_capacity(items.len());
             for item in &items {
@@ -1561,74 +1525,6 @@ impl SharedBucketSink {
             Ordering::Relaxed,
         );
     }
-}
-
-fn sort_colored_atlas_workers_in_place(
-    worker_buckets: &mut Vec<PendingColoredAtlas>,
-    record_len: usize,
-    source_min: u32,
-    source_max: u32,
-) -> Result<(), BucketError> {
-    for pending in worker_buckets.iter_mut() {
-        if pending.graph_ids.len() * record_len != pending.bytes.len() {
-            return Err(BucketError::MalformedRecord);
-        }
-        if pending.graph_ids.is_empty() || source_min == source_max {
-            continue;
-        }
-        let source_count = usize::try_from(source_max - source_min + 1)
-            .map_err(|_| BucketError::MalformedRecord)?;
-        let mut counts = vec![0usize; source_count];
-        for record in pending.bytes.chunks_exact(record_len) {
-            let attr = u32::from_le_bytes(record[..4].try_into().expect("colored attribute"));
-            let source = attr >> 10;
-            if source < source_min || source > source_max {
-                return Err(BucketError::MalformedRecord);
-            }
-            counts[(source - source_min) as usize] += 1;
-        }
-        let mut starts = vec![0usize; source_count];
-        let mut prefix = 0usize;
-        for (start, count) in starts.iter_mut().zip(counts.iter()) {
-            *start = prefix;
-            prefix += *count;
-        }
-        debug_assert_eq!(prefix, pending.graph_ids.len());
-        let mut next = starts.clone();
-        for bucket in 0..source_count {
-            let end = starts[bucket] + counts[bucket];
-            while next[bucket] < end {
-                let record_index = next[bucket];
-                let record_start = record_index * record_len;
-                let source = (u32::from_le_bytes(
-                    pending.bytes[record_start..record_start + 4]
-                        .try_into()
-                        .expect("colored attribute"),
-                ) >> 10)
-                    .checked_sub(source_min)
-                    .ok_or(BucketError::MalformedRecord)? as usize;
-                if source >= source_count {
-                    return Err(BucketError::MalformedRecord);
-                }
-                if source == bucket {
-                    next[bucket] += 1;
-                    continue;
-                }
-                let destination = next[source];
-                if destination >= starts[source] + counts[source] {
-                    return Err(BucketError::MalformedRecord);
-                }
-                pending.graph_ids.swap(record_index, destination);
-                for byte in 0..record_len {
-                    pending
-                        .bytes
-                        .swap(record_start + byte, destination * record_len + byte);
-                }
-                next[source] += 1;
-            }
-        }
-    }
-    Ok(())
 }
 
 fn append_colored_atlas_record(
@@ -1921,11 +1817,8 @@ impl SharedBucketEmitter {
         }
         self.pending_bytes += record_len;
 
-        // A colored source window must remain worker-local until all workers
-        // have finished. Its atlas chunks are collated together by source in
-        // `flush_colored_emitters`; spilling one here would both duplicate the
-        // window in shared buffers and lose global source order. The source
-        // window in `partition` is the external-memory bound for this path.
+        // As in C++, colored worker-atlas chunks are checked and handed to the
+        // shared atlas at the source boundary, not in the middle of a source.
         if self.deferred_uncolored {
             let atlas_id = graph_id / ATLAS_GRAPH_COUNT;
             if self.uncolored_pending[atlas_id].bytes.len() >= SUBGRAPH_CHUNK_BYTES {
@@ -2710,6 +2603,55 @@ mod tests {
             }
         }
         assert!(failed, "truncated compressed block must be rejected");
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn colored_worker_tails_preserve_cpp_worker_order() {
+        let dir = std::env::temp_dir().join(format!(
+            "cf3-colored-worker-tails-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        let mut params = BuildParams::new(crate::GraphInput::References, "test".to_string());
+        params.color = true;
+        params.k = 31;
+        params.minimizer_len = 15;
+        params.threads = 2;
+        params.work_dir = dir.to_string_lossy().into_owned();
+        let sink = SharedBucketSink::create(&params, 1).unwrap();
+
+        let mut emitters = Vec::new();
+        for sources in [[3, 1], [4, 2]] {
+            let mut emitter = sink.emitter();
+            for source_id in sources {
+                emitter
+                    .add_valid(
+                        &WeakSuperKmer {
+                            graph_id: 0,
+                            offset: 0,
+                            len: 31,
+                            source_id: Some(source_id),
+                            left_discontinuous: false,
+                            right_discontinuous: false,
+                        },
+                        &[b'A'; 31],
+                    )
+                    .unwrap();
+            }
+            emitters.push(emitter);
+        }
+        sink.flush_colored_emitters(emitters).unwrap();
+        let stats = sink.finish().unwrap();
+
+        let mut reader = BucketReader::open(stats.bucket_dir.join("00000.wsk")).unwrap();
+        let mut sources = Vec::new();
+        let mut record = BucketPackedRecord::default();
+        while reader.next_packed_record_into(&mut record).unwrap() {
+            sources.push(record.source_id.unwrap());
+        }
+        assert_eq!(sources, [3, 1, 4, 2]);
         fs::remove_dir_all(dir).unwrap();
     }
 }

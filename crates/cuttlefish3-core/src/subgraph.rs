@@ -588,16 +588,7 @@ impl<const K: usize> LocalSubgraph<K> {
             .iter()
             .map(|entry| entry.path.clone())
             .collect::<Vec<_>>();
-        // Weak super-kmers overlap heavily. HumGut's C++ construction observes
-        // about 2.15 unique vertices per record (2.4 in the largest bucket), so
-        // reserving K/4 slots wastes cache and scan bandwidth on sparse tables.
-        let vertex_capacity = entries
-            .iter()
-            .map(|entry| entry.records as usize)
-            .sum::<usize>()
-            .saturating_mul(5)
-            / 2;
-        Self::from_bucket_paths_with_capacity(&paths, cutoff, vertex_capacity, None)
+        Self::from_bucket_paths_with_capacity(&paths, cutoff, 0, None)
     }
 
     pub(crate) fn from_manifest_entries_reusing(
@@ -609,13 +600,7 @@ impl<const K: usize> LocalSubgraph<K> {
             .iter()
             .map(|entry| entry.path.clone())
             .collect::<Vec<_>>();
-        let vertex_capacity = entries
-            .iter()
-            .map(|entry| entry.records as usize)
-            .sum::<usize>()
-            .saturating_mul(5)
-            / 2;
-        Self::from_bucket_paths_with_capacity(&paths, cutoff, vertex_capacity, vertices)
+        Self::from_bucket_paths_with_capacity(&paths, cutoff, 0, vertices)
     }
 
     fn from_bucket_paths_with_capacity(
@@ -824,6 +809,8 @@ impl<const K: usize> LocalSubgraph<K> {
             return Err(LocalSubgraphError::MalformedRecord);
         }
         let mut representative_indices = HashMap::<u64, usize, FastBuildHasher>::default();
+        let mut coordinate_cache =
+            HashMap::<u64, Option<ColorCoordinate>, FastBuildHasher>::default();
         let mut representatives = Vec::<Kmer<K>>::new();
         let mut unitig_hash_runs = Vec::new();
         let mut back_walk = UnitigWalk::default();
@@ -843,6 +830,7 @@ impl<const K: usize> LocalSubgraph<K> {
                     &mut emit,
                     &mut unitig_hash_runs,
                     &mut representative_indices,
+                    &mut coordinate_cache,
                     &mut representatives,
                     &mut back_walk,
                     &mut front_walk,
@@ -864,6 +852,7 @@ impl<const K: usize> LocalSubgraph<K> {
                     &mut emit,
                     &mut unitig_hash_runs,
                     &mut representative_indices,
+                    &mut coordinate_cache,
                     &mut representatives,
                     &mut back_walk,
                     &mut front_walk,
@@ -900,6 +889,7 @@ impl<const K: usize> LocalSubgraph<K> {
         emit: &mut G,
         unitig_hash_runs: &mut Vec<Vec<PendingColorRun>>,
         representative_indices: &mut HashMap<u64, usize, FastBuildHasher>,
+        coordinate_cache: &mut HashMap<u64, Option<ColorCoordinate>, FastBuildHasher>,
         representatives: &mut Vec<Kmer<K>>,
         back_walk: &mut UnitigWalk<K>,
         front_walk: &mut UnitigWalk<K>,
@@ -938,7 +928,9 @@ impl<const K: usize> LocalSubgraph<K> {
                 .last()
                 .is_none_or(|&(_, previous, _)| previous != color_hash)
             {
-                let coordinate = color_is_known(color_hash);
+                let coordinate = *coordinate_cache
+                    .entry(color_hash)
+                    .or_insert_with(|| color_is_known(color_hash));
                 runs.push((offset as u32, color_hash, coordinate));
                 if coordinate.is_none() {
                     representative_indices.entry(color_hash).or_insert_with(|| {

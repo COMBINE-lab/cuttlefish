@@ -240,25 +240,20 @@ fn emit_uncolored_windowed_weak_superkmer_buckets<const K: usize>(
     graph_count: usize,
     paths: &[PathBuf],
 ) -> Result<PartitionEmissionStats, PartitionRunError> {
-    // Uncolored atlas chunks drain at 64 KiB, so source windows are not a
-    // memory bound. Keep the full source set available to the dynamic
-    // scheduler, as in the reference uncolored partitioner.
-    const SOURCE_WINDOW_MAX: usize = usize::MAX;
-
     let sink = SharedBucketSink::create(params, graph_count)?;
     let mut stats = PartitionStats::new(graph_count);
     let mut worker_elapsed = Duration::ZERO;
     let mut parse_elapsed = Duration::ZERO;
 
-    for (window_index, window) in paths.chunks(SOURCE_WINDOW_MAX).enumerate() {
-        let source_start = window_index * SOURCE_WINDOW_MAX;
+    for (source_start, window) in [(0, paths)] {
         let started = Instant::now();
         let mut work_order = (0..window.len()).collect::<Vec<_>>();
         work_order.sort_unstable_by_key(|&offset| {
             std::cmp::Reverse(window[offset].metadata().map_or(0, |meta| meta.len()))
         });
         let next_source = AtomicUsize::new(0);
-        let workers = params.threads.clamp(1, 64).min(window.len());
+        let workers = params.partition_workers(window.len());
+        eprintln!("cuttlefish3-rs: uncolored partition using {workers} worker(s)");
         let mut emitters = Vec::with_capacity(workers);
 
         std::thread::scope(|scope| {
@@ -348,25 +343,22 @@ fn emit_colored_weak_superkmer_buckets<const K: usize>(
     graph_count: usize,
     paths: &[PathBuf],
 ) -> Result<PartitionEmissionStats, PartitionRunError> {
-    // Worker-atlas tails drain after every source, so their 64 KiB threshold is
-    // the memory bound. A moderate source range amortizes all-atlas tail
-    // barriers without losing the compression locality of bounded collation.
-    const SOURCE_WINDOW_MAX: usize = 4096;
-
     let sink = SharedBucketSink::create(params, graph_count)?;
     let mut stats = PartitionStats::new(graph_count);
     let mut worker_elapsed = Duration::ZERO;
     let mut parse_elapsed = Duration::ZERO;
 
-    for (window_index, window) in paths.chunks(SOURCE_WINDOW_MAX).enumerate() {
-        let source_start = window_index * SOURCE_WINDOW_MAX;
+    // The reference partitioner exposes the complete size-sorted source set to
+    // its dynamic scheduler and drains each worker after every source.
+    for (source_start, window) in [(0, paths)] {
         let parse_started = Instant::now();
         let mut work_order = (0..window.len()).collect::<Vec<_>>();
         work_order.sort_unstable_by_key(|&offset| {
             std::cmp::Reverse(window[offset].metadata().map_or(0, |meta| meta.len()))
         });
         let next_source = AtomicUsize::new(0);
-        let workers = params.threads.clamp(1, 64).min(window.len());
+        let workers = params.partition_workers(window.len());
+        eprintln!("cuttlefish3-rs: colored partition using {workers} worker(s)");
         let mut emitters = Vec::with_capacity(workers);
         std::thread::scope(|scope| {
             let mut handles = Vec::new();
@@ -433,11 +425,7 @@ fn emit_colored_weak_superkmer_buckets<const K: usize>(
         })?;
         parse_elapsed += parse_started.elapsed();
 
-        let source_min =
-            u32::try_from(source_start + 1).map_err(|_| PartitionRunError::TooManySources)?;
-        let source_max = u32::try_from(source_start + window.len())
-            .map_err(|_| PartitionRunError::TooManySources)?;
-        sink.flush_colored_emitters(emitters, source_min, source_max)?;
+        sink.flush_colored_emitters(emitters)?;
     }
 
     let (bucket_flushes, bucket_flush_elapsed) = sink.flush_stats();
@@ -528,7 +516,7 @@ pub fn partition_inputs<const K: usize>(
 
     let paths = expand_input_paths(params)?;
     let mut stats = PartitionStats::new(graph_count);
-    let workers = params.threads.min(paths.len().max(1));
+    let workers = params.partition_workers(paths.len());
     let chunk_len = paths.len().div_ceil(workers);
 
     std::thread::scope(|scope| {

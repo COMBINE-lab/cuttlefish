@@ -1,8 +1,19 @@
 use crate::{
     DEFAULT_CUTOFF_READS, DEFAULT_CUTOFF_REFS, DEFAULT_GMTIG_BUCKETS, DEFAULT_K,
-    DEFAULT_LMTIG_BUCKETS, DEFAULT_MINIMIZER_LEN, DEFAULT_THREADS, DEFAULT_VERTEX_PARTITIONS,
-    DEFAULT_WORK_DIR, GraphInput, MAX_K, MAX_MINIMIZER_LEN,
+    DEFAULT_LMTIG_BUCKETS, DEFAULT_MINIMIZER_LEN, DEFAULT_VERTEX_PARTITIONS, GraphInput, MAX_K,
+    MAX_MINIMIZER_LEN, default_threads, default_work_dir,
 };
+
+const GIB: usize = 1024 * 1024 * 1024;
+// This is the soft-memory policy for the Rust-only `--max-memory` extension,
+// not a C++ algorithm parameter. These estimates cover phase-local replicated
+// state; workload-sized graph tables can impose a higher minimum.
+const PARTITION_FIXED_MEMORY: usize = 2 * GIB;
+const PARTITION_MEMORY_PER_WORKER: usize = 32 * 1024 * 1024;
+const LOCAL_FIXED_MEMORY: usize = 4 * GIB;
+const LOCAL_MEMORY_PER_WORKER: usize = 160 * 1024 * 1024;
+const POST_LOCAL_FIXED_MEMORY: usize = 4 * GIB;
+const POST_LOCAL_MEMORY_PER_WORKER: usize = 64 * 1024 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BuildParams {
@@ -21,6 +32,7 @@ pub struct BuildParams {
     pub lmtig_buckets: usize,
     pub gmtig_buckets: usize,
     pub threads: usize,
+    pub max_memory_gb: Option<usize>,
 }
 
 impl BuildParams {
@@ -36,17 +48,51 @@ impl BuildParams {
             color: false,
             compress_buckets: false,
             output_prefix,
-            work_dir: DEFAULT_WORK_DIR.to_string(),
+            work_dir: default_work_dir(),
             vertex_partitions: DEFAULT_VERTEX_PARTITIONS,
             lmtig_buckets: DEFAULT_LMTIG_BUCKETS,
             gmtig_buckets: DEFAULT_GMTIG_BUCKETS,
-            threads: DEFAULT_THREADS,
+            threads: default_threads(),
+            max_memory_gb: None,
         }
     }
 
     #[inline]
     pub fn cutoff(&self) -> u32 {
         self.cutoff.unwrap_or_else(|| self.input.default_cutoff())
+    }
+
+    pub fn max_memory_bytes(&self) -> Option<usize> {
+        self.max_memory_gb.and_then(|gb| gb.checked_mul(GIB))
+    }
+
+    fn memory_bounded_workers(&self, fixed: usize, per_worker: usize) -> usize {
+        let requested = self.threads.max(1);
+        let Some(budget) = self.max_memory_bytes() else {
+            return requested;
+        };
+        let bounded = requested
+            .min(budget.saturating_sub(fixed) / per_worker)
+            .max(1);
+        if bounded == requested {
+            return requested;
+        }
+        // When the estimate requires a reduction, round down to leave headroom
+        // for workload-sized shared tables outside this replicated-state estimate.
+        1usize << bounded.ilog2()
+    }
+
+    pub fn partition_workers(&self, input_files: usize) -> usize {
+        self.memory_bounded_workers(PARTITION_FIXED_MEMORY, PARTITION_MEMORY_PER_WORKER)
+            .min(input_files.max(1))
+    }
+
+    pub fn local_workers(&self) -> usize {
+        self.memory_bounded_workers(LOCAL_FIXED_MEMORY, LOCAL_MEMORY_PER_WORKER)
+    }
+
+    pub fn post_local_workers(&self) -> usize {
+        self.memory_bounded_workers(POST_LOCAL_FIXED_MEMORY, POST_LOCAL_MEMORY_PER_WORKER)
     }
 
     pub fn validate(&self) -> Result<(), ParamError> {
@@ -85,6 +131,11 @@ impl BuildParams {
         if self.threads == 0 {
             return Err(ParamError::InvalidThreadCount);
         }
+        if self.max_memory_gb == Some(0)
+            || self.max_memory_gb.is_some_and(|gb| gb > usize::MAX / GIB)
+        {
+            return Err(ParamError::InvalidMemoryLimit);
+        }
 
         Ok(())
     }
@@ -99,6 +150,7 @@ pub enum ParamError {
     InvalidCutoff,
     BucketCountsMustBePowersOfTwo,
     InvalidThreadCount,
+    InvalidMemoryLimit,
 }
 
 impl std::fmt::Display for ParamError {
@@ -113,6 +165,7 @@ impl std::fmt::Display for ParamError {
             Self::InvalidCutoff => write!(f, "cutoff frequency must be at least 1"),
             Self::BucketCountsMustBePowersOfTwo => write!(f, "bucket counts must be powers of two"),
             Self::InvalidThreadCount => write!(f, "thread count must be at least 1"),
+            Self::InvalidMemoryLimit => write!(f, "maximum memory must be at least 1 GiB"),
         }
     }
 }
@@ -142,5 +195,57 @@ mod tests {
         p.k = 31;
         p.cutoff = Some(0);
         assert_eq!(p.validate(), Err(ParamError::InvalidCutoff));
+    }
+
+    #[test]
+    fn explicit_memory_budget_bounds_phase_concurrency() {
+        let mut p = BuildParams::new(GraphInput::References, "out".to_string());
+        p.threads = 256;
+        p.max_memory_gb = Some(16);
+
+        assert_eq!(p.partition_workers(1_000), 256);
+        assert_eq!(p.local_workers(), 64);
+        assert_eq!(p.post_local_workers(), 128);
+        assert_eq!(p.partition_workers(17), 17);
+    }
+
+    #[test]
+    fn unrestricted_concurrency_follows_the_user_request() {
+        let mut p = BuildParams::new(GraphInput::References, "out".to_string());
+        p.threads = 96;
+
+        assert_eq!(p.partition_workers(1_000), 96);
+        assert_eq!(p.local_workers(), 96);
+        assert_eq!(p.post_local_workers(), 96);
+    }
+
+    #[test]
+    fn ample_memory_budget_preserves_non_power_of_two_request() {
+        let mut p = BuildParams::new(GraphInput::References, "out".to_string());
+        p.threads = 96;
+        p.max_memory_gb = Some(24);
+
+        assert_eq!(p.partition_workers(1_000), 96);
+        assert_eq!(p.local_workers(), 96);
+        assert_eq!(p.post_local_workers(), 96);
+    }
+
+    #[test]
+    fn binding_memory_budget_only_reduces_constrained_phases() {
+        let mut p = BuildParams::new(GraphInput::References, "out".to_string());
+        p.threads = 96;
+        p.max_memory_gb = Some(12);
+
+        assert_eq!(p.partition_workers(1_000), 96);
+        assert_eq!(p.local_workers(), 32);
+        assert_eq!(p.post_local_workers(), 96);
+    }
+
+    #[test]
+    fn rejects_zero_memory_budget() {
+        let mut p = BuildParams::new(GraphInput::References, "out".to_string());
+        p.seqs.push("data/refs1.fa".to_string());
+        p.max_memory_gb = Some(0);
+        assert_eq!(p.validate(), Err(ParamError::InvalidMemoryLimit));
     }
 }

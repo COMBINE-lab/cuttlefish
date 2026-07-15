@@ -7416,33 +7416,33 @@ struct MaterializedStitchedCoordRecord {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct LoadedMaterializedStitchedCoordRecord {
     path_id: u64,
-    rank: u64,
     label_offset: u32,
-    label_len: u32,
     color_start: u32,
-    color_count_and_flags: u32,
+    rank: u16,
+    label_len: u16,
+    color_count: u16,
+    flags: u16,
 }
 
-const _: () = assert!(std::mem::size_of::<LoadedMaterializedStitchedCoordRecord>() == 32);
+const _: () = assert!(std::mem::size_of::<LoadedMaterializedStitchedCoordRecord>() == 24);
 
 impl LoadedMaterializedStitchedCoordRecord {
-    const REVERSE_FLAG: u32 = 1 << 31;
-    const CYCLE_FLAG: u32 = 1 << 30;
-    const COLOR_COUNT_MASK: u32 = (1 << 30) - 1;
+    const REVERSE_FLAG: u16 = 1;
+    const CYCLE_FLAG: u16 = 1 << 1;
 
     #[inline(always)]
     fn reverse(self) -> bool {
-        self.color_count_and_flags & Self::REVERSE_FLAG != 0
+        self.flags & Self::REVERSE_FLAG != 0
     }
 
     #[inline(always)]
     fn is_cycle(self) -> bool {
-        self.color_count_and_flags & Self::CYCLE_FLAG != 0
+        self.flags & Self::CYCLE_FLAG != 0
     }
 
     #[inline(always)]
     fn color_count(self) -> u32 {
-        self.color_count_and_flags & Self::COLOR_COUNT_MASK
+        u32::from(self.color_count)
     }
 
     fn new(
@@ -7455,23 +7455,22 @@ impl LoadedMaterializedStitchedCoordRecord {
         color_start: u32,
         color_count: u32,
     ) -> Self {
-        debug_assert!(color_count <= Self::COLOR_COUNT_MASK);
         Self {
             path_id,
-            rank,
             label_offset,
-            label_len,
             color_start,
-            color_count_and_flags: color_count
-                | u32::from(reverse) * Self::REVERSE_FLAG
-                | u32::from(is_cycle) * Self::CYCLE_FLAG,
+            rank: u16::try_from(rank).expect("materialized rank fits C++ weight_t"),
+            label_len: u16::try_from(label_len)
+                .expect("materialized label length fits C++ uni_len_t"),
+            color_count: u16::try_from(color_count)
+                .expect("materialized color count fits C++ uni_len_t"),
+            flags: u16::from(reverse) * Self::REVERSE_FLAG | u16::from(is_cycle) * Self::CYCLE_FLAG,
         }
     }
 
     fn set_color_count(&mut self, color_count: u32) {
-        debug_assert!(color_count <= Self::COLOR_COUNT_MASK);
-        self.color_count_and_flags =
-            (self.color_count_and_flags & !Self::COLOR_COUNT_MASK) | color_count;
+        self.color_count =
+            u16::try_from(color_count).expect("materialized color count fits C++ uni_len_t");
     }
 }
 
@@ -7490,7 +7489,7 @@ const STITCH_COORD_MAGIC: &[u8; 8] = b"CF3SCB2\0";
 const MATERIALIZED_STITCH_COORD_MAGIC: &[u8; 8] = b"CF3MCB2\0";
 const STITCH_COORD_HEADER_LEN: u64 = 32;
 const STITCH_PATH_INFO_RECORD_LEN: u64 = 24;
-const STITCH_COORD_RECORD_LEN: u64 = 32;
+const STITCH_COORD_RECORD_LEN: u64 = 24;
 const MATERIALIZED_STITCH_COORD_SHARD_WRITE_BUFFER: usize = 16 * 1024;
 const FINAL_UNITIG_BUCKET_WRITE_BUFFER: usize = 128 * 1024;
 const STITCH_COORD_SHARD_WRITE_BUFFER: usize = 1024 * 1024;
@@ -12636,7 +12635,6 @@ struct MaterializedStitchedCoordBuckets {
 struct SharedMaterializedBatch<'a, 'b> {
     shared: &'a SharedMaterializedWriters<'b>,
     buckets: Vec<PendingMaterializedBucket>,
-    bucket_bytes: Vec<usize>,
 }
 
 impl<'a, 'b> SharedMaterializedBatch<'a, 'b> {
@@ -12650,7 +12648,6 @@ impl<'a, 'b> SharedMaterializedBatch<'a, 'b> {
             buckets: (0..bucket_count)
                 .map(|_| PendingMaterializedBucket::default())
                 .collect(),
-            bucket_bytes: vec![0; bucket_count],
         }
     }
 
@@ -12665,8 +12662,19 @@ impl<'a, 'b> SharedMaterializedBatch<'a, 'b> {
     fn finish_bucket(&mut self, bucket_id: usize) -> Result<(), SerialCollationError> {
         self.shared
             .write_batch(bucket_id, &mut self.buckets[bucket_id])?;
-        self.bucket_bytes[bucket_id] = 0;
         Ok(())
+    }
+
+    #[inline]
+    fn uncolored_bucket_ready(bucket: &PendingMaterializedBucket) -> bool {
+        bucket.records.len() >= Self::FLUSH_BYTES / STITCH_COORD_RECORD_LEN as usize
+            && bucket.labels.len() >= Self::FLUSH_BYTES
+    }
+
+    #[inline]
+    fn colored_bucket_ready(bucket: &PendingMaterializedBucket) -> bool {
+        Self::uncolored_bucket_ready(bucket)
+            && bucket.colors.len() * std::mem::size_of::<UnitigColor>() >= Self::FLUSH_BYTES
     }
 }
 
@@ -12677,7 +12685,6 @@ impl MaterializedRecordSink for SharedMaterializedBatch<'_, '_> {
         record: &StitchedCoordRecord,
         label: &[u8],
     ) -> Result<(), SerialCollationError> {
-        self.bucket_bytes[bucket_id] += label.len() + STITCH_COORD_RECORD_LEN as usize;
         let bucket = &mut self.buckets[bucket_id];
         let label_offset = u32::try_from(bucket.labels.len()).map_err(|_| {
             SerialCollationError::MalformedCoordBucket(self.shared.coord_dir.to_path_buf())
@@ -12695,10 +12702,9 @@ impl MaterializedRecordSink for SharedMaterializedBatch<'_, '_> {
                 u32::MAX,
                 0,
             ));
-        if self.bucket_bytes[bucket_id] >= Self::FLUSH_BYTES {
+        if Self::uncolored_bucket_ready(bucket) {
             self.shared
                 .write_batch(bucket_id, &mut self.buckets[bucket_id])?;
-            self.bucket_bytes[bucket_id] = 0;
         }
         Ok(())
     }
@@ -12732,11 +12738,7 @@ impl MaterializedRecordSink for SharedMaterializedBatch<'_, '_> {
                 color_start,
                 color_count,
             ));
-        self.bucket_bytes[bucket_id] += label.len()
-            + STITCH_COORD_RECORD_LEN as usize
-            + std::mem::size_of::<u32>()
-            + colors.len() * std::mem::size_of::<u64>();
-        if self.bucket_bytes[bucket_id] >= Self::FLUSH_BYTES {
+        if Self::colored_bucket_ready(bucket) {
             self.finish_bucket(bucket_id)?;
         }
         Ok(())
@@ -13122,9 +13124,9 @@ impl MaterializedStitchedCoordShardWriter {
                 .extend_from_slice(&encoded_materialized_stitched_coord_record(
                     MaterializedStitchedCoordRecord {
                         path_id: pending.path_id,
-                        rank: pending.rank,
+                        rank: u64::from(pending.rank),
                         label_offset: self.label_bytes + u64::from(pending.label_offset),
-                        label_len: pending.label_len,
+                        label_len: u32::from(pending.label_len),
                         reverse: pending.reverse(),
                         is_cycle: pending.is_cycle(),
                         color_index,
@@ -13649,19 +13651,27 @@ fn encoded_materialized_stitched_coord_record(
 ) -> [u8; STITCH_COORD_RECORD_LEN as usize] {
     let mut bytes = [0u8; STITCH_COORD_RECORD_LEN as usize];
     bytes[..8].copy_from_slice(&record.path_id.to_le_bytes());
-    bytes[8..16].copy_from_slice(&record.rank.to_le_bytes());
     debug_assert!(u32::try_from(record.label_offset).is_ok());
-    bytes[16..20].copy_from_slice(&(record.label_offset as u32).to_le_bytes());
-    bytes[20..24].copy_from_slice(&record.label_len.to_le_bytes());
-    bytes[24..28].copy_from_slice(&record.color_index.to_le_bytes());
-    let mut flags = 0u32;
+    bytes[8..12].copy_from_slice(&(record.label_offset as u32).to_le_bytes());
+    bytes[12..16].copy_from_slice(&record.color_index.to_le_bytes());
+    bytes[16..18].copy_from_slice(
+        &u16::try_from(record.rank)
+            .expect("materialized rank fits C++ weight_t")
+            .to_le_bytes(),
+    );
+    bytes[18..20].copy_from_slice(
+        &u16::try_from(record.label_len)
+            .expect("materialized label length fits C++ uni_len_t")
+            .to_le_bytes(),
+    );
+    let mut flags = 0u16;
     if record.reverse {
         flags |= LoadedMaterializedStitchedCoordRecord::REVERSE_FLAG;
     }
     if record.is_cycle {
         flags |= LoadedMaterializedStitchedCoordRecord::CYCLE_FLAG;
     }
-    bytes[28..32].copy_from_slice(&flags.to_le_bytes());
+    bytes[22..24].copy_from_slice(&flags.to_le_bytes());
     bytes
 }
 
@@ -14146,9 +14156,9 @@ fn append_pending_materialized_bucket(
             .records
             .push(LoadedMaterializedStitchedCoordRecord::new(
                 pending.path_id,
-                pending.rank,
+                u64::from(pending.rank),
                 label_offset,
-                pending.label_len,
+                u32::from(pending.label_len),
                 pending.reverse(),
                 pending.is_cycle(),
                 color_start,
@@ -14429,17 +14439,16 @@ fn decoded_materialized_stitched_coord_record(
         ));
     }
     let path_id = u64::from_le_bytes(bytes[..8].try_into().expect("u64 path_id field"));
-    let rank = u64::from_le_bytes(bytes[8..16].try_into().expect("u64 rank field"));
-    let label_offset =
-        u32::from_le_bytes(bytes[16..20].try_into().expect("u32 label offset field"));
-    let label_len = u32::from_le_bytes(bytes[20..24].try_into().expect("u32 label length field"));
-    let color_index = u32::from_le_bytes(bytes[24..28].try_into().expect("u32 color index field"));
-    let flags = u32::from_le_bytes(bytes[28..32].try_into().expect("u32 flags field"));
+    let label_offset = u32::from_le_bytes(bytes[8..12].try_into().expect("u32 label offset field"));
+    let color_index = u32::from_le_bytes(bytes[12..16].try_into().expect("u32 color index field"));
+    let rank = u16::from_le_bytes(bytes[16..18].try_into().expect("u16 rank field"));
+    let label_len = u16::from_le_bytes(bytes[18..20].try_into().expect("u16 label length field"));
+    let flags = u16::from_le_bytes(bytes[22..24].try_into().expect("u16 flags field"));
     Ok(MaterializedStitchedCoordRecord {
         path_id,
-        rank,
+        rank: u64::from(rank),
         label_offset: u64::from(label_offset),
-        label_len,
+        label_len: u32::from(label_len),
         reverse: flags & LoadedMaterializedStitchedCoordRecord::REVERSE_FLAG != 0,
         is_cycle: flags & LoadedMaterializedStitchedCoordRecord::CYCLE_FLAG != 0,
         color_index,
@@ -17948,7 +17957,32 @@ mod materialized_record_tests {
         assert_eq!(decode_discontinuity_edge::<31>(&encoded[..25]), edge);
 
         set_encoded_edge_unitig_bucket::<31>(&mut encoded, 511);
-        assert_eq!(decode_discontinuity_edge::<31>(&encoded[..25]).unitig_bucket, 511);
+        assert_eq!(
+            decode_discontinuity_edge::<31>(&encoded[..25]).unitig_bucket,
+            511
+        );
+    }
+
+    #[test]
+    fn shared_materialized_batch_matches_cpp_buffer_thresholds() {
+        let mut bucket = PendingMaterializedBucket::default();
+        bucket.records.resize_with(
+            SharedMaterializedBatch::FLUSH_BYTES / STITCH_COORD_RECORD_LEN as usize,
+            || LoadedMaterializedStitchedCoordRecord::new(0, 0, 0, 31, false, false, u32::MAX, 0),
+        );
+        assert!(!SharedMaterializedBatch::uncolored_bucket_ready(&bucket));
+
+        bucket
+            .labels
+            .resize(SharedMaterializedBatch::FLUSH_BYTES, 0);
+        assert!(SharedMaterializedBatch::uncolored_bucket_ready(&bucket));
+        assert!(!SharedMaterializedBatch::colored_bucket_ready(&bucket));
+
+        bucket.colors.resize(
+            SharedMaterializedBatch::FLUSH_BYTES / std::mem::size_of::<UnitigColor>(),
+            UnitigColor::new(0, crate::state::ColorCoordinate::from_u40(0)),
+        );
+        assert!(SharedMaterializedBatch::colored_bucket_ready(&bucket));
     }
 
     #[test]
@@ -18037,6 +18071,7 @@ mod materialized_record_tests {
                 color_index,
             };
             let encoded = encoded_materialized_stitched_coord_record(record);
+            assert_eq!(encoded.len(), 24);
             let decoded = decoded_materialized_stitched_coord_record(
                 &encoded,
                 Path::new("materialized-record-test"),

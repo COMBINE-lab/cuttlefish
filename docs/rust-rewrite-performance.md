@@ -203,6 +203,20 @@ effectively flat on a noisy shared host, so the layout is retained for its
 lower external I/O and memory footprint rather than claiming a scale runtime
 win from that single sample.
 
+The final path-info map now also matches the reference buffering condition:
+each worker/bucket flush waits for independent 8 KiB coordinate and label
+buffers (and an independent 8 KiB color buffer when colored), rather than
+flushing when their combined size reaches 8 KiB. Materialized coordinates use
+the reference `uint16_t` rank, local-unitig length, and per-unitig color count,
+reducing the sortable record from 32 to 24 bytes. On the 5,000-genome
+uncolored workload this reduced path-info reduction from 5.57 to 4.96 seconds,
+graph construction from 64.25 to 62.92 seconds, process wall time from 68.36
+to 67.00 seconds, and external writes by about 11.4 GB. The run emitted the
+exact 179,767,076 unitigs and 11,337,993,544 bases. A 1,000-genome colored run
+also completed without a width overflow and emitted the exact 40,370,131
+unitigs and 2,726,597,540 bases in 17.42 seconds of graph time with 12,478,300
+KiB peak RSS.
+
 The 5,000-genome topology can be compared exactly with bounded memory:
 
 ```bash

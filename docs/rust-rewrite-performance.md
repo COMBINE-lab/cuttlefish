@@ -657,15 +657,44 @@ Matched against C++ on the same corpus, colored, same host and filesystem:
 
 | threads | impl | wall | peak RSS | descriptor peak | unitigs |
 | ---: | --- | ---: | ---: | ---: | ---: |
-| 256 | Rust | 4:43.08 | 44.6 GB | 3588 | 252,487,658 |
-| 256 | C++ | 8:34.00 | 69.4 GB | 28,878 | 252,481,862 |
+| 16 | Rust | 21:44.64 | 10.2 GB | 3113 | 252,487,658 |
+| 16 | C++ | 24:33.02 | 10.9 GB | 27,915 | 252,487,658 |
+| 32 | Rust | 11:48.29 | 11.9 GB | 3145 | 252,487,658 |
+| 32 | C++ | 13:12.56 | 17.1 GB | 27,980 | 252,487,658 |
 | 64 | Rust | 7:21.32 | 15.7 GB | 3209 | 252,487,658 |
 | 64 | C++ | 7:33.78 | 28.3 GB | 28,109 | 252,487,658 |
+| 256 | Rust | 4:43.08 | 44.6 GB | 3588 | 252,487,658 |
+| 256 | C++ | 8:34.00 | 69.4 GB | 28,878 | 252,481,862 |
 
-At 256 threads Rust is 1.82 times faster on 36% less memory; at 64 threads it is
-2.7% faster on 45% less memory. Rust gets 1.56 times faster going from 64 to 256
-threads while C++ gets 1.13 times slower, so its advantage is concentrated in
-high-thread scaling.
+Rust is ahead on wall time and peak memory at every point. Its margin is not
+monotonic — 11.4%, 10.6%, 2.7%, then 81.6% — because 64 threads is C++'s best
+scaling step (1.75 times from 32) after which it degrades, running 1.13 times
+*slower* at 256 than at 64. Rust improves throughout but sub-linearly: 1.84,
+1.60, and 1.56 times for the 16-to-32, 32-to-64, and 64-to-256 steps.
+
+Memory parity is closest at 16 threads, where the two are 6.4% apart. Rust's
+advantage comes largely from per-worker replicated state that barely exists at
+low worker counts, so the gap widens with thread count rather than being a
+constant factor.
+
+The 16-thread point is worth noting on its own: a 150,000-genome colored graph
+builds in 10.2 GB, which fits a modest machine.
+
+Below 128 threads C++ is deterministic and both implementations emit identical
+counts at full corpus scale, so only the 256-thread C++ output is unusable.
+
+Smaller reference rungs at low thread counts, all counts matching:
+
+| genomes | mode | threads | Rust | C++ | Rust RSS | C++ RSS |
+| ---: | --- | ---: | ---: | ---: | ---: | ---: |
+| 1,000 | uncolored | 16 | 23.78 s | 26.03 s | 4.2 GB | 5.8 GB |
+| 1,000 | uncolored | 32 | 15.99 s | 17.57 s | 5.3 GB | 8.6 GB |
+| 1,000 | colored | 16 | 28.43 s | 31.39 s | 6.2 GB | 6.9 GB |
+| 1,000 | colored | 32 | 18.97 s | 22.51 s | 7.9 GB | 9.3 GB |
+| 10,000 | uncolored | 16 | 1:28.12 | 1:30.74 | 4.8 GB | 6.8 GB |
+| 10,000 | uncolored | 32 | 52.32 s | 54.79 s | 5.6 GB | 10.8 GB |
+| 10,000 | colored | 16 | 1:56.01 | 2:05.89 | 7.0 GB | 8.6 GB |
+| 10,000 | colored | 32 | 1:08.59 | 1:15.46 | 8.8 GB | 11.7 GB |
 
 `cf3-compare-fasta` matched all 252,487,658 strand-normalized unitigs between
 the two 64-thread outputs, so the implementations are verified identical at full

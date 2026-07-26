@@ -579,6 +579,12 @@ fn least_rotation_start(s: &[u8]) -> usize {
     i.min(j)
 }
 
+/// Whether to decode bucket records without building the graph (diagnostic).
+fn decode_only_diagnostic() -> bool {
+    static DECODE_ONLY: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *DECODE_ONLY.get_or_init(|| std::env::var_os("CF3_RS_DECODE_ONLY").is_some())
+}
+
 impl<const K: usize> LocalSubgraph<K> {
     pub fn from_bucket_path(
         path: impl AsRef<Path>,
@@ -644,7 +650,14 @@ impl<const K: usize> LocalSubgraph<K> {
             stats: LocalSubgraphStats::default(),
         };
 
+        // Diagnostic: `CF3_RS_DECODE_ONLY` reads and decodes bucket records
+        // without inserting vertices, separating decode cost from table cost.
+        let decode_only = decode_only_diagnostic();
         reader.try_for_each_borrowed_packed_record(|record| {
+            if decode_only {
+                std::hint::black_box(record.words.first());
+                return Ok(());
+            }
             subgraph.add_borrowed_packed_record(record)
         })?;
         for path in &paths[1..] {
@@ -665,6 +678,10 @@ impl<const K: usize> LocalSubgraph<K> {
                 return Err(LocalSubgraphError::MalformedRecord);
             }
             reader.try_for_each_borrowed_packed_record(|record| {
+                if decode_only {
+                    std::hint::black_box(record.words.first());
+                    return Ok(());
+                }
                 subgraph.add_borrowed_packed_record(record)
             })?;
         }

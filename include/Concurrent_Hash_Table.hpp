@@ -66,6 +66,17 @@ private:
     template <typename T_to_, typename T_from_>
     static T_to_ pun_type(const T_from_ val) { return *reinterpret_cast<const T_to_*>(&val); }
 
+    // Acquire-loads the key at `ptr`. Only defined when `atomic_read` holds.
+    //
+    // Slot keys are published with `store_key` after their value is written, so
+    // an acquire load that observes a key also observes that key's value. Plain
+    // loads would be a data race with the concurrent publishing store, and give
+    // no ordering guarantee for the value that follows it.
+    static T_key_ load_key(const T_key_* ptr);
+
+    // Release-stores `key` at `ptr`, publishing the value written before it.
+    static void store_key(T_key_* ptr, T_key_ key);
+
     // Returns a 64-bit signature of the key-set of the hash table if
     // `hash_key_set_` is true. Otherwise returns a 64-bit signature of the
     // value-collection of the table.
@@ -101,6 +112,26 @@ public:
     // `true` iff the insertion succeeds, i.e. free space was found for the
     // insertion.
     bool insert(T_key_ key, T_val_ val, T_val_*& val_add);
+
+    // As `insert(key, val, val_add)`, but also stores the index of the slot
+    // holding `key` in `slot`, so the caller can guard its own reads and writes
+    // of `*val_add` with `lock_slot` / `unlock_slot`.
+    bool insert(T_key_ key, T_val_ val, T_val_*& val_add, std::size_t& slot);
+
+    // Searches for `key` and returns the address of its value, or `nullptr`.
+    // When found, the index of the slot holding `key` is stored in `slot`, so
+    // the caller can guard its accesses with `lock_slot` / `unlock_slot`.
+    T_val_* find(T_key_ key, std::size_t& slot);
+
+    // Acquires the lock guarding slot `slot`.
+    //
+    // A value handed out by `insert` or `find` is only safe to read or modify
+    // while its slot lock is held: another worker may be updating the same key
+    // concurrently, and this table has no other exclusion for value access.
+    void lock_slot(std::size_t slot) const { lock[slot].lock(); }
+
+    // Releases the lock guarding slot `slot`.
+    void unlock_slot(std::size_t slot) const { lock[slot].unlock(); }
 
     // Inserts the key `key` with value `val` into the table. Returns `false` if
     // the key already exists in the table; and in that case, the existing value
@@ -202,6 +233,38 @@ inline void Concurrent_Hash_Table<T_key_, T_val_, T_hasher_>::clear()
 
 
 template <typename T_key_, typename T_val_, typename T_hasher_>
+inline T_key_ Concurrent_Hash_Table<T_key_, T_val_, T_hasher_>::load_key(const T_key_* const ptr)
+{
+    static_assert(atomic_read, "Atomic key loads require a machine-word-sized key.");
+
+    if constexpr(sizeof(T_key_) == 1)
+        return pun_type<T_key_>(__atomic_load_n(reinterpret_cast<const uint8_t*>(ptr), __ATOMIC_ACQUIRE));
+    else if constexpr(sizeof(T_key_) == 2)
+        return pun_type<T_key_>(__atomic_load_n(reinterpret_cast<const uint16_t*>(ptr), __ATOMIC_ACQUIRE));
+    else if constexpr(sizeof(T_key_) == 4)
+        return pun_type<T_key_>(__atomic_load_n(reinterpret_cast<const uint32_t*>(ptr), __ATOMIC_ACQUIRE));
+    else
+        return pun_type<T_key_>(__atomic_load_n(reinterpret_cast<const uint64_t*>(ptr), __ATOMIC_ACQUIRE));
+}
+
+
+template <typename T_key_, typename T_val_, typename T_hasher_>
+inline void Concurrent_Hash_Table<T_key_, T_val_, T_hasher_>::store_key(T_key_* const ptr, const T_key_ key)
+{
+    static_assert(atomic_read, "Atomic key stores require a machine-word-sized key.");
+
+    if constexpr(sizeof(T_key_) == 1)
+        __atomic_store_n(reinterpret_cast<uint8_t*>(ptr), pun_type<uint8_t>(key), __ATOMIC_RELEASE);
+    else if constexpr(sizeof(T_key_) == 2)
+        __atomic_store_n(reinterpret_cast<uint16_t*>(ptr), pun_type<uint16_t>(key), __ATOMIC_RELEASE);
+    else if constexpr(sizeof(T_key_) == 4)
+        __atomic_store_n(reinterpret_cast<uint32_t*>(ptr), pun_type<uint32_t>(key), __ATOMIC_RELEASE);
+    else
+        __atomic_store_n(reinterpret_cast<uint64_t*>(ptr), pun_type<uint64_t>(key), __ATOMIC_RELEASE);
+}
+
+
+template <typename T_key_, typename T_val_, typename T_hasher_>
 inline bool Concurrent_Hash_Table<T_key_, T_val_, T_hasher_>::insert(const T_key_ key, const T_val_ val)
 {
 #ifndef NDEBUG
@@ -216,11 +279,13 @@ inline bool Concurrent_Hash_Table<T_key_, T_val_, T_hasher_>::insert(const T_key
 
     if constexpr(atomic_read)
     {
-        if(T[i].key == empty_key_)  // TODO: check atomic-read / partial-read guarantees.
+        if(load_key(&T[i].key) == empty_key_)
         {
             lock[i].lock();
-            if(T[i].key == empty_key_)
-                T[i].key = key, T[i].val = val,
+            if(load_key(&T[i].key) == empty_key_)
+                // Write the value first; the release-store of the key publishes it.
+                T[i].val = val,
+                store_key(&T[i].key, key),
                 success = true;
             lock[i].unlock();
 
@@ -228,7 +293,7 @@ inline bool Concurrent_Hash_Table<T_key_, T_val_, T_hasher_>::insert(const T_key
                 return true;
         }
 
-        if(T[i].key == key) // TODO: check atomic-read / partial-read guarantees.
+        if(load_key(&T[i].key) == key)
             return false;
     }
     else
@@ -260,6 +325,14 @@ inline bool Concurrent_Hash_Table<T_key_, T_val_, T_hasher_>::insert(const T_key
 template <typename T_key_, typename T_val_, typename T_hasher_>
 inline bool Concurrent_Hash_Table<T_key_, T_val_, T_hasher_>::insert(const T_key_ key, const T_val_ val, T_val_*& val_add)
 {
+    std::size_t slot;
+    return insert(key, val, val_add, slot);
+}
+
+
+template <typename T_key_, typename T_val_, typename T_hasher_>
+inline bool Concurrent_Hash_Table<T_key_, T_val_, T_hasher_>::insert(const T_key_ key, const T_val_ val, T_val_*& val_add, std::size_t& slot)
+{
 #ifndef NDEBUG
     std::size_t tried_slots = 0;
 #endif
@@ -272,24 +345,29 @@ inline bool Concurrent_Hash_Table<T_key_, T_val_, T_hasher_>::insert(const T_key
 
     if constexpr(atomic_read)
     {
-        if(T[i].key == empty_key_)  // TODO: check atomic-read / partial-read guarantees.
+        if(load_key(&T[i].key) == empty_key_)
         {
             lock[i].lock();
-            if(T[i].key == empty_key_)
-                T[i].key = key, T[i].val = val,
+            if(load_key(&T[i].key) == empty_key_)
+                T[i].val = val,
+                store_key(&T[i].key, key),
                 success = true;
             lock[i].unlock();
 
             if(success)
+            {
+                slot = i;
                 return true;
+            }
         }
 
-        if(T[i].key == key) // TODO: check atomic-read / partial-read guarantees.
+        // The acquire-load above pairs with the publishing release-store, so the
+        // value is visible here. It is not stable, though: the caller must hold
+        // `lock_slot(slot)` while reading or modifying it.
+        if(load_key(&T[i].key) == key)
         {
-            lock[i].lock(); // Some other worker can be manipulating the value.
             val_add = &T[i].val;
-            lock[i].unlock();
-
+            slot = i;
             return false;
         }
     }
@@ -302,6 +380,7 @@ inline bool Concurrent_Hash_Table<T_key_, T_val_, T_hasher_>::insert(const T_key
             T[i].key = key, T[i].val = val;
 
             lock[i].unlock();
+            slot = i;
             return true;
         }
 
@@ -310,6 +389,7 @@ inline bool Concurrent_Hash_Table<T_key_, T_val_, T_hasher_>::insert(const T_key
             val_add = &T[i].val;
 
             lock[i].unlock();
+            slot = i;
             return false;
         }
 
@@ -336,11 +416,12 @@ inline bool Concurrent_Hash_Table<T_key_, T_val_, T_hasher_>::insert_or_assign(c
 
     if constexpr(atomic_read)
     {
-        if(T[i].key == empty_key_)  // TODO: check atomic-read / partial-read guarantees.
+        if(load_key(&T[i].key) == empty_key_)
         {
             lock[i].lock();
-            if(T[i].key == empty_key_)
-                T[i].key = key, T[i].val = val,
+            if(load_key(&T[i].key) == empty_key_)
+                T[i].val = val,
+                store_key(&T[i].key, key),
                 success = true;
             lock[i].unlock();
 
@@ -348,7 +429,7 @@ inline bool Concurrent_Hash_Table<T_key_, T_val_, T_hasher_>::insert_or_assign(c
                 return true;
         }
 
-        if(T[i].key == key) // TODO: check atomic-read / partial-read guarantees.
+        if(load_key(&T[i].key) == key)
         {
             lock[i].lock();
             T[i].val = val;
@@ -388,23 +469,32 @@ inline bool Concurrent_Hash_Table<T_key_, T_val_, T_hasher_>::insert_or_assign(c
 template <typename T_key_, typename T_val_, typename T_hasher_>
 inline T_val_* Concurrent_Hash_Table<T_key_, T_val_, T_hasher_>::find(const T_key_ key)
 {
+    std::size_t slot;
+    return find(key, slot);
+}
+
+
+template <typename T_key_, typename T_val_, typename T_hasher_>
+inline T_val_* Concurrent_Hash_Table<T_key_, T_val_, T_hasher_>::find(const T_key_ key, std::size_t& slot)
+{
 #ifndef NDEBUG
     std::size_t tried_slots = 0;
 #endif
 
+    // The returned value is only stable while its slot lock is held; callers
+    // that read or modify it concurrently must use `lock_slot(slot)`.
     T_val_* val_add = nullptr;
     for(std::size_t i = hash_to_idx(hash(key)); ; i = next_index(i))
     if constexpr(atomic_read)
     {
-        if(T[i].key == key) // TODO: check atomic-read / partial-read guarantees.
+        const auto observed = load_key(&T[i].key);
+        if(observed == key)
         {
-            lock[i].lock(); // To ensure that some other thread is not updating this val atm—a stable value is guaranteed.
-                            // This only works correctly because in our use-case of this table, a key is accessed only twice.
             val_add = &T[i].val;
-            lock[i].unlock();
+            slot = i;
             break;
         }
-        else if(T[i].key == empty_key_) // TODO: check atomic-read / partial-read guarantees.
+        else if(observed == empty_key_)
             break;
         else
             assert(++tried_slots <= capacity_);
@@ -415,7 +505,8 @@ inline T_val_* Concurrent_Hash_Table<T_key_, T_val_, T_hasher_>::find(const T_ke
 
         if(T[i].key == key)
         {
-            val_add = &T[i].val;    // This only works correctly because in our use-case of this table, a key is accessed only twice.
+            val_add = &T[i].val;
+            slot = i;
             lock[i].unlock();
             break;
         }
@@ -444,6 +535,10 @@ inline const T_val_* Concurrent_Hash_Table<T_key_, T_val_, T_hasher_>::find(cons
 template <typename T_key_, typename T_val_, typename T_hasher_>
 inline bool Concurrent_Hash_Table<T_key_, T_val_, T_hasher_>::find(const T_key_ key, T_val_& val) const
 {
+    // Safe without the slot lock only because a value is fully written before
+    // its key is published, and this overload's callers never mutate a value
+    // after publication. Callers that do modify values in place must go through
+    // `find(key, slot)` and hold `lock_slot(slot)`.
     const auto val_add = find(key);
     if(val_add != nullptr)
     {

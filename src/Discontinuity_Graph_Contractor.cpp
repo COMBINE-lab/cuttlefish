@@ -76,32 +76,50 @@ void Discontinuity_Graph_Contractor<k, Colored_>::contract()
                             {
                                 const auto& e = buf[idx];
                                 Other_End* p_z;
+                                std::size_t z_slot;
 
                                 assert(G.E().partition(e.y()) == j);
                                 assert(e.x_is_phi() || G.E().partition(e.x()) < j);
 
-                                if(M.insert(e.y(), Other_End(e.x(), e.s_x(), e.s_y(), e.x_is_phi(), e.w(), false), p_z))
+                                if(M.insert(e.y(), Other_End(e.x(), e.s_x(), e.s_y(), e.x_is_phi(), e.w(), false), p_z, z_slot))
                                 {
                                     assert(M.find(e.y()));
                                     continue;
                                 }
 
                                 assert(M.find(e.y()));
-                                auto& z = *p_z;
-                                if(z.is_phi() && e.x_is_phi())
-                                    form_meta_vertex(e.y(), j, e.s_y(), e.w(), z.w(), false);
-                                else if(z.in_same_part())   // Corresponds to a compressed diagonal chain.
+
+                                // Read and update `*p_z` under its slot lock: another
+                                // worker can be handling this same vertex right now, and
+                                // an unsynchronized read-modify-write here loses the
+                                // `process()` flag and drops unitigs. The emission calls
+                                // work off a snapshot so no I/O happens under the lock.
+                                Other_End z_prev;
+                                bool meta = false, edge = false;
+                                M.lock_slot(z_slot);
                                 {
-                                    assert(!z.is_phi());
-                                    assert(M.find(z.v()));
-                                    assert(G.E().partition(z.v()) == j);
+                                    auto& z = *p_z;
+                                    z_prev = z;
+                                    if(z.is_phi() && e.x_is_phi())
+                                        meta = true;
+                                    else if(z.in_same_part())   // Corresponds to a compressed diagonal chain.
+                                    {
+                                        assert(!z.is_phi());
+                                        assert(G.E().partition(z.v()) == j);
 
-                                    z = Other_End(e.x(), e.s_x(), e.s_y(), e.x_is_phi(), e.w(), false);
+                                        z = Other_End(e.x(), e.s_x(), e.s_y(), e.x_is_phi(), e.w(), false);
+                                    }
+                                    else
+                                        edge = true;
+
+                                    z.process();
                                 }
-                                else
-                                    G.add_edge(e.x(), e.s_x(), z.v(), z.s_v(), e.w() + z.w(), e.x_is_phi(), z.is_phi());
+                                M.unlock_slot(z_slot);
 
-                                z.process();
+                                if(meta)
+                                    form_meta_vertex(e.y(), j, e.s_y(), e.w(), z_prev.w(), false);
+                                else if(edge)
+                                    G.add_edge(e.x(), e.s_x(), z_prev.v(), z_prev.s_v(), e.w() + z_prev.w(), e.x_is_phi(), z_prev.is_phi());
                             }
                 };
 
@@ -151,15 +169,27 @@ void Discontinuity_Graph_Contractor<k, Colored_>::contract()
                 M.insert(e.y(), Other_End(Discontinuity_Graph<k, Colored_>::phi(), side_t::back, inv_side(e.s_y()), true, 1, false));
             }
 
-            auto& m_x = *M.find(e.x());
-            auto& m_y = *M.find(e.y());
+            // Snapshot and mark both endpoints under their own slot locks, one at
+            // a time so no two slots are ever held together. Only `process()` is
+            // applied here, so the snapshots below are what the original code
+            // read before marking.
+            std::size_t x_slot, y_slot;
+            auto& m_x = *M.find(e.x(), x_slot);
+            auto& m_y = *M.find(e.y(), y_slot);
 
-            if(m_x.is_phi() && m_y.is_phi())
-                form_meta_vertex(e.x(), j, inv_side(e.s_x()), m_x.w(), w_xy + m_y.w(), false);
+            Other_End m_x_prev, m_y_prev;
+            M.lock_slot(x_slot);
+            m_x_prev = m_x, m_x.process();
+            M.unlock_slot(x_slot);
+
+            M.lock_slot(y_slot);
+            m_y_prev = m_y, m_y.process();
+            M.unlock_slot(y_slot);
+
+            if(m_x_prev.is_phi() && m_y_prev.is_phi())
+                form_meta_vertex(e.x(), j, inv_side(e.s_x()), m_x_prev.w(), w_xy + m_y_prev.w(), false);
             else
-                G.add_edge(m_x.v(), m_x.s_v(), m_y.v(), m_y.s_v(), m_x.w() + w_xy + m_y.w(), m_x.is_phi(), m_y.is_phi());
-
-            m_x.process(), m_y.process();
+                G.add_edge(m_x_prev.v(), m_x_prev.s_v(), m_y_prev.v(), m_y_prev.s_v(), m_x_prev.w() + w_xy + m_y_prev.w(), m_x_prev.is_phi(), m_y_prev.is_phi());
         };
 
         parlay::parallel_for(0, d_c_sz, contract_diagonal_chain);

@@ -1,5 +1,7 @@
 
 #include "dBG_Contractor.hpp"
+
+#include <cstdlib>
 #include "Discontinuity_Graph.hpp"
 #include "Graph_Partitioner.hpp"
 #include "State_Config.hpp"
@@ -56,6 +58,14 @@ void dBG_Contractor<k>::construct()
 
     t_part = timer::now();
     std::cerr << "Sequence splitting into subgraphs completed. Time taken: " << timer::duration(t_part - t_0) << " seconds.\n";
+
+    // Diagnostic: stop after splitting so a profiler can attribute work to that
+    // phase alone. Mirrors CF3_RS_EXIT_AFTER_PARTITION on the Rust side.
+    if(std::getenv("CF3_EXIT_AFTER_SPLIT") != nullptr)
+    {
+        std::cerr << "Exiting after sequence splitting (diagnostic).\n";
+        std::exit(0);
+    }
 
     {
         EXECUTE("subgraphs", G.process)

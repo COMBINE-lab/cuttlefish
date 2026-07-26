@@ -872,6 +872,12 @@ fn handle_source_failure(
     Ok(())
 }
 
+/// Whether to skip record packing and bucket writes (diagnostic only).
+fn scan_only_diagnostic() -> bool {
+    static SCAN_ONLY: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *SCAN_ONLY.get_or_init(|| std::env::var_os("CF3_RS_SCAN_ONLY").is_some())
+}
+
 fn emit_fragment_seq_weak_superkmer_buckets<const K: usize, E>(
     params: &BuildParams,
     graph_count: usize,
@@ -885,13 +891,18 @@ where
 {
     stats.fragments += 1;
     stats.fragment_bases += seq.len() as u64;
+    // Diagnostic: `CF3_RS_SCAN_ONLY` performs the minimizer scan without packing
+    // or writing records, isolating scan cost from emission cost.
+    let scan_only = scan_only_diagnostic();
     for_each_valid_weak_superkmer::<K, E, _>(
         seq,
         params.minimizer_len as usize,
         graph_count,
         params.color.then_some(source_id),
         |sk| {
-            buckets.add_valid(&sk, sk.sequence(seq))?;
+            if !scan_only {
+                buckets.add_valid(&sk, sk.sequence(seq))?;
+            }
             stats.weak_superkmers += 1;
             stats.weak_superkmer_bases += sk.len as u64;
             Ok(())

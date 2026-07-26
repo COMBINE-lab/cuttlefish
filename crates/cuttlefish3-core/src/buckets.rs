@@ -2030,13 +2030,56 @@ fn append_uncolored_record_valid(
 }
 
 #[inline(always)]
+/// Packs 32 valid ACGT bases into one 64-bit word, first base in the high bits.
+///
+/// The scalar form carries a loop-carried dependency (`word = (word << 2) | c`),
+/// so it neither vectorizes nor pipelines: 32 serial iterations for one word,
+/// which dominates record packing. Each 2-bit code is a pure bitwise function of
+/// its byte, so eight bases can be reduced at a time inside a `u64` and the
+/// codes gathered with a single `PEXT`.
+#[inline]
 fn pack_valid_word_32(seq: &[u8]) -> u64 {
     debug_assert!(seq.len() >= 32);
-    let mut word = 0u64;
-    for &base in &seq[..32] {
-        word = (word << 2) | u64::from(valid_ascii_base_bits(base));
+    #[cfg(all(target_arch = "x86_64", target_feature = "bmi2"))]
+    {
+        let mut word = 0u64;
+        for chunk in 0..4 {
+            let bytes = u64::from_le_bytes(
+                seq[chunk * 8..chunk * 8 + 8]
+                    .try_into()
+                    .expect("eight bases"),
+            );
+            // Per byte: ((b >> 2) ^ (b >> 1)) & 0b11, evaluated eight at a time.
+            let codes = ((bytes >> 2) ^ (bytes >> 1)) & 0x0303_0303_0303_0303;
+            // Gather the eight 2-bit codes, lowest byte first, into 16 bits.
+            let packed = unsafe { core::arch::x86_64::_pext_u64(codes, 0x0303_0303_0303_0303) };
+            // The scalar form shifts the first base furthest left, and PEXT emits
+            // the first (lowest-address) base in the least significant bits, so
+            // reverse the 2-bit groups within this 16-bit lane.
+            let reversed = reverse_2bit_groups_16(packed as u16);
+            word = (word << 16) | u64::from(reversed);
+        }
+        word
     }
-    word
+    #[cfg(not(all(target_arch = "x86_64", target_feature = "bmi2")))]
+    {
+        let mut word = 0u64;
+        for &base in &seq[..32] {
+            word = (word << 2) | u64::from(valid_ascii_base_bits(base));
+        }
+        word
+    }
+}
+
+/// Reverses the order of the eight 2-bit groups in a 16-bit value.
+#[cfg(all(target_arch = "x86_64", target_feature = "bmi2"))]
+#[inline]
+fn reverse_2bit_groups_16(value: u16) -> u16 {
+    let v = value as u32;
+    // Swap adjacent 2-bit pairs, then nibbles, then bytes.
+    let v = ((v & 0x3333) << 2) | ((v >> 2) & 0x3333);
+    let v = ((v & 0x0f0f) << 4) | ((v >> 4) & 0x0f0f);
+    (((v & 0x00ff) << 8) | ((v >> 8) & 0x00ff)) as u16
 }
 
 #[inline]
@@ -2487,6 +2530,37 @@ impl std::error::Error for BucketError {}
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn packed_word_matches_scalar_reference() {
+        fn scalar(seq: &[u8]) -> u64 {
+            let mut word = 0u64;
+            for &base in &seq[..32] {
+                word = (word << 2) | u64::from(valid_ascii_base_bits(base));
+            }
+            word
+        }
+        let alphabet = b"ACGT";
+        // Deterministic pseudo-random coverage plus structured edge cases.
+        let mut state = 0x1234_5678_9abc_def0u64;
+        for case in 0..2048 {
+            let mut seq = [0u8; 32];
+            for (i, slot) in seq.iter_mut().enumerate() {
+                state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                *slot = if case < 4 {
+                    alphabet[(case + i) % 4]
+                } else {
+                    alphabet[(state >> 33) as usize % 4]
+                };
+            }
+            assert_eq!(
+                pack_valid_word_32(&seq),
+                scalar(&seq),
+                "mismatch for {:?}",
+                std::str::from_utf8(&seq).unwrap()
+            );
+        }
+    }
+
     use super::*;
 
     #[test]

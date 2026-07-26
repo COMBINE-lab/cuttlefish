@@ -94,6 +94,12 @@ where
                 "cuttlefish3-rs: partition and bucket emission completed in {:.3}s",
                 partition_elapsed.as_secs_f64()
             );
+            // Diagnostic: stop after partitioning so a profiler can attribute
+            // work to that phase alone.
+            if std::env::var_os("CF3_RS_EXIT_AFTER_PARTITION").is_some() {
+                eprintln!("cuttlefish3-rs: exiting after partition (diagnostic)");
+                std::process::exit(0);
+            }
             let build_start = Instant::now();
             if params.color {
                 report_process_memory("before colored build");

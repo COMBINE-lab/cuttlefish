@@ -44,3 +44,8 @@ data/ecoli-refseq-150/genomes.list
 .vscode/
 external/
 .cache/
+
+# Benchmark scratch and profiling output
+bench-tmp/
+perf*.data
+__pycache__/

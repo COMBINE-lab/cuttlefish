@@ -24,6 +24,8 @@ const HEADER_LEN: u64 = 42;
 const COMPRESSED_BLOCK_HEADER_LEN: usize = 12;
 const MAX_SOURCE_ID: u32 = 0x1f_ffff;
 const MAX_OPEN_BUCKET_WRITERS: usize = 512;
+/// Largest record the staging buffers emit: attribute plus four label words.
+const MAX_RECORD_BYTES: usize = 4 + 4 * 8;
 const MAX_PENDING_BUCKET_BYTES: usize = 1024 * 1024;
 // Keep a colored source window coalesced in worker-local atlas buffers. C++
 // retains roughly this amount per active worker set; the larger cap avoids
@@ -1999,15 +2001,19 @@ fn append_record_valid(
 ) -> Result<(), BucketError> {
     let words = pack_valid_label(seq, label_words)?;
 
-    out.reserve(record_size(colored, label_words));
-    if colored {
-        out.extend_from_slice(&packed_attr.to_le_bytes());
+    let mut record = [0u8; MAX_RECORD_BYTES];
+    let attr_len = if colored {
+        record[..4].copy_from_slice(&packed_attr.to_le_bytes());
+        4
     } else {
-        out.extend_from_slice(&(packed_attr as u16).to_le_bytes());
+        record[..2].copy_from_slice(&(packed_attr as u16).to_le_bytes());
+        2
+    };
+    for (idx, &word) in words[..label_words].iter().enumerate() {
+        let at = attr_len + idx * 8;
+        record[at..at + 8].copy_from_slice(&word.to_le_bytes());
     }
-    for &word in &words[..label_words] {
-        out.extend_from_slice(&word.to_le_bytes());
-    }
+    out.extend_from_slice(&record[..attr_len + label_words * 8]);
     Ok(())
 }
 
@@ -2021,11 +2027,17 @@ fn append_uncolored_record_valid(
 ) -> Result<(), BucketError> {
     let words = pack_valid_label(seq, label_words)?;
 
-    out.reserve(2 + label_words * 8);
-    out.extend_from_slice(&packed_attr.to_le_bytes());
-    for &word in &words[..label_words] {
-        out.extend_from_slice(&word.to_le_bytes());
+    // Assemble the record on the stack and append it once. Reserving and then
+    // extending per field costs a capacity check and a `memcpy` call for each of
+    // the attribute and every label word; C++ writes its equivalent with plain
+    // indexed stores into pre-reserved arrays.
+    let mut record = [0u8; MAX_RECORD_BYTES];
+    record[..2].copy_from_slice(&packed_attr.to_le_bytes());
+    for (idx, &word) in words[..label_words].iter().enumerate() {
+        let at = 2 + idx * 8;
+        record[at..at + 8].copy_from_slice(&word.to_le_bytes());
     }
+    out.extend_from_slice(&record[..2 + label_words * 8]);
     Ok(())
 }
 

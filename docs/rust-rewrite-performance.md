@@ -820,3 +820,68 @@ Three routes remain, in increasing order of effort:
    up a first pass over an arbitrary single-member gzip, and the published
    speedups are large, but it is a substantial standalone project and a
    correctness-critical one.
+
+
+## Closing the uncolored partition gap
+
+Uncolored full-corpus builds trailed C++ at 16, 32, and 64 threads while
+leading everywhere else. Bisecting both implementations at the same phase
+boundaries located the cause precisely, after several plausible explanations
+failed to survive measurement.
+
+Diagnostic switches make the phases separable: `CF3_RS_EXIT_AFTER_PARTITION`
+and `CF3_EXIT_AFTER_SPLIT` stop each implementation after partitioning,
+`CF3_RS_SCAN_ONLY` and `CF3_SCAN_ONLY` suppress record emission, and
+`CF3_RS_PARSE_ONLY` additionally suppresses the minimizer scan.
+
+On 10,000 genomes as plain FASTA, the original split was:
+
+| stage | Rust | C++ |
+| --- | ---: | ---: |
+| parse | 0.708e12 | — |
+| minimizer scan | 4.350e12 | — |
+| scan total (parse + minimizer) | 5.257e12 | 3.274e12 |
+| emit | 1.790e12 | 3.024e12 |
+| partition total | 7.634e12 | 6.298e12 |
+
+Rust's emit path was already 41% cheaper than C++'s; the entire deficit, and
+more, was in scanning. Four changes addressed it:
+
+| change | partition instructions |
+| --- | ---: |
+| baseline | 7.634e12 |
+| `PEXT` label packing | 7.141e12 |
+| single bulk record write | 7.047e12 |
+| vectorized line append | 6.848e12 |
+| fused scan loop | 5.763e12 |
+
+The last is the substantive one. The scan ran as a per-base window walker
+invoking a visitor closure, plus a closure tracking super-k-mer boundaries.
+Disassembly showed the closure was never inlined, so its state lived in a
+closure environment and was reloaded and stored through memory on every base,
+on top of a call. `#[inline(always)]` did not persuade the compiler; merging
+the loops did, and the visitor now runs once per weak super-k-mer.
+
+Rust's partition is now cheaper than C++'s: 5.763e12 instructions against
+6.298e12, and 106.6 s against 113.5 s on the full corpus at 64 threads.
+
+| threads | Rust before | Rust after | C++ |
+| ---: | ---: | ---: | ---: |
+| 16 | 15:15.10 | 14:05.75 | 14:42.67 |
+| 32 | 8:21.99 | 7:48.26 | 8:02.13 |
+| 64 | 5:12.76 | 4:57.06 | 4:48.37 |
+
+Rust leads at 16 and 32 threads and trails by 3.0% at 64. Colored improved to
+7:00.71 at 64 threads against C++'s 7:33.78, and read mode to 29.51 s. All
+counts exact.
+
+### Rejected along the way
+
+Each was measured and reverted: atlas-lock scope (partition 4% worse), bucket
+compression as an uncolored default (7-8% slower at 32-64 threads), retained
+bucket-file handles (2% at 32 threads for eight times the descriptors),
+jemalloc decay tuning (11.6% slower), a smaller per-file read buffer (no
+effect), and a seed-0 wyhash specialization (already constant-folded). Two
+hypotheses were disproved outright: C++'s ISA-L inflate accounts for only 8%
+of the gap, and page faults concentrate downstream of partitioning rather than
+in file reading.

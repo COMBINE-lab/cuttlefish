@@ -7496,8 +7496,15 @@ const DEFAULT_MAX_UNITIG_COORD_BUCKETS: usize = 1024;
 const DEFAULT_EXPECTED_COLOR_CEILING: u64 = 48 * 1024 * 1024;
 /// Worker count at or above which the narrower coordinate fanout is used.
 const HIGH_THREAD_COORD_BUCKET_THRESHOLD: usize = 128;
-/// Coordinate fanout used at high worker counts.
+/// Coordinate fanout used at high worker counts on small graphs.
 const HIGH_THREAD_MAX_UNITIG_COORD_BUCKETS: usize = 256;
+/// Largest per-bucket local-unitig base count for which the narrow fanout pays.
+///
+/// Calibrated against measured colored runs at 256 threads: 10,000 Salmonella
+/// assemblies produce 1.21e10 local unitig bases, or 47M per bucket at the
+/// narrow fanout, and prefer it; 149,998 produce 4.38e10, or 171M per bucket,
+/// and prefer the wide fanout by 33% of peak memory. The threshold sits between.
+const MAX_NARROW_COORD_BUCKET_BASES: u64 = 64 * 1024 * 1024;
 const MAX_OPEN_MATERIALIZED_STITCH_WRITERS_PER_SHARD: usize = 8;
 const STITCH_PATH_INFO_BUCKET_TARGET: usize = 32;
 const DEFAULT_INMEM_STITCH_PATH_INFO_LIMIT: usize = 768 * 1024 * 1024;
@@ -8726,9 +8733,11 @@ fn map_external_cpp_path_info_buckets_to_max_unitig_buckets<const K: usize>(
             current_open_file_count(),
             threads,
             colored,
+            inputs.stats.unitig_bases,
         );
     eprintln!(
-        "cuttlefish3-rs: materializing final coordinates into {max_unitig_bucket_count} bucket(s) with {mapping_threads} mapping worker(s), {open_writer_limit} open writer(s)"
+        "cuttlefish3-rs: materializing final coordinates into {max_unitig_bucket_count} bucket(s) with {mapping_threads} mapping worker(s), {open_writer_limit} open writer(s); {} local unitig base(s)",
+        inputs.stats.unitig_bases
     );
     let max_unitig_bucket_mask = max_unitig_bucket_count - 1;
     let shared_writers =
@@ -12549,6 +12558,7 @@ fn materialized_coordinate_plan(
     open_files: usize,
     threads: usize,
     colored: bool,
+    unitig_bases: u64,
 ) -> (usize, usize, usize) {
     let threads = threads.max(1);
     let writer_files = if colored { 3 } else { 2 };
@@ -12559,7 +12569,7 @@ fn materialized_coordinate_plan(
     // reducing to 128 fully-open buckets took 39.7 s. Fewer, larger buckets also
     // used less memory here (19.5 GB versus 22.5 GB), because the reducer sizes
     // its per-worker workspaces from the largest bucket.
-    let mut buckets = coordinate_bucket_target(threads);
+    let mut buckets = coordinate_bucket_target(threads, unitig_bases);
     loop {
         let writer_descriptors = buckets.saturating_mul(writer_files);
         let mapping_workers = file_limit
@@ -12577,13 +12587,19 @@ fn materialized_coordinate_plan(
 /// Returns the maximal-unitig coordinate fanout to attempt before descriptor
 /// adaptation. `CF3_RS_MCOORD_BUCKETS` overrides it for measurement.
 ///
-/// Every mapping worker keeps a staging batch and a writer for each bucket, so
-/// the cost of a wide fanout scales with the worker count while its benefit does
-/// not. Measured on the colored 10,000-genome workload, dropping from 1024 to
-/// 256 buckets at 256 threads was 6.2% faster, used 21% less memory, and cut the
-/// descriptor peak from 3562 to 1285; at 64 threads the same change was 0.7%
-/// slower, so the wide fanout is retained there.
-fn coordinate_bucket_target(threads: usize) -> usize {
+/// Two opposing costs decide this. A wide fanout costs per-bucket staging and a
+/// writer in every mapping worker, which favours fewer buckets at high worker
+/// counts. But the reducer sizes its per-worker workspaces from the *largest
+/// bucket*, so halving the fanout doubles that workspace in every worker, which
+/// favours more buckets as the graph grows.
+///
+/// The second effect dominates at scale, and it is a function of bucket size
+/// rather than thread count. On the colored 10,000-genome workload at 256
+/// threads, 256 buckets was 6.2% faster and used 21% less memory than 1024. On
+/// 149,998 genomes the same reduction cost 33% *more* memory (74.9 GB against
+/// 50.3 GB) for no time difference at all. The fanout is therefore narrowed only
+/// while buckets stay small, and widened back as the graph grows.
+fn coordinate_bucket_target(threads: usize, unitig_bases: u64) -> usize {
     if let Some(buckets) = std::env::var("CF3_RS_MCOORD_BUCKETS")
         .ok()
         .and_then(|value| value.parse::<usize>().ok())
@@ -12591,7 +12607,14 @@ fn coordinate_bucket_target(threads: usize) -> usize {
     {
         return buckets;
     }
-    if threads >= HIGH_THREAD_COORD_BUCKET_THRESHOLD {
+    if threads < HIGH_THREAD_COORD_BUCKET_THRESHOLD {
+        return DEFAULT_MAX_UNITIG_COORD_BUCKETS;
+    }
+    // Keep the narrow fanout only while each bucket stays under the target size;
+    // otherwise fall back to Cuttlefish's 1024 so reduce workspaces stay small.
+    let narrow_bucket_bases =
+        unitig_bases / HIGH_THREAD_MAX_UNITIG_COORD_BUCKETS as u64;
+    if narrow_bucket_bases <= MAX_NARROW_COORD_BUCKET_BASES {
         HIGH_THREAD_MAX_UNITIG_COORD_BUCKETS
     } else {
         DEFAULT_MAX_UNITIG_COORD_BUCKETS
@@ -18155,6 +18178,7 @@ mod materialized_record_tests {
     fn materialized_coordinate_plan_respects_descriptor_budget() {
         // The 1024-bucket fanout is preserved at every descriptor limit; only the
         // number of simultaneously open shard writers adapts.
+        const SMALL_GRAPH: u64 = 4_000_000_000;
         for &(limit, open, threads, colored) in &[
             (1024usize, 64usize, 128usize, false),
             (1024, 64, 128, true),
@@ -18163,7 +18187,7 @@ mod materialized_record_tests {
             (65_536, 64, 256, true),
         ] {
             let (buckets, workers, open_writers) =
-                materialized_coordinate_plan(limit, open, threads, colored);
+                materialized_coordinate_plan(limit, open, threads, colored, SMALL_GRAPH);
             let writer_files = if colored { 3 } else { 2 };
             assert!(buckets >= 1 && buckets.is_power_of_two());
             assert_eq!(open_writers, buckets);
@@ -18175,24 +18199,37 @@ mod materialized_record_tests {
             );
         }
 
-        // A generous limit keeps the full fanout for the thread count: 1024 below
-        // the high-thread threshold, and the narrower fanout at or above it.
+        // Low thread counts always keep the full fanout.
         assert_eq!(
-            materialized_coordinate_plan(1_048_576, 64, 64, true),
+            materialized_coordinate_plan(1_048_576, 64, 64, true, SMALL_GRAPH),
             (DEFAULT_MAX_UNITIG_COORD_BUCKETS, 64, DEFAULT_MAX_UNITIG_COORD_BUCKETS)
         );
+        // High thread counts narrow the fanout only while buckets stay small.
         assert_eq!(
-            materialized_coordinate_plan(1_048_576, 64, 256, true),
+            materialized_coordinate_plan(1_048_576, 64, 256, true, SMALL_GRAPH),
             (
                 HIGH_THREAD_MAX_UNITIG_COORD_BUCKETS,
                 256,
                 HIGH_THREAD_MAX_UNITIG_COORD_BUCKETS
             )
         );
+        // A large graph widens it back, so reduce workspaces stay bounded.
+        let large_graph = MAX_NARROW_COORD_BUCKET_BASES
+            * HIGH_THREAD_MAX_UNITIG_COORD_BUCKETS as u64
+            * 2;
+        assert_eq!(
+            materialized_coordinate_plan(1_048_576, 64, 256, true, large_graph),
+            (
+                DEFAULT_MAX_UNITIG_COORD_BUCKETS,
+                256,
+                DEFAULT_MAX_UNITIG_COORD_BUCKETS
+            )
+        );
 
         // A tight limit reduces the fanout rather than failing, and never
         // reports more open writers than buckets.
-        let (buckets, workers, open_writers) = materialized_coordinate_plan(96, 64, 32, true);
+        let (buckets, workers, open_writers) =
+            materialized_coordinate_plan(96, 64, 32, true, SMALL_GRAPH);
         assert!(buckets >= 1 && buckets.is_power_of_two());
         assert_eq!(open_writers, buckets);
         assert!(workers >= 1);

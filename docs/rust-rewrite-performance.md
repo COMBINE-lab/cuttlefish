@@ -570,13 +570,30 @@ Reducing the fanout itself was the actual lever. On the same workload:
 | 128 | 38.95 s | 24.4 GB | 978 |
 | 64 | 39.04 s | 22.8 GB | 974 |
 
-Each mapping worker keeps staging and a writer per bucket, so a wide fanout
-costs more as workers increase while its benefit does not. 128 buckets was
-fastest at 256 threads but 2.0% slower at 64, and 256 buckets was 0.7% slower at
-64 across interleaved repeats. The fanout is therefore thread-adaptive: 1024
-below 128 threads and 256 at or above, leaving the 64-thread path unchanged.
-At 256 threads this is 1-7% faster with descriptor peaks falling from
-2500-3600 to 800-1300 across colored, uncolored, and read workloads.
+Two opposing costs decide the fanout. Each mapping worker keeps staging and a
+writer per bucket, which favours fewer buckets as workers increase. But the
+reducer sizes its per-worker workspaces from the *largest* bucket, so halving
+the fanout doubles that workspace in every worker, which favours more buckets as
+the graph grows.
+
+A thread-count rule captured only the first effect and was wrong at scale. On
+149,998 Salmonella assemblies at 256 threads, narrowing to 256 buckets cost 33%
+more peak memory than 1024 — 74.9 GB against 50.3 GB — for no time difference,
+exactly inverting the 10,000-genome result. A 50,000-genome guard had not been
+A/B'd on fanout and did not catch it.
+
+The fanout is therefore chosen from bucket *size*, using the local-unitig base
+count already carried in the inputs: at 128 threads or more it narrows to 256
+buckets only while each would hold at most 64 MiB of local-unitig bases, and
+otherwise keeps Cuttlefish's 1024. Measured colored runs at 256 threads:
+
+| genomes | local unitig bases | fanout | wall | peak RSS |
+| ---: | ---: | ---: | ---: | ---: |
+| 10,000 | 1.21e10 | 256 | 39.94 s | 26.9 GB |
+| 50,000 | — | 1024 | 1:54.63 | 39.8 GB |
+| 149,998 | 4.38e10 | 1024 | 4:43.26 | 49.9 GB |
+
+Below 128 threads the full fanout is always used, so that path is unchanged.
 `CF3_RS_MCOORD_BUCKETS` overrides the fanout for measurement.
 
 A related observation: before this change, running with a *lower* descriptor
@@ -631,12 +648,28 @@ corpus to build without curating the list by hand.
 | mode | wall | peak RSS | descriptor peak | unitigs | bases |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | uncolored | 3:42.82 | 65,858,656 KiB | 1033 | 252,487,658 | 16,417,233,428 |
-| colored | 4:41.22 | 79,404,880 KiB | 1289 | 252,487,658 | 16,417,233,428 |
+| colored | 4:43.26 | 52,325,000 KiB | 3593 | 252,487,658 | 16,417,233,428 |
 
 Colored and uncolored agree exactly, which is the deterministic topology gate at
-this scale. The descriptor peak is roughly 1,000 against C++'s ~27,000 on
-smaller rungs, so the full corpus builds comfortably under a 4,096-descriptor
-limit.
+this scale.
+
+Matched against C++ on the same corpus, colored, same host and filesystem:
+
+| threads | impl | wall | peak RSS | descriptor peak | unitigs |
+| ---: | --- | ---: | ---: | ---: | ---: |
+| 256 | Rust | 4:43.26 | 49.9 GB | 3593 | 252,487,658 |
+| 256 | C++ | 8:34.00 | 69.4 GB | 28,878 | 252,481,862 |
+| 64 | Rust | 7:13.75 | 39.2 GB | 3209 | 252,487,658 |
+| 64 | C++ | 7:33.78 | 28.3 GB | 28,109 | 252,487,658 |
+
+At 256 threads Rust is 1.81 times faster on 28% less memory. At 64 threads the
+two agree exactly on output, confirming that C++'s 5,796-unitig deficit at 256
+threads is a function of thread count rather than workload; Rust is 4.4% faster
+there but uses more memory, which remains the one configuration where C++ is
+leaner.
+
+Rust gets 1.53 times faster going from 64 to 256 threads while C++ gets 1.13
+times slower, so the advantage is overwhelmingly in high-thread scaling.
 
 ## Allocation and inner-loop cleanups
 

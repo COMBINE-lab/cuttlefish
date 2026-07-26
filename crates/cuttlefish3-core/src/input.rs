@@ -179,6 +179,22 @@ fn read_probe<R: Read>(source: &mut R, head: &mut [u8]) -> std::io::Result<usize
     Ok(filled)
 }
 
+/// Appends a payload line, dropping embedded whitespace.
+///
+/// The filtering form is a per-byte predicate and push, which cannot vectorize.
+/// Sequence lines essentially never contain interior whitespace, so probe first
+/// with a scan the compiler can vectorize and fall back only when needed. The
+/// slow path is kept so that interior whitespace still joins a record rather
+/// than splitting it into fragments.
+#[inline]
+fn append_sequence_line(seq: &mut Vec<u8>, line: &[u8]) {
+    if line.iter().any(u8::is_ascii_whitespace) {
+        seq.extend(line.iter().copied().filter(|b| !b.is_ascii_whitespace()));
+    } else {
+        seq.extend_from_slice(line);
+    }
+}
+
 fn parse_plain_sequence_reader<R, F>(
     first_line: Vec<u8>,
     mut reader: R,
@@ -202,7 +218,7 @@ where
             break;
         }
         trim_ascii_line_in_place(&mut line);
-        seq.extend(line.iter().copied().filter(|b| !b.is_ascii_whitespace()));
+        append_sequence_line(&mut seq, &line);
     }
     emit_actg_fragments(source_id, 1, &seq, min_len, on_fragment)?;
     Ok(1)
@@ -260,7 +276,7 @@ where
             seq.clear();
             record_id += 1;
         } else if !line.is_empty() {
-            seq.extend(line.iter().copied().filter(|b| !b.is_ascii_whitespace()));
+            append_sequence_line(&mut seq, &line);
         }
     }
 
@@ -307,7 +323,7 @@ where
             if line.starts_with(b"+") {
                 break;
             }
-            seq.extend(line.iter().copied().filter(|b| !b.is_ascii_whitespace()));
+            append_sequence_line(&mut seq, &line);
         }
 
         let mut qual_len = 0usize;

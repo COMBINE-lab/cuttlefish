@@ -1,5 +1,7 @@
 
 #include "Graph_Partitioner.hpp"
+
+#include <cstdlib>
 #include "Subgraphs_Manager.hpp"
 #include "Minimizer_Iterator.hpp"
 #include "DNA_Utility.hpp"
@@ -18,6 +20,17 @@
 #include <algorithm>
 #include <cassert>
 
+
+namespace
+{
+// Diagnostic: with `CF3_SCAN_ONLY` set, scan without emitting super k-mers, to
+// separate scan cost from emission cost. Mirrors `CF3_RS_SCAN_ONLY` in Rust.
+inline bool cf3_scan_only()
+{
+    static const bool v = (std::getenv("CF3_SCAN_ONLY") != nullptr);
+    return v;
+}
+}
 
 namespace cuttlefish
 {
@@ -559,9 +572,9 @@ uint64_t Graph_Partitioner<k, Is_FASTQ_, Colored_>::process_chunk(chunk_t* chunk
                     assert(len_weak >= k);
                     // TODO: the following add, being to different subgraphs' different worker-buffers, causes lots of cache misses.
                     if constexpr(!Colored_)
-                        subgraphs.add_super_kmer(cur_g, frag + cur_sup_km1_mer_off - l_joined, len_weak, l_disc, r_disc);
+                        { if(!cf3_scan_only()) subgraphs.add_super_kmer(cur_g, frag + cur_sup_km1_mer_off - l_joined, len_weak, l_disc, r_disc); }
                     else
-                        subgraphs.add_super_kmer(cur_g, frag + cur_sup_km1_mer_off - l_joined, len_weak, source_id, l_disc, r_disc);
+                        { if(!cf3_scan_only()) subgraphs.add_super_kmer(cur_g, frag + cur_sup_km1_mer_off - l_joined, len_weak, source_id, l_disc, r_disc); }
                     weak_sup_kmers_len += len_weak;
 
                     cur_sup_km1_mer_off = next_sup_km1_mer_off;
@@ -589,9 +602,9 @@ uint64_t Graph_Partitioner<k, Is_FASTQ_, Colored_>::process_chunk(chunk_t* chunk
             assert(len_weak >= k);
             // TODO: the following add, being to different subgraphs' different worker-buffers, causes lots of cache misses.
             if constexpr(!Colored_)
-                subgraphs.add_super_kmer(cur_g, frag + cur_sup_km1_mer_off - l_joined, len_weak, l_disc, r_disc);
+                { if(!cf3_scan_only()) subgraphs.add_super_kmer(cur_g, frag + cur_sup_km1_mer_off - l_joined, len_weak, l_disc, r_disc); }
             else
-                subgraphs.add_super_kmer(cur_g, frag + cur_sup_km1_mer_off - l_joined, len_weak, source_id, l_disc, r_disc);
+                { if(!cf3_scan_only()) subgraphs.add_super_kmer(cur_g, frag + cur_sup_km1_mer_off - l_joined, len_weak, source_id, l_disc, r_disc); }
             weak_sup_kmers_len += len_weak;
 
             last_frag_end = frag_beg + frag_len;

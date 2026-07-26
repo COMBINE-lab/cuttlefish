@@ -657,19 +657,52 @@ Matched against C++ on the same corpus, colored, same host and filesystem:
 
 | threads | impl | wall | peak RSS | descriptor peak | unitigs |
 | ---: | --- | ---: | ---: | ---: | ---: |
-| 256 | Rust | 4:43.26 | 49.9 GB | 3593 | 252,487,658 |
+| 256 | Rust | 4:43.08 | 44.6 GB | 3588 | 252,487,658 |
 | 256 | C++ | 8:34.00 | 69.4 GB | 28,878 | 252,481,862 |
-| 64 | Rust | 7:13.75 | 39.2 GB | 3209 | 252,487,658 |
+| 64 | Rust | 7:21.32 | 15.7 GB | 3209 | 252,487,658 |
 | 64 | C++ | 7:33.78 | 28.3 GB | 28,109 | 252,487,658 |
 
-At 256 threads Rust is 1.81 times faster on 28% less memory. At 64 threads the
-two agree exactly on output, confirming that C++'s 5,796-unitig deficit at 256
-threads is a function of thread count rather than workload; Rust is 4.4% faster
-there but uses more memory, which remains the one configuration where C++ is
-leaner.
+At 256 threads Rust is 1.82 times faster on 36% less memory; at 64 threads it is
+2.7% faster on 45% less memory. Rust gets 1.56 times faster going from 64 to 256
+threads while C++ gets 1.13 times slower, so its advantage is concentrated in
+high-thread scaling.
 
-Rust gets 1.53 times faster going from 64 to 256 threads while C++ gets 1.13
-times slower, so the advantage is overwhelmingly in high-thread scaling.
+`cf3-compare-fasta` matched all 252,487,658 strand-normalized unitigs between
+the two 64-thread outputs, so the implementations are verified identical at full
+corpus scale, not merely equal in count. C++'s 5,796-unitig deficit at 256
+threads is therefore a function of thread count rather than workload.
+
+## Dense path-info arrays dominated peak memory
+
+Tracing RSS across phases showed the peak was not where the earlier fanout work
+assumed. At 64 threads it arrived during the path-info map, which added 25.5 GB
+on top of 13.7 GB; at 256 threads the reduce phase added a further 31.5 GB.
+
+The map phase builds a dense array with one 16-byte `DenseLocalPathInfo` per
+local unitig *in the bucket being processed*, and keeps one per worker. Local
+unitig buckets were capped at the worker count, so the total was
+
+    workers * (local_unitigs / buckets) * 16  =  local_unitigs * 16
+
+independent of thread count — 18.2 GB for the 1,136,040,479 local unitigs of
+149,998 assemblies, which is exactly the amount the phase trace could not
+otherwise account for.
+
+Each worker now owns a private contiguous span of several buckets and rotates
+through them, so bucket ownership stays worker-exclusive and the writer mutexes
+stay uncontended, while each bucket — and therefore each dense array — shrinks
+by the oversubscription factor. Total buckets are capped at 1024, because the
+extra files are nearly free at 64 workers but cost 3.3% of wall time at 256.
+
+| workload | before | after |
+| --- | ---: | ---: |
+| 149,998 colored, 64 threads | 7:13.75, 39.2 GB | 7:21.32, 15.7 GB |
+| 149,998 colored, 256 threads | 4:43.26, 49.9 GB | 4:43.08, 44.6 GB |
+| 10,000 colored, 64 threads | 49.12 s, 16.0 GB | 49.00 s, 12.0 GB |
+| 10,000 colored, 256 threads | 39.94 s, 26.9 GB | 40.18 s, 25.9 GB |
+
+Peak memory falls 60% at 64 threads and 25% at 10,000 genomes, for 1.7% of wall
+time at the full-corpus 64-thread point and nothing measurable elsewhere.
 
 ## Allocation and inner-loop cleanups
 

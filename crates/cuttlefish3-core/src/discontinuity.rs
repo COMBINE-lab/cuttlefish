@@ -12621,6 +12621,24 @@ fn coordinate_bucket_target(threads: usize, unitig_bases: u64) -> usize {
     }
 }
 
+/// Local-unitig buckets owned privately by each contraction worker.
+///
+/// The map phase builds a dense path-info array with one 16-byte entry per local
+/// unitig *in the bucket it is processing*, and holds one such array per worker.
+/// With one bucket per worker that total is `local_unitigs * 16` regardless of
+/// thread count — 18.2 GB on 149,998 Salmonella assemblies, which produce
+/// 1,136,040,479 local unitigs. Giving each worker several private buckets
+/// divides that by the oversubscription factor while keeping bucket ownership
+/// worker-exclusive, so the writer mutexes stay uncontended.
+const LOCAL_UNITIG_BUCKETS_PER_WORKER: usize = 8;
+/// Ceiling on total local-unitig buckets.
+///
+/// Each bucket owns two files, so the oversubscription that is nearly free at 64
+/// workers costs measurable time at 256. Capping the total keeps most of the
+/// memory saving without the file churn: on 149,998 assemblies at 256 threads,
+/// 2048 buckets cost 3.3% wall time against 1024.
+const MAX_LOCAL_UNITIG_BUCKETS: usize = 1024;
+
 fn local_unitig_bucket_plan(file_limit: usize, open_files: usize, workers: usize) -> usize {
     if workers <= 1 {
         return 0;
@@ -12630,7 +12648,16 @@ fn local_unitig_bucket_plan(file_limit: usize, open_files: usize, workers: usize
     let concurrent_worker_files = workers.saturating_mul(2);
     let affordable =
         file_limit.saturating_sub(open_files.saturating_add(concurrent_worker_files)) / 2;
-    affordable.min(workers)
+    // Keep whole per-worker groups so ownership stays exclusive; fall back to one
+    // bucket per worker, and then to fewer, when descriptors are scarce.
+    let per_worker = (MAX_LOCAL_UNITIG_BUCKETS / workers.max(1))
+        .clamp(1, LOCAL_UNITIG_BUCKETS_PER_WORKER);
+    let desired = workers.saturating_mul(per_worker);
+    if affordable >= desired {
+        return desired;
+    }
+    let per_worker = (affordable / workers.max(1)).max(1);
+    affordable.min(workers.saturating_mul(per_worker))
 }
 
 #[derive(Default)]
@@ -17277,12 +17304,20 @@ fn contract_local_subgraphs_into_external_inputs<const K: usize>(
                 let sink = &sink;
                 handles.push(scope.spawn(move || {
                     let mut reusable_vertices = None;
-                    let bucket_id = if local_unitig_bucket_count == 0 {
-                        0
-                    } else {
-                        (worker_id % local_unitig_bucket_count + 1) as u16
-                    };
+                    // Each worker rotates through its own contiguous span of
+                    // buckets, so no two workers ever share one.
+                    let buckets_per_worker =
+                        (local_unitig_bucket_count / workers.max(1)).max(1);
+                    let mut bucket_rotation = 0usize;
                     loop {
+                        let bucket_id = if local_unitig_bucket_count == 0 {
+                            0
+                        } else {
+                            let owned = worker_id * buckets_per_worker
+                                + bucket_rotation % buckets_per_worker;
+                            bucket_rotation += 1;
+                            (owned % local_unitig_bucket_count + 1) as u16
+                        };
                         let group_idx = next_group.fetch_add(1, Ordering::Relaxed);
                         let Some(group) = groups.get(group_idx) else {
                             break;
@@ -18237,9 +18272,39 @@ mod materialized_record_tests {
 
     #[test]
     fn local_unitig_bucket_plan_accounts_for_concurrent_files() {
+        // Too few descriptors for one bucket per worker: fall back to the
+        // previous behaviour of sharing buckets, still inside the budget.
         assert_eq!(local_unitig_bucket_plan(1024, 264, 256), 124);
-        assert_eq!(local_unitig_bucket_plan(65_536, 264, 256), 256);
-        assert_eq!(local_unitig_bucket_plan(1024, 16, 128), 128);
+
+        // An ample budget gives every worker its full private span.
+        assert_eq!(
+            local_unitig_bucket_plan(1_048_576, 264, 256),
+            MAX_LOCAL_UNITIG_BUCKETS
+        );
+        assert_eq!(
+            local_unitig_bucket_plan(65_536, 264, 256),
+            MAX_LOCAL_UNITIG_BUCKETS
+        );
+        // Below the ceiling every worker gets its full private span.
+        assert_eq!(
+            local_unitig_bucket_plan(1_048_576, 264, 64),
+            64 * LOCAL_UNITIG_BUCKETS_PER_WORKER
+        );
+
+        for &(limit, open, workers) in &[
+            (1024usize, 16usize, 128usize),
+            (4096, 64, 64),
+            (262_144, 64, 256),
+        ] {
+            let buckets = local_unitig_bucket_plan(limit, open, workers);
+            // Whenever every worker can have at least one bucket, the count is a
+            // whole multiple of the worker count so ownership stays exclusive.
+            if buckets >= workers {
+                assert_eq!(buckets % workers, 0, "{buckets} not a multiple of {workers}");
+            }
+            // The plan never exceeds what the descriptor budget affords.
+            assert!(buckets * 2 + workers * 2 + open <= limit);
+        }
     }
 
     #[test]

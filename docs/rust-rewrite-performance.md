@@ -494,3 +494,234 @@ The best pre-parity full-corpus Rust implementation took 8:40.59 and
 22,354,288 KiB RSS. The current direct packed-color path is 2.63 times faster;
 its higher peak memory is the deliberate consequence of honoring all 256
 requested local workers rather than applying the obsolete 64-worker cap.
+
+## Read-mode performance record
+
+Reference workloads drove every measurement above. Read workloads were never
+benchmarked, and they exposed a structural limit that reference input hides.
+
+`BuildParams::partition_workers` clamps workers to the input *file* count, and
+the production partitioner gives each worker one whole file. Sequencing-read
+input is a handful of very large files, so partitioning ran on two cores of 256
+for a two-file input, and its cost was identical at `--threads 4` and
+`--threads 256`. On `SRR105788_{1,2}.fastq.gz` (4.4 GB gzip, `k=31`, `l=15`),
+partitioning took 48.3 s of a 63.9 s build at either thread count.
+
+Two changes address this. The gzip backend moved from `flate2`'s default
+`miniz_oxide` to `zlib-rs`, the pure-Rust port of zlib-ng, which is enabled with
+`flate2`'s `zlib-rs` feature and introduces no C code. The partitioner then
+gained a streamed path: when the input presents fewer files than requested
+workers, one reader thread per file decompresses and assembles records into a
+bounded pool of recyclable fragment batches, and every requested worker drains
+that pool to run the minimizer scan and bucket packing. This mirrors the C++
+partitioner's chunk queue (`Graph_Partitioner::read_chunks`). Inputs with at
+least as many files as workers keep the direct one-file-per-worker path
+unchanged, so reference-mode behavior and tuning are untouched.
+`CF3_RS_DIRECT_PARTITION=1` forces the direct path for A/B measurement.
+
+| stage | wall | partition | peak RSS |
+| --- | ---: | ---: | ---: |
+| baseline | 63.91 s | 48.32 s | 13.0 GB |
+| `zlib-rs` | 56.88 s | 40.94 s | 12.6 GB |
+| streamed partitioner | 32.07 s | 15.82 s | 12.2 GB |
+| C++ | 68.54 s | — | 19.8 GB |
+
+Partitioning is 3.05 times faster and the build 1.99 times faster; against C++
+the build is 2.14 times faster using 38% less memory. Every run emitted the
+exact 13,309,867 unitigs and 1,223,963,745 bases, and `cf3-compare-fasta`
+matched all 13,309,867 strand-normalized unitigs against both the previous Rust
+output and a C++ reference.
+
+Read rungs at 256 threads with the accepted build, all counts exact:
+
+| dataset | files | gzip bytes | before | after | C++ |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `SRR105788` pair | 2 | 4.4 GB | 63.91 s | 30.87 s | 68.54 s |
+| `ggallus` | 12 | 23 GB | 92.62 s | 55.19 s | 91.33 s |
+| `SRR622461_1` | 1 | 2.4 GB | — | 52.60 s | — |
+| `mbal` | 4 | 48 GB | — | 167.68 s | — |
+
+`mbal` is the remaining limit rather than a win. Two of its four files hold 96%
+of the data, so only four reader threads can be used and 145.9 s of its 167.7 s
+is partitioning. Single-member gzip cannot be split without a speculative or
+indexed decoder, so reader-side parallelism is bounded by the file count. Inputs
+that are one enormous gzip member will stay decompression-bound.
+
+## Descriptor and fanout policy
+
+Maximal-unitig coordinate buckets were previously fixed at C++'s 1024 and
+reduced only when `RLIMIT_NOFILE` forced it. Two experiments revised that.
+
+Making `OpenMaterializedWriterCache` a real descriptor budget — its `limit` was
+set to the bucket count, so its eviction path never ran — was rejected. A
+mapping worker scatters every batch across all buckets, so a writer cache
+smaller than the bucket count thrashes. Capping open writers to 768, 256, 128,
+and 64 cost 8.7%, 24%, 29%, and 31% of wall time on the colored 10,000-genome
+workload at 256 threads. Under `ulimit -n 1024` the evicting plan took 52.59 s
+against 39.70 s for the existing fanout-reducing plan.
+
+Reducing the fanout itself was the actual lever. On the same workload:
+
+| buckets | wall | peak RSS | descriptor peak |
+| ---: | ---: | ---: | ---: |
+| 1024 | 42.17 s | 35.8 GB | 3562 |
+| 512 | 40.53 s | 25.4 GB | 2057 |
+| 256 | 39.56 s | 28.3 GB | 1285 |
+| 128 | 38.95 s | 24.4 GB | 978 |
+| 64 | 39.04 s | 22.8 GB | 974 |
+
+Each mapping worker keeps staging and a writer per bucket, so a wide fanout
+costs more as workers increase while its benefit does not. 128 buckets was
+fastest at 256 threads but 2.0% slower at 64, and 256 buckets was 0.7% slower at
+64 across interleaved repeats. The fanout is therefore thread-adaptive: 1024
+below 128 threads and 256 at or above, leaving the 64-thread path unchanged.
+At 256 threads this is 1-7% faster with descriptor peaks falling from
+2500-3600 to 800-1300 across colored, uncolored, and read workloads.
+`CF3_RS_MCOORD_BUCKETS` overrides the fanout for measurement.
+
+A related observation: before this change, running with a *lower* descriptor
+limit was already both faster and lighter than running with a generous one
+(39.70 s and 22.5 GB at `ulimit -n 1024` versus 42.58 s and 33.5 GB unrestricted).
+The tool was leaving that on the table whenever descriptors were plentiful.
+
+## Rejected experiments
+
+- **Link-time optimization.** `lto = "fat"` with `codegen-units = 1` was 1.4% to
+  2.7% slower on reference workloads across interleaved repeats, for about 1.8%
+  on read workloads, at 4.6 times the build time. Reverted.
+- **Materialized writer eviction.** Described above.
+
+## Colored repository at scale
+
+The fixed color table is capped at 2^26 slots and diverts to an `scc` overflow
+map once three quarters full, after which every lookup on a saturated table
+spins in `wait_until_quiescent`. On 10,000 and 50,000 Salmonella assemblies the
+table reported 67,108,864 slots and **zero** overflow entries, so this cliff is
+not reached on that corpus and the redundancy of a single-species collection
+keeps the distinct-color-set count far below the cap.
+
+At 149,998 assemblies the table does saturate, reporting 67,108,864 slots and
+36,810,127 overflow entries. Admitting all of them into the primary table — by
+raising both the estimate ceiling and the slot cap, which produced a
+134,217,728-slot table with zero overflow — changed nothing measurable: the
+colored full-corpus build took 4:42.34 and 75.0 GB against 4:41.22 and 75.7 GB
+for the saturated configuration. Overflow is a slope, not a cliff, and the
+`scc` map absorbs tens of millions of colours at the cost of the flat table.
+The default ceiling is therefore unchanged; `CF3_RS_EXPECTED_COLORS` and
+`CF3_RS_COLOR_TABLE_SLOTS` expose both bounds for further measurement.
+
+`AtomicColorTable::entry` now resolves an already-published key with a plain
+probe before touching `active_insertions`, which previously performed a
+`fetch_add` and `fetch_sub` on one shared cache line for every call including
+pure hits. `wait_until_quiescent` latches once the counter drains, since
+saturation stops further increments. Both measured neutral on the workloads
+tested here — colored 10,000 genomes at 256 threads was 40.52 s median either
+way — and are retained for the contention they remove rather than a measured
+win. The 2,097,151-source ceiling is now a `TooManySources` error raised during
+partitioning instead of an assertion inside a contraction worker.
+
+## Full-corpus Salmonella acceptance
+
+149,998 of the 149,999 assemblies in `/scratch4/rob/blackwell_salmonella`,
+`k=31`, minimizer length 12, reference mode, 256 requested threads. One input,
+`SAMEA2674605.contigs.fa.gz`, is zero bytes; `gzip -t` and the pre-change binary
+reject it identically, and it is excluded. `--skip-unreadable` now allows such a
+corpus to build without curating the list by hand.
+
+| mode | wall | peak RSS | descriptor peak | unitigs | bases |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| uncolored | 3:42.82 | 65,858,656 KiB | 1033 | 252,487,658 | 16,417,233,428 |
+| colored | 4:41.22 | 79,404,880 KiB | 1289 | 252,487,658 | 16,417,233,428 |
+
+Colored and uncolored agree exactly, which is the deterministic topology gate at
+this scale. The descriptor peak is roughly 1,000 against C++'s ~27,000 on
+smaller rungs, so the full corpus builds comfortably under a 4,096-descriptor
+limit.
+
+## Allocation and inner-loop cleanups
+
+Four changes, measured together on interleaved repeats:
+
+- `complement_ascii` is now a 256-entry lookup table built at compile time from
+  `Base::from_ascii(..).complement().to_ascii()`, so it is equivalent by
+  construction (a test asserts this for all 256 bytes). Reverse-strand label
+  assembly complements one base at a time, and the enum path compiled to range
+  checks and a jump table.
+- The direct-FASTA writer reused a header buffer instead of allocating a `Vec`
+  per unitig, and stopped cloning a `PathBuf` per record purely to build an
+  error that is almost never constructed.
+- Expansion takes `compressed_diagonal_edges` from the contraction instead of
+  deep-copying it. The caller drops the contraction immediately afterwards, so
+  the copy was pure waste.
+- `add_prepared_edges` counts phi and diagonal edges inside its existing loop
+  rather than making two further passes over the batch.
+
+| workload | before | after |
+| --- | ---: | ---: |
+| Salmonella 10,000, colored, 256 threads | 40.64 s | 39.73 s |
+| Salmonella 10,000, uncolored, 256 threads | 34.83 s | 34.44 s |
+| `SRR105788` read, 256 threads | 29.56 s | 28.98 s |
+
+Read-mode peak RSS also fell from about 9.7 GB to 9.0 GB. All counts were
+preserved and `cf3-compare-fasta` matched all 51,644,203 strand-normalized
+unitigs against the deterministic 64-thread C++ reference.
+
+## The single-large-gzip limit
+
+`mbal` is the workload this does not help. Its four files are 21.4 GB, 2.2 GB,
+21.4 GB, and 2.2 GB, so only four reader threads apply and the two large files
+dominate: 145.9 s of a 167.7 s build is partitioning. That works out to about
+147 MB/s of compressed input per reader, which is the single-thread `zlib-rs`
+inflate rate. Reader parallelism is bounded by file count because a gzip member
+is a single LZ77 stream: block boundaries are not byte-aligned, are not indexed,
+and back-references reach up to 32 KiB into already-decoded output.
+
+Surveyed options, none currently adoptable under a pure-Rust dependency policy:
+
+| approach | status |
+| --- | --- |
+| `rapidgzip` crate | Rust bindings over the vendored C++ decoder; violates the no-C-code policy |
+| `gzp` | parallel *compression*, and decompression only for block formats (BGZF, mgzip); no arbitrary-gzip parallel decode, and its backends are not pure Rust |
+| `flate2` + `miniz_oxide`/`zlib-rs` | pure Rust, single-threaded decode only |
+| pugz | C++, and restricted to text whose bytes lie in 9-126 |
+
+There is no pure-Rust parallel gzip decoder. The `flate2` maintainers have
+discussed adopting the rapidgzip approach but nothing exists.
+
+Three routes remain, in increasing order of effort:
+
+1. **Exploit block-structured input when present.** Implemented. BGZF
+   concatenates independent gzip members and records each member's compressed
+   size in a `BC` extra-field subfield, so members are located by reading headers
+   alone and inflated concurrently. `crate::bgzf::ParallelBgzfReader` deals whole
+   blocks round-robin to a worker pool and returns them in the same rotation, so
+   the decompressed byte stream is identical to a serial decode and parsing is
+   untouched. Detection reads the first 64 bytes; plain gzip falls back to the
+   serial decoder at no cost.
+
+   On a 1.66 GB BGZF transcode of `SRR197985_1` (6.3 GB of payload) at 256
+   threads, against the same data as plain gzip:
+
+   | input | wall | partition | graph build |
+   | --- | ---: | ---: | ---: |
+   | plain gzip | 20.80 s | 11.65 s | 9.04 s |
+   | BGZF | 16.81 s | 7.34 s | 9.35 s |
+
+   Partitioning is 37% faster and the build 19% faster, with the graph phase
+   unchanged, confirming the gain is confined to decompression. Both emitted
+   9,714,930 unitigs and 682,165,789 bases. The remaining serial work in a
+   reader is record assembly, which bounds the speedup well below the worker
+   count. Sequencer and SRA FASTQ is usually single-member, so this helps
+   callers who control their own compression — including anyone willing to
+   transcode once with `bgzip` or `rebgzf`.
+2. **Persist a gzip index.** One serial pass records the bit offset and 32 KiB
+   history window at chosen block boundaries; later runs over the same file seek
+   and inflate in parallel. This does not help a first run, which is the common
+   case for a one-shot assembly, and adds a sidecar file to manage.
+3. **Implement rapidgzip-style speculative parallel inflate in Rust.** Workers
+   start at arbitrary offsets, find plausible deflate block headers by trial and
+   error, decode with an unknown initial window, and reconcile once the true
+   window arrives from the preceding chunk. This is the only route that speeds
+   up a first pass over an arbitrary single-member gzip, and the published
+   speedups are large, but it is a substantial standalone project and a
+   correctness-critical one.

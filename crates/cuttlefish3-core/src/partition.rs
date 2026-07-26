@@ -9,7 +9,7 @@ use crate::dna::{ascii_base_bits, valid_ascii_base_bits};
 use crate::hash::{hash_u64, wyhash_u64};
 use crate::input::{
     BorrowedSequenceFragment, InputError, expand_input_paths, parse_fragments,
-    parse_fragments_borrowed,
+    parse_fragments_borrowed, parse_fragments_borrowed_with,
 };
 use crate::params::{BuildParams, ParamError};
 use std::path::{Path, PathBuf};
@@ -19,6 +19,15 @@ use std::time::{Duration, Instant};
 
 const PARTITION_FRAGMENT_BATCH: usize = 16 * 1024;
 const PARTITION_BATCH_BASES: usize = 8 * 1024 * 1024;
+
+/// Fragment-batch geometry for the streamed partitioner.
+///
+/// Batches are deliberately much smaller than [`PARTITION_BATCH_BASES`] so that
+/// a bounded pool keeps every worker fed without holding gigabytes in flight.
+const STREAM_BATCH_BASES: usize = 1024 * 1024;
+const STREAM_BATCH_FRAGMENTS: usize = 8 * 1024;
+/// Upper bound on the bytes held by the streamed partitioner's batch pool.
+const STREAM_POOL_BYTES: usize = 256 * 1024 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 /// A weak super-k-mer assigned to one local subgraph.
@@ -124,6 +133,12 @@ pub fn emit_weak_superkmer_buckets<const K: usize>(
 
     let paths = expand_input_paths(params)?;
     if params.color {
+        // Colored vertices retain their previous source in a packed 21-bit
+        // field. Reject an oversized source set here, with the input count in
+        // hand, rather than letting a contraction worker trip an assertion.
+        if paths.len() > crate::state::VertexState::MAX_SOURCE_ID as usize {
+            return Err(PartitionRunError::TooManySources);
+        }
         return emit_colored_weak_superkmer_buckets::<K>(params, graph_count, &paths);
     }
     if std::env::var_os("CF3_RS_LEGACY_UNCOLORED_PARTITION").is_none() {
@@ -246,7 +261,224 @@ pub fn emit_weak_superkmer_buckets<const K: usize>(
     })
 }
 
+/// Returns the reader count for the streamed partitioner, or `None` when
+/// file-level parallelism already fills the requested worker count.
+///
+/// Reference workloads present thousands of sources, so one whole file per
+/// worker saturates the machine with no batch copy at all. Read workloads
+/// present a handful of very large files, where that mapping leaves nearly
+/// every core idle; those inputs are streamed instead.
+fn streamed_reader_count(params: &BuildParams, files: usize) -> Option<usize> {
+    if std::env::var_os("CF3_RS_DIRECT_PARTITION").is_some() {
+        return None;
+    }
+    // `usize::MAX` asks for the memory bound only, dropping the input-file clamp
+    // that the direct path needs because it maps one whole file per worker.
+    let workers = params.partition_workers(usize::MAX);
+    if files == 0 || files >= workers {
+        return None;
+    }
+    Some(files)
+}
+
 fn emit_uncolored_windowed_weak_superkmer_buckets<const K: usize>(
+    params: &BuildParams,
+    graph_count: usize,
+    paths: &[PathBuf],
+) -> Result<PartitionEmissionStats, PartitionRunError> {
+    if let Some(readers) = streamed_reader_count(params, paths.len()) {
+        return emit_uncolored_streamed_weak_superkmer_buckets::<K>(
+            params,
+            graph_count,
+            paths,
+            readers,
+        );
+    }
+    emit_uncolored_direct_weak_superkmer_buckets::<K>(params, graph_count, paths)
+}
+
+/// Streams fragment batches from per-file readers to a full pool of workers.
+///
+/// Decompression and record assembly stay on the reader threads while every
+/// requested worker runs the minimizer scan and bucket packing, mirroring the
+/// C++ partitioner's chunk queue. Uncolored emission has no source ordering
+/// requirement, so batches may be consumed in any order.
+fn emit_uncolored_streamed_weak_superkmer_buckets<const K: usize>(
+    params: &BuildParams,
+    graph_count: usize,
+    paths: &[PathBuf],
+    readers: usize,
+) -> Result<PartitionEmissionStats, PartitionRunError> {
+    let sink = SharedBucketSink::create(params, graph_count)?;
+    let mut stats = PartitionStats::new(graph_count);
+    let mut worker_elapsed = Duration::ZERO;
+    let workers = params.partition_workers(usize::MAX);
+    let buffers = (2 * (workers + readers)).min(STREAM_POOL_BYTES / STREAM_BATCH_BASES);
+    eprintln!(
+        "cuttlefish3-rs: uncolored partition streaming {readers} reader(s) into {workers} worker(s), {buffers} batch buffer(s)"
+    );
+
+    // Readers decompress; only block-structured input can use more than one
+    // thread for it, so the budget is shared evenly and costs nothing otherwise.
+    let inflate_workers = (workers / readers.max(1)).max(1);
+    let pool = BatchPool::new(buffers, readers);
+    let next_source = AtomicUsize::new(0);
+    let mut work_order = (0..paths.len()).collect::<Vec<_>>();
+    work_order.sort_unstable_by_key(|&offset| {
+        std::cmp::Reverse(paths[offset].metadata().map_or(0, |meta| meta.len()))
+    });
+
+    let started = Instant::now();
+    let mut emitters = Vec::with_capacity(workers);
+    std::thread::scope(|scope| {
+        let mut worker_handles = Vec::with_capacity(workers);
+        for _ in 0..workers {
+            let sink = Arc::clone(&sink);
+            let pool = &pool;
+            worker_handles.push(scope.spawn(move || {
+                let mut worker_stats = PartitionStats::new(graph_count);
+                let mut elapsed = Duration::ZERO;
+                let mut buckets = sink.deferred_uncolored_emitter();
+                let result = (|| -> Result<(), PartitionRunError> {
+                    while let Some(batch) = pool.take_ready() {
+                        let fragment_started = Instant::now();
+                        let outcome = (|| -> Result<(), PartitionRunError> {
+                            for fragment in &batch.fragments {
+                                let seq =
+                                    &batch.bases[fragment.offset..fragment.offset + fragment.len];
+                                emit_fragment_seq_weak_superkmer_buckets::<K, PartitionRunError>(
+                                    params,
+                                    graph_count,
+                                    fragment.source_id,
+                                    seq,
+                                    &mut buckets,
+                                    &mut worker_stats,
+                                )?;
+                            }
+                            Ok(())
+                        })();
+                        elapsed += fragment_started.elapsed();
+                        pool.release(batch);
+                        outcome?;
+                    }
+                    Ok(())
+                })();
+                if result.is_err() {
+                    pool.fail();
+                }
+                result.map(|()| {
+                    (
+                        PartitionWorkerOutput {
+                            stats: worker_stats,
+                            elapsed,
+                        },
+                        buckets,
+                    )
+                })
+            }));
+        }
+
+        let mut reader_handles = Vec::with_capacity(readers);
+        for _ in 0..readers {
+            let pool = &pool;
+            let next_source = &next_source;
+            let work_order = &work_order;
+            reader_handles.push(scope.spawn(move || {
+                let result = (|| -> Result<(u64, usize), PartitionRunError> {
+                    let mut records = 0u64;
+                    let mut input_files = 0usize;
+                    loop {
+                        let order_idx = next_source.fetch_add(1, Ordering::Relaxed);
+                        let Some(&offset) = work_order.get(order_idx) else {
+                            break;
+                        };
+                        let source_id = u32::try_from(offset + 1)
+                            .map_err(|_| PartitionRunError::TooManySources)?;
+                        let mut batch = pool
+                            .take_free()
+                            .ok_or(PartitionRunError::Partition(
+                                PartitionError::WorkerDisconnected,
+                            ))?;
+                        let parsed = parse_fragments_borrowed_with(
+                            &paths[offset],
+                            source_id,
+                            K + 1,
+                            inflate_workers,
+                            |fragment| {
+                                batch.push(fragment);
+                                if batch.is_full() {
+                                    let replacement = pool.take_free().ok_or(
+                                        InputError::Partition(PartitionError::WorkerDisconnected),
+                                    )?;
+                                    pool.publish(std::mem::replace(&mut batch, replacement));
+                                }
+                                Ok(())
+                            },
+                        );
+                        // Publish whatever this source produced before deciding
+                        // how to treat a failure, so no buffer is leaked.
+                        if batch.fragments.is_empty() {
+                            pool.release(batch);
+                        } else {
+                            pool.publish(batch);
+                        }
+                        match parsed {
+                            Ok(parsed) => {
+                                records += parsed;
+                                input_files += 1;
+                            }
+                            Err(error) => {
+                                handle_source_failure(params, &paths[offset], error)?;
+                            }
+                        }
+                    }
+                    Ok((records, input_files))
+                })();
+                pool.reader_done();
+                if result.is_err() {
+                    pool.fail();
+                }
+                result
+            }));
+        }
+
+        for handle in reader_handles {
+            let (records, input_files) = handle
+                .join()
+                .map_err(|_| PartitionRunError::WorkerPanic)??;
+            stats.records += records;
+            stats.input_files += input_files;
+        }
+        for handle in worker_handles {
+            let (output, buckets) = handle
+                .join()
+                .map_err(|_| PartitionRunError::WorkerPanic)??;
+            worker_elapsed += output.elapsed;
+            stats.merge_from(&output.stats);
+            emitters.push(buckets);
+        }
+        Ok::<(), PartitionRunError>(())
+    })?;
+    let parse_elapsed = started.elapsed();
+    sink.flush_uncolored_emitters(emitters)?;
+
+    let (bucket_flushes, bucket_flush_elapsed) = sink.flush_stats();
+    let bucket_finish_started = Instant::now();
+    let bucket_stats = sink.finish()?;
+    let bucket_finish_elapsed = bucket_finish_started.elapsed();
+    populate_emitted_graph_histogram(&mut stats, &bucket_stats)?;
+    Ok(PartitionEmissionStats {
+        partition: stats,
+        buckets: bucket_stats,
+        parse_elapsed,
+        worker_elapsed,
+        bucket_flush_elapsed,
+        bucket_flushes,
+        bucket_finish_elapsed,
+    })
+}
+
+fn emit_uncolored_direct_weak_superkmer_buckets<const K: usize>(
     params: &BuildParams,
     graph_count: usize,
     paths: &[PathBuf],
@@ -286,7 +518,7 @@ fn emit_uncolored_windowed_weak_superkmer_buckets<const K: usize>(
                         };
                         let source_id = u32::try_from(source_start + offset + 1)
                             .map_err(|_| PartitionRunError::TooManySources)?;
-                        records += parse_fragments_borrowed(
+                        match parse_fragments_borrowed(
                             &window[offset],
                             source_id,
                             K + 1,
@@ -303,8 +535,15 @@ fn emit_uncolored_windowed_weak_superkmer_buckets<const K: usize>(
                                 elapsed += fragment_started.elapsed();
                                 Ok(())
                             },
-                        )?;
-                        input_files += 1;
+                        ) {
+                            Ok(parsed) => {
+                                records += parsed;
+                                input_files += 1;
+                            }
+                            Err(error) => {
+                                handle_source_failure(params, &window[offset], error)?;
+                            }
+                        }
                     }
                     Ok::<_, PartitionRunError>((
                         records,
@@ -390,7 +629,7 @@ fn emit_colored_weak_superkmer_buckets<const K: usize>(
                         };
                         let source_id = u32::try_from(source_start + offset + 1)
                             .map_err(|_| PartitionRunError::TooManySources)?;
-                        records += parse_fragments_borrowed(
+                        match parse_fragments_borrowed(
                             &window[offset],
                             source_id,
                             K + 1,
@@ -407,9 +646,16 @@ fn emit_colored_weak_superkmer_buckets<const K: usize>(
                                 elapsed += started.elapsed();
                                 Ok(())
                             },
-                        )?;
+                        ) {
+                            Ok(parsed) => {
+                                records += parsed;
+                                input_files += 1;
+                            }
+                            Err(error) => {
+                                handle_source_failure(params, &window[offset], error)?;
+                            }
+                        }
                         buckets.flush_colored_worker_if_required()?;
-                        input_files += 1;
                     }
                     Ok::<_, PartitionRunError>((
                         records,
@@ -463,6 +709,13 @@ impl PartitionFragmentBatch {
         }
     }
 
+    fn with_capacity(fragments: usize, bases: usize) -> Self {
+        Self {
+            fragments: Vec::with_capacity(fragments),
+            bases: Vec::with_capacity(bases),
+        }
+    }
+
     fn push(&mut self, fragment: BorrowedSequenceFragment<'_>) {
         let offset = self.bases.len();
         self.bases.extend_from_slice(fragment.seq);
@@ -472,12 +725,151 @@ impl PartitionFragmentBatch {
             len: fragment.seq.len(),
         });
     }
+
+    #[inline]
+    fn is_full(&self) -> bool {
+        self.fragments.len() >= STREAM_BATCH_FRAGMENTS || self.bases.len() >= STREAM_BATCH_BASES
+    }
+
+    fn clear(&mut self) {
+        self.fragments.clear();
+        self.bases.clear();
+    }
+}
+
+/// A bounded pool of recyclable fragment batches shared by readers and workers.
+///
+/// The pool is the backpressure mechanism for the streamed partitioner: readers
+/// block when every buffer is in flight, and workers block until a reader
+/// publishes one. Buffers are recycled rather than reallocated, so the steady
+/// state performs no allocation.
+struct BatchPool {
+    inner: std::sync::Mutex<BatchPoolInner>,
+    ready_available: std::sync::Condvar,
+    free_available: std::sync::Condvar,
+}
+
+struct BatchPoolInner {
+    ready: std::collections::VecDeque<PartitionFragmentBatch>,
+    free: Vec<PartitionFragmentBatch>,
+    readers: usize,
+    failed: bool,
+}
+
+impl BatchPool {
+    fn new(buffers: usize, readers: usize) -> Self {
+        let buffers = buffers.max(1);
+        let mut free = Vec::with_capacity(buffers);
+        for _ in 0..buffers {
+            free.push(PartitionFragmentBatch::with_capacity(
+                STREAM_BATCH_FRAGMENTS,
+                STREAM_BATCH_BASES,
+            ));
+        }
+        Self {
+            inner: std::sync::Mutex::new(BatchPoolInner {
+                ready: std::collections::VecDeque::with_capacity(buffers),
+                free,
+                readers,
+                failed: false,
+            }),
+            ready_available: std::sync::Condvar::new(),
+            free_available: std::sync::Condvar::new(),
+        }
+    }
+
+    /// Claims an empty buffer, blocking until one is recycled.
+    ///
+    /// Returns `None` once a worker has failed, so readers stop early instead of
+    /// blocking forever on a pool nobody is draining.
+    fn take_free(&self) -> Option<PartitionFragmentBatch> {
+        let mut inner = self.inner.lock().ok()?;
+        loop {
+            if inner.failed {
+                return None;
+            }
+            if let Some(batch) = inner.free.pop() {
+                return Some(batch);
+            }
+            inner = self.free_available.wait(inner).ok()?;
+        }
+    }
+
+    fn publish(&self, batch: PartitionFragmentBatch) {
+        if let Ok(mut inner) = self.inner.lock() {
+            inner.ready.push_back(batch);
+            self.ready_available.notify_one();
+        }
+    }
+
+    /// Claims a filled buffer, blocking until one is published.
+    ///
+    /// Returns `None` when every reader has finished and the queue has drained.
+    fn take_ready(&self) -> Option<PartitionFragmentBatch> {
+        let mut inner = self.inner.lock().ok()?;
+        loop {
+            if let Some(batch) = inner.ready.pop_front() {
+                return Some(batch);
+            }
+            if inner.readers == 0 || inner.failed {
+                return None;
+            }
+            inner = self.ready_available.wait(inner).ok()?;
+        }
+    }
+
+    fn release(&self, mut batch: PartitionFragmentBatch) {
+        batch.clear();
+        if let Ok(mut inner) = self.inner.lock() {
+            inner.free.push(batch);
+            self.free_available.notify_one();
+        }
+    }
+
+    fn reader_done(&self) {
+        if let Ok(mut inner) = self.inner.lock() {
+            inner.readers -= 1;
+            if inner.readers == 0 {
+                self.ready_available.notify_all();
+            }
+        }
+    }
+
+    /// Aborts the pool so both sides unblock after a worker or reader error.
+    fn fail(&self) {
+        if let Ok(mut inner) = self.inner.lock() {
+            inner.failed = true;
+        }
+        self.ready_available.notify_all();
+        self.free_available.notify_all();
+    }
 }
 
 impl Default for PartitionFragmentBatch {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Reports a source that failed to parse, or propagates the failure.
+///
+/// With `--skip-unreadable` a corrupt input in a large corpus costs a warning
+/// rather than the whole build. Records already emitted from the failed source
+/// are retained, and its position in the input list is preserved so colored
+/// source assignments do not shift.
+fn handle_source_failure(
+    params: &BuildParams,
+    path: &Path,
+    error: InputError,
+) -> Result<(), PartitionRunError> {
+    if !params.skip_unreadable {
+        return Err(error.into());
+    }
+    eprintln!(
+        "cuttlefish3-rs: skipping unreadable input {}: {error}",
+        path.display()
+    );
+    Ok(())
 }
 
 fn emit_fragment_seq_weak_superkmer_buckets<const K: usize, E>(
@@ -960,5 +1352,108 @@ mod tests {
     fn rejects_non_power_of_two_graph_count() {
         let err = partition_fragment::<7>(b"ACGTACGT", 3, 127, None).unwrap_err();
         assert!(matches!(err, PartitionError::GraphCountNotPowerOfTwo(127)));
+    }
+
+    #[test]
+    fn unreadable_input_aborts_unless_skipping_is_requested() {
+        let base = std::env::temp_dir().join(format!("cf3rs-skip-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+        let good = base.join("good.fa");
+        std::fs::write(&good, b">r1\nACGTACGTACGTACGTACGTACGT\n").unwrap();
+        // A zero-byte `.gz` is the exact corruption seen in the wild: the file
+        // exists and is listed, but no gzip member can be read from it.
+        let bad = base.join("bad.fa.gz");
+        std::fs::write(&bad, b"").unwrap();
+
+        let build = |skip: bool, threads: usize| {
+            let work = base.join(format!("work-{skip}-{threads}"));
+            let _ = std::fs::remove_dir_all(&work);
+            std::fs::create_dir_all(&work).unwrap();
+            let mut params = BuildParams::new(crate::GraphInput::References, "unused".to_string());
+            params.seqs.push(good.to_string_lossy().into_owned());
+            params.seqs.push(bad.to_string_lossy().into_owned());
+            params.k = 7;
+            params.minimizer_len = 3;
+            params.threads = threads;
+            params.skip_unreadable = skip;
+            params.work_dir = work.to_string_lossy().into_owned();
+            emit_weak_superkmer_buckets::<7>(&params, 128)
+        };
+
+        // `threads = 1` takes the direct path, `threads = 8` the streamed one,
+        // because the streamed path engages only when files < workers.
+        for threads in [1usize, 8] {
+            assert!(
+                build(false, threads).is_err(),
+                "unreadable input must abort by default at {threads} thread(s)"
+            );
+            let stats = build(true, threads)
+                .unwrap_or_else(|e| panic!("skipping should succeed at {threads} thread(s): {e}"));
+            assert_eq!(stats.partition.input_files, 1, "only the good source counts");
+            assert!(stats.partition.weak_superkmers > 0);
+        }
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn streamed_partition_matches_direct_partition() {
+        // One input file with four workers selects the streamed path; the direct
+        // path is the same partitioner mapping that file onto a single worker.
+        let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let input = manifest.join("../../data/refs2.fa");
+        assert!(input.exists(), "missing fixture {}", input.display());
+
+        let run = |dir: &std::path::Path| {
+            let _ = std::fs::remove_dir_all(dir);
+            std::fs::create_dir_all(dir).unwrap();
+            let mut params = BuildParams::new(crate::GraphInput::References, "unused".to_string());
+            params.seqs.push(input.to_string_lossy().into_owned());
+            params.k = 7;
+            params.minimizer_len = 3;
+            params.threads = 4;
+            params.work_dir = dir.to_string_lossy().into_owned();
+            let paths = expand_input_paths(&params).unwrap();
+            (params, paths)
+        };
+
+        let base = std::env::temp_dir().join(format!("cf3rs-stream-{}", std::process::id()));
+        let streamed_dir = base.join("streamed");
+        let direct_dir = base.join("direct");
+
+        let (params, paths) = run(&streamed_dir);
+        assert_eq!(streamed_reader_count(&params, paths.len()), Some(1));
+        let streamed =
+            emit_uncolored_streamed_weak_superkmer_buckets::<7>(&params, 128, &paths, 1).unwrap();
+
+        let (params, paths) = run(&direct_dir);
+        let direct =
+            emit_uncolored_direct_weak_superkmer_buckets::<7>(&params, 128, &paths).unwrap();
+
+        assert_eq!(streamed.partition.records, direct.partition.records);
+        assert_eq!(streamed.partition.fragments, direct.partition.fragments);
+        assert_eq!(
+            streamed.partition.fragment_bases,
+            direct.partition.fragment_bases
+        );
+        assert_eq!(
+            streamed.partition.weak_superkmers,
+            direct.partition.weak_superkmers
+        );
+        assert_eq!(
+            streamed.partition.weak_superkmer_bases,
+            direct.partition.weak_superkmer_bases
+        );
+        // Per-bucket record counts prove every weak super-k-mer reached the same
+        // subgraph regardless of which worker packed it.
+        assert_eq!(
+            streamed.partition.graph_histogram,
+            direct.partition.graph_histogram
+        );
+        assert_eq!(streamed.buckets.bucket_files, direct.buckets.bucket_files);
+        assert_eq!(streamed.buckets.bytes_written, direct.buckets.bytes_written);
+
+        let _ = std::fs::remove_dir_all(&base);
     }
 }

@@ -898,6 +898,8 @@ impl ConcurrentBlockedEdgeWriters {
         }
         edges.sort_unstable_by_key(|edge| edge.block);
         let unitig_off = blocked_edge_unitig_offset::<K>();
+        let mut phi = 0u64;
+        let mut diagonal = 0u64;
         let mut start = 0;
         while start < edges.len() {
             let block_id = edges[start].block;
@@ -919,18 +921,15 @@ impl ConcurrentBlockedEdgeWriters {
                     buffer.clear();
                 }
                 buffer.extend_from_slice(&bytes[..block.record_len]);
+                // Counted here rather than in two further passes over `edges`.
+                phi += u64::from(edge.phi);
+                diagonal += u64::from(edge.diagonal);
             }
             block.edges.fetch_add(end - start, Ordering::Relaxed);
             start = end;
         }
-        self.phi_edges.fetch_add(
-            edges.iter().filter(|edge| edge.phi).count() as u64,
-            Ordering::Relaxed,
-        );
-        self.diagonal_edges.fetch_add(
-            edges.iter().filter(|edge| edge.diagonal).count() as u64,
-            Ordering::Relaxed,
-        );
+        self.phi_edges.fetch_add(phi, Ordering::Relaxed);
+        self.diagonal_edges.fetch_add(diagonal, Ordering::Relaxed);
         Ok(())
     }
 
@@ -4375,7 +4374,7 @@ impl SerialDiscontinuityExpander {
     }
 
     fn expand_cpp_ordered_external_to_range_buckets<const K: usize>(
-        contraction: &ExternalBlockedContraction<K>,
+        contraction: &mut ExternalBlockedContraction<K>,
         ranges: &[ExternalLocalUnitigRange],
         ranges_per_bucket: usize,
         bucket_count: usize,
@@ -4405,7 +4404,9 @@ impl SerialDiscontinuityExpander {
         let meta_vertices_per_partition = &contraction.meta_vertices_per_partition;
         let seed_vertices = contraction.meta_vertex_count;
 
-        let mut diagonal_by_partition = contraction.compressed_diagonal_edges.clone();
+        // The caller drops `contraction` as soon as expansion returns, so move
+        // the per-partition diagonal edges instead of deep-copying them.
+        let mut diagonal_by_partition = std::mem::take(&mut contraction.compressed_diagonal_edges);
         diagonal_by_partition.resize_with(partition_count, Vec::new);
         let matrix = &contraction.expansion_matrix;
         let edge_path_info_dir = expansion_dir.join("P_e");
@@ -6056,6 +6057,8 @@ struct FinalUnitigBucketWriters {
     colored: bool,
     direct_output: Option<BufWriter<File>>,
     direct_output_path: Option<PathBuf>,
+    /// Reused across records so the per-unitig header costs no allocation.
+    direct_header_scratch: Vec<u8>,
     direct_records: u64,
     direct_record_id_highwater: u64,
     direct_bases: u64,
@@ -6095,6 +6098,7 @@ impl FinalUnitigBucketWriters {
             colored,
             direct_output: None,
             direct_output_path: None,
+            direct_header_scratch: Vec::new(),
             direct_records: 0,
             direct_record_id_highwater: 0,
             direct_bases: 0,
@@ -6117,6 +6121,7 @@ impl FinalUnitigBucketWriters {
             colored,
             direct_output: Some(BufWriter::with_capacity(8 * 1024 * 1024, file)),
             direct_output_path: Some(output_path.to_path_buf()),
+            direct_header_scratch: Vec::new(),
             direct_records: 0,
             direct_record_id_highwater: 0,
             direct_bases: 0,
@@ -6183,24 +6188,26 @@ impl FinalUnitigBucketWriters {
         self.direct_records += 1;
         self.direct_record_id_highwater += 1;
         self.direct_bases += label.len() as u64;
-        let output_path = self
-            .direct_output_path
-            .as_ref()
-            .expect("direct output path exists")
-            .clone();
-        let out = self.direct_output.as_mut().expect("direct output exists");
-        let mut header = Vec::with_capacity(4 + colors.len() * 12);
+        // The path is only needed to build an error, so borrow it on the failure
+        // path instead of cloning a `PathBuf` for every unitig.
+        let header = &mut self.direct_header_scratch;
+        header.clear();
+        header.reserve(4 + colors.len() * 12);
         header.extend_from_slice(b">0");
         for color in colors {
             header.push(b' ');
-            append_decimal_u64(&mut header, color.raw());
+            append_decimal_u64(header, color.raw());
         }
         header.push(b'\n');
-        out.write_all(&header)
+        let out = self.direct_output.as_mut().expect("direct output exists");
+        out.write_all(header)
             .and_then(|_| out.write_all(label))
             .and_then(|_| out.write_all(b"\n"))
             .map_err(|source| SerialCollationError::Io {
-                path: output_path,
+                path: self
+                    .direct_output_path
+                    .clone()
+                    .expect("direct output path exists"),
                 source,
             })
     }
@@ -6211,17 +6218,15 @@ impl FinalUnitigBucketWriters {
         records: u64,
         bases: u64,
     ) -> Result<(), SerialCollationError> {
-        let output_path = self
-            .direct_output_path
-            .as_ref()
-            .expect("direct output path exists")
-            .clone();
         self.direct_output
             .as_mut()
             .expect("direct output exists")
             .write_all(bytes)
             .map_err(|source| SerialCollationError::Io {
-                path: output_path,
+                path: self
+                    .direct_output_path
+                    .clone()
+                    .expect("direct output path exists"),
                 source,
             })?;
         self.direct_records += records;
@@ -7485,6 +7490,14 @@ const STITCH_COORD_REVERSE_FLAG: u8 = 1;
 const STITCH_COORD_CYCLE_FLAG: u8 = 2;
 const MAX_OPEN_STITCH_PATH_INFO_WRITERS: usize = 768;
 const MAX_OPEN_MATERIALIZED_STITCH_WRITERS: usize = 768;
+/// Cuttlefish's maximal-unitig coordinate fanout before descriptor adaptation.
+const DEFAULT_MAX_UNITIG_COORD_BUCKETS: usize = 1024;
+/// Ceiling on the estimated distinct colour count used to size the colour table.
+const DEFAULT_EXPECTED_COLOR_CEILING: u64 = 48 * 1024 * 1024;
+/// Worker count at or above which the narrower coordinate fanout is used.
+const HIGH_THREAD_COORD_BUCKET_THRESHOLD: usize = 128;
+/// Coordinate fanout used at high worker counts.
+const HIGH_THREAD_MAX_UNITIG_COORD_BUCKETS: usize = 256;
 const MAX_OPEN_MATERIALIZED_STITCH_WRITERS_PER_SHARD: usize = 8;
 const STITCH_PATH_INFO_BUCKET_TARGET: usize = 32;
 const DEFAULT_INMEM_STITCH_PATH_INFO_LIMIT: usize = 768 * 1024 * 1024;
@@ -7797,7 +7810,8 @@ fn collate_external_cpp_path_info_to_final_buckets<const K: usize>(
 
     let contract_started = Instant::now();
     report_process_memory("before C++-style discontinuity contraction");
-    let contraction = SerialDiscontinuityContractor::contract_blocked_external(matrix, threads)?;
+    let mut contraction =
+        SerialDiscontinuityContractor::contract_blocked_external(matrix, threads)?;
     report_process_memory("after C++-style discontinuity contraction");
     eprintln!(
         "cuttlefish3-rs: discontinuity graph contracted in {:.3}s; {} meta-vertices, {} final edge(s), {} reinserted edge(s)",
@@ -7827,7 +7841,7 @@ fn collate_external_cpp_path_info_to_final_buckets<const K: usize>(
     let expand_started = Instant::now();
     report_process_memory("before C++-style discontinuity expansion");
     let expansion = SerialDiscontinuityExpander::expand_cpp_ordered_external_to_range_buckets(
-        &contraction,
+        &mut contraction,
         &inputs.ranges,
         ranges_per_bucket,
         path_info_bucket_count,
@@ -8706,17 +8720,19 @@ fn map_external_cpp_path_info_buckets_to_max_unitig_buckets<const K: usize>(
             .local_unitig_buckets
             .as_ref()
             .is_some_and(|buckets| buckets.iter().any(|bucket| bucket.colored));
-    let (max_unitig_bucket_count, mapping_threads) = materialized_coordinate_plan(
-        open_file_limit(),
-        current_open_file_count(),
-        threads,
-        colored,
-    );
+    let (max_unitig_bucket_count, mapping_threads, open_writer_limit) =
+        materialized_coordinate_plan(
+            open_file_limit(),
+            current_open_file_count(),
+            threads,
+            colored,
+        );
     eprintln!(
-        "cuttlefish3-rs: materializing final coordinates into {max_unitig_bucket_count} bucket(s) with {mapping_threads} mapping worker(s)"
+        "cuttlefish3-rs: materializing final coordinates into {max_unitig_bucket_count} bucket(s) with {mapping_threads} mapping worker(s), {open_writer_limit} open writer(s)"
     );
     let max_unitig_bucket_mask = max_unitig_bucket_count - 1;
-    let shared_writers = SharedMaterializedWriters::new(coord_dir, max_unitig_bucket_count);
+    let shared_writers =
+        SharedMaterializedWriters::new(coord_dir, max_unitig_bucket_count, open_writer_limit);
     let mut phantom_writers =
         SharedMaterializedBatch::new(&shared_writers, max_unitig_bucket_count);
     for (record, phantom) in expansion.phantom_records {
@@ -12519,18 +12535,31 @@ struct OpenMaterializedWriterCache {
     eviction_cursor: usize,
 }
 
+/// Plans the maximal-unitig coordinate fanout, mapping workers, and the number
+/// of shard writers that may be open at once.
+///
+/// Bucket count and descriptor use are deliberately decoupled. Cuttlefish uses
+/// 1024 max-unitig buckets, and shrinking that fanout makes every bucket larger,
+/// which raises reduce-phase memory. Writers are instead opened lazily and
+/// evicted by [`OpenMaterializedWriterCache`], so the fanout can be preserved
+/// while only `open_writers` descriptors are live. The fanout is reduced only
+/// when even a minimal open set cannot coexist with the mapping workers.
 fn materialized_coordinate_plan(
     file_limit: usize,
     open_files: usize,
     threads: usize,
     colored: bool,
-) -> (usize, usize) {
+) -> (usize, usize, usize) {
     let threads = threads.max(1);
     let writer_files = if colored { 3 } else { 2 };
-    // Cuttlefish uses 1024 max-unitig buckets. Keep that fanout whenever the
-    // process limit permits it, and reduce it only to preserve all requested
-    // mapping workers. Each worker concurrently owns a unitig and label reader.
-    let mut buckets = 1024usize;
+    // Reducing the fanout is preferable to evicting writers. A mapping worker
+    // scatters every batch across all buckets, so a writer cache smaller than the
+    // bucket count thrashes: on the colored 10,000-genome workload at 256
+    // threads, keeping 1024 buckets with 147 open writers took 52.6 s, while
+    // reducing to 128 fully-open buckets took 39.7 s. Fewer, larger buckets also
+    // used less memory here (19.5 GB versus 22.5 GB), because the reducer sizes
+    // its per-worker workspaces from the largest bucket.
+    let mut buckets = coordinate_bucket_target(threads);
     loop {
         let writer_descriptors = buckets.saturating_mul(writer_files);
         let mapping_workers = file_limit
@@ -12539,9 +12568,33 @@ fn materialized_coordinate_plan(
             .unwrap_or(0)
             .min(threads);
         if mapping_workers == threads || buckets == 1 {
-            return (buckets, mapping_workers.max(1));
+            return (buckets, mapping_workers.max(1), buckets);
         }
         buckets /= 2;
+    }
+}
+
+/// Returns the maximal-unitig coordinate fanout to attempt before descriptor
+/// adaptation. `CF3_RS_MCOORD_BUCKETS` overrides it for measurement.
+///
+/// Every mapping worker keeps a staging batch and a writer for each bucket, so
+/// the cost of a wide fanout scales with the worker count while its benefit does
+/// not. Measured on the colored 10,000-genome workload, dropping from 1024 to
+/// 256 buckets at 256 threads was 6.2% faster, used 21% less memory, and cut the
+/// descriptor peak from 3562 to 1285; at 64 threads the same change was 0.7%
+/// slower, so the wide fanout is retained there.
+fn coordinate_bucket_target(threads: usize) -> usize {
+    if let Some(buckets) = std::env::var("CF3_RS_MCOORD_BUCKETS")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|value| value.is_power_of_two())
+    {
+        return buckets;
+    }
+    if threads >= HIGH_THREAD_COORD_BUCKET_THRESHOLD {
+        HIGH_THREAD_MAX_UNITIG_COORD_BUCKETS
+    } else {
+        DEFAULT_MAX_UNITIG_COORD_BUCKETS
     }
 }
 
@@ -12565,14 +12618,14 @@ struct PendingMaterializedBucket {
 }
 
 impl<'a> SharedMaterializedWriters<'a> {
-    fn new(coord_dir: &'a Path, bucket_count: usize) -> Self {
+    fn new(coord_dir: &'a Path, bucket_count: usize, open_limit: usize) -> Self {
         Self {
             coord_dir,
             writers: (0..bucket_count).map(|_| Mutex::new(None)).collect(),
             retained: (0..bucket_count).map(|_| Mutex::new(Vec::new())).collect(),
             open_cache: Mutex::new(OpenMaterializedWriterCache {
                 open: 0,
-                limit: bucket_count.max(1),
+                limit: open_limit.clamp(1, bucket_count.max(1)),
                 eviction_cursor: 0,
             }),
         }
@@ -13326,6 +13379,29 @@ impl MaterializedStitchedCoordShardWriter {
     }
 }
 
+/// Returns the record capacity of one (worker, bucket) staging buffer.
+///
+/// Every worker can touch every bucket, so a fixed
+/// [`EDGE_PATH_INFO_WORKER_BUFFER`] per pair scales as
+/// `workers * buckets * 128 KiB` — several gigabytes at high worker counts and
+/// wide fanout. The per-pair size is instead derived from a total staging
+/// budget, and never exceeds the original fixed size.
+/// `CF3_RS_STITCH_STAGING_BYTES` overrides the budget for measurement.
+fn stitched_coord_worker_buffer_records(bucket_count: usize, workers: usize) -> usize {
+    const DEFAULT_STAGING_BUDGET: usize = 2 * 1024 * 1024 * 1024;
+    const MIN_BUFFER_BYTES: usize = 8 * 1024;
+    let budget = std::env::var("CF3_RS_STITCH_STAGING_BYTES")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(DEFAULT_STAGING_BUDGET);
+    let pairs = bucket_count.max(1).saturating_mul(workers.max(1) + 1);
+    let bytes = (budget / pairs).clamp(MIN_BUFFER_BYTES, EDGE_PATH_INFO_WORKER_BUFFER);
+    bytes
+        .div_ceil(std::mem::size_of::<StitchedCoordRecord>())
+        .max(1)
+}
+
 struct StitchedCoordShardWriters<'a> {
     coord_dir: &'a Path,
     worker_id: usize,
@@ -13336,6 +13412,8 @@ struct ConcurrentStitchedCoordWriters<'a> {
     coord_dir: &'a Path,
     writers: Vec<Mutex<Option<StitchedCoordShardWriter>>>,
     worker_buffers: Vec<UnsafeCell<Vec<Option<Vec<StitchedCoordRecord>>>>>,
+    /// Records held per (worker, bucket) pair before flushing.
+    worker_buffer_capacity: usize,
 }
 
 // A Rayon worker exclusively accesses the buffer at its worker index. The final
@@ -13354,6 +13432,7 @@ impl<'a> ConcurrentStitchedCoordWriters<'a> {
                     UnsafeCell::new(buckets)
                 })
                 .collect(),
+            worker_buffer_capacity: stitched_coord_worker_buffer_records(bucket_count, workers),
         }
     }
 
@@ -13394,9 +13473,7 @@ impl<'a> ConcurrentStitchedCoordWriters<'a> {
         // SAFETY: each Rayon worker has a unique index in the expansion pool,
         // and non-pool calls are serial and use the dedicated final slot.
         let buckets = unsafe { &mut *self.worker_buffers[worker_id].get() };
-        let capacity = EDGE_PATH_INFO_WORKER_BUFFER
-            .div_ceil(std::mem::size_of::<StitchedCoordRecord>())
-            .max(1);
+        let capacity = self.worker_buffer_capacity;
         let buffer = buckets[bucket_id].get_or_insert_with(|| Vec::with_capacity(capacity));
         let mut remaining = records;
         while !remaining.is_empty() {
@@ -16992,12 +17069,22 @@ fn contract_local_subgraphs_into_external_inputs<const K: usize>(
         .map_err(serial_collation_to_input_error)?;
     let mut label_offset = 0u64;
     let mut ranges = Vec::new();
+    // Distinct colour sets are estimated from the weak-super-k-mer volume. The
+    // ceiling bounds the primary table, and anything above it is diverted to the
+    // overflow map: on 149,998 Salmonella assemblies the previous 48Mi ceiling
+    // left 36,810,127 colours in overflow. `CF3_RS_EXPECTED_COLORS` overrides
+    // the ceiling for measurement.
+    let expected_color_ceiling = std::env::var("CF3_RS_EXPECTED_COLORS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(DEFAULT_EXPECTED_COLOR_CEILING);
     let expected_colors = entries
         .iter()
         .map(|entry| entry.records)
         .sum::<u64>()
         .div_ceil(16)
-        .min(48 * 1024 * 1024) as usize;
+        .min(expected_color_ceiling) as usize;
     let color_repository = color_path
         .map(|path| {
             ConcurrentColorRepository::create(
@@ -18066,26 +18153,49 @@ mod materialized_record_tests {
 
     #[test]
     fn materialized_coordinate_plan_respects_descriptor_budget() {
+        // The 1024-bucket fanout is preserved at every descriptor limit; only the
+        // number of simultaneously open shard writers adapts.
+        for &(limit, open, threads, colored) in &[
+            (1024usize, 64usize, 128usize, false),
+            (1024, 64, 128, true),
+            (1024, 64, 256, false),
+            (1024, 64, 256, true),
+            (65_536, 64, 256, true),
+        ] {
+            let (buckets, workers, open_writers) =
+                materialized_coordinate_plan(limit, open, threads, colored);
+            let writer_files = if colored { 3 } else { 2 };
+            assert!(buckets >= 1 && buckets.is_power_of_two());
+            assert_eq!(open_writers, buckets);
+            assert!(workers >= 1 && workers <= threads);
+            // The plan must fit inside the process limit it was given.
+            assert!(
+                open + open_writers * writer_files + workers * 2 <= limit,
+                "plan exceeds descriptor limit {limit}: {open_writers} writers, {workers} workers"
+            );
+        }
+
+        // A generous limit keeps the full fanout for the thread count: 1024 below
+        // the high-thread threshold, and the narrower fanout at or above it.
         assert_eq!(
-            materialized_coordinate_plan(1024, 64, 128, false),
-            (256, 128)
+            materialized_coordinate_plan(1_048_576, 64, 64, true),
+            (DEFAULT_MAX_UNITIG_COORD_BUCKETS, 64, DEFAULT_MAX_UNITIG_COORD_BUCKETS)
         );
         assert_eq!(
-            materialized_coordinate_plan(1024, 64, 128, true),
-            (128, 128)
+            materialized_coordinate_plan(1_048_576, 64, 256, true),
+            (
+                HIGH_THREAD_MAX_UNITIG_COORD_BUCKETS,
+                256,
+                HIGH_THREAD_MAX_UNITIG_COORD_BUCKETS
+            )
         );
-        assert_eq!(
-            materialized_coordinate_plan(1024, 64, 256, false),
-            (128, 256)
-        );
-        assert_eq!(
-            materialized_coordinate_plan(1024, 64, 256, true),
-            (128, 256)
-        );
-        assert_eq!(
-            materialized_coordinate_plan(65_536, 64, 256, true),
-            (1024, 256)
-        );
+
+        // A tight limit reduces the fanout rather than failing, and never
+        // reports more open writers than buckets.
+        let (buckets, workers, open_writers) = materialized_coordinate_plan(96, 64, 32, true);
+        assert!(buckets >= 1 && buckets.is_power_of_two());
+        assert_eq!(open_writers, buckets);
+        assert!(workers >= 1);
     }
 
     #[test]

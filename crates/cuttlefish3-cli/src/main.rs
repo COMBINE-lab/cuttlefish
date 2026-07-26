@@ -232,6 +232,7 @@ where
             "--ref" => raw.reference = true,
             "--color" => raw.color = true,
             "--compress-buckets" => raw.compress_buckets = true,
+            "--skip-unreadable" => raw.skip_unreadable = true,
             _ if arg.starts_with("--seq=") => split_values(arg[6..].to_string(), &mut raw.seqs),
             _ if arg.starts_with("--list=") => split_values(arg[7..].to_string(), &mut raw.lists),
             _ if arg.starts_with("--dir=") => split_values(arg[6..].to_string(), &mut raw.dirs),
@@ -280,6 +281,7 @@ where
     params.cutoff = raw.cutoff;
     params.color = raw.color;
     params.compress_buckets = raw.compress_buckets;
+    params.skip_unreadable = raw.skip_unreadable;
     params.max_memory_gb = raw.max_memory_gb;
     if let Some(threads) = raw.threads {
         params.threads = threads;
@@ -307,6 +309,7 @@ struct RawBuild {
     reference: bool,
     color: bool,
     compress_buckets: bool,
+    skip_unreadable: bool,
 }
 
 fn split_values(value: String, out: &mut Vec<String>) {
@@ -375,6 +378,7 @@ fn print_build_help() {
     println!("  -c, --cutoff <arg>    frequency cutoff for (k + 1)-mers");
     println!("      --color           color the compacted graph");
     println!("      --compress-buckets compress uncolored temporary buckets");
+    println!("      --skip-unreadable skip inputs that fail to parse instead of aborting");
     println!("  -h, --help            print usage");
 }
 

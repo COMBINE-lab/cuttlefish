@@ -374,12 +374,34 @@ struct AtomicColorTable {
     saturation_entries: usize,
     active_insertions: AtomicUsize,
     saturated: AtomicBool,
+    /// Latches once `active_insertions` has drained after saturation.
+    quiesced: AtomicBool,
 }
 
 enum AtomicColorEntry<'a> {
     Occupied(ColorCoordinate),
     Vacant(&'a AtomicColorSlot),
     Full,
+}
+
+/// Returns the slot ceiling for the primary colour table.
+///
+/// Once the table saturates at three-quarter load, every further colour is
+/// diverted to the overflow map, so the ceiling decides how much of a workload
+/// stays on the fast open-addressed path. A slot is 16 bytes, so this bound is
+/// also a memory bound: 2^26 slots is 1 GiB.
+///
+/// Overflow was measured to be inexpensive: on 149,998 Salmonella assemblies,
+/// admitting all 36,810,127 overflowed colours into the primary table left wall
+/// time and peak RSS unchanged. The ceiling is therefore left where it is, and
+/// `CF3_RS_COLOR_TABLE_SLOTS` overrides it for further measurement.
+fn max_color_table_slots() -> usize {
+    const DEFAULT_MAX_SLOTS: usize = 64 * 1024 * 1024;
+    std::env::var("CF3_RS_COLOR_TABLE_SLOTS")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|value| value.is_power_of_two())
+        .unwrap_or(DEFAULT_MAX_SLOTS)
 }
 
 impl AtomicColorTable {
@@ -392,7 +414,7 @@ impl AtomicColorTable {
             .saturating_mul(4)
             .div_ceil(3)
             .next_power_of_two()
-            .min(64 * 1024 * 1024);
+            .min(max_color_table_slots());
         Self {
             slots: (0..capacity)
                 .map(|_| AtomicColorSlot {
@@ -405,6 +427,7 @@ impl AtomicColorTable {
             saturation_entries: capacity * 3 / 4,
             active_insertions: AtomicUsize::new(0),
             saturated: AtomicBool::new(false),
+            quiesced: AtomicBool::new(false),
         }
     }
 
@@ -412,6 +435,15 @@ impl AtomicColorTable {
     fn entry(&self, key: u64) -> AtomicColorEntry<'_> {
         if key == Self::EMPTY_KEY {
             return AtomicColorEntry::Full;
+        }
+        // Repeated colour sets dominate at scale, so resolve an already-published
+        // key with a plain probe. The guarded path below performs a `fetch_add`
+        // and `fetch_sub` on one shared cache line for every call, including hits
+        // that publish nothing; at high worker counts that contention is the
+        // dominant cost of colour resolution. A lookup publishes nothing, so it
+        // needs no insertion guard, and a miss simply falls through.
+        if let Some(coordinate) = self.get(key) {
+            return AtomicColorEntry::Occupied(coordinate);
         }
         // Stop populating the fixed primary table before probe chains become
         // pathological. Existing keys are checked there before overflow.
@@ -499,10 +531,20 @@ impl AtomicColorTable {
         self.saturated.load(Ordering::Acquire)
     }
 
+    /// Waits until no insertion can still publish into the primary table.
+    ///
+    /// Once saturation is observed, [`Self::entry`] stops incrementing
+    /// `active_insertions`, so the counter drains to zero exactly once and stays
+    /// there. Latching that fact keeps a saturated repository's lookups off the
+    /// shared counter entirely, instead of re-reading it on every miss.
     fn wait_until_quiescent(&self) {
+        if self.quiesced.load(Ordering::Acquire) {
+            return;
+        }
         while self.active_insertions.load(Ordering::Acquire) != 0 {
             std::hint::spin_loop();
         }
+        self.quiesced.store(true, Ordering::Release);
     }
 }
 

@@ -89,6 +89,13 @@ impl VertexState {
     const VISITED: u32 = 1 << 0;
     const DISC_FRONT: u32 = 1 << 1;
     const DISC_BACK: u32 = 1 << 2;
+    /// Largest source ID representable in the packed last-source field.
+    ///
+    /// Colored builds track the previously seen source per vertex in 21 bits of
+    /// `flags`; partitioning rejects larger source sets before contraction so
+    /// this bound is never reached at run time.
+    pub const MAX_SOURCE_ID: u32 = 0x1F_FFFF;
+
     const SOURCE_SHIFT: u32 = 11;
     const SOURCE_MASK: u32 = 0x1F_FFFF << Self::SOURCE_SHIFT;
 
@@ -162,7 +169,7 @@ impl VertexState {
 
     #[inline(always)]
     pub fn add_source_hashed(&mut self, source: u32, source_hash: u64) {
-        assert!(source <= 0x1F_FFFF);
+        debug_assert!(source <= Self::MAX_SOURCE_ID, "source IDs are bounded during partitioning");
         let last = (self.flags & Self::SOURCE_MASK) >> Self::SOURCE_SHIFT;
         if source != last {
             self.color_hash = hash_combine(self.color_hash, source_hash);

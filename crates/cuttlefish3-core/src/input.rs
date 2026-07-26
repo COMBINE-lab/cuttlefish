@@ -7,7 +7,7 @@ use crate::dna::is_dna_ascii;
 use crate::params::BuildParams;
 use flate2::read::MultiGzDecoder;
 use std::fs;
-use std::io::{BufRead, BufReader, Read};
+use std::io::{BufRead, BufReader, Read, Seek};
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -101,6 +101,25 @@ pub fn parse_fragments_borrowed<P, F>(
     path: P,
     source_id: u32,
     min_len: usize,
+    on_fragment: F,
+) -> Result<u64, InputError>
+where
+    P: AsRef<Path>,
+    F: for<'a> FnMut(BorrowedSequenceFragment<'a>) -> Result<(), InputError>,
+{
+    parse_fragments_borrowed_with(path, source_id, min_len, 1, on_fragment)
+}
+
+/// As [`parse_fragments_borrowed`], but permitted to use `inflate_workers`
+/// threads to decompress block-structured (BGZF) gzip input.
+///
+/// The decompressed byte stream is identical either way; only the work of
+/// producing it is shared out. Plain gzip ignores the budget.
+pub fn parse_fragments_borrowed_with<P, F>(
+    path: P,
+    source_id: u32,
+    min_len: usize,
+    inflate_workers: usize,
     mut on_fragment: F,
 ) -> Result<u64, InputError>
 where
@@ -108,12 +127,28 @@ where
     F: for<'a> FnMut(BorrowedSequenceFragment<'a>) -> Result<(), InputError>,
 {
     let path = path.as_ref();
-    let file = fs::File::open(path).map_err(|source| InputError::Io {
+    let mut file = fs::File::open(path).map_err(|source| InputError::Io {
         path: path.to_path_buf(),
         source,
     })?;
     let input: Box<dyn Read> = if path.extension().is_some_and(|ext| ext == "gz") {
-        Box::new(MultiGzDecoder::new(file))
+        // BGZF concatenates independent gzip members, so its blocks can be
+        // inflated concurrently. A plain member cannot be split, and falls back
+        // to the serial decoder.
+        let mut head = [0u8; crate::bgzf::PROBE_BYTES];
+        let probed = read_probe(&mut file, &mut head).map_err(|source| InputError::Io {
+            path: path.to_path_buf(),
+            source,
+        })?;
+        file.rewind().map_err(|source| InputError::Io {
+            path: path.to_path_buf(),
+            source,
+        })?;
+        if inflate_workers > 1 && crate::bgzf::is_bgzf(&head[..probed]) {
+            Box::new(crate::bgzf::ParallelBgzfReader::new(file, inflate_workers))
+        } else {
+            Box::new(MultiGzDecoder::new(file))
+        }
     } else {
         Box::new(file)
     };
@@ -128,6 +163,20 @@ where
         Some(_) => Err(InputError::UnknownFormat(path.to_path_buf())),
         None => Err(InputError::EmptyFile(path.to_path_buf())),
     }
+}
+
+/// Fills as much of `head` as the file provides, tolerating short reads.
+fn read_probe<R: Read>(source: &mut R, head: &mut [u8]) -> std::io::Result<usize> {
+    let mut filled = 0;
+    while filled < head.len() {
+        match source.read(&mut head[filled..]) {
+            Ok(0) => break,
+            Ok(n) => filled += n,
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(filled)
 }
 
 fn parse_plain_sequence_reader<R, F>(

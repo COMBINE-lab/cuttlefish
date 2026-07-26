@@ -100,6 +100,7 @@ cuttlefish3-rs build [OPTIONS]
       --ref                 build from references
       --color               emit positional colors
       --compress-buckets    LZ4-compress uncolored partition buckets
+      --skip-unreadable     skip inputs that fail to parse
   -h, --help                print build help
 ```
 
@@ -110,6 +111,14 @@ files directly within a directory and is not recursive.
 FASTA and FASTQ are detected from file contents. A `.gz` suffix enables gzip
 decompression. Characters outside `A`, `C`, `G`, and `T` split records into
 independent graph fragments.
+
+An input that cannot be parsed aborts the build, so a truncated or empty file
+never silently yields an incomplete graph. `--skip-unreadable` reports such
+inputs and continues, which is useful for large downloaded corpora where a
+single bad file would otherwise cost a full restart. A skipped source keeps its
+position in the input list, so colored source assignments are unaffected; a
+source that fails part-way through contributes the records read before the
+failure.
 
 Reference builds use a default `(k + 1)`-mer cutoff of 1; read builds use 2.
 Use `--cutoff` to override either default.
@@ -125,10 +134,23 @@ the available hardware threads.
 graph tables can impose a higher workload-dependent minimum, so this is not a
 hard operating-system memory limit.
 
+Inputs presenting fewer files than the requested worker count — typically a
+handful of large FASTQ files — are streamed: one reader thread per file handles
+decompression and record assembly while every requested worker performs the
+minimizer scan and bucket packing.
+
+A plain gzip member cannot be split, so a single very large `.gz` is bounded by
+single-threaded decompression no matter how many workers are requested. BGZF
+input is detected automatically and its blocks are inflated in parallel, which
+removes that bound; compressing input with `bgzip` is worthwhile for files that
+will be read more than once. Splitting input into several files also exposes
+more reader parallelism.
+
 External-memory intermediates are placed in `--work-dir`. Fast local storage is
-recommended. Cuttlefish adapts open bucket writers to the process descriptor
-limit; a higher `ulimit -n` can expose more I/O parallelism. Use
-`--compress-buckets` to trade CPU for lower uncolored temporary-disk usage.
+recommended. Cuttlefish adapts its bucket fanout to the process descriptor
+limit, and narrows the maximal-unitig fanout at high worker counts, so a large
+`ulimit -n` is not required. Use `--compress-buckets` to trade CPU for lower
+uncolored temporary-disk usage.
 
 ## Output
 

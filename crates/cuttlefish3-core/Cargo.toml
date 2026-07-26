@@ -10,7 +10,9 @@ name = "cuttlefish3_core"
 path = "src/lib.rs"
 
 [dependencies]
-flate2 = "1"
+# `zlib-rs` is the pure-Rust port of zlib-ng; it decompresses substantially
+# faster than flate2's default `miniz_oxide` backend on gzipped FASTQ input.
+flate2 = { version = "1.1.9", default-features = false, features = ["zlib-rs"] }
 hashbrown = { version = "0.16.1", features = ["raw-entry"] }
 leapfrog = { version = "0.3.3", features = ["stable_alloc"] }
 lz4_flex = "0.11"

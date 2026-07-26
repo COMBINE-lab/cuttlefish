@@ -78,9 +78,25 @@ pub const fn is_dna_ascii(byte: u8) -> bool {
     ASCII_BASE_BITS[byte as usize] != INVALID_BASE_BITS
 }
 
+/// ASCII complement for every byte, built from [`Base::from_ascii`] so the table
+/// is exactly equivalent to computing it, including for non-DNA bytes.
+///
+/// Reverse-strand label assembly complements one base at a time in its inner
+/// loop; going through the enum compiles to range checks and a jump table, while
+/// this is a single indexed load.
+pub const ASCII_COMPLEMENT: [u8; 256] = {
+    let mut table = [0u8; 256];
+    let mut byte = 0usize;
+    while byte < 256 {
+        table[byte] = Base::from_ascii(byte as u8).complement().to_ascii();
+        byte += 1;
+    }
+    table
+};
+
 #[inline]
 pub const fn complement_ascii(byte: u8) -> u8 {
-    Base::from_ascii(byte).complement().to_ascii()
+    ASCII_COMPLEMENT[byte as usize]
 }
 
 #[inline]
@@ -117,6 +133,17 @@ mod tests {
         assert_eq!(Base::from_ascii(b'G').bits(), 2);
         assert_eq!(Base::from_ascii(b'T').bits(), 3);
         assert_eq!(Base::from_ascii(b'N'), Base::N);
+    }
+
+    #[test]
+    fn complement_table_matches_enum_path() {
+        for byte in 0..=u8::MAX {
+            assert_eq!(
+                complement_ascii(byte),
+                Base::from_ascii(byte).complement().to_ascii(),
+                "complement table diverges at byte {byte}"
+            );
+        }
     }
 
     #[test]

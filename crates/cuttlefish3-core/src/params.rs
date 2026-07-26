@@ -47,6 +47,12 @@ pub struct BuildParams {
     pub color: bool,
     /// Whether weak-super-k-mer buckets use LZ4 block compression.
     pub compress_buckets: bool,
+    /// Whether an input that fails to parse is skipped instead of aborting.
+    ///
+    /// A skipped source retains its position in the input list, so colored
+    /// source assignments are unaffected. Records read before the failure are
+    /// retained, so a file that fails part-way through contributes its prefix.
+    pub skip_unreadable: bool,
     /// Prefix for final graph files.
     pub output_prefix: String,
     /// Directory for external-memory intermediates.
@@ -78,6 +84,7 @@ impl BuildParams {
             cutoff: None,
             color: false,
             compress_buckets: false,
+            skip_unreadable: false,
             output_prefix,
             work_dir: default_work_dir(),
             vertex_partitions: DEFAULT_VERTEX_PARTITIONS,

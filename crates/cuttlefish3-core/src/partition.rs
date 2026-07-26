@@ -872,6 +872,12 @@ fn handle_source_failure(
     Ok(())
 }
 
+/// Whether to skip the minimizer scan entirely (diagnostic only).
+fn parse_only_diagnostic() -> bool {
+    static PARSE_ONLY: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *PARSE_ONLY.get_or_init(|| std::env::var_os("CF3_RS_PARSE_ONLY").is_some())
+}
+
 /// Whether to skip record packing and bucket writes (diagnostic only).
 fn scan_only_diagnostic() -> bool {
     static SCAN_ONLY: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
@@ -894,6 +900,11 @@ where
     // Diagnostic: `CF3_RS_SCAN_ONLY` performs the minimizer scan without packing
     // or writing records, isolating scan cost from emission cost.
     let scan_only = scan_only_diagnostic();
+    // Diagnostic: `CF3_RS_PARSE_ONLY` also skips the minimizer scan, leaving only
+    // line assembly and fragment splitting, so the two can be costed apart.
+    if parse_only_diagnostic() {
+        return Ok(());
+    }
     for_each_valid_weak_superkmer::<K, E, _>(
         seq,
         params.minimizer_len as usize,
@@ -1060,6 +1071,14 @@ where
     )
 }
 
+/// Scans a fragment and reports each weak super-k-mer.
+///
+/// The rolling minimizer window and the super-k-mer boundary state share one
+/// loop, as they do in C++. Splitting them across a per-base visitor closure
+/// kept the boundary state in a closure environment, so every base reloaded and
+/// stored it through memory and paid a call. `visit` now runs once per weak
+/// super-k-mer rather than once per base.
+#[inline]
 fn for_each_weak_superkmer_impl<const K: usize, E, F, const CHECK_BASES: bool>(
     fragment: &[u8],
     minimizer_len: usize,
@@ -1086,79 +1105,6 @@ where
 
     let window_k = K - 1;
     let max_super_km1_len = 2 * (K - 1) - minimizer_len;
-    let mut cur_off = 0usize;
-    let mut km1_idx = 0usize;
-    let mut cur_g = 0usize;
-    let mut prev_g = graph_count;
-    let mut initialized = false;
-    let mut hash_idx = 0usize;
-
-    for_each_km1_window_hash::<K, E, _, CHECK_BASES>(fragment, minimizer_len, |next_hash| {
-        if !initialized {
-            cur_g = graph_id(next_hash, graph_count);
-            initialized = true;
-            hash_idx += 1;
-            return Ok(());
-        }
-
-        let len = km1_idx + window_k;
-        let next_g = graph_id(next_hash, graph_count);
-        km1_idx += 1;
-        if next_g != cur_g || len == max_super_km1_len {
-            let next_off = cur_off + km1_idx;
-            let left_joined = cur_off > 0;
-            let right_joined = true;
-            visit(WeakSuperKmer {
-                graph_id: cur_g,
-                offset: cur_off - usize::from(left_joined),
-                len: usize::from(left_joined) + len + usize::from(right_joined),
-                source_id,
-                left_discontinuous: left_joined && prev_g != cur_g,
-                right_discontinuous: next_g != cur_g,
-            })?;
-
-            debug_assert_eq!(next_off, hash_idx);
-            cur_off = next_off;
-            prev_g = cur_g;
-            cur_g = next_g;
-            km1_idx = 0;
-        }
-        hash_idx += 1;
-        Ok(())
-    })?;
-
-    if !initialized {
-        return Ok(());
-    }
-
-    let len = fragment.len() - cur_off;
-    let left_joined = cur_off > 0;
-    visit(WeakSuperKmer {
-        graph_id: cur_g,
-        offset: cur_off - usize::from(left_joined),
-        len: usize::from(left_joined) + len,
-        source_id,
-        left_discontinuous: left_joined && prev_g != cur_g,
-        right_discontinuous: false,
-    })?;
-
-    Ok(())
-}
-
-fn for_each_km1_window_hash<const K: usize, E, F, const CHECK_BASES: bool>(
-    fragment: &[u8],
-    minimizer_len: usize,
-    mut visit: F,
-) -> Result<(), E>
-where
-    E: From<PartitionError>,
-    F: FnMut(u64) -> Result<(), E>,
-{
-    let window_k = K - 1;
-    if fragment.len() < window_k {
-        return Ok(());
-    }
-
     let lmers_per_window = window_k - minimizer_len + 1;
     let ring_size = lmers_per_window - 1;
     let mut hashes = [0u64; K];
@@ -1171,7 +1117,6 @@ where
         fwd = (fwd << 2) | base_bits as u64;
         rev |= ((base_bits ^ 0b11) as u64) << (2 * idx);
     }
-
     let mask = if minimizer_len == 32 {
         u64::MAX
     } else {
@@ -1191,7 +1136,12 @@ where
 
     reset_min_window(&hashes, &mut prefix_min, ring_size, &mut pivot);
     let mut suffix_min = u64::MAX;
-    visit(prefix_min[pivot].min(suffix_min))?;
+
+    // Boundary state in locals, so the loop needs no closure environment.
+    let mut cur_off = 0usize;
+    let mut km1_idx = 0usize;
+    let mut cur_g = graph_id(prefix_min[pivot].min(suffix_min), graph_count);
+    let mut prev_g = graph_count;
 
     for &base in &fragment[window_k..] {
         let next_bits = partition_base_bits::<CHECK_BASES, E>(base)?;
@@ -1206,13 +1156,43 @@ where
             reset_min_window(&hashes, &mut prefix_min, ring_size, &mut pivot);
             suffix_min = u64::MAX;
         }
-        visit(prefix_min[pivot].min(suffix_min))?;
+
+        let len = km1_idx + window_k;
+        let next_g = graph_id(prefix_min[pivot].min(suffix_min), graph_count);
+        km1_idx += 1;
+        if next_g != cur_g || len == max_super_km1_len {
+            let next_off = cur_off + km1_idx;
+            let left_joined = cur_off > 0;
+            visit(WeakSuperKmer {
+                graph_id: cur_g,
+                offset: cur_off - usize::from(left_joined),
+                len: usize::from(left_joined) + len + 1,
+                source_id,
+                left_discontinuous: left_joined && prev_g != cur_g,
+                right_discontinuous: next_g != cur_g,
+            })?;
+
+            cur_off = next_off;
+            prev_g = cur_g;
+            cur_g = next_g;
+            km1_idx = 0;
+        }
     }
+
+    let len = fragment.len() - cur_off;
+    let left_joined = cur_off > 0;
+    visit(WeakSuperKmer {
+        graph_id: cur_g,
+        offset: cur_off - usize::from(left_joined),
+        len: usize::from(left_joined) + len,
+        source_id,
+        left_discontinuous: left_joined && prev_g != cur_g,
+        right_discontinuous: false,
+    })?;
 
     Ok(())
 }
 
-#[inline(always)]
 fn reset_min_window(hashes: &[u64], prefix_min: &mut [u64], ring_size: usize, pivot: &mut usize) {
     prefix_min[0] = hashes[0];
     for idx in 1..=ring_size {

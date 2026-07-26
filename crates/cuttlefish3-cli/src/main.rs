@@ -69,9 +69,10 @@ where
                 partition_stats.input_files
             );
             eprintln!(
-                "cuttlefish3-rs: partitioned {} record(s), {} ACTG fragment(s), {} weak super-kmer(s), {} non-empty subgraph(s), max subgraph bucket {}",
+                "cuttlefish3-rs: partitioned {} record(s), {} ACTG fragment(s), {} fragment base(s), {} weak super-kmer(s), {} non-empty subgraph(s), max subgraph bucket {}",
                 partition_stats.records,
                 partition_stats.fragments,
+                partition_stats.fragment_bases,
                 partition_stats.weak_superkmers,
                 partition_stats.non_empty_graphs(),
                 partition_stats.max_graph_superkmers()

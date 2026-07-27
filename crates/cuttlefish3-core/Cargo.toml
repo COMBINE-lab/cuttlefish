@@ -15,7 +15,21 @@ path = "src/lib.rs"
 flate2 = { version = "1.1.9", default-features = false, features = ["zlib-rs"] }
 hashbrown = { version = "0.16.1", features = ["raw-entry"] }
 leapfrog = { version = "0.3.3", features = ["stable_alloc"] }
-lz4_flex = "0.11"
+# Bucket blocks use only `lz4_flex::block`, so the frame module and its
+# twox-hash dependency are dropped.
+#
+# The crate's bounds-checked paths are kept. On real bucket payloads they
+# compress at 939 MB/s against C liblz4's 1032 MB/s, and the crate's unsafe
+# paths reach 1053 MB/s -- but that 12% buys nothing end to end, because
+# compression is roughly 5% of wall time at 64 threads. Two paired 150k runs
+# put the unsafe build 1.96s *slower*, inside the noise. Not worth opting into
+# unsafe code in a dependency for an unmeasurable change.
+lz4_flex = { version = "0.11", default-features = false, features = [
+    "std",
+    "safe-encode",
+    "safe-decode",
+    "checked-decode",
+] }
 rayon = "1.12.0"
 scc = "3.8.4"
 xxhash-rust = { version = "0.8.15", features = ["xxh3"] }

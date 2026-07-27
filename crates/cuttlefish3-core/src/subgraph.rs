@@ -214,6 +214,17 @@ impl<const K: usize> LocalVertexMap<K> {
         }
     }
 
+    /// Slots the map can hold without growing.
+    ///
+    /// Clearing walks this rather than [`len`](Self::len), so it is what decides
+    /// whether carrying the map to a smaller subgraph is worth the cost.
+    pub fn capacity(&self) -> usize {
+        match self {
+            Self::OneWord(map) => map.indices.capacity(),
+            Self::TwoWord(map) => map.capacity(),
+        }
+    }
+
     #[inline(always)]
     fn get(&self, kmer: &Kmer<K>) -> Option<&VertexState> {
         match self {

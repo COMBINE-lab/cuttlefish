@@ -18004,6 +18004,60 @@ struct LocalBucketGroup {
     entries: Vec<BucketManifestEntry>,
 }
 
+/// How many times the recent mean vertex count a carried-over map may span
+/// before allocating a fresh one is cheaper than clearing it.
+const VERTEX_MAP_REUSE_SLACK: usize = 8;
+
+/// Reciprocal weight of the newest subgraph in the running mean.
+const VERTEX_MAP_MEAN_DECAY: usize = 8;
+
+/// Capacity below which a map is always carried over, since clearing a small
+/// table costs less than the branch deciding not to.
+const VERTEX_MAP_ALWAYS_REUSE_CAPACITY: usize = 4096;
+
+/// A vertex map carried to the next subgraph, with a running mean of the vertex
+/// counts this worker has recently seen.
+///
+/// Clearing a map walks its capacity rather than its length, so one still sized
+/// for an outlier bucket taxes every later subgraph. Comparing the capacity
+/// against what this worker actually uses calibrates to the corpus without a
+/// tuned constant per workload: uniform reference buckets keep their map, and
+/// the heavy skew of read data drops it after an outlier.
+struct ReusableVertexMap<const K: usize> {
+    map: LocalVertexMap<K>,
+    mean_vertices: usize,
+}
+
+impl<const K: usize> ReusableVertexMap<K> {
+    /// Whether this map is small enough, relative to recent subgraphs, to clear
+    /// rather than discard.
+    fn worth_carrying(&self) -> bool {
+        self.map.capacity()
+            <= self
+                .mean_vertices
+                .saturating_mul(vertex_map_reuse_slack())
+                .max(VERTEX_MAP_ALWAYS_REUSE_CAPACITY)
+    }
+
+    /// Folds `vertices` into the running mean.
+    fn observe(mean: usize, vertices: usize) -> usize {
+        if mean == 0 {
+            return vertices;
+        }
+        (mean.saturating_mul(VERTEX_MAP_MEAN_DECAY - 1) + vertices) / VERTEX_MAP_MEAN_DECAY
+    }
+}
+
+fn vertex_map_reuse_slack() -> usize {
+    static SLACK: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *SLACK.get_or_init(|| {
+        std::env::var("CF3_RS_VERTEX_REUSE_SLACK")
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+            .unwrap_or(VERTEX_MAP_REUSE_SLACK)
+    })
+}
+
 fn contract_local_subgraphs<const K: usize>(
     entries: &[BucketManifestEntry],
     cutoff: u32,
@@ -18159,14 +18213,20 @@ fn contract_local_subgraph<const K: usize>(
     group: &LocalBucketGroup,
     cutoff: u32,
     color_repository: Option<&ConcurrentColorRepository>,
-    reusable_vertices: &mut Option<LocalVertexMap<K>>,
+    reusable_vertices: &mut Option<ReusableVertexMap<K>>,
     emit_trivial_fasta: bool,
 ) -> Result<LocalContractionOutput<K>, DiscontinuityInputError> {
     let build_start = Instant::now();
+    let carried = reusable_vertices.take();
+    // The mean outlives the map: dropping an oversized table must not also
+    // discard what this worker has learned about its subgraph sizes.
+    let mean_vertices = carried.as_ref().map_or(0, |held| held.mean_vertices);
     let mut subgraph = LocalSubgraph::<K>::from_manifest_entries_reusing(
         &group.entries,
         cutoff,
-        reusable_vertices.take(),
+        carried
+            .filter(ReusableVertexMap::worth_carrying)
+            .map(|held| held.map),
     )?;
     let build_elapsed = build_start.elapsed();
     let weak_superkmers = subgraph.stats.weak_superkmers;
@@ -18241,7 +18301,11 @@ fn contract_local_subgraph<const K: usize>(
         trivial_unitigs,
         trivial_bases,
     };
-    *reusable_vertices = Some(subgraph.into_vertex_map());
+    let map = subgraph.into_vertex_map();
+    *reusable_vertices = Some(ReusableVertexMap {
+        mean_vertices: ReusableVertexMap::<K>::observe(mean_vertices, map.len()),
+        map,
+    });
     if !keep_intermediates() {
         for entry in &group.entries {
             match fs::remove_file(&entry.path) {

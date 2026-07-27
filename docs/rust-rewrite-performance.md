@@ -1068,6 +1068,39 @@ suggests it is a poor proxy — bytes per vertex differs sharply between long
 low-coverage reference contigs and short high-coverage reads. The change was
 reverted rather than landed with a regression.
 
-A criterion built on the map's actual capacity against a running mean of recent
-subgraph vertex counts would self-calibrate per corpus, and is the shape any
-future attempt should take.
+### A self-calibrating criterion works
+
+Keying on the map's actual capacity against a running mean of the vertex counts
+each worker has recently seen removes the need for a per-workload constant.
+`LocalVertexMap::capacity` reports what a clear would walk; the carried map
+records an exponentially-weighted mean of `len()` across subgraphs, and is kept
+only while its capacity stays within eight times that mean. The mean is held
+separately from the map so discarding an oversized table does not also discard
+what the worker has learned. Small maps below 4096 slots are always carried,
+since clearing them costs less than the branch declining to.
+
+Uniform reference buckets keep capacity near the mean and never trip the test.
+Read data trips it on the subgraph after an outlier, which is exactly where the
+old policy was paying to clear a table sized for a bucket it would not see
+again.
+
+| workload | metric | before | after |
+| --- | --- | ---: | ---: |
+| read, 4 threads | local contraction | 43.87 / 44.15 | 34.59 / 34.90 |
+| read, 4 threads | wall | 1:19.05 / 1:21.17 | 1:10.81 / 1:10.34 |
+| Salmonella, 64 threads | local contraction | 138.75 / 137.45 / 137.41 | 138.60 / 138.57 / 136.98 |
+| Salmonella, 16 threads | local contraction | 408.74 | 408.83 |
+| Salmonella colored, 64 threads | wall | 6:57.60 | 6:54.27 |
+
+Read mode at 4 threads improves 21% in the phase and 11.9% end to end. The
+reference corpus is flat: 0.13% at 64 threads over three interleaved pairs,
+against a 1.3 s spread within the baselines themselves, and 0.02% at 16.
+Colored is slightly faster. Topology was checked against the C++ output
+directly — 13,309,867 strand-normalized unitigs match — and unitig and
+discontinuity-exit counts are identical across every run above.
+
+Two caveats on the record. The 16-thread and colored rows are single pairs
+rather than three. And wall time on the reference corpus sits 0.4-0.6% above
+baseline while the phase the change actually touches is flat, which is
+consistent with variance in the surrounding phases rather than an effect, but
+is not separable at this sample count.

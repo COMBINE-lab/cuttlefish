@@ -46,6 +46,11 @@ pub struct BuildParams {
     /// Whether to construct and emit positional colors.
     pub color: bool,
     /// Whether weak-super-k-mer buckets use LZ4 block compression.
+    ///
+    /// On by default. Colored builds compress regardless; for uncolored ones
+    /// this cuts write volume on a 150k reference build from 1167.7 GB to
+    /// 439 GB and peak RSS by about a quarter, at no measurable cost in wall
+    /// time across five interleaved pairs at 64 threads.
     pub compress_buckets: bool,
     /// Whether an input that fails to parse is skipped instead of aborting.
     ///
@@ -83,7 +88,7 @@ impl BuildParams {
             minimizer_len: DEFAULT_MINIMIZER_LEN,
             cutoff: None,
             color: false,
-            compress_buckets: false,
+            compress_buckets: true,
             skip_unreadable: false,
             output_prefix,
             work_dir: default_work_dir(),

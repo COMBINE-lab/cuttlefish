@@ -238,7 +238,8 @@ where
             "--read" => raw.read = true,
             "--ref" => raw.reference = true,
             "--color" => raw.color = true,
-            "--compress-buckets" => raw.compress_buckets = true,
+            "--compress-buckets" => raw.compress_buckets = Some(true),
+            "--no-compress-buckets" => raw.compress_buckets = Some(false),
             "--skip-unreadable" => raw.skip_unreadable = true,
             _ if arg.starts_with("--seq=") => split_values(arg[6..].to_string(), &mut raw.seqs),
             _ if arg.starts_with("--list=") => split_values(arg[7..].to_string(), &mut raw.lists),
@@ -287,7 +288,9 @@ where
     }
     params.cutoff = raw.cutoff;
     params.color = raw.color;
-    params.compress_buckets = raw.compress_buckets;
+    if let Some(compress) = raw.compress_buckets {
+        params.compress_buckets = compress;
+    }
     params.skip_unreadable = raw.skip_unreadable;
     params.max_memory_gb = raw.max_memory_gb;
     if let Some(threads) = raw.threads {
@@ -315,7 +318,7 @@ struct RawBuild {
     read: bool,
     reference: bool,
     color: bool,
-    compress_buckets: bool,
+    compress_buckets: Option<bool>,
     skip_unreadable: bool,
 }
 
@@ -384,7 +387,8 @@ fn print_build_help() {
     println!("      --ref             construct a compacted reference de Bruijn graph");
     println!("  -c, --cutoff <arg>    frequency cutoff for (k + 1)-mers");
     println!("      --color           color the compacted graph");
-    println!("      --compress-buckets compress uncolored temporary buckets");
+    println!("      --compress-buckets compress uncolored temporary buckets (default)");
+    println!("      --no-compress-buckets store uncolored temporary buckets uncompressed");
     println!("      --skip-unreadable skip inputs that fail to parse instead of aborting");
     println!("  -h, --help            print usage");
 }

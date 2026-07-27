@@ -147,7 +147,7 @@ RUNPID=$!
           read_bytes:)  (( value > rbytes )) && rbytes=$value ;;
           write_bytes:) (( value > wbytes )) && wbytes=$value ;;
         esac
-      done < "/proc/$p/io" 2>/dev/null
+      done < <(cat "/proc/$p/io" 2>/dev/null)
     done
     (( n > peak )) && { peak=$n; echo "$peak" > "$FDPEAK_FILE"; }
     echo "$rchar $wchar $rbytes $wbytes" > "$IOFILE"

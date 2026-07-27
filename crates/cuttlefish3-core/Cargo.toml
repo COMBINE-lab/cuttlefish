@@ -18,15 +18,17 @@ leapfrog = { version = "0.3.3", features = ["stable_alloc"] }
 # Bucket blocks use only `lz4_flex::block`, so the frame module and its
 # twox-hash dependency are dropped.
 #
-# The crate's bounds-checked paths are kept. On real bucket payloads they
-# compress at 939 MB/s against C liblz4's 1032 MB/s, and the crate's unsafe
-# paths reach 1053 MB/s -- but that 12% buys nothing end to end, because
-# compression is roughly 5% of wall time at 64 threads. Two paired 150k runs
-# put the unsafe build 1.96s *slower*, inside the noise. Not worth opting into
-# unsafe code in a dependency for an unmeasurable change.
+# `safe-encode` is off. The encoder runs on buffers this crate just built, so
+# the exposure is a bug in lz4_flex rather than malformed input, and the unsafe
+# path is consistently faster across unlike payloads -- 972 to 1068 MB/s on
+# reference buckets, 752 to 850 MB/s on read buckets -- overtaking the C liblz4
+# the C++ build links (1023 and 829 MB/s) in both cases.
+#
+# Decoding keeps `safe-decode` and `checked-decode`: a bucket truncated by a
+# killed run is a realistic input, and unsafe decode adds nothing to
+# compression throughput.
 lz4_flex = { version = "0.11", default-features = false, features = [
     "std",
-    "safe-encode",
     "safe-decode",
     "checked-decode",
 ] }

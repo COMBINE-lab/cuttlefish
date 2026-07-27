@@ -100,3 +100,64 @@ and the two expansion read paths that call `fs::read(&block.path)`.
 Cleanup keeps working unchanged: the background directory removal added for
 collation now unlinks 129 files instead of 16,641, which should take the
 3.835 s measured for that step to near zero.
+
+## What measurement changed
+
+Implemented and measured on 149,998 Salmonella assemblies, uncolored, `k=31`,
+64 threads, under `--mem-limit 64G` so the page cache on this 1.5 TB host could
+not absorb the effect. Four interleaved A/B pairs against `rust-rewrite`.
+
+The file-count result holds, and is larger than this document assumed in one
+respect and smaller in another. The matrix is upper-triangular, so only 8,384
+of the 16,641 blocks ever get a file -- the 16,641 figure above is the block
+count, not the file count. Against that corrected baseline:
+
+| | before | after |
+| --- | ---: | ---: |
+| edge-matrix files | 8,384 | **129** |
+| peak files, whole work dir | 23,376 | 17,250 |
+| peak work-dir bytes | 237.1 GB | 231.2 GB |
+
+Peak files vary by 61 across the four container runs against 901 across the
+baselines, and the peak work-dir arms do not overlap, so both are effects rather
+than noise.
+
+**The axis choice did not survive measurement.** This document's sharpest claim
+was that rows and columns are a binary choice, decided by expansion being the
+heavier phase. Neither half is visible on this host:
+
+| | contraction | expansion |
+| --- | ---: | ---: |
+| baseline, 4 runs | 12.319 (spread 0.52) | 29.057 (spread 3.82) |
+| row containers, 4 runs | 12.805 (spread 0.38) | 30.459 (spread 3.59) |
+| column containers, 2 runs | 12.884 | 31.394 |
+
+Contraction pays a real 0.49 s (+4.0%) -- both arms are tight enough to resolve
+it -- and that is the scattered-`pread` cost the design predicted for the
+disfavoured phase. But expansion shows no gain from streaming: each arm spans
+nearly 4 s, the arms interleave, and the container mean is 1.4 s *worse*. The
+column axis is indistinguishable from the row axis on both timers.
+
+So the streaming property was implemented and bought nothing measurable here.
+That is consistent with this document's own reasoning that metadata pressure
+dominates on Lustre and GPFS and much less so on local XFS: the win the design
+predicted may still exist on a network filesystem, but it cannot be claimed from
+this host. `CF3_RS_EDGE_CONTAINER_AXIS` stays, because settling the question
+elsewhere costs one environment variable.
+
+The remaining justification for the change is therefore the 65x file-count
+reduction and 5.9 GB less peak disk, at a cost of 0.49 s in contraction, with
+wall time flat (296.3 s against 292.4 s, inside a ~5 s spread) and I/O volume
+unchanged at 438-439 GB. Colored is likewise flat: 6:39.70 against 6:42.00 with
+an unchanged 41 GiB colour index.
+
+Two implementation notes worth keeping:
+
+- Contraction deliberately did *not* become a container pass. Its tasks are
+  read, decoded, contracted and emitted through reusable per-worker buffers,
+  which is what took it from 13.76 s to 9.02 s at scale; materialising a column
+  first would give that back. It sorts its tasks by `(container, offset)`
+  instead, which is the locality a streaming read would have provided.
+- Extents that land adjacently coalesce at append time, so a block that flushes
+  twice with nothing interleaved is read back in one call. This matters most to
+  the disfavoured axis, whose reads are per-block.

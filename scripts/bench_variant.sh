@@ -25,6 +25,12 @@
 #   --root DIR         bench root (default /scratch4/rob/cf3-bench)
 #   --tsv FILE         results TSV (default $ROOT/results.tsv)
 #   --keep             keep the work dir and output FASTA
+#
+# WORKPEAK_INTERVAL   seconds between work-dir samples (default 5). The sampler
+#                     records peak file count and peak bytes, which the post-run
+#                     `du` cannot: intermediates are unlinked incrementally, so
+#                     what survives to the end is a residual, not a high-water
+#                     mark.
 #   --extra "ARGS"     extra arguments appended verbatim
 set -u -o pipefail
 
@@ -111,6 +117,15 @@ echo 0 > "$FDPEAK_FILE"
 IOFILE=$(mktemp "$ROOT/out/.io.XXXXXX")
 echo "0 0 0 0" > "$IOFILE"
 
+# Peak work-dir file count and size. `du`/`find` walk every inode, so this
+# samples far more slowly than the io loop above -- often enough to catch the
+# peak, rarely enough not to perturb the run it is measuring. Both are peaks:
+# the post-run `du` below is a residual, and intermediates are unlinked
+# incrementally, so it cannot see what the build actually held.
+WORKPEAK_FILE=$(mktemp "$ROOT/out/.workpeak.XXXXXX")
+echo "0 0" > "$WORKPEAK_FILE"
+WORKPEAK_INTERVAL=${WORKPEAK_INTERVAL:-5}
+
 TIMEFILE=$(mktemp "$ROOT/out/.time.XXXXXX")
 [[ -n $ULIMIT_N ]] && ulimit -n "$ULIMIT_N"
 
@@ -156,8 +171,27 @@ RUNPID=$!
 ) &
 SAMPLER=$!
 
+(
+  files=0; bytes=0
+  while kill -0 $RUNPID 2>/dev/null; do
+    n=$(find "$WORK" -type f 2>/dev/null | wc -l)
+    # Allocated blocks, not apparent size. XFS speculatively preallocates on
+    # extending writes, and with thousands of small repeatedly-reopened files
+    # that slack is large -- 332.7 GB allocated against 237.8 GB apparent for
+    # the bucket directory alone. `du -sb` would report the smaller number and
+    # miss exactly the effect a container change is meant to remove.
+    b=$(du -s --block-size=1 "$WORK" 2>/dev/null | cut -f1)
+    (( n > files )) && files=$n
+    (( ${b:-0} > bytes )) && bytes=$b
+    echo "$files $bytes" > "$WORKPEAK_FILE"
+    sleep "$WORKPEAK_INTERVAL"
+  done
+) &
+WORKSAMPLER=$!
+
 wait $RUNPID; STATUS=$?
 wait $SAMPLER 2>/dev/null
+wait $WORKSAMPLER 2>/dev/null
 
 DEVSTAT_AFTER=$(devstat "$DEV")
 
@@ -165,6 +199,7 @@ WALL=$(awk -F': ' '/Elapsed \(wall clock\)/ {print $2}' "$TIMEFILE")
 RSS=$(awk -F': ' '/Maximum resident set size/ {print $2}' "$TIMEFILE")
 FDPEAK=$(cat "$FDPEAK_FILE")
 read -r RCHAR WCHAR RBYTES WBYTES < "$IOFILE"
+read -r FILEPEAK WORKPEAK < "$WORKPEAK_FILE"
 # Fields 3 and 7 of /sys/block/<dev>/stat are sectors read and written.
 DEVREAD=0; DEVWRITE=0
 if [[ -n $DEVSTAT_BEFORE && -n $DEVSTAT_AFTER ]]; then
@@ -192,17 +227,18 @@ WORKBYTES=$(du -sb "$WORK" 2>/dev/null | cut -f1)
 FASTA=$(stat -c %s "$OUTPREFIX".fa 2>/dev/null || stat -c %s "$OUTPREFIX".fa.fa 2>/dev/null || echo 0)
 
 if [[ ! -s $TSV ]]; then
-  printf 'variant\timpl\tdataset\tmode\tcolor\tthreads\tk\tmin_len\tstatus\twall\tmax_rss_kb\tfd_peak\tpart_workers\tpartition_s\tbuild_s\tlocal_s\tcontract_s\texpand_s\tunitigs\tbases\twork_bytes\tfasta_bytes\trchar\twchar\tread_bytes\twrite_bytes\tdev_read\tdev_write\tmem_limit\ttag\n' > "$TSV"
+  printf 'variant\timpl\tdataset\tmode\tcolor\tthreads\tk\tmin_len\tstatus\twall\tmax_rss_kb\tfd_peak\tfile_peak\twork_peak_bytes\tpart_workers\tpartition_s\tbuild_s\tlocal_s\tcontract_s\texpand_s\tunitigs\tbases\twork_bytes\tfasta_bytes\trchar\twchar\tread_bytes\twrite_bytes\tdev_read\tdev_write\tmem_limit\ttag\n' > "$TSV"
 fi
-printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
   "$VARIANT" "$IMPL" "$DATASET" "$MODE" "$COLORTAG" "$THREADS" "$K" "$MINLEN" "$STATUS" \
-  "$WALL" "$RSS" "$FDPEAK" "${PARTWORKERS:-}" "${PART:-}" "${BUILD:-}" "${LOCAL:-}" "${CONTRACT:-}" "${EXPAND:-}" \
+  "$WALL" "$RSS" "$FDPEAK" "${FILEPEAK:-0}" "${WORKPEAK:-0}" \
+  "${PARTWORKERS:-}" "${PART:-}" "${BUILD:-}" "${LOCAL:-}" "${CONTRACT:-}" "${EXPAND:-}" \
   "${UNITIGS:-}" "${BASES:-}" "${WORKBYTES:-}" "$FASTA" \
   "$RCHAR" "$WCHAR" "$RBYTES" "$WBYTES" "$DEVREAD" "$DEVWRITE" "${MEM_LIMIT:-none}" "$TAG" >> "$TSV"
 
-rm -f "$TIMEFILE" "$FDPEAK_FILE" "$IOFILE"
+rm -f "$TIMEFILE" "$FDPEAK_FILE" "$IOFILE" "$WORKPEAK_FILE"
 if [[ $KEEP == 0 ]]; then rm -rf "$WORK"; fi
 
-echo "== status=$STATUS wall=$WALL rss=${RSS}KiB fd_peak=$FDPEAK unitigs=${UNITIGS:-?} bases=${BASES:-?}"
+echo "== status=$STATUS wall=$WALL rss=${RSS}KiB fd_peak=$FDPEAK files=${FILEPEAK:-?} work_peak=${WORKPEAK:-?} unitigs=${UNITIGS:-?} bases=${BASES:-?}"
 echo "== io: wchar=$(numfmt --to=iec ${WCHAR:-0}) write_bytes=$(numfmt --to=iec ${WBYTES:-0}) rchar=$(numfmt --to=iec ${RCHAR:-0}) read_bytes=$(numfmt --to=iec ${RBYTES:-0}) dev_write=$(numfmt --to=iec ${DEVWRITE:-0}) mem_limit=${MEM_LIMIT:-none}"
 exit $STATUS

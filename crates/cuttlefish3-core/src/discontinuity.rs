@@ -792,18 +792,349 @@ impl<const K: usize> MatrixEndpoint<K> {
 
 const BLOCKED_EDGE_WRITE_BUFFER_BYTES: usize = 256 * 1024;
 
-#[derive(Debug)]
+/// A run of one block's bytes inside its container file.
+///
+/// Always a whole number of records: a block's buffer only ever receives
+/// complete `record_len` records and is flushed wholesale, so concatenating a
+/// block's extents in write order reproduces its record stream exactly.
+/// `len` is 64-bit because adjacent extents coalesce, so a run is not bounded
+/// by the write buffer.
+#[derive(Debug, Clone, Copy)]
+struct BlockExtent {
+    offset: u64,
+    len: u64,
+}
+
+#[derive(Debug, Default)]
 struct BlockedEdgeBlock {
-    path: PathBuf,
+    /// Where this block's flushed bytes live, in the order they were written.
+    extents: Vec<BlockExtent>,
     edges: usize,
     record_len: usize,
     buffer: Vec<u8>,
+}
+
+/// Which axis of the matrix shares a physical file.
+///
+/// Contraction reads a column and expansion reads a row, so no single choice
+/// makes both sequential. The favoured phase wants every block in the container
+/// it reads and can stream it front to back; the other pays one `pread` per
+/// block. Expansion is the heavier phase, so rows are the default.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EdgeContainerAxis {
+    Row,
+    Column,
+}
+
+fn edge_container_axis() -> EdgeContainerAxis {
+    static AXIS: std::sync::OnceLock<EdgeContainerAxis> = std::sync::OnceLock::new();
+    *AXIS.get_or_init(
+        || match std::env::var("CF3_RS_EDGE_CONTAINER_AXIS").as_deref() {
+            Ok("column") => EdgeContainerAxis::Column,
+            _ => EdgeContainerAxis::Row,
+        },
+    )
+}
+
+/// The physical files backing the edge matrix.
+///
+/// One file per container rather than one per block, cutting a 129x129 matrix
+/// from 16,641 files to 129. Appends reserve space with an atomic cursor and
+/// then pwrite, so no container-wide lock is held and nothing is opened or
+/// closed per flush.
+#[derive(Debug)]
+struct EdgeContainers {
+    files: Vec<EdgeContainerFile>,
+    axis: EdgeContainerAxis,
+    partition_count: usize,
+}
+
+#[derive(Debug)]
+struct EdgeContainerFile {
+    path: PathBuf,
+    file: File,
+    cursor: AtomicU64,
+}
+
+impl EdgeContainers {
+    fn create(dir: &Path, partition_count: usize) -> Result<Self, SerialCollationError> {
+        let mut files = Vec::with_capacity(partition_count);
+        for index in 0..partition_count {
+            let path = dir.join(format!("{index:05}.edge"));
+            let file = OpenOptions::new()
+                .create(true)
+                .truncate(true)
+                .read(true)
+                .write(true)
+                .open(&path)
+                .map_err(|source| SerialCollationError::Io {
+                    path: path.clone(),
+                    source,
+                })?;
+            files.push(EdgeContainerFile {
+                path,
+                file,
+                cursor: AtomicU64::new(0),
+            });
+        }
+        Ok(Self {
+            files,
+            axis: edge_container_axis(),
+            partition_count,
+        })
+    }
+
+    #[inline]
+    fn container_index(&self, block_index: usize) -> usize {
+        match self.axis {
+            EdgeContainerAxis::Row => block_index / self.partition_count,
+            EdgeContainerAxis::Column => block_index % self.partition_count,
+        }
+    }
+
+    #[inline]
+    fn container_for(&self, block_index: usize) -> &EdgeContainerFile {
+        &self.files[self.container_index(block_index)]
+    }
+
+    /// Appends `bytes` for `block_index`, returning where they landed.
+    fn append(
+        &self,
+        block_index: usize,
+        bytes: &[u8],
+    ) -> Result<BlockExtent, SerialCollationError> {
+        let container = self.container_for(block_index);
+        let offset = container
+            .cursor
+            .fetch_add(bytes.len() as u64, Ordering::Relaxed);
+        container
+            .file
+            .write_all_at(bytes, offset)
+            .map_err(|source| SerialCollationError::Io {
+                path: container.path.clone(),
+                source,
+            })?;
+        Ok(BlockExtent {
+            offset,
+            len: bytes.len() as u64,
+        })
+    }
+
+    /// Reads one run in a single call.
+    fn read_run(&self, run: &ContainerRun) -> Result<Vec<u8>, SerialCollationError> {
+        let container = &self.files[run.container];
+        let mut bytes = vec![0u8; run.len];
+        container
+            .file
+            .read_exact_at(&mut bytes, run.offset)
+            .map_err(|source| SerialCollationError::Io {
+                path: container.path.clone(),
+                source,
+            })?;
+        Ok(bytes)
+    }
+
+    /// Reads every block in `blocks` and returns the bytes as run buffers plus
+    /// the extent slices that index them.
+    ///
+    /// Blocks sharing a container are swept front to back in one linear pass;
+    /// blocks in separate containers plan independently. So the favoured axis
+    /// streams and the other keeps its scattered reads, with no branch at the
+    /// call site.
+    ///
+    /// Nothing is reassembled per block. Callers that only need each block's
+    /// records — not their contiguity — take the slices directly, which is what
+    /// makes streaming free rather than a memcpy of the whole row.
+    fn read_pass(
+        &self,
+        blocks: &[(usize, &[BlockExtent])],
+    ) -> Result<ContainerPass, SerialCollationError> {
+        let mut by_container: FastHashMap<usize, Vec<(usize, &[BlockExtent])>> =
+            FastHashMap::with_hasher(FastBuildHasher::default());
+        for (slot, (block_index, extents)) in blocks.iter().enumerate() {
+            by_container
+                .entry(self.container_index(*block_index))
+                .or_default()
+                .push((slot, extents));
+        }
+        let mut runs = Vec::new();
+        for (container, group) in by_container {
+            runs.extend(plan_container_runs(container, &group));
+        }
+        let buffers = runs
+            .par_iter()
+            .map(|run| self.read_run(run))
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(ContainerPass { runs, buffers })
+    }
+
+    /// Reads every extent of a block, reassembled in write order.
+    ///
+    /// This is the scattered path, for the axis that does *not* stream: it
+    /// touches one block in each of ~129 containers. Runs still apply, because
+    /// a block's own extents coalesce whenever it flushed twice with no
+    /// interleaving writer between.
+    fn read_block(
+        &self,
+        block_index: usize,
+        extents: &[BlockExtent],
+    ) -> Result<Vec<u8>, SerialCollationError> {
+        let container = self.container_for(block_index);
+        let total: usize = extents.iter().map(|extent| extent.len as usize).sum();
+        let mut bytes = vec![0u8; total];
+        for run in plan_container_runs(self.container_index(block_index), &[(0, extents)]) {
+            // A run holding one whole extent reads straight into place; only a
+            // run that merged several needs the intermediate buffer.
+            if let [only] = run.extents.as_slice()
+                && only.len == run.len
+            {
+                container
+                    .file
+                    .read_exact_at(
+                        &mut bytes[only.dest_offset..only.dest_offset + only.len],
+                        run.offset,
+                    )
+                    .map_err(|source| SerialCollationError::Io {
+                        path: container.path.clone(),
+                        source,
+                    })?;
+                continue;
+            }
+            let buffer = self.read_run(&run)?;
+            for extent in &run.extents {
+                bytes[extent.dest_offset..extent.dest_offset + extent.len]
+                    .copy_from_slice(&buffer[extent.run_offset..extent.run_offset + extent.len]);
+            }
+        }
+        Ok(bytes)
+    }
+
+    fn path_for(&self, block_index: usize) -> PathBuf {
+        self.container_for(block_index).path.clone()
+    }
+}
+
+/// Runs merge across gaps below this. Reading a short gap costs less than a
+/// second syscall and a second seek.
+const CONTAINER_READ_GAP_BYTES: u64 = 1024 * 1024;
+
+/// Runs are capped here so a container pass stays parallelisable and its
+/// transient buffers stay bounded.
+const CONTAINER_RUN_BYTES: u64 = 16 * 1024 * 1024;
+
+/// Where one extent's bytes sit inside a planned run.
+#[derive(Debug, Clone, Copy)]
+struct RunExtent {
+    /// Index into the block list the run was planned from.
+    slot: usize,
+    /// Offset of these bytes within the run's buffer.
+    run_offset: usize,
+    /// Offset of these bytes within the slot's own reassembled block.
+    dest_offset: usize,
+    len: usize,
+}
+
+/// One contiguous span of a container to be read in a single call.
+#[derive(Debug)]
+struct ContainerRun {
+    container: usize,
+    offset: u64,
+    len: usize,
+    extents: Vec<RunExtent>,
+}
+
+/// The bytes one pass read, and the extent slices that index them.
+#[derive(Debug)]
+struct ContainerPass {
+    runs: Vec<ContainerRun>,
+    buffers: Vec<Vec<u8>>,
+}
+
+impl ContainerPass {
+    /// One slice per extent, tagged with the slot it belongs to.
+    ///
+    /// Each slice is a whole number of records, so callers may chunk them
+    /// freely without tracking record boundaries across them.
+    fn extents(&self) -> impl Iterator<Item = (usize, &[u8])> {
+        self.runs
+            .iter()
+            .zip(&self.buffers)
+            .flat_map(|(run, buffer)| {
+                run.extents.iter().map(move |extent| {
+                    (
+                        extent.slot,
+                        &buffer[extent.run_offset..extent.run_offset + extent.len],
+                    )
+                })
+            })
+    }
+}
+
+/// Plans a front-to-back pass over the extents of `blocks`, which must all
+/// share the container `container`.
+///
+/// The favoured axis wants every block in the container it reads, so one linear
+/// pass beats one `pread` per extent; extents interleaving by write order costs
+/// a streaming reader nothing, because it wants all of them anyway. The other
+/// axis passes a single block and still benefits from the coalescing.
+fn plan_container_runs(
+    container: usize,
+    blocks: &[(usize, &[BlockExtent])],
+) -> Vec<ContainerRun> {
+    let mut placed = Vec::new();
+    for (slot, extents) in blocks {
+        let mut dest_offset = 0usize;
+        for extent in *extents {
+            if extent.len != 0 {
+                placed.push((extent.offset, extent.len, *slot, dest_offset));
+            }
+            dest_offset += extent.len as usize;
+        }
+    }
+    placed.sort_unstable_by_key(|(offset, ..)| *offset);
+
+    let mut runs: Vec<ContainerRun> = Vec::new();
+    for (offset, len, slot, dest_offset) in placed {
+        let end = offset + len;
+        // Reservations within a container are disjoint, so the sorted extents
+        // never overlap and `offset >= run_end` always holds.
+        let merge = runs.last().is_some_and(|run| {
+            let run_end = run.offset + run.len as u64;
+            offset >= run_end
+                && offset - run_end <= CONTAINER_READ_GAP_BYTES
+                && end - run.offset <= CONTAINER_RUN_BYTES
+        });
+        if merge && let Some(run) = runs.last_mut() {
+            let run_offset = (offset - run.offset) as usize;
+            run.len = (end - run.offset) as usize;
+            run.extents.push(RunExtent {
+                slot,
+                run_offset,
+                dest_offset,
+                len: len as usize,
+            });
+        } else {
+            runs.push(ContainerRun {
+                container,
+                offset,
+                len: len as usize,
+                extents: vec![RunExtent {
+                    slot,
+                    run_offset: 0,
+                    dest_offset,
+                    len: len as usize,
+                }],
+            });
+        }
+    }
+    runs
 }
 
 #[derive(Debug)]
 struct BlockedEdgeMatrix<const K: usize> {
     dir: PathBuf,
     vertex_partitions: usize,
+    containers: Arc<EdgeContainers>,
     blocks: Vec<BlockedEdgeBlock>,
     stats: SerialEdgeMatrixStats,
     phantom: PhantomData<[(); K]>,
@@ -827,13 +1158,16 @@ enum BlockedReadTask<'a> {
 }
 
 struct ConcurrentBlockedAppend {
-    path: PathBuf,
+    /// Extents this block owns, ordered by flush. Only ever taken while the
+    /// block's buffer lock is held, so a block's order is its write order.
+    extents: Mutex<Vec<BlockExtent>>,
     record_len: usize,
     buffer: Mutex<Vec<u8>>,
     edges: AtomicUsize,
 }
 
 struct ConcurrentBlockedEdgeWriters {
+    containers: Arc<EdgeContainers>,
     partition_count: usize,
     blocks: Vec<ConcurrentBlockedAppend>,
     phi_edges: AtomicU64,
@@ -844,11 +1178,12 @@ impl ConcurrentBlockedEdgeWriters {
     fn new<const K: usize>(matrix: &BlockedEdgeMatrix<K>) -> Self {
         Self {
             partition_count: matrix.partition_count(),
+            containers: Arc::clone(&matrix.containers),
             blocks: matrix
                 .blocks
                 .iter()
                 .map(|block| ConcurrentBlockedAppend {
-                    path: block.path.clone(),
+                    extents: Mutex::new(Vec::new()),
                     record_len: block.record_len,
                     buffer: Mutex::new(Vec::new()),
                     edges: AtomicUsize::new(0),
@@ -866,8 +1201,7 @@ impl ConcurrentBlockedEdgeWriters {
             .lock()
             .unwrap_or_else(|poison| poison.into_inner());
         if buffer.len() + block.record_len > BLOCKED_EDGE_WRITE_BUFFER_BYTES {
-            append_blocked_bytes(&block.path, &buffer)?;
-            buffer.clear();
+            self.spill(edge.block, &mut buffer)?;
         }
         buffer.extend_from_slice(&edge.bytes[..block.record_len]);
         block.edges.fetch_add(1, Ordering::Relaxed);
@@ -886,8 +1220,7 @@ impl ConcurrentBlockedEdgeWriters {
         for edge in edges {
             debug_assert_eq!(edge.block, edges[0].block);
             if buffer.len() + block.record_len > BLOCKED_EDGE_WRITE_BUFFER_BYTES {
-                append_blocked_bytes(&block.path, &buffer)?;
-                buffer.clear();
+                self.spill(edges[0].block, &mut buffer)?;
             }
             buffer.extend_from_slice(&edge.bytes[..block.record_len]);
         }
@@ -925,8 +1258,7 @@ impl ConcurrentBlockedEdgeWriters {
                 add_unitig_base_to_encoded_edge::<K>(&mut bytes, unitig_off, unitig_base);
                 set_encoded_edge_unitig_bucket::<K>(&mut bytes, unitig_bucket);
                 if buffer.len() + block.record_len > BLOCKED_EDGE_WRITE_BUFFER_BYTES {
-                    append_blocked_bytes(&block.path, &buffer)?;
-                    buffer.clear();
+                    self.spill(block_id, &mut buffer)?;
                 }
                 buffer.extend_from_slice(&bytes[..block.record_len]);
                 // Counted here rather than in two further passes over `edges`.
@@ -946,14 +1278,26 @@ impl ConcurrentBlockedEdgeWriters {
         matrix: &mut BlockedEdgeMatrix<K>,
     ) -> Result<(), SerialCollationError> {
         let mut edges = 0u64;
-        for (block, target) in self.blocks.iter().zip(&mut matrix.blocks) {
+        for (block_index, (block, target)) in
+            self.blocks.iter().zip(&mut matrix.blocks).enumerate()
+        {
             let mut buffer = block
                 .buffer
                 .lock()
                 .unwrap_or_else(|poison| poison.into_inner());
             if !buffer.is_empty() {
-                append_blocked_bytes(&block.path, &buffer)?;
-                buffer.clear();
+                self.spill(block_index, &mut buffer)?;
+            }
+            // Contraction builds a second writer set over a matrix that local
+            // contraction already filled, so these extents extend what is there
+            // rather than replacing it.
+            for extent in std::mem::take(
+                &mut *block
+                    .extents
+                    .lock()
+                    .unwrap_or_else(|poison| poison.into_inner()),
+            ) {
+                push_coalesced_extent(&mut target.extents, extent);
             }
             target.edges = block.edges.load(Ordering::Relaxed);
             edges += target.edges as u64;
@@ -964,10 +1308,61 @@ impl ConcurrentBlockedEdgeWriters {
         Ok(())
     }
 
-    fn flush_column(&self, col: usize) -> Result<(), SerialCollationError> {
-        for row in 0..=col {
-            self.flush_block(row * self.partition_count + col)?;
+    /// Hands one block's flushed bytes *and* its edge count to the matrix.
+    ///
+    /// Both must move together. Under the old per-block-file design the
+    /// appender wrote to the very path the matrix block already knew, via
+    /// `O_APPEND`, so the count was the only thing that had to be transferred.
+    /// Now the container holds the bytes and only the matrix's extent list can
+    /// find them again, so transferring one without the other silently loses
+    /// every edge reinserted during contraction.
+    ///
+    /// Flush the matrix's own buffer before calling this: extents are read back
+    /// in list order, so the merged list must follow write order.
+    fn merge_block_into<const K: usize>(
+        &self,
+        matrix: &mut BlockedEdgeMatrix<K>,
+        row: usize,
+        col: usize,
+    ) -> Result<usize, SerialCollationError> {
+        let block_index = row * self.partition_count + col;
+        self.flush_block(block_index)?;
+        let block = &self.blocks[block_index];
+        let target = &mut matrix.blocks[block_index];
+        for extent in std::mem::take(
+            &mut *block
+                .extents
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner()),
+        ) {
+            push_coalesced_extent(&mut target.extents, extent);
         }
+        let added = block.edges.swap(0, Ordering::Relaxed);
+        target.edges += added;
+        debug_assert_eq!(
+            target.extents.iter().map(|e| e.len as usize).sum::<usize>() + target.buffer.len(),
+            target.edges * target.record_len,
+            "block {block_index} extents and edge count disagree after merge",
+        );
+        Ok(added)
+    }
+
+    /// Appends a block's staged bytes to its container and records the extent.
+    ///
+    /// A block that flushes twice with nothing interleaved lands its bytes
+    /// contiguously, so the extents merge and every later read of that block
+    /// issues one call instead of two.
+    fn spill(&self, block_index: usize, buffer: &mut Vec<u8>) -> Result<(), SerialCollationError> {
+        if buffer.is_empty() {
+            return Ok(());
+        }
+        let extent = self.containers.append(block_index, buffer)?;
+        let mut extents = self.blocks[block_index]
+            .extents
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        push_coalesced_extent(&mut extents, extent);
+        buffer.clear();
         Ok(())
     }
 
@@ -978,34 +1373,20 @@ impl ConcurrentBlockedEdgeWriters {
             .lock()
             .unwrap_or_else(|poison| poison.into_inner());
         if !buffer.is_empty() {
-            append_blocked_bytes(&block.path, &buffer)?;
-            buffer.clear();
+            self.spill(block_id, &mut buffer)?;
         }
         Ok(())
     }
+}
 
-    fn take_added_edges(&self, row: usize, col: usize) -> usize {
-        self.blocks[row * self.partition_count + col]
-            .edges
-            .swap(0, Ordering::Relaxed)
+/// Records `extent`, extending the previous one when the bytes are adjacent.
+fn push_coalesced_extent(extents: &mut Vec<BlockExtent>, extent: BlockExtent) {
+    match extents.last_mut() {
+        Some(last) if last.offset + last.len == extent.offset => last.len += extent.len,
+        _ => extents.push(extent),
     }
 }
 
-fn append_blocked_bytes(path: &Path, bytes: &[u8]) -> Result<(), SerialCollationError> {
-    let mut file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)
-        .map_err(|source| SerialCollationError::Io {
-            path: path.to_path_buf(),
-            source,
-        })?;
-    file.write_all(bytes)
-        .map_err(|source| SerialCollationError::Io {
-            path: path.to_path_buf(),
-            source,
-        })
-}
 
 impl<const K: usize> BlockedEdgeMatrix<K> {
     fn create(dir: &Path, vertex_partitions: usize) -> Result<Self, SerialCollationError> {
@@ -1021,20 +1402,16 @@ impl<const K: usize> BlockedEdgeMatrix<K> {
         })?;
         let partition_count = vertex_partitions + 1;
         let record_len = discontinuity_edge_record_len::<K>();
+        let containers = Arc::new(EdgeContainers::create(dir, partition_count)?);
         let mut blocks = Vec::with_capacity(partition_count * partition_count);
-        for row in 0..partition_count {
-            for col in 0..partition_count {
-                blocks.push(BlockedEdgeBlock {
-                    path: dir.join(format!("{row}.{col}.edge")),
-                    edges: 0,
-                    record_len,
-                    buffer: Vec::new(),
-                });
-            }
-        }
+        blocks.resize_with(partition_count * partition_count, || BlockedEdgeBlock {
+            record_len,
+            ..BlockedEdgeBlock::default()
+        });
         Ok(Self {
             dir: dir.to_path_buf(),
             vertex_partitions,
+            containers,
             blocks,
             stats: SerialEdgeMatrixStats::default(),
             phantom: PhantomData,
@@ -1073,15 +1450,16 @@ impl<const K: usize> BlockedEdgeMatrix<K> {
         self.stats.phi_edges += u64::from(edge.first.is_phi() || edge.second.is_phi());
         self.stats.diagonal_edges += u64::from(row == col);
         let idx = self.block_index(row, col);
+        let containers = Arc::clone(&self.containers);
         let record = encode_discontinuity_edge(&edge);
         let block = &mut self.blocks[idx];
         if block.buffer.len() + block.record_len > BLOCKED_EDGE_WRITE_BUFFER_BYTES {
-            flush_blocked_edge_block(block)?;
+            flush_blocked_edge_block(&containers, idx, block)?;
         }
         block.buffer.extend_from_slice(&record[..block.record_len]);
         block.edges += 1;
         if block.buffer.len() + block.record_len > BLOCKED_EDGE_WRITE_BUFFER_BYTES {
-            flush_blocked_edge_block(block)?;
+            flush_blocked_edge_block(&containers, idx, block)?;
         }
         Ok(())
     }
@@ -1092,12 +1470,13 @@ impl<const K: usize> BlockedEdgeMatrix<K> {
         unitig_base: usize,
     ) -> Result<(), SerialCollationError> {
         let unitig_off = blocked_edge_unitig_offset::<K>();
+        let containers = Arc::clone(&self.containers);
         for edge in edges {
             let mut bytes = edge.bytes;
             add_unitig_base_to_encoded_edge::<K>(&mut bytes, unitig_off, unitig_base);
             let block = &mut self.blocks[edge.block];
             if block.buffer.len() + block.record_len > BLOCKED_EDGE_WRITE_BUFFER_BYTES {
-                flush_blocked_edge_block(block)?;
+                flush_blocked_edge_block(&containers, edge.block, block)?;
             }
             block.buffer.extend_from_slice(&bytes[..block.record_len]);
             block.edges += 1;
@@ -1112,10 +1491,11 @@ impl<const K: usize> BlockedEdgeMatrix<K> {
         &mut self,
         edges: &[PreparedBlockedEdge],
     ) -> Result<(), SerialCollationError> {
+        let containers = Arc::clone(&self.containers);
         for edge in edges {
             let block = &mut self.blocks[edge.block];
             if block.buffer.len() + block.record_len > BLOCKED_EDGE_WRITE_BUFFER_BYTES {
-                flush_blocked_edge_block(block)?;
+                flush_blocked_edge_block(&containers, edge.block, block)?;
             }
             block
                 .buffer
@@ -1130,12 +1510,14 @@ impl<const K: usize> BlockedEdgeMatrix<K> {
 
     fn flush_block(&mut self, row: usize, col: usize) -> Result<(), SerialCollationError> {
         let idx = self.block_index(row, col);
-        flush_blocked_edge_block(&mut self.blocks[idx])
+        let containers = Arc::clone(&self.containers);
+        flush_blocked_edge_block(&containers, idx, &mut self.blocks[idx])
     }
 
     fn flush_all(&mut self) -> Result<(), SerialCollationError> {
-        for block in &mut self.blocks {
-            flush_blocked_edge_block(block)?;
+        let containers = Arc::clone(&self.containers);
+        for (index, block) in self.blocks.iter_mut().enumerate() {
+            flush_blocked_edge_block(&containers, index, block)?;
         }
         Ok(())
     }
@@ -1146,12 +1528,15 @@ impl<const K: usize> BlockedEdgeMatrix<K> {
             return self.flush_all();
         }
         let chunk = self.blocks.len().div_ceil(workers);
+        let containers = Arc::clone(&self.containers);
         std::thread::scope(|scope| {
+            let containers = &containers;
             let mut handles = Vec::with_capacity(workers);
-            for blocks in self.blocks.chunks_mut(chunk) {
+            for (group, blocks) in self.blocks.chunks_mut(chunk).enumerate() {
+                let base = group * chunk;
                 handles.push(scope.spawn(move || {
-                    for block in blocks {
-                        flush_blocked_edge_block(block)?;
+                    for (offset, block) in blocks.iter_mut().enumerate() {
+                        flush_blocked_edge_block(containers, base + offset, block)?;
                     }
                     Ok::<_, SerialCollationError>(())
                 }));
@@ -1175,19 +1560,10 @@ impl<const K: usize> BlockedEdgeMatrix<K> {
         if block.edges == 0 {
             return Ok(Vec::new());
         }
-        let bytes = match fs::read(&block.path) {
-            Ok(bytes) => bytes,
-            Err(source) if source.kind() == std::io::ErrorKind::NotFound => Vec::new(),
-            Err(source) => {
-                return Err(SerialCollationError::Io {
-                    path: block.path.clone(),
-                    source,
-                });
-            }
-        };
+        let bytes = self.containers.read_block(idx, &block.extents)?;
         if bytes.len() + block.buffer.len() != block.edges * block.record_len {
             return Err(SerialCollationError::MalformedCoordBucket(
-                block.path.clone(),
+                self.containers.path_for(idx),
             ));
         }
         let mut records = Vec::with_capacity(block.edges);
@@ -1332,29 +1708,16 @@ struct BlockedContractTimings {
     finish: Duration,
 }
 
-fn flush_blocked_edge_block(block: &mut BlockedEdgeBlock) -> Result<(), SerialCollationError> {
+fn flush_blocked_edge_block(
+    containers: &EdgeContainers,
+    block_index: usize,
+    block: &mut BlockedEdgeBlock,
+) -> Result<(), SerialCollationError> {
     if block.buffer.is_empty() {
         return Ok(());
     }
-    let file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&block.path)
-        .map_err(|source| SerialCollationError::Io {
-            path: block.path.clone(),
-            source,
-        })?;
-    let mut writer = BufWriter::with_capacity(BLOCKED_EDGE_WRITE_BUFFER_BYTES, file);
-    writer
-        .write_all(&block.buffer)
-        .map_err(|source| SerialCollationError::Io {
-            path: block.path.clone(),
-            source,
-        })?;
-    writer.flush().map_err(|source| SerialCollationError::Io {
-        path: block.path.clone(),
-        source,
-    })?;
+    let extent = containers.append(block_index, &block.buffer)?;
+    push_coalesced_extent(&mut block.extents, extent);
     block.buffer.clear();
     Ok(())
 }
@@ -2604,13 +2967,12 @@ impl SerialDiscontinuityContractor {
         timings: &mut BlockedContractTimings,
     ) -> Result<(PartitionContraction<K>, u64), SerialCollationError> {
         let phase = Instant::now();
-        appenders.flush_column(partition)?;
+        // The matrix's own buffer flushes first so the merged extent list stays
+        // in write order.
         for row in 0..=partition {
             matrix.flush_block(row, partition)?;
-            let added = appenders.take_added_edges(row, partition);
+            let added = appenders.merge_block_into(matrix, row, partition)?;
             if added != 0 {
-                let block_id = matrix.block_index(row, partition);
-                matrix.blocks[block_id].edges += added;
                 matrix.stats.edges += added as u64;
                 matrix.stats.phi_edges += u64::from(row == 0) * added as u64;
                 matrix.stats.diagonal_edges += u64::from(row == partition) * added as u64;
@@ -2636,56 +2998,73 @@ impl SerialDiscontinuityContractor {
             .collect::<Vec<_>>();
         let records_per_task = (1024 * 1024 / record_len).max(1);
         let bytes_per_task = records_per_task * record_len;
-        let mut block_files = Vec::with_capacity(block_ids.len());
+        // Extents already name an offset and length inside an open container,
+        // so the read tasks are built from them directly: no file is opened and
+        // no size is stat'd per block.
+        //
+        // Unlike expansion this does not materialise the column first: tasks
+        // are read, decoded, contracted and emitted through reusable per-worker
+        // buffers, which is what took contraction from 13.76 s to 9.02 s at
+        // scale. So it stays task-based rather than using a container pass, and
+        // is instead *ordered* by where the bytes are, which is all a streaming
+        // read would have bought it.
+        let mut ordered = Vec::new();
         for &block_id in &block_ids {
             let block = &matrix.blocks[block_id];
-            let expected_file_bytes = block
+            let flushed: usize = block.extents.iter().map(|e| e.len as usize).sum();
+            let expected = block
                 .edges
                 .checked_mul(record_len)
                 .and_then(|bytes| bytes.checked_sub(block.buffer.len()))
-                .ok_or_else(|| SerialCollationError::MalformedCoordBucket(block.path.clone()))?;
-            if expected_file_bytes == 0 {
-                block_files.push((block_id, None, 0));
-                continue;
-            }
-            let file = File::open(&block.path).map_err(|source| SerialCollationError::Io {
-                path: block.path.clone(),
-                source,
-            })?;
-            let file_bytes = file
-                .metadata()
-                .map_err(|source| SerialCollationError::Io {
-                    path: block.path.clone(),
-                    source,
-                })?
-                .len() as usize;
-            if file_bytes != expected_file_bytes || file_bytes % record_len != 0 {
+                .ok_or_else(|| {
+                    SerialCollationError::MalformedCoordBucket(
+                        matrix.containers.path_for(block_id),
+                    )
+                })?;
+            if flushed != expected || flushed % record_len != 0 {
                 return Err(SerialCollationError::MalformedCoordBucket(
-                    block.path.clone(),
+                    matrix.containers.path_for(block_id),
                 ));
             }
-            block_files.push((block_id, Some(file), file_bytes));
-        }
-        let mut tasks = Vec::new();
-        for (block_id, file, file_bytes) in &block_files {
-            if let Some(file) = file {
-                let path = matrix.blocks[*block_id].path.as_path();
-                for offset in (0..*file_bytes).step_by(bytes_per_task) {
-                    tasks.push(BlockedReadTask::File {
-                        file,
-                        path,
-                        offset: offset as u64,
-                        len: bytes_per_task.min(*file_bytes - offset),
-                    });
+            let container_index = matrix.containers.container_index(block_id);
+            let container = matrix.containers.container_for(block_id);
+            for extent in &block.extents {
+                // Every extent is a whole number of records, as is
+                // `bytes_per_task`, so sub-chunking keeps records aligned.
+                let mut done = 0usize;
+                while done < extent.len as usize {
+                    let len = bytes_per_task.min(extent.len as usize - done);
+                    let offset = extent.offset + done as u64;
+                    ordered.push((
+                        container_index,
+                        offset,
+                        BlockedReadTask::File {
+                            file: &container.file,
+                            path: &container.path,
+                            offset,
+                            len,
+                        },
+                    ));
+                    done += len;
                 }
             }
-            tasks.extend(
-                matrix.blocks[*block_id]
+            ordered.extend(
+                block
                     .buffer
                     .chunks(bytes_per_task)
-                    .map(BlockedReadTask::Memory),
+                    .map(|chunk| (usize::MAX, 0, BlockedReadTask::Memory(chunk))),
             );
         }
+        // Rayon splits a task vector into contiguous ranges, so ordering by
+        // where the bytes live is what gives each worker a sequential sweep.
+        // A block's own extents are already offset-ordered -- the container
+        // cursor only grows -- so this matters when several blocks of the
+        // column share one file, which is exactly the column axis.
+        ordered.sort_unstable_by_key(|(container, offset, _)| (*container, *offset));
+        let tasks = ordered
+            .into_iter()
+            .map(|(_, _, task)| task)
+            .collect::<Vec<_>>();
         timings.tasks += setup_started.elapsed();
         let join_started = Instant::now();
         let ((outputs, scan_elapsed), (diagonal, diagonal_elapsed)) = pool.install(|| {
@@ -3904,11 +4283,8 @@ impl SerialDiscontinuityContractor {
         let flush_started = Instant::now();
         for row in 0..partition_count {
             for col in row..partition_count {
-                let block_id = working.block_index(row, col);
-                appenders.flush_block(block_id)?;
-                let added = appenders.take_added_edges(row, col);
+                let added = appenders.merge_block_into(&mut working, row, col)?;
                 if added != 0 {
-                    working.blocks[block_id].edges += added;
                     working.stats.edges += added as u64;
                     working.stats.phi_edges += u64::from(row == 0) * added as u64;
                     working.stats.diagonal_edges += u64::from(row == col) * added as u64;
@@ -4229,6 +4605,11 @@ impl SerialDiscontinuityExpander {
         ),
         SerialCollationError,
     > {
+        // Expansion reads row `partition`, which under the default row axis is
+        // one whole container, so this is the phase that streams: a single
+        // front-to-back sweep, demultiplexed by extent. The tasks below carry
+        // their own `col`, so nothing needs a block's records to be contiguous
+        // and the sweep costs no reassembly.
         let blocks = (partition + 1..matrix.partition_count())
             .filter_map(|col| {
                 let block_id = matrix.block_index(partition, col);
@@ -4236,41 +4617,30 @@ impl SerialDiscontinuityExpander {
                 (block.edges != 0).then_some((col, block_id))
             })
             .collect::<Vec<_>>();
-        let block_bytes = pool.install(|| {
-            blocks
-                .par_iter()
-                .copied()
-                .map(|(col, block_id)| {
-                    let block = &matrix.blocks[block_id];
-                    let bytes = match fs::read(&block.path) {
-                        Ok(bytes) => bytes,
-                        Err(source) if source.kind() == std::io::ErrorKind::NotFound => Vec::new(),
-                        Err(source) => {
-                            return Err(SerialCollationError::Io {
-                                path: block.path.clone(),
-                                source,
-                            });
-                        }
-                    };
-                    if bytes.len() % block.record_len != 0 {
-                        return Err(SerialCollationError::MalformedCoordBucket(
-                            block.path.clone(),
-                        ));
-                    }
-                    Ok::<_, SerialCollationError>((col, block_id, bytes))
-                })
-                .collect::<Result<Vec<_>, SerialCollationError>>()
-        })?;
+        let pass_inputs = blocks
+            .iter()
+            .map(|(_, block_id)| (*block_id, matrix.blocks[*block_id].extents.as_slice()))
+            .collect::<Vec<_>>();
+        let pass = pool.install(|| matrix.containers.read_pass(&pass_inputs))?;
         let mut tasks = Vec::new();
-        for (col, block_id, bytes) in &block_bytes {
-            let block = &matrix.blocks[*block_id];
-            let record_len = block.record_len;
+        for (slot, bytes) in pass.extents() {
+            let (col, block_id) = blocks[slot];
+            let record_len = matrix.blocks[block_id].record_len;
+            if bytes.len() % record_len != 0 {
+                return Err(SerialCollationError::MalformedCoordBucket(
+                    matrix.containers.path_for(block_id),
+                ));
+            }
             let bytes_per_task = (1024 * 1024 / record_len).max(1) * record_len;
             for chunk in bytes.chunks(bytes_per_task) {
-                tasks.push((*col, record_len, chunk));
+                tasks.push((col, record_len, chunk));
             }
+        }
+        for (col, block_id) in blocks.iter().copied() {
+            let block = &matrix.blocks[block_id];
+            let bytes_per_task = (1024 * 1024 / block.record_len).max(1) * block.record_len;
             for chunk in block.buffer.chunks(bytes_per_task) {
-                tasks.push((*col, record_len, chunk));
+                tasks.push((col, block.record_len, chunk));
             }
         }
         let outputs = pool.install(|| {
@@ -4827,21 +5197,13 @@ impl SerialDiscontinuityExpander {
                 edge_path_infos += local_emitted;
             }
 
-            let phi_block = &matrix.blocks[matrix.block_index(0, partition)];
+            let phi_index = matrix.block_index(0, partition);
+            let phi_block = &matrix.blocks[phi_index];
             if phi_block.edges != 0 {
-                let bytes = match fs::read(&phi_block.path) {
-                    Ok(bytes) => bytes,
-                    Err(source) if source.kind() == std::io::ErrorKind::NotFound => Vec::new(),
-                    Err(source) => {
-                        return Err(SerialCollationError::Io {
-                            path: phi_block.path.clone(),
-                            source,
-                        });
-                    }
-                };
+                let bytes = matrix.containers.read_block(phi_index, &phi_block.extents)?;
                 if bytes.len() + phi_block.buffer.len() != phi_block.edges * phi_block.record_len {
                     return Err(SerialCollationError::MalformedCoordBucket(
-                        phi_block.path.clone(),
+                        matrix.containers.path_for(phi_index),
                     ));
                 }
                 let records_per_chunk = (1024 * 1024 / phi_block.record_len).max(1);
@@ -18437,6 +18799,114 @@ mod materialized_record_tests {
             decode_discontinuity_edge::<31>(&encoded[..25]).unitig_bucket,
             511
         );
+    }
+
+    /// Both writers on one block, reconciled the way contraction does.
+    ///
+    /// The container holds a block's bytes but only the matrix's extent list
+    /// can find them again, so a reconciliation that moves the edge count
+    /// without the extents silently loses every edge the appender wrote. The
+    /// per-block files this replaced hid that: the appender wrote to the very
+    /// path the matrix already knew, so the count was genuinely the only thing
+    /// that had to move.
+    #[test]
+    fn merging_concurrent_appends_transfers_extents_and_counts() {
+        let directory = std::env::temp_dir().join(format!(
+            "cf3-edge-container-merge-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&directory);
+
+        const VERTEX_PARTITIONS: usize = 4;
+        let record_len = discontinuity_edge_record_len::<31>();
+        let mut matrix = BlockedEdgeMatrix::<31>::create(&directory, VERTEX_PARTITIONS).unwrap();
+        let (row, col) = (1usize, 2usize);
+        let block = matrix.block_index(row, col);
+
+        // `unitig_index` is the identity here; the encoded weight is only 16
+        // bits, so it cannot carry a counter this long.
+        let edge = |id: usize| DiscontinuityEdge::<31> {
+            first: MatrixEndpoint::Vertex(DiscontinuityEndpoint {
+                vertex: Kmer::from_bits(id as u128 * 7 + 1),
+                side: Side::Back,
+            }),
+            second: MatrixEndpoint::Vertex(DiscontinuityEndpoint {
+                vertex: Kmer::from_bits(id as u128 * 11 + 2),
+                side: Side::Front,
+            }),
+            weight: 1,
+            unitig_bucket: 3,
+            unitig_index: id,
+            unitig_exit_side: Side::Front,
+            phantom_unitig: None,
+            swapped: false,
+        };
+        let prepared = |id: usize| PreparedBlockedEdge {
+            block,
+            bytes: encode_discontinuity_edge(&edge(id)),
+            phi: false,
+            diagonal: false,
+        };
+
+        // Enough to spill the 256 KiB write buffer several times over, so the
+        // two writers really do interleave extents in the container rather than
+        // each landing in one run.
+        let per_writer = (BLOCKED_EDGE_WRITE_BUFFER_BYTES / record_len) * 3;
+        let mut expected = Vec::new();
+
+        // Round-trip both writers repeatedly against the same block.
+        for round in 0..3usize {
+            let appenders = ConcurrentBlockedEdgeWriters::new(&matrix);
+            let base = round * per_writer * 2;
+
+            let direct = (0..per_writer)
+                .map(|i| prepared(base + i))
+                .collect::<Vec<_>>();
+            matrix.add_prepared_edges_absolute(&direct).unwrap();
+            expected.extend((0..per_writer).map(|i| edge(base + i)));
+
+            for i in 0..per_writer {
+                appenders.add(&prepared(base + per_writer + i)).unwrap();
+                expected.push(edge(base + per_writer + i));
+            }
+
+            // Exactly what `contract_blocked_partition_atomic` does: the
+            // matrix's own buffer first so the merged list follows write order,
+            // then the appender's extents and count together.
+            matrix.flush_block(row, col).unwrap();
+            let added = appenders.merge_block_into(&mut matrix, row, col).unwrap();
+            assert_eq!(added, per_writer);
+        }
+
+        let flushed = matrix.blocks[block]
+            .extents
+            .iter()
+            .map(|extent| extent.len as usize)
+            .sum::<usize>();
+        assert_eq!(matrix.blocks[block].edges, expected.len());
+        assert_eq!(
+            flushed + matrix.blocks[block].buffer.len(),
+            matrix.blocks[block].edges * record_len,
+            "extent bytes and edge count must agree",
+        );
+
+        let mut read_back = matrix.read_flushed_block(row, col).unwrap();
+        assert_eq!(read_back.len(), expected.len());
+        read_back.sort_unstable_by_key(|edge| edge.unitig_index);
+        expected.sort_unstable_by_key(|edge| edge.unitig_index);
+        assert_eq!(read_back, expected);
+
+        // Every other block stayed empty, so the container holds only this one.
+        assert!(
+            matrix
+                .blocks
+                .iter()
+                .enumerate()
+                .all(|(index, block_state)| index == block || block_state.edges == 0)
+        );
+
+        std::fs::remove_dir_all(&directory).unwrap();
     }
 
     #[test]

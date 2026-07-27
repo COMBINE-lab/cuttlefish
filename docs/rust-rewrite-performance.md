@@ -1105,6 +1105,110 @@ baseline while the phase the change actually touches is flat, which is
 consistent with variance in the surrounding phases rather than an effect, but
 is not separable at this sample count.
 
+## Edge-matrix container files
+
+A 150k uncolored build wrote roughly 36,600 physical files. The edge matrix was
+the largest single class: one file per block, and although the matrix is
+129x129, it is upper-triangular, so 8,384 of the 16,641 blocks actually get a
+file. `docs/edge-matrix-containers.md` carries the design; this records what it
+cost and bought.
+
+One file per matrix row replaces one file per block. Appends reserve space with
+an atomic cursor and then `write_all_at`, so no container-wide lock is held and
+nothing is opened or closed per flush; each block records the extents its bytes
+landed in, and adjacent extents coalesce.
+
+Measured on 149,998 Salmonella assemblies, `k=31`, 64 threads, under
+`--mem-limit 64G` -- without that cap this host's 1.5 TB of RAM absorbs the page
+cache effects entirely and the comparison is meaningless. Four interleaved A/B
+pairs, plus two column-axis runs:
+
+| metric | baseline | containers | resolvable? |
+| --- | ---: | ---: | --- |
+| edge-matrix files | 8,384 | 129 | structural |
+| peak files, work dir | 23,376 (spread 901) | 17,250 (spread 61) | yes |
+| peak work-dir bytes | 237.1 GB (1.4) | 231.2 GB (1.3) | yes |
+| contraction | 12.319 s (0.52) | 12.805 s (0.38) | yes, +4.0% |
+| expansion | 29.057 s (3.82) | 30.459 s (3.59) | no |
+| wall | 296.3 s (4.96) | 292.4 s (6.21) | no |
+| peak RSS | 9.22 GB (0.65) | 9.39 GB (0.57) | no |
+| `wchar` | 439 GB | 438 GB | unchanged |
+
+Only two metrics have a delta larger than either arm's spread, and they are the
+file count and the peak disk. Every run emitted the exact 252,487,658 unitigs
+and 16,417,233,428 bases with identical internal counts -- 162,177,995
+meta-vertices and 703,792,519 reinserted edges -- and `cf3-compare-fasta`
+matched all 252,487,658 strand-normalized unitigs against the 64-thread C++
+reference. Colored is flat as well: 6:39.70 against 6:42.00, with an unchanged
+41 GiB colour index and exact counts.
+
+One container-arm contraction sample was a 14.681 s outlier against 12.9, 12.9
+and 12.6; the +4.0% above excludes it. Including it the figure is +7.8%.
+
+### The axis choice did not survive measurement
+
+The design's sharpest claim was that contraction reads columns and expansion
+reads rows, so no axis makes both sequential, and that rows win because
+expansion is the heavier phase. The disfavoured half is real -- contraction pays
+0.49 s for scattered `pread`s -- but the favoured half is not there. Expansion
+was 30.459 s with row containers against 29.057 s without, inside a per-arm
+spread of nearly 4 s, and the column axis measured 12.884 s and 31.394 s, which
+is the row axis to within noise on both timers.
+
+Expansion streaming *is* implemented: it reads row `partition`, which under row
+containers is one whole file, in a single front-to-back sweep demultiplexed by
+extent. Its downstream tasks already carried their own column, so no
+reassembly pass was needed and peak memory is unchanged. It simply does not pay
+on this host, which is consistent with the design's own note that inode and
+directory-metadata pressure dominates on Lustre and GPFS and much less so on
+local XFS. `CF3_RS_EDGE_CONTAINER_AXIS` is retained so the question can be
+settled on a network filesystem for the price of an environment variable.
+
+Contraction deliberately kept its task-based pipeline rather than becoming a
+container pass: it reads, decodes, contracts and emits through reusable
+per-worker buffers, which is the structure that took it from 13.76 s to 9.02 s
+at scale, and materialising a column first would give that back. It sorts tasks
+by `(container, offset)` instead, which is the locality streaming would have
+provided.
+
+The change is therefore justified by a 65x reduction in edge-matrix files and
+5.9 GB less peak disk, at a measured cost of 0.49 s in contraction and no
+detectable change in wall time. On a network filesystem the metadata saving
+should be worth considerably more than it is here.
+
+### A fault worth recording
+
+The conversion failed six pipeline tests for a reason specific to what
+containers change. Contraction reconciles its concurrent appenders into the
+matrix at two points, and both moved the appender's edge *count* without its
+*extents*. Under per-block files that was correct by construction: the appender
+wrote to the very path the matrix block already knew, via `O_APPEND`, so the
+count really was the only thing that had to move. A container holds the bytes
+but only the matrix's extent list can find them again, so every edge reinserted
+during contraction became unreachable, and the block's own length check failed
+first.
+
+The two writers are now reconciled by a single `merge_block_into` that moves
+flush, extents and count together and asserts the resulting invariant at the
+site. Nothing had previously constructed either writer outside production code;
+a test now drives both against one block and reconciles the way contraction
+does, and it fails at the merge with a message naming the cause when the
+transfer is removed.
+
+Two other hypotheses were checked and were not faults. Extents cannot interleave
+out of write order in the blocked path, because every write goes through the
+appenders and the per-block buffer mutex serialises spills -- the `&mut self`
+path is the mutually exclusive single-threaded branch. And record alignment
+holds by construction: a buffer only ever receives whole records and is flushed
+wholesale, so every extent is a whole number of records. That is now a
+documented invariant, since the streaming demultiplexer depends on it.
+
+`scripts/bench_variant.sh` gained `file_peak` and `work_peak_bytes` for this
+work. Its existing `du` runs after the process exits, and intermediates are
+unlinked incrementally, so what it recorded was a residual and not a high-water
+mark. The new columns change the TSV schema, so these runs are recorded in
+`results-containers.tsv` rather than `results-io.tsv`.
+
 ## Colour-set encoding
 
 The colour repository is the largest artifact a colored build produces, and it

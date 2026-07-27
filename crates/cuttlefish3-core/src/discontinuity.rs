@@ -1316,6 +1316,15 @@ struct BlockedContractTimings {
     diagonal: Duration,
     read: Duration,
     scan: Duration,
+    /// Wall time of the scan/diagonal `join`. Comparing this against `scan` and
+    /// `diagonal` separately shows how much of the serial diagonal walk the
+    /// concurrent scan actually hides.
+    join: Duration,
+    /// Serial per-partition setup: stat'ing every column block and building the
+    /// read-task list.
+    tasks: Duration,
+    /// Serial concatenation of each scan task's meta-vertex output.
+    gather: Duration,
     finish: Duration,
 }
 
@@ -2613,6 +2622,7 @@ impl SerialDiscontinuityContractor {
         diagonal_matrix.blocks[partition][partition] = diagonal_edges;
         let diagonal_read_elapsed = diagonal_read_started.elapsed();
 
+        let setup_started = Instant::now();
         let record_len = discontinuity_edge_record_len::<K>();
         let block_ids = (0..partition)
             .filter_map(|row| {
@@ -2672,6 +2682,8 @@ impl SerialDiscontinuityContractor {
                     .map(BlockedReadTask::Memory),
             );
         }
+        timings.tasks += setup_started.elapsed();
+        let join_started = Instant::now();
         let ((outputs, scan_elapsed), (diagonal, diagonal_elapsed)) = pool.install(|| {
             rayon::join(
                 || {
@@ -2735,11 +2747,17 @@ impl SerialDiscontinuityContractor {
                 },
             )
         });
+        let join_elapsed = join_started.elapsed();
         let outputs = outputs?;
         diagonal_matrix.blocks[partition][partition].clear();
+        timings.join += join_elapsed;
         timings.scan += scan_elapsed;
         timings.diagonal += diagonal_read_elapsed + diagonal_elapsed;
-        let mut meta_vertices = Vec::new();
+        let gather_started = Instant::now();
+        // A partition contributes on the order of a million meta-vertices, so
+        // growing the joined vector by doubling copies gigabytes over the run.
+        let mut meta_vertices =
+            Vec::with_capacity(outputs.iter().map(|(meta, _, _)| meta.len()).sum());
         let mut input_non_diagonal_edges = 0;
         let mut pre_reinserted_edges = 0u64;
         for (local_meta, local_input, local_emitted) in outputs {
@@ -2752,6 +2770,7 @@ impl SerialDiscontinuityContractor {
             meta_vertices,
             input_non_diagonal_edges,
         };
+        timings.gather += gather_started.elapsed();
         let phase = Instant::now();
         let contracted =
             Self::finish_atomic_partition(partition, threads, table, pool, diagonal, scan);
@@ -3905,12 +3924,15 @@ impl SerialDiscontinuityContractor {
         );
         if atomic_table.is_some() {
             eprintln!(
-                "cuttlefish3-rs: fused contraction phases: column flush {:.3}s, table clear {:.3}s, diagonal {:.3}s, raw read {:.3}s, table scan {:.3}s, finalize {:.3}s",
+                "cuttlefish3-rs: fused contraction phases: column flush {:.3}s, table clear {:.3}s, diagonal {:.3}s, raw read {:.3}s, table scan {:.3}s, scan/diagonal join wall {:.3}s, task setup {:.3}s, gather {:.3}s, finalize {:.3}s",
                 direct_timings.flush.as_secs_f64(),
                 direct_timings.clear.as_secs_f64(),
                 direct_timings.diagonal.as_secs_f64(),
                 direct_timings.read.as_secs_f64(),
                 direct_timings.scan.as_secs_f64(),
+                direct_timings.join.as_secs_f64(),
+                direct_timings.tasks.as_secs_f64(),
+                direct_timings.gather.as_secs_f64(),
                 direct_timings.finish.as_secs_f64(),
             );
         }

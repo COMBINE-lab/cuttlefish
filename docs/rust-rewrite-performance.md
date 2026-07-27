@@ -945,3 +945,57 @@ The remaining collation gap at 64 threads is +1.03 s, now dominated by
 discontinuity contraction at 12.43 s against C++'s 9.15 s. Its scan and
 diagonal halves run concurrently under a `join`, so the two reported timers
 overlap and cannot be added.
+
+## Anatomy of the remaining contraction gap
+
+Discontinuity contraction is the last sub-phase where Rust trails: 12.43 s
+against C++'s 9.15 s at 64 threads, 13.13 s against 10.61 s at 32. Aligning the
+two implementations' sub-timers shows the deficit is narrower than it looks.
+
+| | t16 | t32 | t64 |
+| --- | ---: | ---: | ---: |
+| Rust table scan | 14.41 | 6.43 | 4.85 |
+| C++ non-diagonal contraction | 14.36 | 6.90 | 4.50 |
+| Rust diagonal | 4.54 | 4.25 | 4.74 |
+| C++ diagonal (computation + contraction) | 4.45 | 2.38 | 3.11 |
+
+Rust's scan matches C++ and scales 2.97x from 16 to 64 threads. The diagonal
+does not scale at all. `compress_diagonal_block_with_ends` is a sequential
+chain walk: each edge's result depends on `ends` insertions made by earlier
+edges, and it runs once per partition on one thread. It cannot be hoisted or
+run across partitions either, because `block(p, p)` only becomes final after
+every partition above `p` has reinserted into it.
+
+The raw timer overstates the cost. The diagonal runs as one half of a
+`rayon::join` against the column scan, so what matters is how much the scan
+hides. Timing the join's wall clock alongside both halves:
+
+| threads | scan | diagonal | join wall | exposed |
+| ---: | ---: | ---: | ---: | ---: |
+| 32 | 7.37 | 4.42 | 8.54 | 1.18 |
+| 64 | 4.69 | 4.79 | 6.27 | 1.58 |
+
+Only 1.2-1.6 s of the diagonal is on the critical path; the scan absorbs the
+rest. Removing it entirely would leave contraction around 10.8 s at 64 threads,
+still above C++'s 9.15 s.
+
+Instrumenting the statements the phase timers skipped found the other half of
+the gap, the same way the collation residual was found. Per-partition setup was
+negligible at 0.04 s, but concatenating each scan task's meta-vertex vector into
+one cost **1.58 s**, single-threaded. Pre-sizing that vector — a partition
+contributes on the order of a million meta-vertices, so growth by doubling
+copies gigabytes across the run — takes it to 1.23 s, and leaves 0.37 s
+unattributed in the phase.
+
+C++ avoids both costs by construction: its workers append diagonal chain edges
+to per-worker buckets *during* the parallel non-diagonal scan, then flatten them
+with a prefix sum and a parallel memcpy and contract them with a
+`parlay::parallel_for`. There is no serial diagonal pass and no serial gather.
+
+Matching that is the remaining work, and it is not cheap. Eliminating the gather
+copy means threading nested per-task vectors through five call sites and the
+meta-vertex writer, for about 1.2 s. Eliminating the exposed diagonal means
+restructuring the contraction core so chains are collected under the atomic
+table's slot locks during the scan, for about 1.6 s. Together they are worth
+roughly 2.8 s of a 295 s run — under 1% — against real risk to a
+correctness-critical path, so they are recorded here rather than attempted.

@@ -1151,11 +1151,23 @@ by the largest ID plus one, matching C++'s `max_source_id + 1`. Sizing them by
 the source *count* silently drops the top source from the bitmap; the colored
 compat test caught it.
 
-The cost is 3.4% of wall time, measured over two interleaved pairs at 64
+The cost was 3.4% of wall time, measured over two interleaved pairs at 64
 threads -- 6:31.13 against 6:44.29, with the two baselines within 1.1 s of each
-other, so this is an effect rather than noise. Against C++'s 7:33.78 the build
-remains 10.9% faster while now matching its output size. Peak RSS moves by about
-1%.
+other, so an effect rather than noise. Most of it was in the bit writer rather
+than the encoding: it drained its accumulator a byte at a time, so a full
+64-bit append cost eight `Vec::push` calls. Buffering a whole word and
+appending it in one go, plus dropping a per-absence `Option` check from the
+complement loop, took two further pairs from 6:44.67 to 6:35.50, a 2.3%
+recovery. The net cost of the new encoding is 1.1%.
+
+Fusing the three appends of an Elias delta code into a single register-built
+word was tried and reverted: it is 2% *slower* at 1,000 assemblies across two
+pairs, despite issuing a third as many appends. The complement walk itself was
+also examined and left alone -- it already iterates only the breaks in the
+sorted source list, and scanning that list is a lower bound on finding them.
+
+Against C++'s 7:33.78 the build is 12.8% faster while matching its output size.
+Peak RSS moves by about 1%.
 
 The repository also now defaults to `<output_prefix>.cf3rs.color-repository`,
 beside the FASTA. It was written into `--work-dir`, which callers treat as

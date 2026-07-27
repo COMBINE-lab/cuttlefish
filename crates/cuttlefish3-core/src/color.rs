@@ -856,29 +856,34 @@ impl BitWriter {
 
     fn push(&mut self, value: u64, count: u32) {
         debug_assert!(count <= 64);
-        let mut value = value & mask(count);
-        let mut count = count;
-        while count > 0 {
-            let take = count.min(64 - self.pending);
-            self.accumulator |= (value & mask(take)) << self.pending;
-            self.pending += take;
-            value >>= take;
-            count -= take;
-            while self.pending >= 8 {
-                self.bytes.push(self.accumulator as u8);
-                self.accumulator >>= 8;
-                self.pending -= 8;
-            }
+        if count == 0 {
+            return;
         }
+        let value = value & mask(count);
+        // Accumulate a whole word before touching the output, so a full push
+        // costs one eight-byte append rather than eight single-byte ones.
+        let free = 64 - self.pending;
+        if count < free {
+            self.accumulator |= value << self.pending;
+            self.pending += count;
+            return;
+        }
+        self.accumulator |= value << self.pending;
+        self.bytes.extend_from_slice(&self.accumulator.to_le_bytes());
+        self.accumulator = if free == 64 { 0 } else { value >> free };
+        self.pending = count - free;
     }
 
     /// Pads to the next byte so each record starts on a byte boundary.
     fn finish(&mut self) -> &[u8] {
-        if self.pending > 0 {
+        // Up to a whole word may be held back, so this drains rather than
+        // emitting a single trailing byte.
+        while self.pending > 0 {
             self.bytes.push(self.accumulator as u8);
-            self.accumulator = 0;
-            self.pending = 0;
+            self.accumulator >>= 8;
+            self.pending = self.pending.saturating_sub(8);
         }
+        self.accumulator = 0;
         &self.bytes
     }
 }
@@ -996,29 +1001,39 @@ fn encode_source_set(out: &mut BitWriter, sources: &[u32], num_colors: u32) {
             remaining -= width;
         }
     } else {
-        // Gap-code the complement: every source not in the set.
-        let mut previous: Option<u32> = None;
+        // Gap-code the complement. A dense set is nearly contiguous, so the
+        // inner loop rarely fires and this is a scan of `sources` -- which is
+        // the lower bound anyway, since absences are only discoverable by
+        // finding the breaks in a sorted list.
+        //
+        // `previous` starts one before zero so the first absence is written as
+        // its own value, without an Option check on every later one.
+        let mut previous = u32::MAX;
         let mut absent = 0u32;
         for &source in sources {
             while absent < source {
-                write_absent(out, absent, &mut previous);
+                let gap = if previous == u32::MAX {
+                    absent
+                } else {
+                    absent - (previous + 1)
+                };
+                write_delta(out, u64::from(gap));
+                previous = absent;
                 absent += 1;
             }
             absent = source + 1;
         }
         while absent < num_colors {
-            write_absent(out, absent, &mut previous);
+            let gap = if previous == u32::MAX {
+                absent
+            } else {
+                absent - (previous + 1)
+            };
+            write_delta(out, u64::from(gap));
+            previous = absent;
             absent += 1;
         }
     }
-}
-
-fn write_absent(out: &mut BitWriter, value: u32, previous: &mut Option<u32>) {
-    match previous {
-        None => write_delta(out, u64::from(value)),
-        Some(prior) => write_delta(out, u64::from(value - (*prior + 1))),
-    }
-    *previous = Some(value);
 }
 
 /// Inverse of [`encode_source_set`].
@@ -1223,6 +1238,29 @@ mod tests {
             let encoded = writer.finish().to_vec();
             let decoded = decode_source_set(&mut BitReader::new(&encoded), num_colors).unwrap();
             assert_eq!(decoded, sources, "round trip failed for {} sources", sources.len());
+        }
+    }
+
+    /// Pushes span word boundaries at every alignment, which is where a
+    /// word-at-a-time writer can drop or duplicate bits.
+    #[test]
+    fn bit_writer_round_trips_arbitrary_widths() {
+        for start in 0..64u32 {
+            let mut writer = BitWriter::default();
+            // Offset the stream so the following pushes straddle the boundary.
+            writer.push(0, start);
+            let values: Vec<(u64, u32)> = (1..=64u32)
+                .map(|width| (0xdead_beef_cafe_babeu64 & mask(width), width))
+                .collect();
+            for &(value, width) in &values {
+                writer.push(value, width);
+            }
+            let encoded = writer.finish().to_vec();
+            let mut reader = BitReader::new(&encoded);
+            assert_eq!(reader.take(start).unwrap(), 0);
+            for &(value, width) in &values {
+                assert_eq!(reader.take(width).unwrap(), value, "width {width} at start {start}");
+            }
         }
     }
 

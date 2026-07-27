@@ -103,6 +103,10 @@ pub struct ExternalDiscontinuityInputs<const K: usize> {
     color_runs: Option<ColorRunSidecar>,
     local_unitig_buckets: Option<Vec<LocalUnitigBucketEntry>>,
     trivial_fasta: Option<(PathBuf, u64, u64)>,
+    /// Set when `trivial_fasta` is the final output file itself, which local
+    /// contraction wrote in place. Collation then appends to it rather than
+    /// recreating it and copying the trivial records across.
+    trivial_is_output: bool,
     color_repository: Option<ColorRepositoryManifest>,
     pub stats: DiscontinuityInputStats,
 }
@@ -5773,13 +5777,24 @@ impl SerialUncoloredCollator {
                 .local_unitig_buckets
                 .as_ref()
                 .is_some_and(|buckets| buckets.iter().any(|bucket| bucket.colored));
-        let mut final_buckets = FinalUnitigBucketWriters::create_direct(output_path, colored)?;
         let mut direct_local_unitigs = 0u64;
-        if let Some((path, records, bases)) = inputs.trivial_fasta.take() {
-            final_buckets.append_direct_fasta_file(&path, records, bases)?;
-            remove_serial_file(&path)?;
+        let trivial_started = Instant::now();
+        let trivial = inputs.trivial_fasta.take();
+        let mut final_buckets = if inputs.trivial_is_output {
+            // Local contraction already wrote these records into the output.
+            let (records, bases) = trivial.map_or((0, 0), |(_, records, bases)| (records, bases));
             direct_local_unitigs = records;
-        }
+            FinalUnitigBucketWriters::adopt_direct(output_path, colored, records, bases)?
+        } else {
+            let mut writers = FinalUnitigBucketWriters::create_direct(output_path, colored)?;
+            if let Some((path, records, bases)) = trivial {
+                writers.append_direct_fasta_file(&path, records, bases)?;
+                remove_serial_file(&path)?;
+                direct_local_unitigs = records;
+            }
+            writers
+        };
+        let trivial_elapsed = trivial_started.elapsed();
         let use_cpp_path_info = std::env::var_os("CF3_RS_ENDPOINT_STITCH").is_none();
         let mut direct_local_complete = false;
         let stitched_discontinuity_unitigs = if use_cpp_path_info {
@@ -5801,6 +5816,7 @@ impl SerialUncoloredCollator {
             )?
         };
 
+        let fallback_started = Instant::now();
         if !direct_local_complete {
             let reader = ExternalDiscontinuityReader::open(inputs)?;
             let mut color_reader = None;
@@ -5843,6 +5859,8 @@ impl SerialUncoloredCollator {
                 }
             }
         }
+        let fallback_elapsed = fallback_started.elapsed();
+        let cleanup_started = Instant::now();
         if !keep_intermediates() {
             remove_serial_file(&inputs.unitig_path)?;
             remove_serial_file(&inputs.label_path)?;
@@ -5850,7 +5868,18 @@ impl SerialUncoloredCollator {
                 remove_serial_file(&sidecar.run_path)?;
             }
         }
+        let cleanup_elapsed = cleanup_started.elapsed();
+        let finish_started = Instant::now();
         let manifest = final_buckets.finish()?;
+        eprintln!(
+            "cuttlefish3-rs: collation serial detail: trivial-fasta adopt/copy {:.3}s (in-place {}), direct-local fallback {:.3}s (ran {}), cleanup {:.3}s, finish {:.3}s",
+            trivial_elapsed.as_secs_f64(),
+            inputs.trivial_is_output,
+            fallback_elapsed.as_secs_f64(),
+            !direct_local_complete,
+            cleanup_elapsed.as_secs_f64(),
+            finish_started.elapsed().as_secs_f64(),
+        );
         eprintln!(
             "cuttlefish3-rs: external collation stitched and spilled final-label candidates in {:.3}s",
             spill_started.elapsed().as_secs_f64()
@@ -6125,6 +6154,46 @@ impl FinalUnitigBucketWriters {
             direct_records: 0,
             direct_record_id_highwater: 0,
             direct_bases: 0,
+        })
+    }
+
+    /// Reopens an output file that local contraction already seeded with
+    /// `records` trivial unitigs, so collation appends past them.
+    fn adopt_direct(
+        output_path: &Path,
+        colored: bool,
+        records: u64,
+        bases: u64,
+    ) -> Result<Self, SerialCollationError> {
+        let mut file = OpenOptions::new()
+            .write(true)
+            .open(output_path)
+            .map_err(|source| SerialCollationError::Io {
+                path: output_path.to_path_buf(),
+                source,
+            })?;
+        // The seed was written with positioned writes, which leave the file
+        // cursor at zero; buffered appends must resume past what is there.
+        file.seek(SeekFrom::End(0))
+            .map_err(|source| SerialCollationError::Io {
+                path: output_path.to_path_buf(),
+                source,
+            })?;
+        Ok(Self {
+            dir: output_path.parent().unwrap_or(Path::new(".")).to_path_buf(),
+            bucket_mask: 0,
+            next_bucket: 0,
+            writers: Vec::new(),
+            records: Vec::new(),
+            bases: Vec::new(),
+            open_writers: 0,
+            colored,
+            direct_output: Some(BufWriter::with_capacity(8 * 1024 * 1024, file)),
+            direct_output_path: Some(output_path.to_path_buf()),
+            direct_header_scratch: Vec::new(),
+            direct_records: records,
+            direct_record_id_highwater: records,
+            direct_bases: bases,
         })
     }
 
@@ -7791,6 +7860,49 @@ struct ExternalCppPathInfoCollation {
     direct_local_unitigs_complete: bool,
 }
 
+/// Threads used to unlink a spent intermediate directory in the background.
+///
+/// The directories involved hold tens of thousands of multi-megabyte files, and
+/// releasing their extents is syscall-bound rather than CPU-bound, so a handful
+/// of threads saturates the filesystem without competing for the cores that the
+/// map and reduce phases are using.
+const BACKGROUND_UNLINK_WORKERS: usize = 8;
+
+/// Removes `dir` and its contents on background threads.
+///
+/// The edge matrix and the expansion buckets are each several seconds of
+/// unlinking at every thread count, and nothing downstream reads them once the
+/// phase that produced them is done. Removing them concurrently keeps that cost
+/// off the critical path; the caller joins the handle before it returns so the
+/// work directory is still clean when the build finishes.
+fn spawn_background_dir_removal(dir: PathBuf) -> std::thread::JoinHandle<()> {
+    std::thread::spawn(move || {
+        let Ok(entries) = fs::read_dir(&dir) else {
+            let _ = fs::remove_dir_all(&dir);
+            return;
+        };
+        let paths: Vec<PathBuf> = entries.flatten().map(|entry| entry.path()).collect();
+        let next = AtomicUsize::new(0);
+        let workers = paths.len().clamp(1, BACKGROUND_UNLINK_WORKERS);
+        std::thread::scope(|scope| {
+            for _ in 0..workers {
+                scope.spawn(|| {
+                    loop {
+                        let index = next.fetch_add(1, Ordering::Relaxed);
+                        let Some(path) = paths.get(index) else {
+                            break;
+                        };
+                        if fs::remove_file(path).is_err() {
+                            let _ = fs::remove_dir_all(path);
+                        }
+                    }
+                });
+            }
+        });
+        let _ = fs::remove_dir_all(&dir);
+    })
+}
+
 fn collate_external_cpp_path_info_to_final_buckets<const K: usize>(
     inputs: &mut ExternalDiscontinuityInputs<K>,
     threads: usize,
@@ -7864,7 +7976,7 @@ fn collate_external_cpp_path_info_to_final_buckets<const K: usize>(
         expansion.stats.unresolved_edges
     );
     drop(contraction);
-    let _ = fs::remove_dir_all(&matrix_dir);
+    let matrix_reclaim = spawn_background_dir_removal(matrix_dir);
     trim_process_allocations();
     report_process_memory("after discontinuity contraction release");
 
@@ -7879,7 +7991,7 @@ fn collate_external_cpp_path_info_to_final_buckets<const K: usize>(
         final_buckets,
     )?;
     report_process_memory("after C++-style path-info map");
-    let _ = fs::remove_dir_all(&expansion_dir);
+    let expansion_reclaim = spawn_background_dir_removal(expansion_dir);
     eprintln!(
         "cuttlefish3-rs: C++-style path-info map completed in {:.3}s",
         map_started.elapsed().as_secs_f64()
@@ -7896,6 +8008,13 @@ fn collate_external_cpp_path_info_to_final_buckets<const K: usize>(
     eprintln!(
         "cuttlefish3-rs: C++-style path-info reduce {:.3}s",
         reduce_started.elapsed().as_secs_f64()
+    );
+    let reclaim_started = Instant::now();
+    let _ = matrix_reclaim.join();
+    let _ = expansion_reclaim.join();
+    eprintln!(
+        "cuttlefish3-rs: waited {:.3}s for background intermediate removal",
+        reclaim_started.elapsed().as_secs_f64()
     );
     Ok(ExternalCppPathInfoCollation {
         stitched_unitigs: emitted,
@@ -16928,11 +17047,15 @@ pub fn emit_uncolored_discontinuity_inputs_with_threads_in_dir<const K: usize>(
 ///
 /// This is the production local-contraction entry point. `threads` must be
 /// nonzero, and `label_path` identifies the external label stream.
+///
+/// When `direct_output_path` names the final FASTA, trivial (exit-free) local
+/// unitigs are written into it directly, since they need no further processing.
 pub fn emit_uncolored_external_discontinuity_inputs_with_threads_in_dir<const K: usize>(
     bucket_dir: impl AsRef<Path>,
     cutoff: u32,
     threads: usize,
     label_path: impl AsRef<Path>,
+    direct_output_path: Option<&Path>,
 ) -> Result<ExternalDiscontinuityInputs<K>, DiscontinuityInputError> {
     if cutoff == 0 {
         return Err(DiscontinuityInputError::InvalidCutoff);
@@ -16947,6 +17070,7 @@ pub fn emit_uncolored_external_discontinuity_inputs_with_threads_in_dir<const K:
         threads,
         label_path.as_ref(),
         None,
+        direct_output_path,
     )
 }
 
@@ -16974,6 +17098,8 @@ pub fn emit_colored_external_discontinuity_inputs_with_threads_in_dir<const K: u
         threads,
         label_path.as_ref(),
         Some(color_path.as_ref()),
+        // Colored builds emit no trivial FASTA; every unitig carries colors.
+        None,
     )
 }
 
@@ -16993,7 +17119,7 @@ fn emit_uncolored_discontinuity_inputs_with_threads_impl<const K: usize>(
     let entries = read_manifest(bucket_dir.as_ref())?;
     if let Some(label_path) = label_path {
         let external = contract_local_subgraphs_into_external_inputs::<K>(
-            &entries, cutoff, threads, label_path, None,
+            &entries, cutoff, threads, label_path, None, None,
         )?;
         return external_inputs_to_memory_inputs(external);
     }
@@ -17071,6 +17197,7 @@ fn contract_local_subgraphs_into_external_inputs<const K: usize>(
     threads: usize,
     label_path: &Path,
     color_path: Option<&Path>,
+    direct_output_path: Option<&Path>,
 ) -> Result<ExternalDiscontinuityInputs<K>, DiscontinuityInputError> {
     // C++ hands both colored and uncolored local contractions to expansion in
     // max-unitig coordinate buckets. The representation does not depend on
@@ -17099,7 +17226,12 @@ fn contract_local_subgraphs_into_external_inputs<const K: usize>(
         source,
     })?;
     let mut unitigs = BufWriter::with_capacity(8 * 1024 * 1024, unitig_file);
-    let trivial_path = label_path.with_extension("trivial.fa");
+    // Trivial unitigs are already complete FASTA records, so when the caller
+    // names the final output we write them straight into it. Collation then
+    // appends past them instead of copying gigabytes through a single thread.
+    let trivial_path = direct_output_path
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| label_path.with_extension("trivial.fa"));
     let trivial_file =
         File::create(&trivial_path).map_err(|source| DiscontinuityInputError::Io {
             path: trivial_path.clone(),
@@ -17455,8 +17587,12 @@ fn contract_local_subgraphs_into_external_inputs<const K: usize>(
             color_repository_elapsed.as_secs_f64(),
         );
     }
+    let trivial_is_output = direct_output_path.is_some();
     let trivial_fasta = if trivial_unitigs == 0 {
-        let _ = fs::remove_file(&trivial_path);
+        // The final output is the caller's to keep even when it is still empty.
+        if !trivial_is_output {
+            let _ = fs::remove_file(&trivial_path);
+        }
         None
     } else {
         Some((trivial_path, trivial_unitigs, trivial_bases))
@@ -17472,6 +17608,7 @@ fn contract_local_subgraphs_into_external_inputs<const K: usize>(
         color_runs,
         local_unitig_buckets,
         trivial_fasta,
+        trivial_is_output,
         color_repository,
         stats: inputs.stats,
     })

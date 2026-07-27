@@ -885,3 +885,63 @@ effect), and a seed-0 wyhash specialization (already constant-folded). Two
 hypotheses were disproved outright: C++'s ISA-L inflate accounts for only 8%
 of the gap, and page faults concentrate downstream of partitioning rather than
 in file reading.
+
+## Closing the collation gap
+
+Collation trailed C++ at every thread count, unlike local contraction which
+only differed at 64. Splitting the phase against matched C++ runs on the full
+Salmonella corpus showed the deficit was not where it looked:
+
+| sub-phase | C++ t64 | Rust t64 | Δ |
+| --- | ---: | ---: | ---: |
+| discontinuity contraction | 9.15 | 11.38 | +2.24 |
+| expansion | 31.97 | 29.12 | −2.85 |
+| path-info map | 4.06 | 5.43 | +1.37 |
+| path-info reduce | 4.68 | 4.28 | −0.40 |
+| unattributed | — | 4.08 | +4.08 |
+
+Rust already led on expansion and reduce. The largest single item was time no
+timer accounted for, and it was flat across thread counts — 4.09 s at 16, 4.56 s
+at 32, 4.26 s at 64 — which rules out anything that scales with workers.
+
+Instrumenting the untimed statements between phases found it: `remove_dir_all`
+on the edge-matrix block directory cost **3.835 s**, single-threaded, on the
+critical path. A second `remove_dir_all` over the expansion buckets cost about
+0.9 s and sat *inside* the map timer, which is most of why map appeared slower.
+The neighbouring suspects were nothing: dropping the contraction table took
+0.004 s and `malloc_trim` 0.000 s.
+
+Nothing downstream reads either directory. `spawn_background_dir_removal`
+unlinks them on eight threads — the work is syscall-bound, so a handful of
+threads saturates the filesystem without competing for the cores map and reduce
+are using — and the caller joins before returning so the work directory is
+still clean when the build finishes. The join measures 0.000 s at every thread
+count: the removal completes entirely within the phases it now overlaps.
+
+| threads | collation before | collation after | residual before | residual after |
+| ---: | ---: | ---: | ---: | ---: |
+| 16 | 90.10 | 86.77 | 4.09 | 0.02 |
+| 32 | 65.44 | 57.61 | 4.56 | 0.03 |
+| 64 | 54.30 | 50.00 | 4.26 | 0.06 |
+
+Post-local total against C++ at 32 threads went from +9.29 s to +1.46 s. Wall
+time is 7:38.51 at 32 threads against C++'s 8:02.13, and 4:55.00 at 64 against
+4:48.37. Topology is unchanged: 252,487,658 strand-normalized unitigs match the
+predecessor binary exactly, on a byte-identical FASTA.
+
+Wall-time deltas are noisier than the phase timers here. The 16-thread run
+recorded 14:06.81 against a 14:05.75 baseline despite collation improving 3.3 s,
+because partition and local contraction — phases this change does not touch —
+happened to run 4.4 s slower on that pass. Run-to-run spread on the earlier
+phases is roughly ±4 s at this scale, so the collation timer is the signal.
+
+Trivial (exit-free) local unitigs now go straight into the output FASTA instead
+of a temporary file that collation copied in. This was pursued as the suspected
+residual and was not it: the copy measured 0.185 s for 3.4 GB because
+`std::io::copy` reaches `copy_file_range`. It is kept only because it removes
+3.4 GB of redundant temporary write and read, and it is neutral on wall time.
+
+The remaining collation gap at 64 threads is +1.03 s, now dominated by
+discontinuity contraction at 12.43 s against C++'s 9.15 s. Its scan and
+diagonal halves run concurrently under a `join`, so the two reported timers
+overlap and cannot be added.

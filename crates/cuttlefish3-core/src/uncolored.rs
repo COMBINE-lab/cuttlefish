@@ -121,11 +121,13 @@ pub fn build_uncolored_with_serial_discontinuity_pipeline<const K: usize>(
     let bucket_dir = bucket_dir.as_ref().to_path_buf();
     let local_threads = params.local_workers();
     eprintln!("cuttlefish3-rs: local contraction using {local_threads} worker(s)");
+    let output_path = PathBuf::from(format!("{}.fa", params.output_prefix));
     let mut inputs = emit_uncolored_external_discontinuity_inputs_with_threads_in_dir::<K>(
         &bucket_dir,
         params.cutoff(),
         local_threads,
         &label_path,
+        Some(&output_path),
     )?;
     let local_elapsed = local_start.elapsed();
     report_process_memory("after local contraction before trim");
@@ -148,7 +150,6 @@ pub fn build_uncolored_with_serial_discontinuity_pipeline<const K: usize>(
     eprintln!("cuttlefish3-rs: collating final unitigs");
     let collation_start = Instant::now();
     report_process_memory("before collation");
-    let output_path = PathBuf::from(format!("{}.fa", params.output_prefix));
     let coord_dir =
         PathBuf::from(&params.work_dir).join(format!("{output_name}.cf3rs.stitch-coords"));
     let final_dir =

@@ -54,6 +54,7 @@ pub struct BucketEmitter {
     writers: BTreeMap<usize, BucketFile>,
     pending: Vec<PendingBucket>,
     pending_bytes: usize,
+    scratch: CompressionScratch,
 }
 
 pub struct SharedBucketSink {
@@ -112,6 +113,9 @@ struct SharedBucketAtlas {
     first_graph_id: usize,
     files: Vec<SharedBucketFileMeta>,
     buffered_bytes: usize,
+    /// Shared by every flush through this atlas, which the atlas lock already
+    /// serializes, so it costs no contention and saves an allocation per block.
+    scratch: CompressionScratch,
 }
 
 #[derive(Default)]
@@ -812,6 +816,7 @@ impl BucketEmitter {
             compress_buckets: params.color || params.compress_buckets,
             label_words: label_word_count(params.k, params.minimizer_len),
             files: BTreeMap::new(),
+            scratch: CompressionScratch::default(),
             writers: BTreeMap::new(),
             pending: vec![PendingBucket::default(); graph_count],
             pending_bytes: 0,
@@ -889,8 +894,12 @@ impl BucketEmitter {
         self.pending_bytes -= pending.bytes.len();
 
         let (records, bytes_written) = {
-            let writer = self.ensure_writer(graph_id)?;
-            writer.write_records(&pending.bytes, pending.records)?
+            self.ensure_writer(graph_id)?;
+            let Self {
+                writers, scratch, ..
+            } = self;
+            let writer = writers.get_mut(&graph_id).expect("writer just ensured");
+            writer.write_records(&pending.bytes, pending.records, scratch)?
         };
         let meta = self.files.get_mut(&graph_id).unwrap();
         meta.records = records;
@@ -1010,6 +1019,7 @@ impl SharedBucketSink {
                             .map(|_| SharedBucketFileMeta::default())
                             .collect(),
                         buffered_bytes: 0,
+                        scratch: CompressionScratch::default(),
                     })
                 })
                 .collect(),
@@ -1668,7 +1678,10 @@ impl SharedBucketAtlas {
         compress_buckets: bool,
         stats: &mut SharedBucketFlushStats,
     ) -> Result<(), BucketError> {
-        let file = &mut self.files[local_graph_id];
+        let Self {
+            files, scratch, ..
+        } = self;
+        let file = &mut files[local_graph_id];
         if file.buffer.is_empty() {
             return Ok(());
         }
@@ -1690,7 +1703,8 @@ impl SharedBucketAtlas {
             )?,
         };
         let flushed_bytes = file.buffer.len();
-        let (records, bytes_written) = writer.write_records(&file.buffer, file.buffer_records)?;
+        let (records, bytes_written) =
+            writer.write_records(&file.buffer, file.buffer_records, scratch)?;
         file.written_records = records;
         file.bytes_written = bytes_written;
         if file.path.is_none() {
@@ -2127,6 +2141,49 @@ struct BucketFile {
     label_words: usize,
 }
 
+/// Reusable staging for compressed bucket writes.
+///
+/// A `BucketFile` is opened per flush, so these buffers belong to the emitter
+/// that owns the flush loop; held there, a 64 KiB block costs no allocation.
+#[derive(Default)]
+pub(crate) struct CompressionScratch {
+    /// Fixed-size attributes, de-interleaved out of the record stream.
+    attrs: Vec<u8>,
+    /// Label words, de-interleaved out of the record stream.
+    labels: Vec<u8>,
+    /// LZ4 output for the attribute stream, or for the whole block.
+    encoded: Vec<u8>,
+    /// LZ4 output for the label stream.
+    encoded_labels: Vec<u8>,
+    /// Header and payload assembled for a single `write_all`.
+    block: Vec<u8>,
+}
+
+impl CompressionScratch {
+    /// Compresses `input` into `out`, returning the encoded length.
+    ///
+    /// `out` only ever grows, so the zero-fill a resize implies is paid once
+    /// per writer rather than once per block.
+    fn encode(input: &[u8], out: &mut Vec<u8>) -> Result<usize, BucketError> {
+        let bound = lz4_flex::block::get_maximum_output_size(input.len());
+        if out.len() < bound {
+            out.resize(bound, 0);
+        }
+        lz4_flex::block::compress_into(input, &mut out[..bound])
+            .map_err(|_| BucketError::MalformedRecord)
+    }
+}
+
+/// Whether uncolored buckets compress attributes and labels as separate
+/// streams, the way the colored path and C++ both do.
+///
+/// The interleaved default compresses whole records in one stream. The header
+/// records which was used, so readers stay correct under either setting.
+fn force_split_compression() -> bool {
+    static SPLIT: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *SPLIT.get_or_init(|| std::env::var_os("CF3_RS_SPLIT_COMPRESSION").is_some())
+}
+
 impl BucketFile {
     fn create(
         bucket_dir: &Path,
@@ -2152,7 +2209,7 @@ impl BucketFile {
         write_u16(&mut file, &path, minimizer_len)?;
         write_u64(&mut file, &path, graph_count as u64)?;
         write_u64(&mut file, &path, graph_id as u64)?;
-        let interleaved_compression = compressed && !colored;
+        let interleaved_compression = compressed && !colored && !force_split_compression();
         file.write_all(&[
             u8::from(colored),
             label_words as u8,
@@ -2211,10 +2268,15 @@ impl BucketFile {
         })
     }
 
-    fn write_records(&mut self, bytes: &[u8], records: u64) -> Result<(u64, u64), BucketError> {
+    fn write_records(
+        &mut self,
+        bytes: &[u8],
+        records: u64,
+        scratch: &mut CompressionScratch,
+    ) -> Result<(u64, u64), BucketError> {
         debug_assert_eq!(bytes.len() as u64, records * self.record_size);
         let written = if self.compressed {
-            self.write_compressed_block(bytes, records)?
+            self.write_compressed_block(bytes, records, scratch)?
         } else {
             self.file
                 .write_all(bytes)
@@ -2232,51 +2294,59 @@ impl BucketFile {
         Ok((self.records, self.bytes_written))
     }
 
-    fn write_compressed_block(&mut self, bytes: &[u8], records: u64) -> Result<u64, BucketError> {
+    fn write_compressed_block(
+        &mut self,
+        bytes: &[u8],
+        records: u64,
+        scratch: &mut CompressionScratch,
+    ) -> Result<u64, BucketError> {
         let records_u32 = u32::try_from(records).map_err(|_| BucketError::TooManyRecords)?;
         if records_u32 == 0 {
             return Ok(0);
         }
-        if self.interleaved_compression {
-            let compressed = lz4_flex::block::compress(bytes);
-            let compressed_len =
-                u32::try_from(compressed.len()).map_err(|_| BucketError::TooManyRecords)?;
-            self.file
-                .write_all(&records_u32.to_le_bytes())
-                .and_then(|_| self.file.write_all(&compressed_len.to_le_bytes()))
-                .and_then(|_| self.file.write_all(&0u32.to_le_bytes()))
-                .and_then(|_| self.file.write_all(&compressed))
-                .map_err(|source| BucketError::Io {
-                    path: self.path.clone(),
-                    source,
-                })?;
-            return Ok((COMPRESSED_BLOCK_HEADER_LEN + compressed.len()) as u64);
+        let (attr_len, label_len) = if self.interleaved_compression {
+            (CompressionScratch::encode(bytes, &mut scratch.encoded)?, 0)
+        } else {
+            let record_len = usize::try_from(self.record_size).unwrap();
+            let fixed_len = record_len - self.label_words * 8;
+            scratch.attrs.clear();
+            scratch.labels.clear();
+            scratch.attrs.reserve(records as usize * fixed_len);
+            scratch.labels.reserve(records as usize * self.label_words * 8);
+            for record in bytes.chunks_exact(record_len) {
+                scratch.attrs.extend_from_slice(&record[..fixed_len]);
+                scratch.labels.extend_from_slice(&record[fixed_len..]);
+            }
+            let attrs = std::mem::take(&mut scratch.attrs);
+            let labels = std::mem::take(&mut scratch.labels);
+            let attr_len = CompressionScratch::encode(&attrs, &mut scratch.encoded)?;
+            let label_len = CompressionScratch::encode(&labels, &mut scratch.encoded_labels)?;
+            scratch.attrs = attrs;
+            scratch.labels = labels;
+            (attr_len, label_len)
+        };
+        let attr_len_u32 = u32::try_from(attr_len).map_err(|_| BucketError::TooManyRecords)?;
+        let label_len_u32 = u32::try_from(label_len).map_err(|_| BucketError::TooManyRecords)?;
+
+        // One write per block: the file is unbuffered, so the header and both
+        // streams would otherwise cost three or four syscalls apiece.
+        scratch.block.clear();
+        scratch.block.extend_from_slice(&records_u32.to_le_bytes());
+        scratch.block.extend_from_slice(&attr_len_u32.to_le_bytes());
+        scratch.block.extend_from_slice(&label_len_u32.to_le_bytes());
+        scratch.block.extend_from_slice(&scratch.encoded[..attr_len]);
+        if label_len != 0 {
+            scratch
+                .block
+                .extend_from_slice(&scratch.encoded_labels[..label_len]);
         }
-        let record_len = usize::try_from(self.record_size).unwrap();
-        let fixed_len = record_len - self.label_words * 8;
-        let mut attrs = Vec::with_capacity(records as usize * fixed_len);
-        let mut labels = Vec::with_capacity(records as usize * self.label_words * 8);
-        for record in bytes.chunks_exact(record_len) {
-            attrs.extend_from_slice(&record[..fixed_len]);
-            labels.extend_from_slice(&record[fixed_len..]);
-        }
-        let compressed_attrs = lz4_flex::block::compress(&attrs);
-        let compressed_labels = lz4_flex::block::compress(&labels);
-        let attr_len =
-            u32::try_from(compressed_attrs.len()).map_err(|_| BucketError::TooManyRecords)?;
-        let label_len =
-            u32::try_from(compressed_labels.len()).map_err(|_| BucketError::TooManyRecords)?;
         self.file
-            .write_all(&records_u32.to_le_bytes())
-            .and_then(|_| self.file.write_all(&attr_len.to_le_bytes()))
-            .and_then(|_| self.file.write_all(&label_len.to_le_bytes()))
-            .and_then(|_| self.file.write_all(&compressed_attrs))
-            .and_then(|_| self.file.write_all(&compressed_labels))
+            .write_all(&scratch.block)
             .map_err(|source| BucketError::Io {
                 path: self.path.clone(),
                 source,
             })?;
-        Ok((COMPRESSED_BLOCK_HEADER_LEN + compressed_attrs.len() + compressed_labels.len()) as u64)
+        Ok(scratch.block.len() as u64)
     }
 
     fn flush(&mut self) -> Result<(), BucketError> {

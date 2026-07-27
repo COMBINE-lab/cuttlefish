@@ -1104,3 +1104,60 @@ rather than three. And wall time on the reference corpus sits 0.4-0.6% above
 baseline while the phase the change actually touches is flat, which is
 consistent with variance in the surrounding phases rather than an effect, but
 is not separable at this sample count.
+
+## Colour-set encoding
+
+The colour repository is the largest artifact a colored build produces, and it
+was four times the size of C++'s: 176.0 GB against 43.6 GB on 149,998
+Salmonella assemblies.
+
+Two things about it were initially misread and are worth recording, because
+both look like defects and neither is. It is not residue -- it carries a
+`metadata.tsv` declaring format, k, encoding and source count, the CLI prints
+its path, and it is the colour index that accompanies the FASTA. And the
+primary colour table's overflow, 36,810,130 entries past a 2^26 ceiling, has
+nothing to do with it: that table is 1 GiB of memory, and admitting every
+overflowed colour was already measured to leave wall time and peak RSS
+unchanged.
+
+The size came from the encoding. Each set was a varint count followed by varint
+gaps, which spends a byte per member. In a pangenome of near-identical
+assemblies most k-mers are core, so a typical set names almost every source and
+costs over a hundred kilobytes.
+
+C++ avoids this with `fulgor::color_set_builder`, vendored at
+`include/color_sets/hybrid.hpp`, which picks one of three regimes by how much of
+the source set a colour covers:
+
+| coverage | encoding |
+| --- | --- |
+| below a quarter | Elias-delta gaps between members |
+| a quarter to three quarters | a plain bitmap, one bit per source |
+| above three quarters | Elias-delta gaps between *absences* |
+
+The last regime is what matters at pangenome scale, and Elias delta rather than
+varints is what makes the first and last cheap: a run of adjacent sources costs
+a few bits instead of a byte each.
+
+Implementing the same scheme, with Fulgor's LSB-first bit order:
+
+| | before | after | C++ |
+| --- | ---: | ---: | ---: |
+| 1,000 assemblies | 135 MB | 58 MB | — |
+| 149,998 assemblies | 176.0 GB | 43.4 GB | 43.6 GB |
+
+Source IDs are one-based here, so the thresholds and the bitmap width are sized
+by the largest ID plus one, matching C++'s `max_source_id + 1`. Sizing them by
+the source *count* silently drops the top source from the bitmap; the colored
+compat test caught it.
+
+The cost is 3.4% of wall time, measured over two interleaved pairs at 64
+threads -- 6:31.13 against 6:44.29, with the two baselines within 1.1 s of each
+other, so this is an effect rather than noise. Against C++'s 7:33.78 the build
+remains 10.9% faster while now matching its output size. Peak RSS moves by about
+1%.
+
+The repository also now defaults to `<output_prefix>.cf3rs.color-repository`,
+beside the FASTA. It was written into `--work-dir`, which callers treat as
+scratch; C++ likewise writes its own colour files next to the FASTA as
+`<output>.fa.col.N`.

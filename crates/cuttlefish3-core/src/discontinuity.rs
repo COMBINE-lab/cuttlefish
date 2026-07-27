@@ -17106,6 +17106,7 @@ pub fn emit_uncolored_external_discontinuity_inputs_with_threads_in_dir<const K:
         label_path.as_ref(),
         None,
         direct_output_path,
+        None,
     )
 }
 
@@ -17119,6 +17120,7 @@ pub fn emit_colored_external_discontinuity_inputs_with_threads_in_dir<const K: u
     threads: usize,
     label_path: impl AsRef<Path>,
     color_path: impl AsRef<Path>,
+    color_repository_dir: impl AsRef<Path>,
 ) -> Result<ExternalDiscontinuityInputs<K>, DiscontinuityInputError> {
     if cutoff == 0 {
         return Err(DiscontinuityInputError::InvalidCutoff);
@@ -17135,6 +17137,7 @@ pub fn emit_colored_external_discontinuity_inputs_with_threads_in_dir<const K: u
         Some(color_path.as_ref()),
         // Colored builds emit no trivial FASTA; every unitig carries colors.
         None,
+        Some(color_repository_dir.as_ref()),
     )
 }
 
@@ -17154,7 +17157,7 @@ fn emit_uncolored_discontinuity_inputs_with_threads_impl<const K: usize>(
     let entries = read_manifest(bucket_dir.as_ref())?;
     if let Some(label_path) = label_path {
         let external = contract_local_subgraphs_into_external_inputs::<K>(
-            &entries, cutoff, threads, label_path, None, None,
+            &entries, cutoff, threads, label_path, None, None, None,
         )?;
         return external_inputs_to_memory_inputs(external);
     }
@@ -17233,6 +17236,7 @@ fn contract_local_subgraphs_into_external_inputs<const K: usize>(
     label_path: &Path,
     color_path: Option<&Path>,
     direct_output_path: Option<&Path>,
+    color_repository_dir: Option<&Path>,
 ) -> Result<ExternalDiscontinuityInputs<K>, DiscontinuityInputError> {
     // C++ hands both colored and uncolored local contractions to expansion in
     // max-unitig coordinate buckets. The representation does not depend on
@@ -17304,8 +17308,13 @@ fn contract_local_subgraphs_into_external_inputs<const K: usize>(
         .min(expected_color_ceiling) as usize;
     let color_repository = color_path
         .map(|path| {
+            // The repository is a deliverable, not scratch, so it defaults
+            // beside the FASTA rather than inside the work directory.
+            let dir = color_repository_dir
+                .map(Path::to_path_buf)
+                .unwrap_or_else(|| path.with_extension("color-repository"));
             ConcurrentColorRepository::create(
-                path.with_extension("color-repository"),
+                dir,
                 threads.min(256),
                 expected_colors.max(entries.len() * 8),
             )

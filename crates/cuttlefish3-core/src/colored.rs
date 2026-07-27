@@ -48,6 +48,10 @@ pub fn build_colored_from_buckets<const K: usize>(
     let work_dir = PathBuf::from(&params.work_dir);
     let label_path = work_dir.join(format!("{output_name}.cf3rs.lmtig-labels"));
     let color_path = work_dir.join(format!("{output_name}.cf3rs.colors"));
+    // The colour repository accompanies the FASTA as part of the build's
+    // output; only the run-sidecar above is scratch.
+    let color_repository_dir =
+        PathBuf::from(format!("{}.cf3rs.color-repository", params.output_prefix));
 
     let local_started = Instant::now();
     report_process_memory("before colored local contraction");
@@ -59,6 +63,7 @@ pub fn build_colored_from_buckets<const K: usize>(
         local_threads,
         &label_path,
         &color_path,
+        &color_repository_dir,
     )?;
     eprintln!(
         "cuttlefish3-rs: colored local contraction completed in {:.3}s; {} local unitig(s)",

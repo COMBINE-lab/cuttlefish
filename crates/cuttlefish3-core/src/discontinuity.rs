@@ -102,6 +102,10 @@ pub struct ExternalDiscontinuityInputs<const K: usize> {
     edge_matrix: Option<BlockedEdgeMatrix<K>>,
     color_runs: Option<ColorRunSidecar>,
     local_unitig_buckets: Option<Vec<LocalUnitigBucketEntry>>,
+    /// Directory holding `local_unitig_buckets`. The map phase is their last
+    /// reader, so collation unlinks it rather than leaving tens of gigabytes
+    /// in the work directory after the build.
+    local_unitig_bucket_dir: Option<PathBuf>,
     trivial_fasta: Option<(PathBuf, u64, u64)>,
     /// Set when `trivial_fasta` is the final output file itself, which local
     /// contraction wrote in place. Collation then appends to it rather than
@@ -8014,6 +8018,12 @@ fn collate_external_cpp_path_info_to_final_buckets<const K: usize>(
     )?;
     report_process_memory("after C++-style path-info map");
     let expansion_reclaim = spawn_background_dir_removal(expansion_dir);
+    // The map phase was the last reader of the local unitig buckets.
+    let local_unitig_reclaim = inputs
+        .local_unitig_bucket_dir
+        .take()
+        .filter(|_| !keep_intermediates())
+        .map(spawn_background_dir_removal);
     eprintln!(
         "cuttlefish3-rs: C++-style path-info map completed in {:.3}s",
         map_started.elapsed().as_secs_f64()
@@ -8034,6 +8044,9 @@ fn collate_external_cpp_path_info_to_final_buckets<const K: usize>(
     let reclaim_started = Instant::now();
     let _ = matrix_reclaim.join();
     let _ = expansion_reclaim.join();
+    if let Some(handle) = local_unitig_reclaim {
+        let _ = handle.join();
+    }
     eprintln!(
         "cuttlefish3-rs: waited {:.3}s for background intermediate removal",
         reclaim_started.elapsed().as_secs_f64()
@@ -17629,6 +17642,8 @@ fn contract_local_subgraphs_into_external_inputs<const K: usize>(
         edge_matrix: Some(edge_matrix),
         color_runs,
         local_unitig_buckets,
+        local_unitig_bucket_dir: (local_unitig_bucket_count != 0)
+            .then(|| local_unitig_bucket_dir.clone()),
         trivial_fasta,
         trivial_is_output,
         color_repository,

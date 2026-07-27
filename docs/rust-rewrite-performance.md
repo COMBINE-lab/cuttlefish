@@ -999,3 +999,75 @@ restructuring the contraction core so chains are collected under the atomic
 table's slot locks during the scan, for about 1.6 s. Together they are worth
 roughly 2.8 s of a 295 s run — under 1% — against real risk to a
 correctness-critical path, so they are recorded here rather than attempted.
+
+## The 4-thread read-mode memory gap
+
+An earlier reading of the record had Rust at 1.55x C++'s peak RSS on
+`SRR105788` at 4 threads. That number came from a stale binary. Re-measured on
+the current build:
+
+| | wall | peak RSS |
+| --- | ---: | ---: |
+| Rust, as recorded | 1:21.86 | 5.24 GB |
+| Rust, current | 1:20.62 | 3.71 GB |
+| C++ | 1:55.87 | 3.38 GB |
+
+The real figure is 1.10x, against a 30% lead on wall time. The phase profile
+puts the whole peak in local contraction — partitioning peaks at 1.46 GB and
+collation never exceeds 0.88 GB — climbing with bucket progress and collapsing
+to 93 MB the moment the phase ends.
+
+Three explanations were tested and all three are wrong:
+
+- **Per-block edge write buffers.** `ConcurrentBlockedEdgeWriters` keeps a
+  buffer per block, `clear()` retains capacity, and the block count is
+  `DEFAULT_VERTEX_PARTITIONS` squared regardless of threads — 16,384 blocks at
+  256 KiB is 4 GB of latent staging that a 4-thread run would show and a
+  256-thread run would hide. Sweeping the total budget over a 16x range moved
+  peak RSS from 3.66 to 3.84 GB, in the wrong direction. Not it.
+- **Vertex-map high-water retention.** Each worker carries its map to the next
+  subgraph, so it grows to the largest subgraph seen. Disabling reuse entirely
+  changed peak RSS from 4.10 to 4.11 GB. Not it.
+- **jemalloc page retention.** Rust links jemalloc and C++ does not, which fits
+  a diffuse excess with no single structure behind it. Forcing immediate return
+  with `dirty_decay_ms:0,muzzy_decay_ms:0` *raised* peak RSS to 3.86 GB from
+  3.76 GB and cost 1.7 s. Not it.
+
+The remaining 0.3 GB is unattributed. It is 10% on the one configuration where
+Rust is 30% faster, so it is recorded rather than chased further.
+
+### Vertex-map reuse is workload-dependent
+
+The investigation turned up a larger effect than the memory gap. Removing the
+reuse entirely made 4-thread read mode *faster*: local contraction 44.67 s to
+33.45 s, wall 1:20.91 to 1:09.14, on identical unitig counts. `clear_and_reserve`
+calls `HashTable::clear`, which walks the table's capacity rather than its
+length, so a map still sized for the largest bucket makes every later, smaller
+subgraph pay for that size.
+
+It does not generalize. On the full Salmonella corpus reuse is worth 8.2 s of
+local contraction at 64 threads and 7.7 s at 16, and at 256 threads in read mode
+the whole phase is 4.4 s and the policy is irrelevant. The effect only appears
+where one worker processes thousands of subgraphs in sequence.
+
+A carried-map policy keyed on `LocalBucketGroup::stored_bytes` — reuse only when
+the held map is not sized more than N times beyond the incoming subgraph — was
+implemented and swept:
+
+| slack | read t4 local | ref t64 local |
+| ---: | ---: | ---: |
+| always reuse | 44.67 | 136.72 |
+| 64 | 44.08 | 135.52 |
+| 16 | 34.87 | 140.92 |
+| 4 | 35.22 | 139.76 |
+| never reuse | 33.45 | 144.93 |
+
+No threshold serves both: the read win needs 16 or below, and those same values
+cost 3-4 s on the reference corpus. That `stored_bytes` fails to separate them
+suggests it is a poor proxy — bytes per vertex differs sharply between long
+low-coverage reference contigs and short high-coverage reads. The change was
+reverted rather than landed with a regression.
+
+A criterion built on the map's actual capacity against a running mean of recent
+subgraph vertex counts would self-calibrate per corpus, and is the shape any
+future attempt should take.

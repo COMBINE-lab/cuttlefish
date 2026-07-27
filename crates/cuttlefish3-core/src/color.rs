@@ -357,6 +357,9 @@ impl ColorRunStreamReader {
 
 pub struct ConcurrentColorRepository {
     dir: PathBuf,
+    /// Total sources in the build. The hybrid encoding picks its regime from
+    /// how much of this a colour covers, so it must be exact.
+    num_colors: u32,
     table: AtomicColorTable,
     overflow: SccHashMap<u64, ColorCoordinate, FastBuildHasher>,
     workers: Vec<Mutex<ColorWorkerWriter>>,
@@ -551,6 +554,8 @@ impl AtomicColorTable {
 struct ColorWorkerWriter {
     records: u32,
     output: BufWriter<File>,
+    /// Reused across records so encoding a colour allocates nothing.
+    bits: BitWriter,
 }
 
 impl ConcurrentColorRepository {
@@ -562,6 +567,7 @@ impl ConcurrentColorRepository {
         dir: impl AsRef<Path>,
         workers: usize,
         expected_colors: usize,
+        num_colors: u32,
     ) -> Result<Self, ColorError> {
         if workers == 0 || workers > 256 {
             return Err(ColorError::InvalidWorkerCount(workers));
@@ -587,10 +593,12 @@ impl ConcurrentColorRepository {
             worker_writers.push(Mutex::new(ColorWorkerWriter {
                 records: 0,
                 output: BufWriter::with_capacity(COLOR_BUFFER_BYTES, file),
+                bits: BitWriter::default(),
             }));
         }
         Ok(Self {
             dir,
+            num_colors,
             table: AtomicColorTable::with_expected_entries(expected_colors),
             overflow: SccHashMap::with_capacity_and_hasher(8, FastBuildHasher::default()),
             workers: worker_writers,
@@ -619,7 +627,7 @@ impl ConcurrentColorRepository {
                     .lock()
                     .map_err(|_| ColorError::PoisonedWriter)?;
                 let index = writer.records;
-                if let Err(source) = write_source_set(&mut writer.output, sources) {
+                if let Err(source) = write_color_record(&mut writer, sources, self.num_colors) {
                     self.table.abort(slot);
                     return Err(ColorError::Io {
                         path: color_worker_path(&self.dir, worker),
@@ -647,7 +655,7 @@ impl ConcurrentColorRepository {
                             .lock()
                             .map_err(|_| ColorError::PoisonedWriter)?;
                         let index = writer.records;
-                        write_source_set(&mut writer.output, sources).map_err(|source| {
+                        write_color_record(&mut writer, sources, self.num_colors).map_err(|source| {
                             ColorError::Io {
                                 path: color_worker_path(&self.dir, worker),
                                 source,
@@ -691,9 +699,11 @@ impl ConcurrentColorRepository {
             })?;
             records.push(writer.records);
         }
+        let num_colors = self.num_colors;
         let manifest = ColorRepositoryManifest {
             dir: self.dir.clone(),
             records,
+            num_colors,
         };
         manifest.write()?;
         Ok(manifest)
@@ -704,6 +714,8 @@ impl ConcurrentColorRepository {
 pub struct ColorRepositoryManifest {
     pub dir: PathBuf,
     pub records: Vec<u32>,
+    /// Total sources, needed to pick the decoding regime per record.
+    pub num_colors: u32,
 }
 
 impl ColorRepositoryManifest {
@@ -744,11 +756,11 @@ impl ColorRepositoryManifest {
                     source,
                 })?,
             );
-        writeln!(metadata, "format\tcf3rs-color-repository-v1")
+        writeln!(metadata, "format\tcf3rs-color-repository-v2")
             .and_then(|_| writeln!(metadata, "k\t{k}"))
             .and_then(|_| writeln!(metadata, "fasta\t{}", fasta_path.display()))
             .and_then(|_| writeln!(metadata, "coordinate\tworker:u8,index:u32"))
-            .and_then(|_| writeln!(metadata, "encoding\tcount-varint,delta-source-varints"))
+            .and_then(|_| writeln!(metadata, "encoding\thybrid-elias-delta: sparse gaps, bitmap, complement gaps"))
             .and_then(|_| writeln!(metadata, "source_count\t{}", sources.len()))
             .map_err(|source| ColorError::Io {
                 path: metadata_path.clone(),
@@ -783,10 +795,11 @@ impl ColorRepositoryManifest {
             })?,
         );
         for index in 0..=target {
-            let sources = read_source_set(&mut input).map_err(|source| ColorError::Io {
-                path: path.clone(),
-                source,
-            })?;
+            let sources =
+                read_color_record(&mut input, self.num_colors).map_err(|source| ColorError::Io {
+                    path: path.clone(),
+                    source,
+                })?;
             if index == target {
                 return Ok(sources);
             }
@@ -799,25 +812,272 @@ fn color_worker_path(dir: &Path, worker: usize) -> PathBuf {
     dir.join(format!("{worker:03}.colors"))
 }
 
-fn write_source_set(output: &mut impl Write, sources: &[u32]) -> std::io::Result<()> {
-    write_varint(output, sources.len() as u32)?;
-    let mut previous = 0u32;
-    for &source in sources {
-        write_varint(output, source - previous)?;
-        previous = source;
-    }
-    Ok(())
+/// Writes one length-prefixed colour record.
+///
+/// The bit stream is byte-padded and preceded by its length so a record can be
+/// skipped without decoding it, which is what sequential lookup does.
+fn write_color_record(
+    writer: &mut ColorWorkerWriter,
+    sources: &[u32],
+    num_colors: u32,
+) -> std::io::Result<()> {
+    writer.bits.clear();
+    encode_source_set(&mut writer.bits, sources, num_colors);
+    let encoded = writer.bits.finish();
+    write_varint(&mut writer.output, encoded.len() as u32)?;
+    writer.output.write_all(encoded)
 }
 
-fn read_source_set(input: &mut impl Read) -> std::io::Result<Vec<u32>> {
+/// Inverse of [`write_color_record`].
+fn read_color_record(input: &mut impl Read, num_colors: u32) -> std::io::Result<Vec<u32>> {
     let len = read_varint(input)? as usize;
+    let mut encoded = vec![0u8; len];
+    input.read_exact(&mut encoded)?;
+    decode_source_set(&mut BitReader::new(&encoded), num_colors)
+}
+
+/// Appends bits least-significant-first, matching Fulgor's `bit_vector_builder`.
+#[derive(Default)]
+struct BitWriter {
+    bytes: Vec<u8>,
+    accumulator: u64,
+    pending: u32,
+    /// Scratch for the bitmap regime, which would otherwise allocate a buffer
+    /// as wide as the source set for every middling colour.
+    bitmap: Vec<u64>,
+}
+
+impl BitWriter {
+    fn clear(&mut self) {
+        self.bytes.clear();
+        self.accumulator = 0;
+        self.pending = 0;
+    }
+
+    fn push(&mut self, value: u64, count: u32) {
+        debug_assert!(count <= 64);
+        let mut value = value & mask(count);
+        let mut count = count;
+        while count > 0 {
+            let take = count.min(64 - self.pending);
+            self.accumulator |= (value & mask(take)) << self.pending;
+            self.pending += take;
+            value >>= take;
+            count -= take;
+            while self.pending >= 8 {
+                self.bytes.push(self.accumulator as u8);
+                self.accumulator >>= 8;
+                self.pending -= 8;
+            }
+        }
+    }
+
+    /// Pads to the next byte so each record starts on a byte boundary.
+    fn finish(&mut self) -> &[u8] {
+        if self.pending > 0 {
+            self.bytes.push(self.accumulator as u8);
+            self.accumulator = 0;
+            self.pending = 0;
+        }
+        &self.bytes
+    }
+}
+
+/// Reads the stream [`BitWriter`] produces.
+struct BitReader<'a> {
+    bytes: &'a [u8],
+    position: usize,
+}
+
+impl<'a> BitReader<'a> {
+    fn new(bytes: &'a [u8]) -> Self {
+        Self { bytes, position: 0 }
+    }
+
+    fn bit(&mut self) -> std::io::Result<u64> {
+        let byte = self
+            .bytes
+            .get(self.position / 8)
+            .ok_or_else(|| std::io::Error::from(std::io::ErrorKind::UnexpectedEof))?;
+        let bit = (byte >> (self.position % 8)) & 1;
+        self.position += 1;
+        Ok(u64::from(bit))
+    }
+
+    fn take(&mut self, count: u32) -> std::io::Result<u64> {
+        let mut value = 0u64;
+        for index in 0..count {
+            value |= self.bit()? << index;
+        }
+        Ok(value)
+    }
+
+    fn skip_zeros(&mut self) -> std::io::Result<u64> {
+        let mut zeros = 0u64;
+        while self.bit()? == 0 {
+            zeros += 1;
+        }
+        Ok(zeros)
+    }
+}
+
+fn mask(bits: u32) -> u64 {
+    if bits >= 64 {
+        u64::MAX
+    } else {
+        (1u64 << bits) - 1
+    }
+}
+
+/// Index of the most significant set bit; `value` must be nonzero.
+fn msb(value: u64) -> u32 {
+    63 - value.leading_zeros()
+}
+
+fn write_gamma(out: &mut BitWriter, value: u64) {
+    let shifted = value + 1;
+    let bits = msb(shifted);
+    // Unary: `bits` zeros then a one.
+    out.push(1u64 << bits, bits + 1);
+    out.push(shifted & mask(bits), bits);
+}
+
+fn read_gamma(input: &mut BitReader<'_>) -> std::io::Result<u64> {
+    let bits = input.skip_zeros()? as u32;
+    Ok((input.take(bits)? | (1u64 << bits)) - 1)
+}
+
+fn write_delta(out: &mut BitWriter, value: u64) {
+    let shifted = value + 1;
+    let bits = msb(shifted);
+    write_gamma(out, u64::from(bits));
+    out.push(shifted & mask(bits), bits);
+}
+
+fn read_delta(input: &mut BitReader<'_>) -> std::io::Result<u64> {
+    let bits = read_gamma(input)? as u32;
+    Ok((input.take(bits)? | (1u64 << bits)) - 1)
+}
+
+/// Encodes `sources` with Fulgor's hybrid scheme, given `num_colors` sources
+/// in total.
+///
+/// Three regimes, chosen by how much of the source set a colour covers. Sparse
+/// sets are gap-coded; middling ones become a plain bitmap; very dense ones are
+/// gap-coded over their complement. The last is what matters for a pangenome of
+/// near-identical assemblies, where a core k-mer occurs in almost every source:
+/// a flat list spends one code per member, while the complement spends one per
+/// absence.
+fn encode_source_set(out: &mut BitWriter, sources: &[u32], num_colors: u32) {
+    let len = sources.len() as u64;
+    write_delta(out, len);
+    if sources.is_empty() {
+        return;
+    }
+    let sparse_threshold = u64::from(num_colors) / 4;
+    let dense_threshold = u64::from(num_colors) * 3 / 4;
+    if len < sparse_threshold {
+        write_delta(out, u64::from(sources[0]));
+        for pair in sources.windows(2) {
+            write_delta(out, u64::from(pair[1] - (pair[0] + 1)));
+        }
+    } else if len < dense_threshold {
+        let words = (num_colors as usize).div_ceil(64);
+        out.bitmap.clear();
+        out.bitmap.resize(words, 0);
+        for &source in sources {
+            out.bitmap[source as usize / 64] |= 1u64 << (source % 64);
+        }
+        let mut remaining = num_colors;
+        for index in 0..words {
+            let word = out.bitmap[index];
+            let width = remaining.min(64);
+            out.push(word, width);
+            remaining -= width;
+        }
+    } else {
+        // Gap-code the complement: every source not in the set.
+        let mut previous: Option<u32> = None;
+        let mut absent = 0u32;
+        for &source in sources {
+            while absent < source {
+                write_absent(out, absent, &mut previous);
+                absent += 1;
+            }
+            absent = source + 1;
+        }
+        while absent < num_colors {
+            write_absent(out, absent, &mut previous);
+            absent += 1;
+        }
+    }
+}
+
+fn write_absent(out: &mut BitWriter, value: u32, previous: &mut Option<u32>) {
+    match previous {
+        None => write_delta(out, u64::from(value)),
+        Some(prior) => write_delta(out, u64::from(value - (*prior + 1))),
+    }
+    *previous = Some(value);
+}
+
+/// Inverse of [`encode_source_set`].
+fn decode_source_set(input: &mut BitReader<'_>, num_colors: u32) -> std::io::Result<Vec<u32>> {
+    let len = read_delta(input)? as usize;
+    if len == 0 {
+        return Ok(Vec::new());
+    }
+    let sparse_threshold = u64::from(num_colors) / 4;
+    let dense_threshold = u64::from(num_colors) * 3 / 4;
     let mut sources = Vec::with_capacity(len);
-    let mut previous = 0u32;
-    for _ in 0..len {
-        previous = previous
-            .checked_add(read_varint(input)?)
-            .ok_or_else(|| std::io::Error::from(std::io::ErrorKind::InvalidData))?;
+    if (len as u64) < sparse_threshold {
+        let mut previous = read_delta(input)? as u32;
         sources.push(previous);
+        for _ in 1..len {
+            let gap = read_delta(input)? as u32;
+            let value = previous
+                .checked_add(1)
+                .and_then(|base| base.checked_add(gap))
+                .ok_or_else(|| std::io::Error::from(std::io::ErrorKind::InvalidData))?;
+            sources.push(value);
+            previous = value;
+        }
+    } else if (len as u64) < dense_threshold {
+        let mut remaining = num_colors;
+        let mut base = 0u32;
+        while remaining > 0 {
+            let width = remaining.min(64);
+            let word = input.take(width)?;
+            for offset in 0..width {
+                if word >> offset & 1 == 1 {
+                    sources.push(base + offset);
+                }
+            }
+            base += width;
+            remaining -= width;
+        }
+    } else {
+        // Reconstruct by walking the complement.
+        let absent_count = num_colors as usize - len;
+        let mut absent = Vec::with_capacity(absent_count);
+        let mut previous: Option<u32> = None;
+        for _ in 0..absent_count {
+            let gap = read_delta(input)? as u32;
+            let value = match previous {
+                None => gap,
+                Some(prior) => prior + 1 + gap,
+            };
+            absent.push(value);
+            previous = Some(value);
+        }
+        let mut next_absent = absent.into_iter().peekable();
+        for value in 0..num_colors {
+            if next_absent.peek() == Some(&value) {
+                next_absent.next();
+            } else {
+                sources.push(value);
+            }
+        }
     }
     Ok(sources)
 }
@@ -919,6 +1179,85 @@ impl std::error::Error for ColorError {}
 
 #[cfg(test)]
 mod tests {
+    /// Round-trips every regime the hybrid encoder can choose, including the
+    /// boundaries where it switches between them.
+    #[test]
+    fn hybrid_color_sets_round_trip_across_regimes() {
+        let num_colors = 512u32;
+        let sparse = num_colors / 4;
+        let dense = num_colors * 3 / 4;
+        let mut cases: Vec<Vec<u32>> = vec![
+            vec![0],
+            vec![511],
+            vec![0, 511],
+            vec![0, 1, 2, 3],
+            (0..num_colors).collect(),
+        ];
+        // One case per regime, plus each boundary from both sides.
+        for size in [
+            1,
+            sparse - 1,
+            sparse,
+            sparse + 1,
+            num_colors / 2,
+            dense - 1,
+            dense,
+            dense + 1,
+            num_colors - 1,
+        ] {
+            cases.push((0..size).collect());
+            // A spread-out set of the same size exercises larger gaps.
+            let stride = (num_colors / size.max(1)).max(1);
+            cases.push(
+                (0..size)
+                    .map(|index| (index * stride) % num_colors)
+                    .collect::<std::collections::BTreeSet<_>>()
+                    .into_iter()
+                    .collect(),
+            );
+        }
+
+        for sources in cases {
+            let mut writer = BitWriter::default();
+            encode_source_set(&mut writer, &sources, num_colors);
+            let encoded = writer.finish().to_vec();
+            let decoded = decode_source_set(&mut BitReader::new(&encoded), num_colors).unwrap();
+            assert_eq!(decoded, sources, "round trip failed for {} sources", sources.len());
+        }
+    }
+
+    #[test]
+    fn elias_codes_round_trip() {
+        let mut writer = BitWriter::default();
+        let values: Vec<u64> = (0..64).chain([1000, 65535, 1 << 20, u32::MAX as u64]).collect();
+        for &value in &values {
+            write_gamma(&mut writer, value);
+            write_delta(&mut writer, value);
+        }
+        let encoded = writer.finish().to_vec();
+        let mut reader = BitReader::new(&encoded);
+        for &value in &values {
+            assert_eq!(read_gamma(&mut reader).unwrap(), value);
+            assert_eq!(read_delta(&mut reader).unwrap(), value);
+        }
+    }
+
+    /// A dense set must cost far less than one code per member; this is the
+    /// whole point of the complement regime for pangenome-scale colours.
+    #[test]
+    fn dense_sets_encode_smaller_than_their_membership() {
+        let num_colors = 4096u32;
+        let sources: Vec<u32> = (0..num_colors).filter(|value| value % 64 != 0).collect();
+        let mut writer = BitWriter::default();
+        encode_source_set(&mut writer, &sources, num_colors);
+        let encoded_len = writer.finish().len();
+        assert!(
+            encoded_len < sources.len() / 4,
+            "dense set took {encoded_len} bytes for {} members",
+            sources.len()
+        );
+    }
+
     use super::*;
     use std::sync::Arc;
 
@@ -986,7 +1325,7 @@ mod tests {
             std::process::id(),
             std::thread::current().id()
         ));
-        let repository = ConcurrentColorRepository::create(&dir, 2, 8).unwrap();
+        let repository = ConcurrentColorRepository::create(&dir, 2, 8, 64).unwrap();
         let first = repository.resolve_or_insert(17, &[1, 2, 150], 0).unwrap();
         let duplicate = repository.resolve_or_insert(17, &[1, 2, 150], 1).unwrap();
         assert_eq!(first, duplicate);
@@ -998,7 +1337,7 @@ mod tests {
             .write_metadata(31, Path::new("graph.fa"), &[PathBuf::from("source.fa")])
             .unwrap();
         let metadata = fs::read_to_string(dir.join("metadata.tsv")).unwrap();
-        assert!(metadata.contains("format\tcf3rs-color-repository-v1"));
+        assert!(metadata.contains("format\tcf3rs-color-repository-v2"));
         assert!(metadata.contains("source\t1\tsource.fa"));
         let manifest_text = fs::read_to_string(dir.join("manifest.tsv")).unwrap();
         assert!(manifest_text.contains("000.colors"));
@@ -1013,7 +1352,7 @@ mod tests {
             std::process::id(),
             std::thread::current().id()
         ));
-        let repository = ConcurrentColorRepository::create(&dir, 2, 8).unwrap();
+        let repository = ConcurrentColorRepository::create(&dir, 2, 8, 64).unwrap();
         let mut coordinates = Vec::new();
         for key in 0..24u64 {
             coordinates.push(

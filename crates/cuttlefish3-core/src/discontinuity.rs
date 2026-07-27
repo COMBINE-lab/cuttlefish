@@ -17107,6 +17107,7 @@ pub fn emit_uncolored_external_discontinuity_inputs_with_threads_in_dir<const K:
         None,
         direct_output_path,
         None,
+        0,
     )
 }
 
@@ -17121,6 +17122,7 @@ pub fn emit_colored_external_discontinuity_inputs_with_threads_in_dir<const K: u
     label_path: impl AsRef<Path>,
     color_path: impl AsRef<Path>,
     color_repository_dir: impl AsRef<Path>,
+    num_colors: u32,
 ) -> Result<ExternalDiscontinuityInputs<K>, DiscontinuityInputError> {
     if cutoff == 0 {
         return Err(DiscontinuityInputError::InvalidCutoff);
@@ -17138,6 +17140,7 @@ pub fn emit_colored_external_discontinuity_inputs_with_threads_in_dir<const K: u
         // Colored builds emit no trivial FASTA; every unitig carries colors.
         None,
         Some(color_repository_dir.as_ref()),
+        num_colors,
     )
 }
 
@@ -17157,7 +17160,7 @@ fn emit_uncolored_discontinuity_inputs_with_threads_impl<const K: usize>(
     let entries = read_manifest(bucket_dir.as_ref())?;
     if let Some(label_path) = label_path {
         let external = contract_local_subgraphs_into_external_inputs::<K>(
-            &entries, cutoff, threads, label_path, None, None, None,
+            &entries, cutoff, threads, label_path, None, None, None, 0,
         )?;
         return external_inputs_to_memory_inputs(external);
     }
@@ -17237,6 +17240,7 @@ fn contract_local_subgraphs_into_external_inputs<const K: usize>(
     color_path: Option<&Path>,
     direct_output_path: Option<&Path>,
     color_repository_dir: Option<&Path>,
+    num_colors: u32,
 ) -> Result<ExternalDiscontinuityInputs<K>, DiscontinuityInputError> {
     // C++ hands both colored and uncolored local contractions to expansion in
     // max-unitig coordinate buckets. The representation does not depend on
@@ -17317,6 +17321,7 @@ fn contract_local_subgraphs_into_external_inputs<const K: usize>(
                 dir,
                 threads.min(256),
                 expected_colors.max(entries.len() * 8),
+                num_colors,
             )
         })
         .transpose()?;

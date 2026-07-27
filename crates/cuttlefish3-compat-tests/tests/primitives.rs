@@ -110,6 +110,7 @@ fn colored_bucket_local_runs_resolve_after_external_collation() {
         root.join("local.labels"),
         root.join("local.colors"),
         root.join("local.color-repository"),
+        3,
     )
     .unwrap();
     let repository = inputs.color_repository().unwrap().clone();

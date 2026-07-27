@@ -52,6 +52,13 @@ pub fn build_colored_from_buckets<const K: usize>(
     // output; only the run-sidecar above is scratch.
     let color_repository_dir =
         PathBuf::from(format!("{}.cf3rs.color-repository", params.output_prefix));
+    // The hybrid colour encoding selects its regime from the total source
+    // count, so it has to be known before any colour is written.
+    let sources = expand_input_paths(params)?;
+    // Source IDs are one-based, so the regime thresholds and the bitmap width
+    // are sized by the largest ID plus one, as C++ does with max_source_id + 1.
+    let num_colors = u32::try_from(sources.len() + 1)
+        .map_err(|_| ColoredBuildError::ColorRequired)?;
 
     let local_started = Instant::now();
     report_process_memory("before colored local contraction");
@@ -64,6 +71,7 @@ pub fn build_colored_from_buckets<const K: usize>(
         &label_path,
         &color_path,
         &color_repository_dir,
+        num_colors,
     )?;
     eprintln!(
         "cuttlefish3-rs: colored local contraction completed in {:.3}s; {} local unitig(s)",
@@ -95,7 +103,7 @@ pub fn build_colored_from_buckets<const K: usize>(
         .color_repository()
         .ok_or(ColoredBuildError::MissingColorArtifacts)?
         .clone();
-    color_repository.write_metadata(params.k, &output_path, &expand_input_paths(params)?)?;
+    color_repository.write_metadata(params.k, &output_path, &sources)?;
     Ok(ColoredBuildStats {
         input_buckets: inputs.stats.input_buckets,
         bucket_records: inputs.stats.weak_superkmers,

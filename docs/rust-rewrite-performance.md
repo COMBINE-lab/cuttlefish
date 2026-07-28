@@ -1381,6 +1381,48 @@ hole. The 2.15 GB of tail waste the 256 KiB segment size was chosen to bound
 costs no real disk, so that choice is far less sensitive than its derivation
 assumed.
 
+## Descriptor limits need no user intervention
+
+Cuttlefish 3 previously wanted `ulimit -n` raised: the C++ build needs 65,536
+on the full Salmonella corpus. The Rust rewrite already needed far less --
+peak descriptor use is 2,185 uncolored and 3,210 colored at 64 threads -- and
+now it needs nothing at all from the user.
+
+The CLI raises its own soft limit to the hard limit at startup. That requires
+no privileges, a process may always do it, and on a systemd host the hard
+limit is typically 524288 against a soft limit of 1024. The phases that fan
+out already size themselves from the live budget, so a generous limit simply
+lets them stay wide.
+
+The container work made this necessary rather than merely nice. Bucket and
+edge-matrix containers hold descriptors for the whole build where the
+per-file layouts opened and closed per flush, so eager creation of 128 + 129
+of them turned a soft budget into a hard floor -- a build under `ulimit -n
+384` failed outright on `00125.wskc`. Both now size their container count from
+the descriptor budget and fall back to sharing: several atlases, or several
+matrix rows, to one file. That is safe without further work because the
+segment cursor is already atomic, and it costs only read locality, since a
+row's planned runs treat another row's bytes as gaps.
+
+Measured floors on 10,000 genomes at 64 threads, forcing the soft limit down:
+
+| `ulimit -n` | result | wall | bucket containers | matrix containers |
+| ---: | --- | ---: | ---: | ---: |
+| 1024 | ok | 35.97 s | 128 | 129 |
+| 512 | ok | 35.94 s | 62 | 125 |
+| 256 | ok | 39.09 s | 1 | 28 |
+| 192 | ok | 42.57 s | 1 | 1 |
+| 128 | fails | — | — | — |
+
+The floor is 192, which is exactly where the pre-container build failed too, so
+graceful degradation is preserved rather than merely restored. Nothing is lost
+until 512, and the full-corpus build runs with the stock 1024 soft limit
+untouched because the process raises it first.
+
+Recommendation, if one is wanted despite the above: any limit at or above 1024,
+which is the default nearly everywhere. Below 512 the build still completes but
+narrows its fanout and slows.
+
 ## Colour-set encoding
 
 The colour repository is the largest artifact a colored build produces, and it

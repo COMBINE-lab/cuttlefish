@@ -5,6 +5,7 @@
 //! build does not require one descriptor per subgraph. The on-disk format is a
 //! private, versioned Rust format and may be compressed with LZ4 blocks.
 
+use crate::discontinuity::{current_open_file_count, open_file_limit};
 use crate::dna::{Base, ascii_base_bits, valid_ascii_base_bits};
 use crate::params::BuildParams;
 use crate::partition::WeakSuperKmer;
@@ -51,6 +52,11 @@ const SUBGRAPH_CHUNK_BYTES: usize = 64 * 1024;
 /// against 7.3 MB of chain metadata. Larger segments trade waste for fewer
 /// reads, and reads were measured not to matter on local storage.
 const DEFAULT_BUCKET_SEGMENT_BYTES: u64 = 256 * 1024;
+
+/// Descriptors left for everything downstream of the bucket containers: the
+/// edge-matrix containers, local-unitig buckets, stitch writers and the
+/// coordinate-bucket fanout, all of which plan against the same budget.
+const RESERVED_NON_BUCKET_DESCRIPTORS: usize = 384;
 
 fn bucket_segment_bytes() -> u64 {
     static BYTES: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
@@ -99,6 +105,26 @@ struct BucketContainerFile {
 }
 
 impl BucketContainers {
+    /// Containers a build may hold open, given the descriptor budget.
+    ///
+    /// One per atlas is the natural choice and what a normal limit allows, but
+    /// it must not be a floor: the per-file layout this replaced held no
+    /// descriptors between flushes, so a tight `ulimit -n` merely narrowed the
+    /// fanout planners rather than failing the build. Sharing a container
+    /// between atlases costs nothing -- the segment cursor is atomic, so
+    /// concurrent reservations from different atlas locks are already safe --
+    /// and keeps that property.
+    fn plan_container_count(atlas_count: usize) -> usize {
+        let budget = open_file_limit()
+            .saturating_sub(current_open_file_count())
+            // Local contraction opens the edge-matrix containers and the
+            // local-unitig buckets on top of these, and the fanout planners
+            // want room of their own.
+            .saturating_sub(RESERVED_NON_BUCKET_DESCRIPTORS)
+            / 2;
+        atlas_count.min(budget.max(1))
+    }
+
     fn create(bucket_dir: &Path, container_count: usize) -> Result<Self, BucketError> {
         let mut files = Vec::with_capacity(container_count);
         for index in 0..container_count {
@@ -153,6 +179,11 @@ impl BucketContainers {
     #[inline]
     pub fn segment_bytes(&self) -> u64 {
         self.segment_bytes
+    }
+
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.files.len()
     }
 
     #[inline]
@@ -1647,11 +1678,18 @@ impl SharedBucketSink {
             source,
         })?;
 
-        // One container per atlas. An atlas already serializes its own writes
-        // with a mutex, so a container is only ever written by the thread
-        // holding that lock and needs no lock of its own.
+        // One container per atlas where descriptors allow. An atlas
+        // serializes its own writes with a mutex, so at one-to-one a container
+        // has a single writer; when several atlases share one, the atomic
+        // segment cursor keeps that safe.
         let atlas_count = graph_count.div_ceil(ATLAS_GRAPH_COUNT);
-        let containers = BucketContainers::create(&bucket_dir, atlas_count)?;
+        let container_count = BucketContainers::plan_container_count(atlas_count);
+        if container_count < atlas_count {
+            eprintln!(
+                "cuttlefish3-rs: descriptor budget allows {container_count} bucket container(s) rather than {atlas_count}"
+            );
+        }
+        let containers = BucketContainers::create(&bucket_dir, container_count)?;
 
         Ok(Arc::new(Self {
             bucket_dir,
@@ -2104,7 +2142,7 @@ impl SharedBucketSink {
                 &mut finish_flush_stats,
             )?;
             let first_graph_id = atlas.first_graph_id;
-            let container = first_graph_id / ATLAS_GRAPH_COUNT;
+            let container = (first_graph_id / ATLAS_GRAPH_COUNT) % self.containers.len();
             for (local_graph_id, meta) in atlas.files.iter_mut().enumerate() {
                 let meta = std::mem::take(meta);
                 if meta.total_records == 0 {
@@ -2141,7 +2179,9 @@ impl SharedBucketSink {
                 && !self.colored
                 && !force_split_compression(),
             segment_bytes: self.containers.segment_bytes(),
-            container_count: self.atlases.len(),
+            // The number of containers actually created, which is not the
+            // atlas count when the descriptor budget narrowed it.
+            container_count: self.containers.len(),
         };
         write_container_manifest(&self.bucket_dir, &header, &entries)?;
         Ok(BucketEmitStats {
@@ -2288,7 +2328,7 @@ impl SharedBucketAtlas {
         compress_buckets: bool,
         stats: &mut SharedBucketFlushStats,
     ) -> Result<(), BucketError> {
-        let container = self.first_graph_id / ATLAS_GRAPH_COUNT;
+        let container = (self.first_graph_id / ATLAS_GRAPH_COUNT) % containers.len();
         let Self {
             files, scratch, ..
         } = self;

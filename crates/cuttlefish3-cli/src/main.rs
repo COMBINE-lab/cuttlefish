@@ -1,5 +1,5 @@
 use cuttlefish3_core::colored::{ColoredBuildError, build_colored_from_buckets};
-use cuttlefish3_core::discontinuity::report_process_memory;
+use cuttlefish3_core::discontinuity::{raise_open_file_limit, report_process_memory};
 use cuttlefish3_core::input::InputError;
 use cuttlefish3_core::params::{BuildParams, ParamError};
 use cuttlefish3_core::partition::{
@@ -51,6 +51,16 @@ where
             // those workers for the entire build.
             configure_global_parallelism(if params.k <= 31 { 1 } else { params.threads })
                 .map_err(|error| CliError::Parallelism(error.to_string()))?;
+            // Nobody should have to discover `ulimit -n` to build a graph.
+            // Raising the soft limit to the hard limit needs no privileges,
+            // and the phases that fan out adapt to whatever budget they see,
+            // so a generous one simply lets them stay wide.
+            let (fd_before, fd_after) = raise_open_file_limit();
+            if fd_after > fd_before {
+                eprintln!(
+                    "cuttlefish3-rs: raised open-file limit from {fd_before} to {fd_after}"
+                );
+            }
             eprintln!(
                 "cuttlefish3-rs: parsed build request for k={}, l={}, cutoff={}, color={}",
                 params.k,
@@ -78,7 +88,7 @@ where
                 partition_stats.max_graph_superkmers()
             );
             eprintln!(
-                "cuttlefish3-rs: wrote {} weak-superkmer bucket file(s), {} byte(s), manifest at {}/manifest.tsv",
+                "cuttlefish3-rs: wrote {} weak-superkmer bucket(s), {} byte(s), in {}",
                 emission.buckets.bucket_files,
                 emission.buckets.bytes_written,
                 emission.buckets.bucket_dir.display()

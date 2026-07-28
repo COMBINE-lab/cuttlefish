@@ -20,8 +20,8 @@
 
 mod resource;
 
-use resource::{current_open_file_count, open_file_limit};
-pub use resource::{report_process_memory, trim_process_allocations};
+pub(crate) use resource::{current_open_file_count, open_file_limit};
+pub use resource::{raise_open_file_limit, report_process_memory, trim_process_allocations};
 
 use crate::DEFAULT_VERTEX_PARTITIONS;
 use crate::Side;
@@ -858,8 +858,21 @@ struct EdgeContainerFile {
 
 impl EdgeContainers {
     fn create(dir: &Path, partition_count: usize) -> Result<Self, SerialCollationError> {
-        let mut files = Vec::with_capacity(partition_count);
-        for index in 0..partition_count {
+        // Never a floor: the per-block files this replaced were opened and
+        // closed per flush, so a tight limit narrowed the fanout planners
+        // rather than failing the build.
+        let budget = open_file_limit()
+            .saturating_sub(current_open_file_count())
+            .saturating_sub(RESERVED_NON_MATRIX_DESCRIPTORS)
+            / 2;
+        let container_count = partition_count.min(budget.max(1));
+        if container_count < partition_count {
+            eprintln!(
+                "cuttlefish3-rs: descriptor budget allows {container_count} edge-matrix container(s) rather than {partition_count}"
+            );
+        }
+        let mut files = Vec::with_capacity(container_count);
+        for index in 0..container_count {
             let path = dir.join(format!("{index:05}.edge"));
             let file = OpenOptions::new()
                 .create(true)
@@ -886,10 +899,16 @@ impl EdgeContainers {
 
     #[inline]
     fn container_index(&self, block_index: usize) -> usize {
-        match self.axis {
+        let axis_index = match self.axis {
             EdgeContainerAxis::Row => block_index / self.partition_count,
             EdgeContainerAxis::Column => block_index % self.partition_count,
-        }
+        };
+        // One file per row is the natural mapping and what a normal descriptor
+        // limit allows. Under a tight one, rows share files: the cursor is
+        // atomic so concurrent appends stay safe, and a shared container only
+        // costs read locality, because a row's planned runs simply see the
+        // other rows' bytes as gaps.
+        axis_index % self.files.len()
     }
 
     #[inline]
@@ -1016,6 +1035,11 @@ impl EdgeContainers {
 
 /// Runs merge across gaps below this. Reading a short gap costs less than a
 /// second syscall and a second seek.
+/// Descriptors left for everything the edge matrix shares the build with:
+/// the bucket containers still open for reading, local-unitig buckets, stitch
+/// writers and the coordinate-bucket fanout.
+const RESERVED_NON_MATRIX_DESCRIPTORS: usize = 192;
+
 const CONTAINER_READ_GAP_BYTES: u64 = 1024 * 1024;
 
 /// Runs are capped here so a container pass stays parallelisable and its

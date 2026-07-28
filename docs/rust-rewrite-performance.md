@@ -1127,12 +1127,19 @@ pairs, plus two column-axis runs:
 | --- | ---: | ---: | --- |
 | edge-matrix files | 8,384 | 129 | structural |
 | peak files, work dir | 23,376 (spread 901) | 17,250 (spread 61) | yes |
-| peak work-dir bytes | 237.1 GB (1.4) | 231.2 GB (1.3) | yes |
+| peak work-dir bytes* | 237.1 GB (1.4) | 231.2 GB (1.3) | yes |
 | contraction | 12.319 s (0.52) | 12.805 s (0.38) | yes, +4.0% |
 | expansion | 29.057 s (3.82) | 30.459 s (3.59) | no |
 | wall | 296.3 s (4.96) | 292.4 s (6.21) | no |
 | peak RSS | 9.22 GB (0.65) | 9.39 GB (0.57) | no |
 | `wchar` | 439 GB | 438 GB | unchanged |
+
+\* These two are *apparent* size: the sampler still used `du -sb` when this
+pair was measured, and only later moved to allocated blocks after XFS
+speculative preallocation turned out to hold 332.7 GB for 237.8 GB of bucket
+data. Both arms were sampled identically so the delta stands, but the absolute
+figures understate real disk and are not comparable with the allocated-block
+numbers reported for the bucket containers below.
 
 Only two metrics have a delta larger than either arm's spread, and they are the
 file count and the peak disk. Every run emitted the exact 252,487,658 unitigs

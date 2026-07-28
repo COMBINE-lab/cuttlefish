@@ -1339,6 +1339,48 @@ Taken together, a full uncolored build now peaks at 2,423 files against 23,786
 and 233.6 GB against 331.3 GB, and `cf3-compare-fasta` matched all 252,487,658
 strand-normalized unitigs against the 64-thread C++ reference.
 
+### Stage 3 was investigated and rejected
+
+After both container stages a full uncolored build peaks at 3,713 files:
+2,048 stitch-coords, 1,024 local-unitig buckets, 512 expansion buckets, 257
+edge-matrix (129 containers plus 128 meta-vertex buckets) and 129 wsk. The
+obvious next step is to containerise the first three, and measurement says not
+to bother.
+
+**Peak disk cannot improve.** Sampling the work directory every two seconds and
+capturing its composition at the maximum shows the peak is 236.98 GB and
+consists *only* of the bucket directory, at the end of partitioning before
+local contraction has written anything. The other directories grow into space
+the buckets vacate, and the total never returns to that mark. There is real
+speculative preallocation elsewhere -- 35.9 GB in the edge matrix, 29.2 GB in
+local-unitig buckets, 18.4 GB in stitch-coords, 7.1 GB in expansion buckets --
+but all of it sits at moments below the peak. `ftruncate` to the exact size
+frees it (verified: 27.9% slack to 0%), and doing so would not move the number
+that matters.
+
+Note that slack tracks file *size*, not file count: stitch-coords carry ~0% at
+10,000 genomes and 63% at 149,998. Consolidating files makes each one bigger
+and so makes speculative preallocation worse, which is why the edge-matrix
+containers carry 47.5%.
+
+**File count alone does not pay**, which the edge matrix already established at
+8,384 files to 129 for no measurable time.
+
+**The syscall churn is gone.** Across a whole 1,000-genome build: 176,845
+`pwrite64`, 35,841 `openat` and 2,097 `lseek`. The residual ~13 opens per file
+is eviction in the stitch writers, three orders of magnitude below the 14.4
+million flush envelopes that justified the bucket work.
+
+The only surviving argument is inode and directory-metadata pressure on Lustre
+and GPFS, which this host cannot measure -- the same argument the edge-matrix
+stage rests on. stitch-coords would be the cheapest target at 2,048 files.
+
+One incidental result: the wsk directory's slack is *negative* (-1.0%) because
+the reserved-but-unwritten tail of each bucket's final segment is a sparse
+hole. The 2.15 GB of tail waste the 256 KiB segment size was chosen to bound
+costs no real disk, so that choice is far less sensitive than its derivation
+assumed.
+
 ## Colour-set encoding
 
 The colour repository is the largest artifact a colored build produces, and it

@@ -1584,6 +1584,35 @@ and 11.0 is the Apple Silicon minimum regardless, comfortably inside the APFS
 era, and above any ambiguity about when `F_PUNCHHOLE` became available. Nothing
 in the code needs a newer API than that.
 
+## The leapmap and scc contractors were unreachable, not inferior
+
+Two alternative column-scan implementations sat behind
+`CF3_RS_LEAPMAP_CONTRACTOR` and `CF3_RS_SCC_CONTRACTOR`, and the natural
+assumption was that they had been measured and lost. They had not. Both
+arrived in the initial rewrite commit and no commit or measurement in this
+record judged them either way.
+
+They could not have been. Putting `panic!` at the top of each and running the
+whole suite plus a real build with each variable explicitly set reaches
+neither. They live on the in-memory `SerialEdgeMatrix` contraction path, which
+production does not use -- the CLI goes through `contract_blocked_external` --
+and the only remaining callers of that path are two tests that pass
+`threads = 1`, which returns at the `threads <= 1` guard before the variables
+are ever read. The env switches were dead controls on a dead path, which
+`dead_code` could not see precisely because the branch made the functions
+syntactically reachable.
+
+Both are removed, along with the two switches. That drops the `leapfrog`
+dependency entirely, since `LeapMap` had no other user. `scc` stays: it is
+also the colored repository's overflow map, which holds 36.8 million entries
+on the full corpus, so it is production code rather than an experiment.
+
+The lesson generalises past these two. An `#[allow(dead_code)]` is visible and
+an env-gated branch is not, so a switch that selects nothing is a more durable
+way to keep dead code alive than simply forgetting to delete it. Worth probing
+the remaining `CF3_RS_*` switches the same way before trusting that any of them
+still do what their name says.
+
 ## Colour-set encoding
 
 The colour repository is the largest artifact a colored build produces, and it

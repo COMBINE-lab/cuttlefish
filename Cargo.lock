@@ -15,12 +15,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "683d7910e743518b0e34f1186f92494becacb047c7b6bf616c96772180fef923"
 
 [[package]]
-name = "atomic"
-version = "0.5.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c59bdb34bc650a32731b31bd8f0829cc15d24a708ee31559e0bb34f2bc320cba"
-
-[[package]]
 name = "cc"
 version = "1.2.66"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -77,7 +71,6 @@ version = "0.1.0"
 dependencies = [
  "flate2",
  "hashbrown",
- "leapfrog",
  "libc",
  "lz4_flex",
  "rayon",
@@ -128,16 +121,6 @@ dependencies = [
  "allocator-api2",
  "equivalent",
  "foldhash",
-]
-
-[[package]]
-name = "leapfrog"
-version = "0.3.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "051c43359ac3022f1703b7996522be4db9c5e5e8781636ee90a41c4c567ff0ee"
-dependencies = [
- "allocator-api2",
- "atomic",
 ]
 
 [[package]]

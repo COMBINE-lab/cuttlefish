@@ -14,7 +14,6 @@ path = "src/lib.rs"
 # faster than flate2's default `miniz_oxide` backend on gzipped FASTQ input.
 flate2 = { version = "1.1.9", default-features = false, features = ["zlib-rs"] }
 hashbrown = { version = "0.16.1", features = ["raw-entry"] }
-leapfrog = { version = "0.3.3", features = ["stable_alloc"] }
 # Bucket blocks use only `lz4_flex::block`, so the frame module and its
 # twox-hash dependency are dropped.
 #

@@ -5,7 +5,7 @@
 //! only as a debug/reference implementation.
 
 use crate::Side;
-use crate::buckets::{BucketError, BucketReader, read_manifest};
+use crate::buckets::{BucketError, BucketStore};
 use crate::discontinuity::{
     SerialUncoloredCollator, emit_uncolored_external_discontinuity_inputs_with_threads_in_dir,
     report_process_memory, trim_process_allocations,
@@ -65,18 +65,16 @@ pub fn build_uncolored_with_debug_global_contractor<const K: usize>(
     let mut observed_edges = 0u64;
     let mut graph = DebugGlobalCanonicalGraph::<K>::new(cutoff);
 
-    let entries = read_manifest(bucket_dir)?;
+    let (store, entries) = BucketStore::open_dir(bucket_dir)?;
     for entry in &entries {
-        let reader = BucketReader::open(&entry.path)?;
+        let mut reader = store.reader(entry)?;
         let header = reader.header();
         if header.k != params.k || header.minimizer_len != params.minimizer_len || header.colored {
             return Err(UncoloredBuildError::BucketParamsMismatch {
-                path: entry.path.clone(),
+                path: bucket_dir.to_path_buf(),
             });
         }
-        drop(reader);
 
-        let mut reader = BucketReader::open(&entry.path)?;
         while let Some(record) = reader.next_record()? {
             bucket_records += 1;
             observed_edges += graph.add_label(&record.label)?;

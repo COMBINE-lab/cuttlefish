@@ -1,5 +1,5 @@
 use cuttlefish3_core::Side;
-use cuttlefish3_core::buckets::{BucketReader, read_manifest};
+use cuttlefish3_core::buckets::BucketStore;
 use cuttlefish3_core::discontinuity::{
     DISCONTINUITY_PARALLELIZATION_OPPORTUNITIES, DiscontinuityEdge, DiscontinuityEndpoint,
     DiscontinuityInputStats, DiscontinuityInputs, EdgePathInfo, FullSerialContractionStats,
@@ -390,7 +390,7 @@ fn emits_external_memory_weak_superkmer_buckets() {
     let manifest = fs::read_to_string(emitted.buckets.bucket_dir.join("manifest.tsv")).unwrap();
     assert!(manifest.starts_with("graph_id\trecords\tpath\n"));
 
-    let entries = read_manifest(&emitted.buckets.bucket_dir).unwrap();
+    let (store, entries) = BucketStore::open_dir(&emitted.buckets.bucket_dir).unwrap();
     assert_eq!(entries.len(), emitted.buckets.bucket_files);
     assert_eq!(
         entries.iter().map(|entry| entry.records).sum::<u64>(),
@@ -399,7 +399,7 @@ fn emits_external_memory_weak_superkmer_buckets() {
 
     let mut decoded_records = 0u64;
     for entry in entries {
-        let mut reader = BucketReader::open(&entry.path).unwrap();
+        let mut reader = store.reader(&entry).unwrap();
         assert_eq!(reader.header().k, 7);
         assert_eq!(reader.header().minimizer_len, 3);
         assert_eq!(reader.header().graph_id, entry.graph_id);
@@ -447,7 +447,7 @@ fn constructs_local_subgraphs_from_emitted_buckets() {
     params.work_dir = output_prefix.parent().unwrap().display().to_string();
 
     let emitted = emit_weak_superkmer_buckets::<7>(&params, DEFAULT_SUBGRAPH_COUNT).unwrap();
-    let entries = read_manifest(&emitted.buckets.bucket_dir).unwrap();
+    let (store, entries) = BucketStore::open_dir(&emitted.buckets.bucket_dir).unwrap();
 
     let mut weak_superkmers = 0u64;
     let mut observed_vertices = 0u64;
@@ -455,7 +455,8 @@ fn constructs_local_subgraphs_from_emitted_buckets() {
     let mut unique_vertices = 0u64;
     for entry in entries {
         let mut subgraph =
-            LocalSubgraph::<7>::from_bucket_path(&entry.path, params.cutoff()).unwrap();
+            LocalSubgraph::<7>::from_manifest_entries(&store, std::slice::from_ref(&entry), params.cutoff())
+                .unwrap();
         assert_eq!(subgraph.graph_id, entry.graph_id);
         assert_eq!(subgraph.stats.weak_superkmers, entry.records);
         assert_eq!(

@@ -11,6 +11,7 @@ use crate::partition::WeakSuperKmer;
 use std::collections::BTreeMap;
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
+use std::os::unix::fs::FileExt;
 use std::path::{Path, PathBuf};
 use std::sync::{
     Arc, Mutex,
@@ -34,6 +35,213 @@ const MAX_PENDING_BUCKET_BYTES: usize = 1024 * 1024;
 const MAX_TOTAL_PENDING_BYTES: usize = 128 * 1024 * 1024;
 const ATLAS_GRAPH_COUNT: usize = 128;
 const SUBGRAPH_CHUNK_BYTES: usize = 64 * 1024;
+
+/// Bytes reserved per segment when buckets share container files.
+///
+/// The segment decouples the write unit from the read and reclaim units. A
+/// flush stays at `SUBGRAPH_CHUNK_BYTES` because that is a memory budget --
+/// 16,384 buckets times 64 KiB of staging -- while reads become segment-sized
+/// and reclaim becomes block-aligned, which is what lets a consumed bucket be
+/// punched out in full.
+///
+/// Sized from measurement on 149,998 Salmonella assemblies: 237.8 GB across
+/// 16,385 buckets, mean 14.51 MB, p1 8.80 MB and p99 22.77 MB, so the
+/// distribution is tight and the only real cost is the partial final segment
+/// each bucket leaves. At 256 KiB that is 2.15 GB, 0.90% of the directory,
+/// against 7.3 MB of chain metadata. Larger segments trade waste for fewer
+/// reads, and reads were measured not to matter on local storage.
+const DEFAULT_BUCKET_SEGMENT_BYTES: u64 = 256 * 1024;
+
+fn bucket_segment_bytes() -> u64 {
+    static BYTES: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    *BYTES.get_or_init(|| {
+        std::env::var("CF3_RS_BUCKET_SEGMENT_BYTES")
+            .ok()
+            .and_then(|value| value.parse::<u64>().ok())
+            .filter(|bytes| *bytes >= MAX_RECORD_BYTES as u64 && bytes % 4096 == 0)
+            .unwrap_or(DEFAULT_BUCKET_SEGMENT_BYTES)
+    })
+}
+
+/// The physical files backing the weak-super-k-mer buckets.
+///
+/// One container per atlas rather than one file per bucket, taking a 16,384
+/// bucket build from 16,385 files to 129. Two things make this cheap rather
+/// than intricate. Every bucket already writes under its atlas's mutex
+/// (`SharedBucketSink::append_bucket`), and a container holds exactly one
+/// atlas's buckets, so a container is only ever written by the thread holding
+/// that lock and needs no lock of its own. And a flush no longer opens
+/// anything: `BucketFile::open_existing` cost an `openat`, seven unbuffered
+/// reads to re-read a 42-byte header, a revalidation, an `lseek` and a `close`
+/// on *every* 64 KiB flush, which is about eleven syscalls times the 14.4
+/// million flushes a full-corpus build performs. A container flush is one
+/// `pwrite`.
+///
+/// The measured prize is smaller than that count suggests -- partitioning's
+/// whole system time is 436.7 s of CPU across 64 threads, so the ceiling is
+/// a couple of seconds of wall -- and larger somewhere unexpected. XFS
+/// speculatively preallocates on extending writes, and with 16,385 repeatedly
+/// reopened files it held 332.7 GB for 237.8 GB of data. Writing 128 files
+/// instead returns that 94.9 GB.
+#[derive(Debug)]
+pub struct BucketContainers {
+    files: Vec<BucketContainerFile>,
+    segment_bytes: u64,
+}
+
+#[derive(Debug)]
+struct BucketContainerFile {
+    path: PathBuf,
+    file: File,
+    /// Next unreserved byte offset. Atomic for shape rather than contention:
+    /// one atlas owns one container.
+    cursor: AtomicU64,
+}
+
+impl BucketContainers {
+    fn create(bucket_dir: &Path, container_count: usize) -> Result<Self, BucketError> {
+        let mut files = Vec::with_capacity(container_count);
+        for index in 0..container_count {
+            let path = bucket_dir.join(format!("{index:05}.wskc"));
+            let file = OpenOptions::new()
+                .create(true)
+                .truncate(true)
+                .read(true)
+                .write(true)
+                .open(&path)
+                .map_err(|source| BucketError::Io {
+                    path: path.clone(),
+                    source,
+                })?;
+            files.push(BucketContainerFile {
+                path,
+                file,
+                cursor: AtomicU64::new(0),
+            });
+        }
+        Ok(Self {
+            files,
+            segment_bytes: bucket_segment_bytes(),
+        })
+    }
+
+    /// Opens the containers a finished manifest names, for reading.
+    fn open(bucket_dir: &Path, container_count: usize, segment_bytes: u64) -> Result<Self, BucketError> {
+        let mut files = Vec::with_capacity(container_count);
+        for index in 0..container_count {
+            let path = bucket_dir.join(format!("{index:05}.wskc"));
+            let file = OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(&path)
+                .map_err(|source| BucketError::Io {
+                    path: path.clone(),
+                    source,
+                })?;
+            files.push(BucketContainerFile {
+                path,
+                file,
+                cursor: AtomicU64::new(0),
+            });
+        }
+        Ok(Self {
+            files,
+            segment_bytes,
+        })
+    }
+
+    #[inline]
+    pub fn segment_bytes(&self) -> u64 {
+        self.segment_bytes
+    }
+
+    #[inline]
+    fn reserve_segment(&self, container: usize) -> u64 {
+        self.files[container]
+            .cursor
+            .fetch_add(self.segment_bytes, Ordering::Relaxed)
+    }
+
+    fn write_at(&self, container: usize, offset: u64, bytes: &[u8]) -> Result<(), BucketError> {
+        let file = &self.files[container];
+        file.file
+            .write_all_at(bytes, offset)
+            .map_err(|source| BucketError::Io {
+                path: file.path.clone(),
+                source,
+            })
+    }
+
+    fn read_at(&self, container: usize, offset: u64, buf: &mut [u8]) -> Result<(), BucketError> {
+        let file = &self.files[container];
+        file.file
+            .read_exact_at(buf, offset)
+            .map_err(|source| BucketError::Io {
+                path: file.path.clone(),
+                source,
+            })
+    }
+
+    pub fn paths(&self) -> impl Iterator<Item = &Path> {
+        self.files.iter().map(|file| file.path.as_path())
+    }
+}
+
+// Reclaim is deliberately not implemented yet.
+//
+// Today local contraction unlinks each bucket as it consumes it, and that
+// incremental release is what bounds peak disk; a container cannot be unlinked
+// until all 128 of its buckets are done, so the obvious worry is that this
+// trades a metadata win for a disk-footprint regression. Two measurements say
+// to check before building the machinery. Containers start 94.9 GB *below* the
+// per-file layout because they do not accumulate XFS speculative preallocation
+// (332.7 GB held for 237.8 GB of data across 16,385 files), and the sampled
+// work-directory peak on a full uncolored run matches the bucket directory's
+// own size, which puts the peak at the end of partitioning -- before any
+// reclaim, per-file or otherwise, has happened.
+//
+// If that holds, deferred reclaim costs nothing at the peak and the segment
+// layout is doing its job unaided. If the peak turns out to move into local
+// contraction, the fix is `fallocate(FALLOC_FL_PUNCH_HOLE)` over a consumed
+// bucket's segments, which is exactly why segments are reserved at a 4 KiB
+// multiple: a punch frees the whole range instead of leaving partial blocks
+// behind, which is the one thing raw extents could not do. Verified working on
+// this filesystem -- a 32 MiB punch freed exactly 32 MiB.
+
+/// Sequential reader over one bucket's segment chain.
+///
+/// `BucketReader` uses its source purely as a `Read`, so presenting the chain
+/// this way leaves the whole decode path -- record iteration, the compressed
+/// block framing, the borrowed-record fast path -- exactly as it was for whole
+/// files. Reads stop at each segment boundary, and the caller's `BufReader`
+/// hides that.
+#[derive(Debug)]
+struct SegmentChainReader {
+    containers: Arc<BucketContainers>,
+    container: usize,
+    segments: Vec<u64>,
+    len: u64,
+    pos: u64,
+}
+
+impl Read for SegmentChainReader {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        if self.pos >= self.len || buf.is_empty() {
+            return Ok(0);
+        }
+        let segment_bytes = self.containers.segment_bytes;
+        let index = (self.pos / segment_bytes) as usize;
+        let within = self.pos % segment_bytes;
+        let room = (segment_bytes - within).min(self.len - self.pos);
+        let take = (buf.len() as u64).min(room) as usize;
+        let offset = self.segments[index] + within;
+        self.containers
+            .read_at(self.container, offset, &mut buf[..take])
+            .map_err(std::io::Error::other)?;
+        self.pos += take as u64;
+        Ok(take)
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BucketEmitStats {
@@ -123,12 +331,61 @@ struct SharedBucketFlushStats {
     calls: u64,
 }
 
+/// Where one bucket's bytes live.
+///
+/// Both forms are real: the shared production sink writes containers, and
+/// `BucketEmitter` -- the serial emitter the tests and the legacy path use --
+/// still writes one file per bucket with its header inline. Keeping the enum
+/// lets the reader serve both without duplicating the decode path.
 #[derive(Debug, Clone, PartialEq, Eq)]
-/// Manifest entry for one physical weak-super-k-mer bucket file.
+pub enum BucketLocation {
+    /// One whole file, carrying its own 42-byte header.
+    File(PathBuf),
+    /// A chain of segments inside a shared container. The header that a whole
+    /// file would carry lives in the manifest instead, so nothing has to be
+    /// re-read and revalidated per flush.
+    Container {
+        container: usize,
+        /// Segment indices in write order; byte offset is index * segment_bytes.
+        segments: Vec<u32>,
+        /// Logical length, which is the sum of the payload written into those
+        /// segments and is generally less than their reserved capacity.
+        bytes: u64,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+/// Manifest entry for one weak-super-k-mer bucket.
 pub struct BucketManifestEntry {
     pub graph_id: usize,
     pub records: u64,
-    pub path: PathBuf,
+    pub location: BucketLocation,
+}
+
+impl BucketManifestEntry {
+    /// Bytes this bucket occupies, for the longest-bucket-first scheduler.
+    ///
+    /// Containers make this free. The per-file layout had to `stat` all 16,384
+    /// buckets before local contraction could sort them.
+    pub fn stored_bytes(&self) -> Result<u64, BucketError> {
+        match &self.location {
+            BucketLocation::File(path) => fs::metadata(path)
+                .map(|meta| meta.len())
+                .map_err(|source| BucketError::Io {
+                    path: path.clone(),
+                    source,
+                }),
+            BucketLocation::Container { bytes, .. } => Ok(*bytes),
+        }
+    }
+
+    /// The whole-file path, when the bucket is one.
+    pub fn file_path(&self) -> Option<&Path> {
+        match &self.location {
+            BucketLocation::File(path) => Some(path.as_path()),
+            BucketLocation::Container { .. } => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -176,10 +433,104 @@ pub(crate) struct BorrowedBucketPackedRecord<'a> {
     pub words: &'a [u64],
 }
 
+/// Byte source behind a `BucketReader`.
+///
+/// The decode path treats its source as a plain sequential `Read`, so a
+/// segment chain slots in beside a whole file without any of the record
+/// iteration, block framing, or borrowed-record handling needing to know.
+enum BucketSource {
+    File(File),
+    Chain(SegmentChainReader),
+}
+
+impl Read for BucketSource {
+    #[inline]
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        match self {
+            Self::File(file) => file.read(buf),
+            Self::Chain(chain) => chain.read(buf),
+        }
+    }
+}
+
+/// Opens buckets, whichever layout the directory uses.
+///
+/// A container directory keeps the shared header in its manifest, so this owns
+/// both and hands out readers; a whole-file directory carries the header in
+/// each bucket and this just opens paths. Threading one of these through the
+/// consumers replaces threading a path per bucket.
+pub struct BucketStore {
+    containers: Option<Arc<BucketContainers>>,
+    header: Option<ContainerManifestHeader>,
+}
+
+impl BucketStore {
+    /// Opens a bucket directory and reads its manifest.
+    pub fn open_dir(
+        bucket_dir: impl AsRef<Path>,
+    ) -> Result<(Self, Vec<BucketManifestEntry>), BucketError> {
+        let bucket_dir = bucket_dir.as_ref();
+        if let Some((header, entries)) = read_container_manifest(bucket_dir)? {
+            let containers =
+                BucketContainers::open(bucket_dir, header.container_count, header.segment_bytes)?;
+            return Ok((
+                Self {
+                    containers: Some(Arc::new(containers)),
+                    header: Some(header),
+                },
+                entries,
+            ));
+        }
+        let entries = read_manifest(bucket_dir)?;
+        Ok((
+            Self {
+                containers: None,
+                header: None,
+            },
+            entries,
+        ))
+    }
+
+    /// A store for a directory that is known to hold whole bucket files.
+    pub fn files_only() -> Self {
+        Self {
+            containers: None,
+            header: None,
+        }
+    }
+
+    pub fn containers(&self) -> Option<&Arc<BucketContainers>> {
+        self.containers.as_ref()
+    }
+
+    /// Opens one bucket for reading.
+    pub fn reader(&self, entry: &BucketManifestEntry) -> Result<BucketReader, BucketError> {
+        match &entry.location {
+            BucketLocation::File(path) => BucketReader::open(path),
+            BucketLocation::Container {
+                container,
+                segments,
+                bytes,
+            } => {
+                let (Some(containers), Some(header)) = (&self.containers, &self.header) else {
+                    return Err(BucketError::MalformedRecord);
+                };
+                BucketReader::open_chain(
+                    Arc::clone(containers),
+                    *container,
+                    segments.clone(),
+                    *bytes,
+                    header.bucket_header(entry.graph_id, entry.records),
+                )
+            }
+        }
+    }
+}
+
 /// Streaming reader for one versioned weak-super-k-mer bucket.
 pub struct BucketReader {
     path: PathBuf,
-    file: BufReader<File>,
+    file: BufReader<BucketSource>,
     header: BucketHeader,
     records_read: u64,
     block_attrs: Vec<u8>,
@@ -197,12 +548,47 @@ impl BucketReader {
             path: path.clone(),
             source,
         })?;
-        let mut file = BufReader::with_capacity(1024 * 1024, file);
+        let mut file = BufReader::with_capacity(1024 * 1024, BucketSource::File(file));
         let header = read_header(&mut file, &path)?;
 
         Ok(Self {
             path,
             file,
+            header,
+            records_read: 0,
+            block_attrs: Vec::new(),
+            block_labels: Vec::new(),
+            block_interleaved: Vec::new(),
+            compressed_block: Vec::new(),
+            block_records: 0,
+            block_record: 0,
+        })
+    }
+
+    /// Opens a bucket stored as a segment chain.
+    ///
+    /// There is no inline header to skip: a container's buckets keep theirs in
+    /// the manifest, so the chain starts at the first record byte and the
+    /// caller supplies the header it would otherwise have read.
+    fn open_chain(
+        containers: Arc<BucketContainers>,
+        container: usize,
+        segments: Vec<u32>,
+        bytes: u64,
+        header: BucketHeader,
+    ) -> Result<Self, BucketError> {
+        let segment_bytes = containers.segment_bytes();
+        let path = containers.files[container].path.clone();
+        let chain = SegmentChainReader {
+            containers,
+            container,
+            segments: segments.iter().map(|s| u64::from(*s) * segment_bytes).collect(),
+            len: bytes,
+            pos: 0,
+        };
+        Ok(Self {
+            path,
+            file: BufReader::with_capacity(1024 * 1024, BucketSource::Chain(chain)),
             header,
             records_read: 0,
             block_attrs: Vec::new(),
@@ -558,6 +944,216 @@ impl Iterator for BucketRecords {
     }
 }
 
+const CONTAINER_MANIFEST_MAGIC: &[u8; 8] = b"CF3WSKC1";
+const CONTAINER_MANIFEST_NAME: &str = "manifest.bin";
+
+/// The parameters every bucket in a container directory shares.
+///
+/// This is the 42-byte per-bucket header, hoisted. Under the per-file layout it
+/// was written once per bucket and then re-read and revalidated on *every*
+/// 64 KiB flush, because a flush reopened the file to append. Stored once for
+/// the whole directory, that disappears; the only genuinely per-bucket field
+/// was the record count, which the manifest already carried.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContainerManifestHeader {
+    pub k: u16,
+    pub minimizer_len: u16,
+    pub graph_count: usize,
+    pub colored: bool,
+    pub label_words: usize,
+    pub compressed: bool,
+    pub interleaved_compression: bool,
+    pub segment_bytes: u64,
+    pub container_count: usize,
+}
+
+impl ContainerManifestHeader {
+    fn compression_code(&self) -> u8 {
+        if self.interleaved_compression {
+            2
+        } else {
+            u8::from(self.compressed)
+        }
+    }
+
+    /// The per-bucket header a whole-file reader would have found inline.
+    fn bucket_header(&self, graph_id: usize, records: u64) -> BucketHeader {
+        BucketHeader {
+            k: self.k,
+            minimizer_len: self.minimizer_len,
+            graph_count: self.graph_count,
+            graph_id,
+            colored: self.colored,
+            label_words: self.label_words,
+            compressed: self.compressed,
+            interleaved_compression: self.interleaved_compression,
+            records,
+        }
+    }
+}
+
+fn write_u32_to(out: &mut Vec<u8>, value: u32) {
+    out.extend_from_slice(&value.to_le_bytes());
+}
+
+fn write_u64_to(out: &mut Vec<u8>, value: u64) {
+    out.extend_from_slice(&value.to_le_bytes());
+}
+
+/// Writes the container manifest: shared header, then one record per bucket.
+pub fn write_container_manifest(
+    bucket_dir: &Path,
+    header: &ContainerManifestHeader,
+    entries: &[BucketManifestEntry],
+) -> Result<(), BucketError> {
+    let path = bucket_dir.join(CONTAINER_MANIFEST_NAME);
+    let mut out = Vec::with_capacity(64 + entries.len() * 32);
+    out.extend_from_slice(CONTAINER_MANIFEST_MAGIC);
+    out.extend_from_slice(&header.k.to_le_bytes());
+    out.extend_from_slice(&header.minimizer_len.to_le_bytes());
+    write_u64_to(&mut out, header.graph_count as u64);
+    out.push(u8::from(header.colored));
+    out.push(header.label_words as u8);
+    out.push(header.compression_code());
+    out.push(0);
+    write_u64_to(&mut out, header.segment_bytes);
+    write_u64_to(&mut out, header.container_count as u64);
+    write_u64_to(&mut out, entries.len() as u64);
+    for entry in entries {
+        let BucketLocation::Container {
+            container,
+            segments,
+            bytes,
+        } = &entry.location
+        else {
+            return Err(BucketError::MalformedManifest(path.clone()));
+        };
+        write_u64_to(&mut out, entry.graph_id as u64);
+        write_u64_to(&mut out, entry.records);
+        write_u64_to(&mut out, *bytes);
+        write_u32_to(&mut out, *container as u32);
+        write_u32_to(&mut out, segments.len() as u32);
+        for segment in segments {
+            write_u32_to(&mut out, *segment);
+        }
+    }
+    fs::write(&path, &out).map_err(|source| BucketError::Io {
+        path: path.clone(),
+        source,
+    })
+}
+
+struct ManifestCursor<'a> {
+    bytes: &'a [u8],
+    pos: usize,
+    path: &'a Path,
+}
+
+impl<'a> ManifestCursor<'a> {
+    fn take(&mut self, len: usize) -> Result<&'a [u8], BucketError> {
+        let end = self
+            .pos
+            .checked_add(len)
+            .filter(|end| *end <= self.bytes.len())
+            .ok_or_else(|| BucketError::MalformedManifest(self.path.to_path_buf()))?;
+        let slice = &self.bytes[self.pos..end];
+        self.pos = end;
+        Ok(slice)
+    }
+
+    fn u16(&mut self) -> Result<u16, BucketError> {
+        Ok(u16::from_le_bytes(self.take(2)?.try_into().unwrap()))
+    }
+
+    fn u32(&mut self) -> Result<u32, BucketError> {
+        Ok(u32::from_le_bytes(self.take(4)?.try_into().unwrap()))
+    }
+
+    fn u64(&mut self) -> Result<u64, BucketError> {
+        Ok(u64::from_le_bytes(self.take(8)?.try_into().unwrap()))
+    }
+}
+
+/// Reads the container manifest, if this directory has one.
+pub fn read_container_manifest(
+    bucket_dir: impl AsRef<Path>,
+) -> Result<Option<(ContainerManifestHeader, Vec<BucketManifestEntry>)>, BucketError> {
+    let path = bucket_dir.as_ref().join(CONTAINER_MANIFEST_NAME);
+    let bytes = match fs::read(&path) {
+        Ok(bytes) => bytes,
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(source) => {
+            return Err(BucketError::Io {
+                path: path.clone(),
+                source,
+            });
+        }
+    };
+    let mut cursor = ManifestCursor {
+        bytes: &bytes,
+        pos: 0,
+        path: &path,
+    };
+    if cursor.take(8)? != CONTAINER_MANIFEST_MAGIC {
+        return Err(BucketError::MalformedManifest(path.clone()));
+    }
+    let k = cursor.u16()?;
+    let minimizer_len = cursor.u16()?;
+    let graph_count = cursor.u64()? as usize;
+    let flags = cursor.take(4)?;
+    let (colored, label_words, compression) = (flags[0], flags[1], flags[2]);
+    if colored > 1 || compression > 2 || flags[3] != 0 {
+        return Err(BucketError::MalformedManifest(path.clone()));
+    }
+    let header = ContainerManifestHeader {
+        k,
+        minimizer_len,
+        graph_count,
+        colored: colored == 1,
+        label_words: label_words as usize,
+        compressed: compression != 0,
+        interleaved_compression: compression == 2,
+        segment_bytes: cursor.u64()?,
+        container_count: cursor.u64()? as usize,
+    };
+    if header.segment_bytes == 0 || header.label_words as usize != label_word_count(k, minimizer_len)
+    {
+        return Err(BucketError::MalformedManifest(path.clone()));
+    }
+    let bucket_count = cursor.u64()? as usize;
+    let mut entries = Vec::with_capacity(bucket_count);
+    for _ in 0..bucket_count {
+        let graph_id = cursor.u64()? as usize;
+        let records = cursor.u64()?;
+        let bytes_len = cursor.u64()?;
+        let container = cursor.u32()? as usize;
+        let segment_count = cursor.u32()? as usize;
+        if graph_id >= graph_count || container >= header.container_count {
+            return Err(BucketError::MalformedManifest(path.clone()));
+        }
+        let mut segments = Vec::with_capacity(segment_count);
+        for _ in 0..segment_count {
+            segments.push(cursor.u32()?);
+        }
+        // The chain must be able to hold the logical length, and must not be
+        // more than one segment longer than it needs to be.
+        let capacity = segment_count as u64 * header.segment_bytes;
+        if bytes_len > capacity || capacity.saturating_sub(bytes_len) >= header.segment_bytes {
+            return Err(BucketError::MalformedManifest(path.clone()));
+        }
+        entries.push(BucketManifestEntry {
+            graph_id,
+            records,
+            location: BucketLocation::Container {
+                container,
+                segments,
+                bytes: bytes_len,
+            },
+        });
+    }
+    Ok(Some((header, entries)))
+}
+
 /// Reads and validates `manifest.tsv` from a bucket directory.
 pub fn read_manifest(
     bucket_dir: impl AsRef<Path>,
@@ -602,7 +1198,7 @@ pub fn read_manifest(
         out.push(BucketManifestEntry {
             graph_id,
             records,
-            path: PathBuf::from(bucket_path),
+            location: BucketLocation::File(PathBuf::from(bucket_path)),
         });
     }
 
@@ -686,7 +1282,15 @@ fn coalesce_bucket_group(
     group: &(usize, Vec<BucketManifestEntry>),
 ) -> Result<(usize, u64, PathBuf, u64), BucketError> {
     let (graph_id, graph_entries) = group;
-    let first_header = read_bucket_header(&graph_entries[0].path)?;
+    // Coalescing concatenates raw payloads, which only whole uncompressed
+    // bucket files expose; a container's buckets are read through the store.
+    let entry_path = |entry: &BucketManifestEntry| {
+        entry
+            .file_path()
+            .map(Path::to_path_buf)
+            .ok_or_else(|| BucketError::MalformedManifest(bucket_dir.to_path_buf()))
+    };
+    let first_header = read_bucket_header(&entry_path(&graph_entries[0])?)?;
     let mut writer = BucketFile::create(
         bucket_dir,
         first_header.k,
@@ -699,10 +1303,10 @@ fn coalesce_bucket_group(
     )?;
 
     for entry in graph_entries {
-        let copied_records =
-            copy_bucket_payload(&entry.path, &first_header, *graph_id, &mut writer)?;
+        let path = entry_path(entry)?;
+        let copied_records = copy_bucket_payload(&path, &first_header, *graph_id, &mut writer)?;
         if copied_records != entry.records {
-            return Err(BucketError::MalformedHeader(entry.path.clone()));
+            return Err(BucketError::MalformedHeader(path));
         }
     }
 

@@ -25,7 +25,7 @@ pub use resource::{report_process_memory, trim_process_allocations};
 
 use crate::DEFAULT_VERTEX_PARTITIONS;
 use crate::Side;
-use crate::buckets::{BucketError, BucketManifestEntry, read_manifest};
+use crate::buckets::{BucketError, BucketManifestEntry, BucketStore};
 use crate::color::{
     ColorError, ColorRepositoryManifest, ColorRunSidecar, ColorRunSidecarWriter,
     ConcurrentColorRepository, ConcurrentColorRunSidecarWriter, append_color_runs,
@@ -17460,8 +17460,9 @@ pub fn emit_uncolored_external_discontinuity_inputs_with_threads_in_dir<const K:
     if threads == 0 {
         return Err(DiscontinuityInputError::InvalidThreadCount);
     }
-    let entries = read_manifest(bucket_dir.as_ref())?;
+    let (store, entries) = BucketStore::open_dir(bucket_dir.as_ref())?;
     contract_local_subgraphs_into_external_inputs::<K>(
+        &store,
         &entries,
         cutoff,
         threads,
@@ -17492,8 +17493,9 @@ pub fn emit_colored_external_discontinuity_inputs_with_threads_in_dir<const K: u
     if threads == 0 {
         return Err(DiscontinuityInputError::InvalidThreadCount);
     }
-    let entries = read_manifest(bucket_dir.as_ref())?;
+    let (store, entries) = BucketStore::open_dir(bucket_dir.as_ref())?;
     contract_local_subgraphs_into_external_inputs::<K>(
+        &store,
         &entries,
         cutoff,
         threads,
@@ -17519,15 +17521,15 @@ fn emit_uncolored_discontinuity_inputs_with_threads_impl<const K: usize>(
         return Err(DiscontinuityInputError::InvalidThreadCount);
     }
 
-    let entries = read_manifest(bucket_dir.as_ref())?;
+    let (store, entries) = BucketStore::open_dir(bucket_dir.as_ref())?;
     if let Some(label_path) = label_path {
         let external = contract_local_subgraphs_into_external_inputs::<K>(
-            &entries, cutoff, threads, label_path, None, None, None, 0,
+            &store, &entries, cutoff, threads, label_path, None, None, None, 0,
         )?;
         return external_inputs_to_memory_inputs(external);
     }
 
-    let outputs = contract_local_subgraphs::<K>(&entries, cutoff, threads)?;
+    let outputs = contract_local_subgraphs::<K>(&store, &entries, cutoff, threads)?;
     let mut inputs = DiscontinuityInputs::empty(DiscontinuityInputStats {
         input_buckets: entries.len(),
         ..DiscontinuityInputStats::default()
@@ -17595,6 +17597,7 @@ fn external_inputs_to_memory_inputs<const K: usize>(
 }
 
 fn contract_local_subgraphs_into_external_inputs<const K: usize>(
+    store: &BucketStore,
     entries: &[BucketManifestEntry],
     cutoff: u32,
     threads: usize,
@@ -17761,6 +17764,7 @@ fn contract_local_subgraphs_into_external_inputs<const K: usize>(
         let mut reusable_vertices = None;
         for (offset, group) in groups.iter().enumerate() {
             let output = contract_local_subgraph::<K>(
+                store,
                 group,
                 cutoff,
                 color_repository.as_ref(),
@@ -17866,6 +17870,7 @@ fn contract_local_subgraphs_into_external_inputs<const K: usize>(
                             break;
                         };
                         let output = contract_local_subgraph::<K>(
+                            store,
                             group,
                             cutoff,
                             sink.color_repository,
@@ -18450,6 +18455,7 @@ fn vertex_map_reuse_slack() -> usize {
 }
 
 fn contract_local_subgraphs<const K: usize>(
+    store: &BucketStore,
     entries: &[BucketManifestEntry],
     cutoff: u32,
     threads: usize,
@@ -18471,6 +18477,7 @@ fn contract_local_subgraphs<const K: usize>(
         let mut reusable_vertices = None;
         for (offset, group) in groups.iter().enumerate() {
             outputs.push(contract_local_subgraph::<K>(
+                store,
                 group,
                 cutoff,
                 None,
@@ -18501,6 +18508,7 @@ fn contract_local_subgraphs<const K: usize>(
                         break;
                     };
                     chunk_outputs.push(contract_local_subgraph::<K>(
+                        store,
                         group,
                         cutoff,
                         None,
@@ -18557,13 +18565,14 @@ fn local_bucket_groups(
         .into_iter()
         .enumerate()
         .map(|(index, (graph_id, entries))| {
+            // Containers answer this from the manifest. Whole-file buckets
+            // still cost one stat each, which is 16,384 of them before the
+            // longest-bucket-first sort can run at all.
             let stored_bytes = entries.iter().try_fold(0u64, |bytes, entry| {
-                fs::metadata(&entry.path)
-                    .map(|metadata| bytes.saturating_add(metadata.len()))
-                    .map_err(|source| DiscontinuityInputError::Io {
-                        path: entry.path.clone(),
-                        source,
-                    })
+                entry
+                    .stored_bytes()
+                    .map(|len| bytes.saturating_add(len))
+                    .map_err(DiscontinuityInputError::from)
             })?;
             Ok(LocalBucketGroup {
                 index,
@@ -18601,6 +18610,7 @@ fn report_discontinuity_contraction_progress(done: usize, total: usize, started:
 }
 
 fn contract_local_subgraph<const K: usize>(
+    store: &BucketStore,
     group: &LocalBucketGroup,
     cutoff: u32,
     color_repository: Option<&ConcurrentColorRepository>,
@@ -18613,6 +18623,7 @@ fn contract_local_subgraph<const K: usize>(
     // discard what this worker has learned about its subgraph sizes.
     let mean_vertices = carried.as_ref().map_or(0, |held| held.mean_vertices);
     let mut subgraph = LocalSubgraph::<K>::from_manifest_entries_reusing(
+        store,
         &group.entries,
         cutoff,
         carried
@@ -18668,6 +18679,7 @@ fn contract_local_subgraph<const K: usize>(
     if subgraph.colored {
         let repository = color_repository.ok_or(DiscontinuityInputError::MissingColorRuns)?;
         let runs = subgraph.contract_colored_resolved_with(
+            store,
             &group.entries,
             repository,
             group.index % repository.worker_count(),
@@ -18698,13 +18710,20 @@ fn contract_local_subgraph<const K: usize>(
         map,
     });
     if !keep_intermediates() {
+        // Whole-file buckets are unlinked as they are consumed, which is what
+        // bounds peak disk for that layout. Containers cannot unlink a bucket
+        // on its own; see the reclaim note in `buckets.rs` for why deferring
+        // that is expected to cost nothing at the peak.
         for entry in &group.entries {
-            match fs::remove_file(&entry.path) {
+            let Some(path) = entry.file_path() else {
+                continue;
+            };
+            match fs::remove_file(path) {
                 Ok(()) => {}
                 Err(source) if source.kind() == std::io::ErrorKind::NotFound => {}
                 Err(source) => {
                     return Err(DiscontinuityInputError::Io {
-                        path: entry.path.clone(),
+                        path: path.to_path_buf(),
                         source,
                     });
                 }

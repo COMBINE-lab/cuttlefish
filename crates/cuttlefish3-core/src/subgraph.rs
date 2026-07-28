@@ -8,7 +8,9 @@
 use crate::Side;
 #[cfg(test)]
 use crate::buckets::BucketRecord;
-use crate::buckets::{BorrowedBucketPackedRecord, BucketError, BucketManifestEntry, BucketReader};
+use crate::buckets::{
+    BorrowedBucketPackedRecord, BucketError, BucketLocation, BucketManifestEntry, BucketStore,
+};
 use crate::color::{ColorError, ConcurrentColorRepository};
 use crate::dna::Base;
 use crate::hash::{FastBuildHasher, fast_u64_hash, hash_two_u64};
@@ -601,34 +603,35 @@ impl<const K: usize> LocalSubgraph<K> {
         path: impl AsRef<Path>,
         cutoff: u32,
     ) -> Result<Self, LocalSubgraphError> {
-        Self::from_bucket_paths_with_capacity(&[path.as_ref().to_path_buf()], cutoff, 0, None)
+        let store = BucketStore::files_only();
+        let entries = [BucketManifestEntry {
+            graph_id: 0,
+            records: 0,
+            location: BucketLocation::File(path.as_ref().to_path_buf()),
+        }];
+        Self::from_entries_with_capacity(&store, &entries, cutoff, 0, None)
     }
 
     pub fn from_manifest_entries(
+        store: &BucketStore,
         entries: &[BucketManifestEntry],
         cutoff: u32,
     ) -> Result<Self, LocalSubgraphError> {
-        let paths = entries
-            .iter()
-            .map(|entry| entry.path.clone())
-            .collect::<Vec<_>>();
-        Self::from_bucket_paths_with_capacity(&paths, cutoff, 0, None)
+        Self::from_entries_with_capacity(store, entries, cutoff, 0, None)
     }
 
     pub(crate) fn from_manifest_entries_reusing(
+        store: &BucketStore,
         entries: &[BucketManifestEntry],
         cutoff: u32,
         vertices: Option<LocalVertexMap<K>>,
     ) -> Result<Self, LocalSubgraphError> {
-        let paths = entries
-            .iter()
-            .map(|entry| entry.path.clone())
-            .collect::<Vec<_>>();
-        Self::from_bucket_paths_with_capacity(&paths, cutoff, 0, vertices)
+        Self::from_entries_with_capacity(store, entries, cutoff, 0, vertices)
     }
 
-    fn from_bucket_paths_with_capacity(
-        paths: &[std::path::PathBuf],
+    fn from_entries_with_capacity(
+        store: &BucketStore,
+        entries: &[BucketManifestEntry],
         cutoff: u32,
         vertex_capacity: usize,
         reusable_vertices: Option<LocalVertexMap<K>>,
@@ -636,10 +639,10 @@ impl<const K: usize> LocalSubgraph<K> {
         if cutoff == 0 {
             return Err(LocalSubgraphError::InvalidCutoff);
         }
-        let Some(first_path) = paths.first() else {
+        let Some(first_entry) = entries.first() else {
             return Err(LocalSubgraphError::EmptyBucketGroup);
         };
-        let mut reader = BucketReader::open(first_path)?;
+        let mut reader = store.reader(first_entry)?;
         if reader.header().k as usize != K {
             return Err(LocalSubgraphError::KMismatch {
                 expected: K,
@@ -671,8 +674,8 @@ impl<const K: usize> LocalSubgraph<K> {
             }
             subgraph.add_borrowed_packed_record(record)
         })?;
-        for path in &paths[1..] {
-            let mut reader = BucketReader::open(path)?;
+        for entry in &entries[1..] {
+            let mut reader = store.reader(entry)?;
             if reader.header().k as usize != K {
                 return Err(LocalSubgraphError::KMismatch {
                     expected: K,
@@ -728,20 +731,22 @@ impl<const K: usize> LocalSubgraph<K> {
 
     pub fn contract_colored(
         &mut self,
+        store: &BucketStore,
         entries: &[BucketManifestEntry],
     ) -> Result<Vec<ColoredLocalUnitig<K>>, LocalSubgraphError> {
-        self.contract_colored_with_known(entries, |_| None)
+        self.contract_colored_with_known(store, entries, |_| None)
     }
 
     pub fn contract_colored_with_known<F>(
         &mut self,
+        store: &BucketStore,
         entries: &[BucketManifestEntry],
         color_is_known: F,
     ) -> Result<Vec<ColoredLocalUnitig<K>>, LocalSubgraphError>
     where
         F: Fn(u64) -> Option<ColorCoordinate>,
     {
-        let pending = self.contract_colored_impl(entries, color_is_known)?;
+        let pending = self.contract_colored_impl(store, entries, color_is_known)?;
         pending
             .unitigs
             .into_iter()
@@ -775,6 +780,7 @@ impl<const K: usize> LocalSubgraph<K> {
 
     pub(crate) fn contract_colored_resolved_with<F>(
         &mut self,
+        store: &BucketStore,
         entries: &[BucketManifestEntry],
         repository: &ConcurrentColorRepository,
         worker: usize,
@@ -784,6 +790,7 @@ impl<const K: usize> LocalSubgraph<K> {
         F: FnMut(LocalUnitig<K>),
     {
         let pending = self.contract_colored_impl_with(
+            store,
             entries,
             |color_hash| repository.get(color_hash),
             emit,
@@ -813,6 +820,7 @@ impl<const K: usize> LocalSubgraph<K> {
 
     fn contract_colored_impl<F>(
         &mut self,
+        store: &BucketStore,
         entries: &[BucketManifestEntry],
         color_is_known: F,
     ) -> Result<PendingColoredContraction<K>, LocalSubgraphError>
@@ -821,7 +829,9 @@ impl<const K: usize> LocalSubgraph<K> {
     {
         let mut unitigs = Vec::new();
         let pending = self
-            .contract_colored_impl_with(entries, color_is_known, |unitig| unitigs.push(unitig))?;
+            .contract_colored_impl_with(store, entries, color_is_known, |unitig| {
+                unitigs.push(unitig)
+            })?;
         Ok(PendingColoredContraction {
             unitigs,
             runs: pending.runs,
@@ -832,6 +842,7 @@ impl<const K: usize> LocalSubgraph<K> {
 
     fn contract_colored_impl_with<F, G>(
         &mut self,
+        store: &BucketStore,
         entries: &[BucketManifestEntry],
         color_is_known: F,
         mut emit: G,
@@ -901,7 +912,7 @@ impl<const K: usize> LocalSubgraph<K> {
         }
         let mut source_sets = vec![Vec::<u32>::new(); representatives.len()];
         for entry in entries {
-            let mut reader = BucketReader::open(&entry.path)?;
+            let mut reader = store.reader(entry)?;
             reader.try_for_each_borrowed_packed_record(|record| {
                 collect_wanted_color_relations::<K>(record, &wanted, &mut source_sets)
             })?;
@@ -1733,7 +1744,7 @@ impl std::error::Error for LocalSubgraphError {}
 mod tests {
     use super::*;
     use crate::GraphInput;
-    use crate::buckets::{BucketEmitter, read_manifest};
+    use crate::buckets::BucketEmitter;
     use crate::params::BuildParams;
     use crate::partition::WeakSuperKmer;
     use std::fs;
@@ -1841,9 +1852,9 @@ mod tests {
                 .unwrap();
         }
         emitter.finish().unwrap();
-        let entries = read_manifest(&dir).unwrap();
-        let mut subgraph = LocalSubgraph::<3>::from_manifest_entries(&entries, 1).unwrap();
-        let unitigs = subgraph.contract_colored(&entries).unwrap();
+        let (store, entries) = BucketStore::open_dir(&dir).unwrap();
+        let mut subgraph = LocalSubgraph::<3>::from_manifest_entries(&store, &entries, 1).unwrap();
+        let unitigs = subgraph.contract_colored(&store, &entries).unwrap();
         assert_eq!(unitigs.len(), 1);
         assert_eq!(unitigs[0].colors.len(), 1);
         assert_eq!(unitigs[0].colors[0].offset, 0);

@@ -258,23 +258,50 @@ impl BucketContainers {
     }
 }
 
-/// Punches `len` bytes at `offset` out of `file`, ignoring an unsupported
-/// filesystem: a failed punch costs disk, not correctness.
+/// Punches `len` bytes at `offset` out of `file`.
+///
+/// There is no portable interface for this and no crate that abstracts one:
+/// Linux spells it `fallocate(FALLOC_FL_PUNCH_HOLE)` and macOS spells it
+/// `fcntl(F_PUNCHHOLE)`, and both `nix` and `rustix` gate their `fallocate`
+/// behind `target_os = "linux"` with no Apple equivalent offered. So the two
+/// are written out here.
+///
+/// Failure is ignored on purpose. A filesystem without hole punching -- HFS+,
+/// or a network mount -- costs disk rather than correctness, because the
+/// container is unlinked wholesale at the end regardless.
+#[cfg(target_os = "linux")]
 fn punch_hole(file: &File, offset: u64, len: u64) {
     use std::os::fd::AsRawFd;
-    const FALLOC_FL_KEEP_SIZE: libc::c_int = 0x01;
-    const FALLOC_FL_PUNCH_HOLE: libc::c_int = 0x02;
     // SAFETY: the descriptor is owned by `file` and outlives the call, and the
     // kernel validates the range itself.
     unsafe {
         libc::fallocate(
             file.as_raw_fd(),
-            FALLOC_FL_KEEP_SIZE | FALLOC_FL_PUNCH_HOLE,
+            libc::FALLOC_FL_KEEP_SIZE | libc::FALLOC_FL_PUNCH_HOLE,
             offset as libc::off_t,
             len as libc::off_t,
         );
     }
 }
+
+#[cfg(target_vendor = "apple")]
+fn punch_hole(file: &File, offset: u64, len: u64) {
+    use std::os::fd::AsRawFd;
+    let punch = libc::fpunchhole_t {
+        fp_flags: 0,
+        reserved: 0,
+        fp_offset: offset as libc::off_t,
+        fp_length: len as libc::off_t,
+    };
+    // SAFETY: as above; `punch` outlives the call and F_PUNCHHOLE reads it as
+    // a `*const fpunchhole_t`.
+    unsafe {
+        libc::fcntl(file.as_raw_fd(), libc::F_PUNCHHOLE, &punch);
+    }
+}
+
+#[cfg(not(any(target_os = "linux", target_vendor = "apple")))]
+fn punch_hole(_file: &File, _offset: u64, _len: u64) {}
 
 /// Sequential reader over one bucket's segment chain.
 ///

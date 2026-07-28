@@ -1423,6 +1423,38 @@ Recommendation, if one is wanted despite the above: any limit at or above 1024,
 which is the default nearly everywhere. Below 512 the build still completes but
 narrows its fanout and slows.
 
+### Platform notes
+
+The two facilities involved are not portable in the same way, and no crate
+abstracts the harder one. `nix` and `rustix` both expose `getrlimit`/
+`setrlimit` across platforms, and both gate `fallocate` behind
+`target_os = "linux"` with no Apple equivalent -- because there is none to
+wrap: Linux punches holes with `fallocate(FALLOC_FL_PUNCH_HOLE)` and macOS
+with `fcntl(F_PUNCHHOLE)` and an `fpunchhole_t`. Since a `libc` dependency is
+needed for the macOS path regardless, adding `nix` or `rustix` on top would buy
+only ergonomics, so `libc` is used directly for both.
+
+Two portability bugs were fixed in the process, neither of which this host
+could have caught, since it is Linux and has soft = hard = 262144:
+
+- The hole punch called `libc::fallocate` with no `cfg`, which does not exist
+  on Apple. macOS builds would not have compiled. `cargo check --target
+  aarch64-apple-darwin` reproduces it and now passes.
+- `RLIMIT_NOFILE` was hardcoded as `7`. It is 8 on Apple and 6 on Linux/sparc,
+  so the limit query was reading the wrong resource on both. It now uses
+  `libc::RLIMIT_NOFILE`.
+
+macOS also refuses a soft limit above `sysconf(_SC_OPEN_MAX)` while reporting
+an effectively infinite hard limit, so raising to the hard limit directly fails
+with `EINVAL` and silently leaves the process where it started. The raise
+clamps to that ceiling. This matters more on macOS than Linux: the stock soft
+limit there is 256 rather than 1024, close enough to the 192 floor to force
+heavy narrowing.
+
+Checked against `aarch64-apple-darwin` and `aarch64-unknown-linux-musl` as well
+as the native target; musl exercises the non-glibc path where `malloc_trim`
+does not exist.
+
 ## Colour-set encoding
 
 The colour repository is the largest artifact a colored build produces, and it

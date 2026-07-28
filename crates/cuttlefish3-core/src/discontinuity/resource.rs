@@ -4,40 +4,24 @@
 //! public profiling helpers are re-exported from [`super`], preserving the
 //! original API while keeping platform-specific code out of the algorithm.
 
-#[cfg(all(target_os = "linux", target_env = "gnu"))]
-unsafe extern "C" {
-    fn malloc_trim(pad: usize) -> i32;
-    fn getrlimit(resource: i32, limits: *mut RLimit) -> i32;
-    fn setrlimit(resource: i32, limits: *const RLimit) -> i32;
-}
-
-#[cfg(all(target_os = "linux", target_env = "gnu"))]
-#[repr(C)]
-struct RLimit {
-    current: u64,
-    maximum: u64,
-}
-
 /// Returns the process soft file-descriptor limit.
 ///
-/// The conservative fallback is used on unsupported platforms and if querying
-/// the process limit fails.
-#[cfg(all(target_os = "linux", target_env = "gnu"))]
+/// `libc::RLIMIT_NOFILE` rather than a literal: the resource number is 7 on
+/// most Linux architectures, 6 on sparc and 8 on Apple, so a hardcoded value
+/// silently queries the wrong limit.
+#[cfg(unix)]
 pub(crate) fn open_file_limit() -> usize {
-    const RLIMIT_NOFILE: i32 = 7;
+    // SAFETY: `limits` is a valid, fully initialized destination.
     unsafe {
-        let mut limits = RLimit {
-            current: 0,
-            maximum: 0,
-        };
-        if getrlimit(RLIMIT_NOFILE, &mut limits) != 0 {
+        let mut limits = std::mem::zeroed::<libc::rlimit>();
+        if libc::getrlimit(libc::RLIMIT_NOFILE, &mut limits) != 0 {
             return 1024;
         }
-        usize::try_from(limits.current).unwrap_or(usize::MAX)
+        usize::try_from(limits.rlim_cur).unwrap_or(usize::MAX)
     }
 }
 
-#[cfg(not(all(target_os = "linux", target_env = "gnu")))]
+#[cfg(not(unix))]
 pub(crate) fn open_file_limit() -> usize {
     1024
 }
@@ -48,39 +32,52 @@ pub(crate) fn open_file_limit() -> usize {
 /// privileges, and there is no reason for this one not to: every descriptor it
 /// opens is a file it is actively using, and the phases that fan out already
 /// adapt their width to whatever budget they are given. Doing it here means a
-/// user never has to discover `ulimit -n` to build a large graph -- the stock
-/// soft limit of 1024 on most distributions is enough to run but tight enough
-/// to force the fanout planners to narrow, and on a systemd host the hard
-/// limit is usually 524288.
+/// user never has to discover `ulimit -n` to build a large graph. It matters
+/// more on macOS than on Linux, where the stock soft limit is 256 rather than
+/// 1024 -- close enough to this build's floor to force heavy narrowing.
 ///
 /// Returns `(soft_before, soft_after)`.
-#[cfg(all(target_os = "linux", target_env = "gnu"))]
+#[cfg(unix)]
 pub fn raise_open_file_limit() -> (usize, usize) {
-    const RLIMIT_NOFILE: i32 = 7;
+    // SAFETY: both calls take valid, fully initialized `rlimit` pointers.
     unsafe {
-        let mut limits = RLimit {
-            current: 0,
-            maximum: 0,
-        };
-        if getrlimit(RLIMIT_NOFILE, &mut limits) != 0 {
+        let mut limits = std::mem::zeroed::<libc::rlimit>();
+        if libc::getrlimit(libc::RLIMIT_NOFILE, &mut limits) != 0 {
             return (0, 0);
         }
-        let before = usize::try_from(limits.current).unwrap_or(usize::MAX);
-        if limits.current >= limits.maximum {
+        let before = usize::try_from(limits.rlim_cur).unwrap_or(usize::MAX);
+        // Darwin reports an effectively infinite hard limit but refuses a soft
+        // limit above `sysconf(_SC_OPEN_MAX)`, so asking for the hard limit
+        // directly fails with EINVAL and leaves the process at 256.
+        let ceiling = darwin_open_max().unwrap_or(limits.rlim_max);
+        let target = limits.rlim_max.min(ceiling);
+        if target <= limits.rlim_cur {
             return (before, before);
         }
-        let raised = RLimit {
-            current: limits.maximum,
-            maximum: limits.maximum,
+        let raised = libc::rlimit {
+            rlim_cur: target,
+            rlim_max: limits.rlim_max,
         };
-        if setrlimit(RLIMIT_NOFILE, &raised) != 0 {
+        if libc::setrlimit(libc::RLIMIT_NOFILE, &raised) != 0 {
             return (before, before);
         }
-        (before, usize::try_from(limits.maximum).unwrap_or(usize::MAX))
+        (before, usize::try_from(target).unwrap_or(usize::MAX))
     }
 }
 
-#[cfg(not(all(target_os = "linux", target_env = "gnu")))]
+#[cfg(target_vendor = "apple")]
+fn darwin_open_max() -> Option<libc::rlim_t> {
+    // SAFETY: `sysconf` takes a name and returns a long; -1 signals no limit.
+    let value = unsafe { libc::sysconf(libc::_SC_OPEN_MAX) };
+    (value > 0).then(|| value as libc::rlim_t)
+}
+
+#[cfg(not(target_vendor = "apple"))]
+fn darwin_open_max() -> Option<u64> {
+    None
+}
+
+#[cfg(not(unix))]
 pub fn raise_open_file_limit() -> (usize, usize) {
     (0, 0)
 }
@@ -105,7 +102,7 @@ pub(crate) fn current_open_file_count() -> usize {
 pub fn trim_process_allocations() {
     #[cfg(all(target_os = "linux", target_env = "gnu"))]
     unsafe {
-        let _ = malloc_trim(0);
+        let _ = libc::malloc_trim(0);
     }
 }
 

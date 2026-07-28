@@ -1,5 +1,5 @@
 use cuttlefish3_core::Side;
-use cuttlefish3_core::buckets::BucketStore;
+use cuttlefish3_core::buckets::{BucketLocation, BucketStore, read_container_manifest};
 use cuttlefish3_core::discontinuity::{
     DISCONTINUITY_PARALLELIZATION_OPPORTUNITIES, DiscontinuityEdge, DiscontinuityEndpoint,
     DiscontinuityInputStats, DiscontinuityInputs, EdgePathInfo, FullSerialContractionStats,
@@ -387,8 +387,42 @@ fn emits_external_memory_weak_superkmer_buckets() {
     assert!(emitted.buckets.bucket_files > 0);
     assert!(emitted.buckets.bytes_written > 0);
 
-    let manifest = fs::read_to_string(emitted.buckets.bucket_dir.join("manifest.tsv")).unwrap();
-    assert!(manifest.starts_with("graph_id\trecords\tpath\n"));
+    // Buckets share container files, so the directory holds one file per atlas
+    // plus the manifest -- not one file per bucket -- and the per-bucket header
+    // that a whole file carried inline now lives in that manifest.
+    let (header, manifest) = read_container_manifest(&emitted.buckets.bucket_dir)
+        .unwrap()
+        .expect("container manifest");
+    assert_eq!(header.k, 7);
+    assert_eq!(header.minimizer_len, 3);
+    assert!(!header.colored);
+    assert!(header.compressed);
+    assert_eq!(manifest.len(), emitted.buckets.bucket_files);
+    // The file count tracks the atlas count, not the bucket count: one
+    // container per atlas plus the manifest, whatever DEFAULT_SUBGRAPH_COUNT
+    // is. Containers are created eagerly, so a fixture this small writes more
+    // files than it fills -- at real bucket counts every one of them is used,
+    // and creating them lazily would put a check on the flush path to save
+    // 128 empty inodes.
+    let physical = fs::read_dir(&emitted.buckets.bucket_dir).unwrap().count();
+    assert_eq!(physical, header.container_count + 1);
+    assert_eq!(
+        header.container_count,
+        DEFAULT_SUBGRAPH_COUNT.div_ceil(128),
+        "one container per atlas"
+    );
+    for entry in &manifest {
+        let BucketLocation::Container {
+            container, segments, bytes,
+        } = &entry.location else {
+            panic!("expected a container location");
+        };
+        assert!(*container < header.container_count);
+        assert!(!segments.is_empty() && *bytes > 0);
+        // The chain holds the payload with less than one segment to spare.
+        let capacity = segments.len() as u64 * header.segment_bytes;
+        assert!(*bytes <= capacity && capacity - *bytes < header.segment_bytes);
+    }
 
     let (store, entries) = BucketStore::open_dir(&emitted.buckets.bucket_dir).unwrap();
     assert_eq!(entries.len(), emitted.buckets.bucket_files);

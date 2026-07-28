@@ -267,6 +267,7 @@ pub struct BucketEmitter {
 
 pub struct SharedBucketSink {
     bucket_dir: PathBuf,
+    containers: BucketContainers,
     k: u16,
     minimizer_len: u16,
     graph_count: usize,
@@ -314,7 +315,12 @@ struct SharedBucketFileMeta {
     total_records: u64,
     written_records: u64,
     bytes_written: u64,
-    path: Option<PathBuf>,
+    /// Segment indices this bucket owns, in write order.
+    segments: Vec<u32>,
+    /// Bytes used in the last segment; a flush that overruns it straddles into
+    /// a freshly reserved one, which the reader stitches back because it walks
+    /// the chain in order.
+    segment_used: u64,
 }
 
 struct SharedBucketAtlas {
@@ -1604,8 +1610,15 @@ impl SharedBucketSink {
             source,
         })?;
 
+        // One container per atlas. An atlas already serializes its own writes
+        // with a mutex, so a container is only ever written by the thread
+        // holding that lock and needs no lock of its own.
+        let atlas_count = graph_count.div_ceil(ATLAS_GRAPH_COUNT);
+        let containers = BucketContainers::create(&bucket_dir, atlas_count)?;
+
         Ok(Arc::new(Self {
             bucket_dir,
+            containers,
             k: params.k,
             minimizer_len: params.minimizer_len,
             graph_count,
@@ -1711,10 +1724,7 @@ impl SharedBucketSink {
                             .lock()
                             .map_err(|_| BucketError::WorkerPanic)?;
                         atlas.flush_all(
-                            &self.bucket_dir,
-                            self.k,
-                            self.minimizer_len,
-                            self.graph_count,
+                            &self.containers,
                             false,
                             self.label_words,
                             self.compress_buckets,
@@ -1790,10 +1800,7 @@ impl SharedBucketSink {
             if atlas.files[local_graph_id].buffer.len() >= SUBGRAPH_CHUNK_BYTES {
                 atlas.flush_subgraph(
                     local_graph_id,
-                    &self.bucket_dir,
-                    self.k,
-                    self.minimizer_len,
-                    self.graph_count,
+                    &self.containers,
                     false,
                     self.label_words,
                     self.compress_buckets,
@@ -1825,10 +1832,7 @@ impl SharedBucketSink {
         let mut flush_stats = SharedBucketFlushStats::default();
         atlas.flush_subgraph(
             local_graph_id,
-            &self.bucket_dir,
-            self.k,
-            self.minimizer_len,
-            self.graph_count,
+            &self.containers,
             self.colored,
             self.label_words,
             self.compress_buckets,
@@ -1882,10 +1886,7 @@ impl SharedBucketSink {
             if atlas.files[local_graph_id].buffer.len() >= SUBGRAPH_CHUNK_BYTES {
                 atlas.flush_subgraph(
                     local_graph_id,
-                    &self.bucket_dir,
-                    self.k,
-                    self.minimizer_len,
-                    self.graph_count,
+                    &self.containers,
                     true,
                     self.label_words,
                     self.compress_buckets,
@@ -1936,10 +1937,7 @@ impl SharedBucketSink {
                             )?;
                             atlas.flush_subgraph(
                                 local_graph_id,
-                                &self.bucket_dir,
-                                self.k,
-                                self.minimizer_len,
-                                self.graph_count,
+                                &self.containers,
                                 true,
                                 self.label_words,
                                 true,
@@ -2025,10 +2023,7 @@ impl SharedBucketSink {
                         for local_graph_id in 0..atlas.files.len() {
                             atlas.flush_subgraph(
                                 local_graph_id,
-                                &self.bucket_dir,
-                                self.k,
-                                self.minimizer_len,
-                                self.graph_count,
+                                &self.containers,
                                 true,
                                 self.label_words,
                                 true,
@@ -2058,91 +2053,65 @@ impl SharedBucketSink {
     }
 
     pub fn finish(&self) -> Result<BucketEmitStats, BucketError> {
-        let mut items = Vec::new();
+        let mut entries = Vec::new();
         let mut finish_flush_stats = SharedBucketFlushStats::default();
         let finish_started = Instant::now();
+        let mut bytes_written = 0u64;
         for atlas in &self.atlases {
             let mut atlas = atlas.lock().map_err(|_| BucketError::WorkerPanic)?;
             atlas.flush_all(
-                &self.bucket_dir,
-                self.k,
-                self.minimizer_len,
-                self.graph_count,
+                &self.containers,
                 self.colored,
                 self.label_words,
                 self.compress_buckets,
                 &mut finish_flush_stats,
             )?;
             let first_graph_id = atlas.first_graph_id;
+            let container = first_graph_id / ATLAS_GRAPH_COUNT;
             for (local_graph_id, meta) in atlas.files.iter_mut().enumerate() {
                 let meta = std::mem::take(meta);
                 if meta.total_records == 0 {
                     continue;
                 }
-                items.push((first_graph_id + local_graph_id, meta));
+                bytes_written += meta.bytes_written;
+                entries.push(BucketManifestEntry {
+                    graph_id: first_graph_id + local_graph_id,
+                    records: meta.total_records,
+                    location: BucketLocation::Container {
+                        container,
+                        segments: meta.segments,
+                        bytes: meta.bytes_written,
+                    },
+                });
             }
         }
         self.record_flush_stats(finish_flush_stats, finish_started.elapsed());
-        let bytes_written = items.iter().map(|(_, meta)| meta.bytes_written).sum();
+        entries.sort_unstable_by_key(|entry| entry.graph_id);
 
-        let workers = self.workers.min(items.len().max(1));
-        let mut manifest = if workers <= 1 {
-            let mut manifest = Vec::with_capacity(items.len());
-            for item in &items {
-                manifest.push(self.finish_shared_bucket(item)?);
-            }
-            manifest
-        } else {
-            let next_item = AtomicUsize::new(0);
-            let mut worker_results = std::thread::scope(|scope| {
-                let mut handles = Vec::new();
-                for _ in 0..workers {
-                    let next_item = &next_item;
-                    let items = &items;
-                    handles.push(scope.spawn(move || {
-                        let mut local = Vec::new();
-                        loop {
-                            let item_idx = next_item.fetch_add(1, Ordering::Relaxed);
-                            let Some(item) = items.get(item_idx) else {
-                                break;
-                            };
-                            local.push(self.finish_shared_bucket(item)?);
-                        }
-                        Ok::<_, BucketError>(local)
-                    }));
-                }
-
-                let mut merged = Vec::with_capacity(items.len());
-                for handle in handles {
-                    let local = handle.join().map_err(|_| BucketError::WorkerPanic)??;
-                    merged.extend(local);
-                }
-                Ok::<_, BucketError>(merged)
-            })?;
-            worker_results.sort_unstable_by_key(|(graph_id, _, _)| *graph_id);
-            worker_results
+        // Nothing to patch and nothing to reopen. The per-file layout finished
+        // by reopening all 16,384 buckets to write the record count into each
+        // header, parallelised across workers because it was slow enough to
+        // matter; the count now lives in the manifest that has to be written
+        // anyway.
+        let header = ContainerManifestHeader {
+            k: self.k,
+            minimizer_len: self.minimizer_len,
+            graph_count: self.graph_count,
+            colored: self.colored,
+            label_words: self.label_words,
+            compressed: self.compress_buckets,
+            interleaved_compression: self.compress_buckets
+                && !self.colored
+                && !force_split_compression(),
+            segment_bytes: self.containers.segment_bytes(),
+            container_count: self.atlases.len(),
         };
-        if workers <= 1 {
-            manifest.sort_unstable_by_key(|(graph_id, _, _)| *graph_id);
-        }
-        write_manifest(&self.bucket_dir, &manifest)?;
+        write_container_manifest(&self.bucket_dir, &header, &entries)?;
         Ok(BucketEmitStats {
             bucket_dir: self.bucket_dir.clone(),
-            bucket_files: manifest.len(),
+            bucket_files: entries.len(),
             bytes_written,
         })
-    }
-
-    fn finish_shared_bucket(
-        &self,
-        (graph_id, meta): &(usize, SharedBucketFileMeta),
-    ) -> Result<(usize, u64, PathBuf), BucketError> {
-        let path = meta
-            .path
-            .clone()
-            .ok_or_else(|| BucketError::MalformedHeader(self.bucket_dir.clone()))?;
-        BucketFile::finish_closed(&path, meta.total_records)?;
-        Ok((*graph_id, meta.total_records, path))
     }
 
     fn record_flush_stats(&self, stats: SharedBucketFlushStats, elapsed: Duration) {
@@ -2245,10 +2214,7 @@ impl SharedBucketAtlas {
 
     fn flush_all(
         &mut self,
-        bucket_dir: &Path,
-        k: u16,
-        minimizer_len: u16,
-        graph_count: usize,
+        containers: &BucketContainers,
         colored: bool,
         label_words: usize,
         compress_buckets: bool,
@@ -2257,10 +2223,7 @@ impl SharedBucketAtlas {
         for local_graph_id in 0..self.files.len() {
             self.flush_subgraph(
                 local_graph_id,
-                bucket_dir,
-                k,
-                minimizer_len,
-                graph_count,
+                containers,
                 colored,
                 label_words,
                 compress_buckets,
@@ -2270,18 +2233,25 @@ impl SharedBucketAtlas {
         Ok(())
     }
 
+    /// Writes one bucket's staged records into its container.
+    ///
+    /// This is the whole syscall saving. The per-file path reached here with
+    /// an `openat`, seven unbuffered reads to re-read the 42-byte header, a
+    /// revalidation, an `lseek` to the end and a `close` -- around eleven
+    /// syscalls for every 64 KiB flush, and a full-corpus build performs 14.4
+    /// million of them. A container flush is the `pwrite` and nothing else:
+    /// the header is in the manifest, the descriptor is already open, and the
+    /// offset is known rather than sought.
     fn flush_subgraph(
         &mut self,
         local_graph_id: usize,
-        bucket_dir: &Path,
-        k: u16,
-        minimizer_len: u16,
-        graph_count: usize,
+        containers: &BucketContainers,
         colored: bool,
         label_words: usize,
         compress_buckets: bool,
         stats: &mut SharedBucketFlushStats,
     ) -> Result<(), BucketError> {
+        let container = self.first_graph_id / ATLAS_GRAPH_COUNT;
         let Self {
             files, scratch, ..
         } = self;
@@ -2289,37 +2259,73 @@ impl SharedBucketAtlas {
         if file.buffer.is_empty() {
             return Ok(());
         }
-
-        let graph_id = self.first_graph_id + local_graph_id;
-        let mut writer = match file.path.as_deref() {
-            Some(path) => {
-                BucketFile::open_existing(path, file.written_records, file.bytes_written)?
-            }
-            None => BucketFile::create(
-                bucket_dir,
-                k,
-                minimizer_len,
-                graph_count,
-                graph_id,
-                colored,
-                label_words,
-                compress_buckets,
-            )?,
-        };
         let flushed_bytes = file.buffer.len();
-        let (records, bytes_written) =
-            writer.write_records(&file.buffer, file.buffer_records, scratch)?;
-        file.written_records = records;
-        file.bytes_written = bytes_written;
-        if file.path.is_none() {
-            file.path = Some(writer.path.clone());
-        }
+        let record_size = record_size(colored, label_words) as u64;
+
+        let written = if compress_buckets {
+            let interleaved = !colored && !force_split_compression();
+            let len = encode_compressed_block(
+                &file.buffer,
+                file.buffer_records,
+                record_size,
+                label_words,
+                interleaved,
+                scratch,
+            )?;
+            let block = std::mem::take(&mut scratch.block);
+            let written = append_to_chain(containers, container, file, &block)?;
+            scratch.block = block;
+            debug_assert_eq!(written, len as u64);
+            written
+        } else {
+            let buffer = std::mem::take(&mut file.buffer);
+            let written = append_to_chain(containers, container, file, &buffer);
+            file.buffer = buffer;
+            written?
+        };
+
+        file.written_records += file.buffer_records;
+        file.bytes_written += written;
         file.buffer.clear();
         file.buffer_records = 0;
         self.buffered_bytes -= flushed_bytes;
         stats.calls += 1;
         Ok(())
     }
+}
+
+/// Appends `bytes` to a bucket's segment chain, reserving as it goes.
+///
+/// A block may straddle a segment boundary rather than starting a fresh
+/// segment. That costs a second `pwrite` for the rare block that spans one,
+/// and saves refusing to fill the tail of every segment -- which at a 64 KiB
+/// flush and a 256 KiB segment would waste up to a quarter of the directory.
+/// The reader concatenates the chain in order, so a split block reassembles.
+fn append_to_chain(
+    containers: &BucketContainers,
+    container: usize,
+    file: &mut SharedBucketFileMeta,
+    bytes: &[u8],
+) -> Result<u64, BucketError> {
+    let segment_bytes = containers.segment_bytes();
+    let mut written = 0usize;
+    while written < bytes.len() {
+        if file.segments.is_empty() || file.segment_used == segment_bytes {
+            let offset = containers.reserve_segment(container);
+            let index = u32::try_from(offset / segment_bytes)
+                .map_err(|_| BucketError::TooManyRecords)?;
+            file.segments.push(index);
+            file.segment_used = 0;
+        }
+        let room = (segment_bytes - file.segment_used) as usize;
+        let take = room.min(bytes.len() - written);
+        let offset =
+            u64::from(*file.segments.last().unwrap()) * segment_bytes + file.segment_used;
+        containers.write_at(container, offset, &bytes[written..written + take])?;
+        written += take;
+        file.segment_used += take as u64;
+    }
+    Ok(written as u64)
 }
 
 impl SharedBucketEmitter {
@@ -2577,6 +2583,61 @@ pub fn write_manifest(
         })?;
     }
     Ok(())
+}
+
+/// Encodes one compressed block into `scratch.block`, returning its length.
+///
+/// Assembling the whole block -- 12-byte header plus one or two LZ4 streams --
+/// before it is written keeps a flush to a single `write` on a file that has
+/// no buffering, and lets a container flush reuse the identical framing.
+fn encode_compressed_block(
+    bytes: &[u8],
+    records: u64,
+    record_size: u64,
+    label_words: usize,
+    interleaved: bool,
+    scratch: &mut CompressionScratch,
+) -> Result<usize, BucketError> {
+    let records_u32 = u32::try_from(records).map_err(|_| BucketError::TooManyRecords)?;
+    if records_u32 == 0 {
+        scratch.block.clear();
+        return Ok(0);
+    }
+    let (attr_len, label_len) = if interleaved {
+        (CompressionScratch::encode(bytes, &mut scratch.encoded)?, 0)
+    } else {
+        let record_len = usize::try_from(record_size).unwrap();
+        let fixed_len = record_len - label_words * 8;
+        scratch.attrs.clear();
+        scratch.labels.clear();
+        scratch.attrs.reserve(records as usize * fixed_len);
+        scratch.labels.reserve(records as usize * label_words * 8);
+        for record in bytes.chunks_exact(record_len) {
+            scratch.attrs.extend_from_slice(&record[..fixed_len]);
+            scratch.labels.extend_from_slice(&record[fixed_len..]);
+        }
+        let attrs = std::mem::take(&mut scratch.attrs);
+        let labels = std::mem::take(&mut scratch.labels);
+        let attr_len = CompressionScratch::encode(&attrs, &mut scratch.encoded)?;
+        let label_len = CompressionScratch::encode(&labels, &mut scratch.encoded_labels)?;
+        scratch.attrs = attrs;
+        scratch.labels = labels;
+        (attr_len, label_len)
+    };
+    let attr_len_u32 = u32::try_from(attr_len).map_err(|_| BucketError::TooManyRecords)?;
+    let label_len_u32 = u32::try_from(label_len).map_err(|_| BucketError::TooManyRecords)?;
+
+    scratch.block.clear();
+    scratch.block.extend_from_slice(&records_u32.to_le_bytes());
+    scratch.block.extend_from_slice(&attr_len_u32.to_le_bytes());
+    scratch.block.extend_from_slice(&label_len_u32.to_le_bytes());
+    scratch.block.extend_from_slice(&scratch.encoded[..attr_len]);
+    if label_len != 0 {
+        scratch
+            .block
+            .extend_from_slice(&scratch.encoded_labels[..label_len]);
+    }
+    Ok(scratch.block.len())
 }
 
 fn append_record(
@@ -2904,45 +2965,16 @@ impl BucketFile {
         records: u64,
         scratch: &mut CompressionScratch,
     ) -> Result<u64, BucketError> {
-        let records_u32 = u32::try_from(records).map_err(|_| BucketError::TooManyRecords)?;
-        if records_u32 == 0 {
+        let len = encode_compressed_block(
+            bytes,
+            records,
+            self.record_size,
+            self.label_words,
+            self.interleaved_compression,
+            scratch,
+        )?;
+        if len == 0 {
             return Ok(0);
-        }
-        let (attr_len, label_len) = if self.interleaved_compression {
-            (CompressionScratch::encode(bytes, &mut scratch.encoded)?, 0)
-        } else {
-            let record_len = usize::try_from(self.record_size).unwrap();
-            let fixed_len = record_len - self.label_words * 8;
-            scratch.attrs.clear();
-            scratch.labels.clear();
-            scratch.attrs.reserve(records as usize * fixed_len);
-            scratch.labels.reserve(records as usize * self.label_words * 8);
-            for record in bytes.chunks_exact(record_len) {
-                scratch.attrs.extend_from_slice(&record[..fixed_len]);
-                scratch.labels.extend_from_slice(&record[fixed_len..]);
-            }
-            let attrs = std::mem::take(&mut scratch.attrs);
-            let labels = std::mem::take(&mut scratch.labels);
-            let attr_len = CompressionScratch::encode(&attrs, &mut scratch.encoded)?;
-            let label_len = CompressionScratch::encode(&labels, &mut scratch.encoded_labels)?;
-            scratch.attrs = attrs;
-            scratch.labels = labels;
-            (attr_len, label_len)
-        };
-        let attr_len_u32 = u32::try_from(attr_len).map_err(|_| BucketError::TooManyRecords)?;
-        let label_len_u32 = u32::try_from(label_len).map_err(|_| BucketError::TooManyRecords)?;
-
-        // One write per block: the file is unbuffered, so the header and both
-        // streams would otherwise cost three or four syscalls apiece.
-        scratch.block.clear();
-        scratch.block.extend_from_slice(&records_u32.to_le_bytes());
-        scratch.block.extend_from_slice(&attr_len_u32.to_le_bytes());
-        scratch.block.extend_from_slice(&label_len_u32.to_le_bytes());
-        scratch.block.extend_from_slice(&scratch.encoded[..attr_len]);
-        if label_len != 0 {
-            scratch
-                .block
-                .extend_from_slice(&scratch.encoded_labels[..label_len]);
         }
         self.file
             .write_all(&scratch.block)
@@ -2950,7 +2982,7 @@ impl BucketFile {
                 path: self.path.clone(),
                 source,
             })?;
-        Ok(scratch.block.len() as u64)
+        Ok(len as u64)
     }
 
     fn flush(&mut self) -> Result<(), BucketError> {
@@ -3290,9 +3322,13 @@ mod tests {
         sink.flush_uncolored_emitters(emitters).unwrap();
         let stats = sink.finish().unwrap();
 
+        let (store, entries) = BucketStore::open_dir(&stats.bucket_dir).unwrap();
         for &(graph_id, base) in &expected {
-            let path = stats.bucket_dir.join(format!("{graph_id:05}.wsk"));
-            let mut reader = BucketReader::open(&path).unwrap();
+            let entry = entries
+                .iter()
+                .find(|entry| entry.graph_id == graph_id)
+                .expect("bucket in manifest");
+            let mut reader = store.reader(entry).unwrap();
             let mut record = BucketRecord::default();
             let mut count = 0;
             while reader.next_record_into(&mut record).unwrap() {
@@ -3346,8 +3382,12 @@ mod tests {
         }
         let stats = sink.finish().unwrap();
 
-        let path = stats.bucket_dir.join("00000.wsk");
-        let mut reader = BucketReader::open(&path).unwrap();
+        let (store, entries) = BucketStore::open_dir(&stats.bucket_dir).unwrap();
+        let entry = entries
+            .iter()
+            .find(|entry| entry.graph_id == 0)
+            .expect("bucket in manifest");
+        let mut reader = store.reader(entry).unwrap();
         assert!(reader.header().compressed);
         let mut sources = Vec::new();
         let mut record = BucketPackedRecord::default();
@@ -3356,14 +3396,23 @@ mod tests {
         }
         assert_eq!(sources, [1, 1, 2, 3, 3, 4, 4, 5, 6]);
 
-        let len = fs::metadata(&path).unwrap().len();
+        // Clipping the container leaves the manifest claiming a length the
+        // chain can no longer supply, which is the container-shaped version of
+        // a bucket file cut short by a killed run.
+        let container_path = stats.bucket_dir.join("00000.wskc");
+        let len = fs::metadata(&container_path).unwrap().len();
         OpenOptions::new()
             .write(true)
-            .open(&path)
+            .open(&container_path)
             .unwrap()
             .set_len(len - 1)
             .unwrap();
-        let mut truncated = BucketReader::open(&path).unwrap();
+        let (store, entries) = BucketStore::open_dir(&stats.bucket_dir).unwrap();
+        let entry = entries
+            .iter()
+            .find(|entry| entry.graph_id == 0)
+            .expect("bucket in manifest");
+        let mut truncated = store.reader(entry).unwrap();
         let mut record = BucketPackedRecord::default();
         let mut failed = false;
         loop {
@@ -3419,7 +3468,12 @@ mod tests {
         sink.flush_colored_emitters(emitters).unwrap();
         let stats = sink.finish().unwrap();
 
-        let mut reader = BucketReader::open(stats.bucket_dir.join("00000.wsk")).unwrap();
+        let (store, entries) = BucketStore::open_dir(&stats.bucket_dir).unwrap();
+        let entry = entries
+            .iter()
+            .find(|entry| entry.graph_id == 0)
+            .expect("bucket in manifest");
+        let mut reader = store.reader(entry).unwrap();
         let mut sources = Vec::new();
         let mut record = BucketPackedRecord::default();
         while reader.next_packed_record_into(&mut record).unwrap() {

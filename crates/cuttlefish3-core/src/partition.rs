@@ -927,7 +927,8 @@ fn populate_emitted_graph_histogram(
     buckets: &BucketEmitStats,
 ) -> Result<(), PartitionRunError> {
     stats.graph_histogram.fill(0);
-    for entry in crate::buckets::read_manifest(&buckets.bucket_dir)? {
+    let (_, entries) = crate::buckets::BucketStore::open_dir(&buckets.bucket_dir)?;
+    for entry in entries {
         stats.graph_histogram[entry.graph_id] = entry.records;
     }
     Ok(())

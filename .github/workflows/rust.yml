@@ -1,0 +1,127 @@
+name: rust
+
+# Shaped by the failure modes this project has actually produced rather than a
+# generic checklist. Every job below exists because something real got past the
+# checks that came before it.
+
+on:
+  push:
+    branches: [rust-rewrite, develop, master]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # The gate that matters most: exact unitig and base counts against fixtures
+  # checked into the repository. This is what caught the edge-matrix
+  # extent-transfer bug, where six pipeline tests failed the moment the
+  # invariant broke.
+  #
+  # Deliberately a debug build. The container code asserts its
+  # extents-versus-edge-count invariant with `debug_assert`, which a release
+  # build compiles away, and that assertion is the thing that names the cause
+  # instead of letting it surface three phases downstream.
+  test:
+    name: test / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # macOS is not optional here. Three defects were invisible on Linux:
+        # `libc::fallocate` does not exist on Apple, `RLIMIT_NOFILE` is 8 there
+        # rather than 7, and Darwin refuses a soft descriptor limit above
+        # `sysconf(_SC_OPEN_MAX)`. Only a real run exercises the last two, and
+        # only a real APFS run exercises `fcntl(F_PUNCHHOLE)`.
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --workspace
+
+  lint:
+    name: fmt + clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all --check
+      # `-D warnings` after `--` rather than in RUSTFLAGS, so it applies to this
+      # workspace and not to every dependency compiled alongside it.
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+
+  # Compile the platform-specific paths the host's own build never sees. Cheap,
+  # and it is what turns "macOS is broken" from a user report into a red check.
+  # `jemalloc-sys` cannot cross-compile its C build script, so the CLI is
+  # checked without it; all the platform-conditional code is in the core crate.
+  cross:
+    name: cross-check / ${{ matrix.target }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - aarch64-apple-darwin
+          - aarch64-unknown-linux-musl # non-glibc: no malloc_trim
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --target ${{ matrix.target }} -p cuttlefish3-core --all-targets -- -D warnings
+      - run: cargo check --target ${{ matrix.target }} -p cuttlefish3-cli --no-default-features
+
+  # Descriptor pressure is its own axis, and a development machine usually has
+  # none -- the host this was written on runs soft = hard = 262144, so every
+  # container path was unconstrained until it was tested deliberately. Doing so
+  # found that the bucket containers had turned a soft budget into a hard floor,
+  # and that a narrowed build wrote a manifest naming container files it had
+  # never created. Both produced wrong behaviour, not just a tight fit, so this
+  # checks the output rather than the exit code.
+  descriptors:
+    name: low descriptor limit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release -p cuttlefish3-cli
+      - name: build a graph under a tight descriptor budget
+        run: |
+          set -euo pipefail
+          expect=3
+          run_case() {
+            local label=$1; shift
+            local work; work=$(mktemp -d)
+            local got
+            got=$( "$@" ./target/release/cuttlefish3-rs build --ref \
+                     --seq data/refs2.fa --kmer-len 7 --min-len 3 --threads 4 \
+                     --work-dir "$work" --output "$work/out" 2>&1 \
+                   | grep -oP 'wrote \K[0-9]+(?= unitig)' | tail -1 )
+            rm -rf "$work"
+            if [ "${got:-none}" != "$expect" ]; then
+              echo "::error::$label produced ${got:-no output}, expected $expect"
+              exit 1
+            fi
+            echo "$label: $got unitigs"
+          }
+
+          # 192 is the measured floor; 256 is the stock macOS soft limit. Both
+          # soft and hard are lowered, so the process cannot raise its way out
+          # and the adaptive container planning is what is under test.
+          for limit in 256 384; do
+            run_case "hard limit $limit" env - PATH="$PATH" \
+              bash -c "ulimit -n $limit; exec \"\$@\"" --
+          done
+
+          # Soft-only, which is the shape of a stock machine: the process should
+          # raise itself out of trouble rather than narrow anything.
+          run_case "soft limit 256" env - PATH="$PATH" \
+            bash -c 'ulimit -S -n 256; exec "$@"' --

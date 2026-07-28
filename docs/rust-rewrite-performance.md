@@ -1388,6 +1388,42 @@ hole. The 2.15 GB of tail waste the 256 KiB segment size was chosen to bound
 costs no real disk, so that choice is far less sensitive than its derivation
 assumed.
 
+## Continuous integration
+
+There is a `rust` workflow, and its shape is deliberate: every job exists
+because something real got past the checks before it.
+
+- **test**, on Linux *and* macOS. Exact unitig and base counts against
+  in-repository fixtures, which is what caught the edge-matrix extent-transfer
+  bug the moment its invariant broke. Deliberately a debug build, because the
+  container code asserts that invariant with `debug_assert` and release
+  compiles it away.
+- **fmt + clippy**, with `-D warnings` passed after `--` so it binds this
+  workspace rather than every dependency compiled alongside it.
+- **cross-check** against `aarch64-apple-darwin` and
+  `aarch64-unknown-linux-musl`. The Apple target caught a build break that
+  Linux cannot see -- `libc::fallocate` does not exist there -- and a clippy
+  lint that fires only on that path. musl covers the non-glibc case where
+  `malloc_trim` is absent.
+- **low descriptor limit**, checking output rather than exit status. This axis
+  is invisible on a development machine: the host these measurements were taken
+  on runs soft = hard = 262144, so every container path was unconstrained until
+  it was tested deliberately, at which point the bucket containers turned out to
+  have made a soft budget into a hard floor and a narrowed build wrote a
+  manifest naming container files it had never created.
+
+`libc` is a direct dependency and that is accepted rather than merely tolerated.
+There is no alternative for hole punching -- `nix` and `rustix` both gate
+`fallocate` behind `target_os = "linux"` and neither offers the Apple
+`fcntl(F_PUNCHHOLE)` path -- and it is bindings only, already in the lockfile
+and already linked, since `std` itself goes through libc on Unix.
+
+What CI does *not* cover is performance. Runner variance dwarfs the effects this
+document records -- several of them are 1-3% -- and the session that produced
+them found that even on dedicated hardware a non-interleaved comparison is
+untrustworthy at that magnitude in both directions. Timing claims belong in
+interleaved pairs on a known host, not in a check.
+
 ## Descriptor limits need no user intervention
 
 Cuttlefish 3 previously wanted `ulimit -n` raised: the C++ build needs 65,536

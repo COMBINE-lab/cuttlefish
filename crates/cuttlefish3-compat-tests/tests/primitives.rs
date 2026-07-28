@@ -85,6 +85,31 @@ fn normalized_uncolored_fixture_with_threads(
     expected_bases: u64,
     threads: Option<usize>,
 ) {
+    normalized_uncolored_fixture_tuned(
+        fixture_path,
+        name,
+        expected_unitigs,
+        expected_bases,
+        threads,
+        DEFAULT_SUBGRAPH_COUNT,
+        true,
+    );
+}
+
+/// As above, but also choosing how many buckets the partitioner may use.
+///
+/// The bucket count is the data-driven lever on `workers`: local contraction
+/// takes `threads.min(groups.len())`, and a group is a non-empty bucket, so
+/// one bucket pins it to a single worker however many threads are asked for.
+fn normalized_uncolored_fixture_tuned(
+    fixture_path: &str,
+    name: &str,
+    expected_unitigs: &[&str],
+    expected_bases: u64,
+    threads: Option<usize>,
+    subgraph_count: usize,
+    expect_discontinuity_edges: bool,
+) {
     let output_prefix = scratch_prefix(name);
     let bucket_dir = output_prefix
         .parent()
@@ -108,7 +133,7 @@ fn normalized_uncolored_fixture_with_threads(
         params.threads = threads;
     }
 
-    let emitted = emit_weak_superkmer_buckets::<7>(&params, DEFAULT_SUBGRAPH_COUNT).unwrap();
+    let emitted = emit_weak_superkmer_buckets::<7>(&params, subgraph_count).unwrap();
     let built = build_uncolored_from_buckets::<7>(&params, &emitted.buckets.bucket_dir).unwrap();
     let actual = normalized_fasta_labels(&built.output_path);
     let mut expected = expected_unitigs
@@ -121,8 +146,8 @@ fn normalized_uncolored_fixture_with_threads(
     assert_eq!(built.unitigs, expected_unitigs.len() as u64);
     assert_eq!(built.unitig_bases, expected_bases);
     assert_eq!(built.bucket_records, emitted.partition.weak_superkmers);
-    assert!(built.observed_edges > 0);
-    assert!(built.retained_edges > 0);
+    assert_eq!(built.observed_edges > 0, expect_discontinuity_edges);
+    assert_eq!(built.retained_edges > 0, expect_discontinuity_edges);
 
     let _ = fs::remove_dir_all(emitted.buckets.bucket_dir);
     let _ = fs::remove_file(built.output_path);
@@ -287,6 +312,38 @@ fn uncolored_compat_small_matches_cpp_validated_unitigs() {
         "uncolored-compat-small-expected",
         COMPAT_SMALL_UNITIGS,
         148,
+    );
+}
+
+/// One bucket: `workers` collapses to 1 by input shape, not by `--threads`.
+///
+/// This is the route a thread floor could not have closed, since `workers` is
+/// `threads.min(groups.len())` and a group is a non-empty bucket. Forcing the
+/// partitioner to a single bucket reproduces it deterministically at a thread
+/// count that would otherwise take the concurrent path.
+///
+/// It does *not* reach the code the single-worker bug lived in, and cannot:
+/// a discontinuity vertex is one whose neighbour is absent from its subgraph,
+/// so once every weak super-k-mer shares a bucket the junctions between them
+/// are ordinary vertices and no unitig has an exit. Everything is then trivial
+/// and goes straight to the FASTA, never to the unitig file whose index was
+/// wrong. One group and a non-empty unitig file are mutually exclusive, which
+/// is why `--threads 1` remains the only way to exercise that path and why the
+/// sweep below is the test that guards it.
+///
+/// What this does cover is that the degenerate shape -- one subgraph, no
+/// discontinuity edges, an empty unitig file and an empty edge matrix -- still
+/// produces the right FASTA rather than dividing by zero somewhere.
+#[test]
+fn uncolored_single_bucket_collapses_workers_without_discontinuity_edges() {
+    normalized_uncolored_fixture_tuned(
+        "data/compat-small.fa",
+        "uncolored-compat-small-one-bucket",
+        COMPAT_SMALL_UNITIGS,
+        148,
+        Some(8),
+        1,
+        false,
     );
 }
 

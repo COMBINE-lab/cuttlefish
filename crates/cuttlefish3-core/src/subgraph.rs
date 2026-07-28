@@ -1612,6 +1612,7 @@ fn normalize_source_sets(source_sets: &mut [Vec<u32>]) {
     }
 }
 
+/// Decodes a label into canonical k-mers; the subgraph builder walks them in place instead.
 #[allow(dead_code)]
 fn canonical_vertices_from_label<const K: usize>(
     label: &[u8],

@@ -1225,6 +1225,7 @@ impl ConcurrentBlockedEdgeWriters {
         }
     }
 
+    /// Appends a single prepared edge. The production writers batch, so only tests reach this.
     #[allow(dead_code)]
     fn add(&self, edge: &PreparedBlockedEdge) -> Result<(), SerialCollationError> {
         let block = &self.blocks[edge.block];
@@ -1454,6 +1455,7 @@ impl<const K: usize> BlockedEdgeMatrix<K> {
     }
 
     #[inline]
+    /// Maps a matrix endpoint to its vertex partition. Superseded by the callers computing it inline.
     #[allow(dead_code)]
     fn partition(&self, endpoint: MatrixEndpoint<K>) -> usize {
         edge_matrix_partition(self.vertex_partitions, endpoint)
@@ -1464,6 +1466,7 @@ impl<const K: usize> BlockedEdgeMatrix<K> {
         row * self.partition_count() + col
     }
 
+    /// Adds one decoded edge through the matrix's own buffers, the pre-concurrent write path.
     #[allow(dead_code)]
     fn add_edge_record(
         &mut self,
@@ -1519,6 +1522,7 @@ impl<const K: usize> BlockedEdgeMatrix<K> {
         Ok(())
     }
 
+    /// Adds prepared edges whose unitig indices are already absolute. Used by the dual-writer test.
     #[allow(dead_code)]
     fn add_prepared_edges_absolute(
         &mut self,
@@ -1609,6 +1613,7 @@ impl<const K: usize> BlockedEdgeMatrix<K> {
         Ok(records)
     }
 
+    /// Loads a whole matrix column into an in-memory SerialEdgeMatrix, the pre-blocked contraction input.
     #[allow(dead_code)]
     fn load_column(
         &mut self,
@@ -2919,6 +2924,7 @@ impl SerialDiscontinuityContractor {
         }
     }
 
+    /// Column scan against the atomic partition table, superseded by the fused scan the production path uses.
     #[allow(dead_code)]
     fn scan_partition_column_atomic<const K: usize>(
         matrix: &SerialEdgeMatrix<K>,
@@ -3185,6 +3191,7 @@ impl SerialDiscontinuityContractor {
         Ok((contracted, pre_reinserted_edges))
     }
 
+    /// Partition contraction over per-worker owned tables, one of three table strategies that lost to the atomic one.
     #[allow(dead_code)]
     fn contract_partition_with_owned_tables<const K: usize>(
         matrix: &SerialEdgeMatrix<K>,
@@ -3326,6 +3333,7 @@ impl SerialDiscontinuityContractor {
         }
     }
 
+    /// Partition contraction driven directly by the atomic table, before the scan and contraction were fused.
     #[allow(dead_code)]
     fn contract_partition_with_atomic_table<const K: usize>(
         matrix: &SerialEdgeMatrix<K>,
@@ -3512,6 +3520,7 @@ impl SerialDiscontinuityContractor {
         }
     }
 
+    /// Partition contraction over the open-addressed FlatPartitionTable, the third table strategy.
     #[allow(dead_code)]
     fn contract_partition_with_flat_table<const K: usize>(
         matrix: &SerialEdgeMatrix<K>,
@@ -4784,6 +4793,7 @@ impl SerialDiscontinuityExpander {
         Self::expand_cpp_ordered_impl::<K, true, true>(contraction)
     }
 
+    /// Whole-graph C++-ordered expansion, superseded by the per-range-bucket expansion collation now uses.
     #[allow(dead_code)]
     fn expand_cpp_ordered_external<const K: usize>(
         contraction: &FullSerialDiscontinuityContraction<K>,
@@ -7846,6 +7856,7 @@ impl DenseLocalPathInfo {
         rank_and_flags: u64::MAX,
     };
 
+    /// Builds a compact path-info key from a stitched coordinate record; callers now construct it in place.
     #[allow(dead_code)]
     fn from_record(record: StitchedCoordRecord) -> Self {
         Self {
@@ -8559,6 +8570,7 @@ fn emit_contracted_edge_chunks<const K: usize>(
         .try_reduce(|| 0, |left, right| Ok(left + right))
 }
 
+/// Emits a batch of contracted edges through the concurrent writers, superseded by the chunked emitter.
 #[allow(dead_code)]
 fn emit_contracted_edge_batch<const K: usize>(
     edges: Vec<DiscontinuityEdge<K>>,
@@ -8659,6 +8671,7 @@ struct VertexPathInfoBucketWriters<const K: usize> {
 }
 
 impl<const K: usize> VertexPathInfoBucketWriters<K> {
+    /// Creates a vertex path-info bucket directory, from the expansion layout that predated range buckets.
     #[allow(dead_code)]
     fn create(dir: &Path, bucket_count: usize) -> Result<Self, SerialCollationError> {
         if dir.exists() {
@@ -9034,6 +9047,7 @@ fn push_edge_path_record_to_range_bucket_writer<const K: usize>(
 }
 
 #[allow(clippy::too_many_arguments)]
+/// Routes one edge path-info record into per-range staging buffers, the uncompacted coordinate layout.
 #[allow(dead_code)]
 fn push_edge_path_record_to_range_buffers<const K: usize>(
     edge: &DiscontinuityEdge<K>,
@@ -9057,6 +9071,7 @@ fn push_edge_path_record_to_range_buffers<const K: usize>(
 }
 
 #[allow(clippy::too_many_arguments)]
+/// As above for the compact coordinate layout; both predate the writers taking records directly.
 #[allow(dead_code)]
 fn push_compact_edge_path_record_to_range_buffers<const K: usize>(
     edge: &DiscontinuityEdge<K>,
@@ -9130,6 +9145,7 @@ fn stitched_record_from_compact_edge_path_info<const K: usize>(
     })
 }
 
+/// Materializes path info into coordinate buckets from an unbucketed record stream.
 #[allow(dead_code)]
 fn write_external_cpp_path_info_materialized_coord_buckets<const K: usize>(
     inputs: &ExternalDiscontinuityInputs<K>,
@@ -9144,6 +9160,7 @@ fn write_external_cpp_path_info_materialized_coord_buckets<const K: usize>(
     )
 }
 
+/// Same, from records already grouped by bucket.
 #[allow(dead_code)]
 fn write_external_cpp_path_info_materialized_coord_buckets_from_bucketed<const K: usize>(
     inputs: &ExternalDiscontinuityInputs<K>,
@@ -9806,6 +9823,7 @@ where
     Ok(())
 }
 
+/// Bucketed materialization variant retained from the fanout experiments.
 #[allow(dead_code)]
 fn write_external_cpp_path_info_materialized_coord_buckets_bucketed<const K: usize>(
     inputs: &ExternalDiscontinuityInputs<K>,
@@ -9939,6 +9957,7 @@ fn write_external_cpp_path_info_materialized_coord_buckets_bucketed<const K: usi
     })
 }
 
+/// The original single-pass materialization, kept as the reference the later variants were measured against.
 #[allow(dead_code)]
 fn write_external_cpp_path_info_materialized_coord_buckets_legacy<const K: usize>(
     inputs: &ExternalDiscontinuityInputs<K>,
@@ -9994,6 +10013,7 @@ fn write_external_cpp_path_info_materialized_coord_buckets_legacy<const K: usize
     writers.finish()
 }
 
+/// Streaming materialization variant from the same series.
 #[allow(dead_code)]
 fn write_external_cpp_path_info_materialized_coord_buckets_streaming<const K: usize>(
     inputs: &ExternalDiscontinuityInputs<K>,
@@ -13312,6 +13332,7 @@ impl<'a> SharedMaterializedWriters<'a> {
         Ok(())
     }
 
+    /// Writes a colored coordinate with its label and colors interleaved, before the color sidecar was split out.
     #[allow(dead_code)]
     fn write_colored_record(
         &self,
@@ -13771,6 +13792,7 @@ impl MaterializedStitchedCoordShardWriter {
         self.write_record_with_color_index(record, label, color_index, count)
     }
 
+    /// The pre-encoded form of the same colored record write.
     #[allow(dead_code)]
     fn write_encoded_colored_record(
         &mut self,
@@ -14813,6 +14835,7 @@ fn encode_final_unitig_batch(
     }
 }
 
+/// Reduces one materialized coordinate bucket read from a file group, superseded by the in-memory reducer.
 #[allow(dead_code)]
 fn reduce_materialized_stitched_coord_bucket_file_group<const K: usize>(
     group: &[MaterializedStitchedCoordBucketEntry],
@@ -15194,6 +15217,7 @@ fn append_materialized_stitched_coord_bucket_file(
     Ok(())
 }
 
+/// Decodes a single materialized coordinate record; the hot paths decode in bulk instead.
 #[allow(dead_code)]
 fn decoded_materialized_stitched_coord_record(
     bytes: &[u8],
@@ -16623,6 +16647,7 @@ impl<const K: usize> ExpansionPathInfoTable<K> {
         }
     }
 
+    /// Membership test on the atomic partition table, used only by the retired contraction strategies.
     #[allow(dead_code)]
     fn contains_key(&self, vertex: &Kmer<K>) -> bool {
         self.get(*vertex).is_some()
@@ -16755,18 +16780,21 @@ impl<const K: usize> ConcurrentPathInfoTable<K> {
     }
 
     #[inline]
+    /// The same test on the owned-table strategy.
     #[allow(dead_code)]
     fn contains_key(&self, vertex: &Kmer<K>) -> bool {
         self.get(*vertex).is_some()
     }
 }
 
+/// Per-worker owned partition tables: shard by vertex, no atomics, merged at the end.
 #[allow(dead_code)]
 struct OwnedPartitionTables<const K: usize> {
     maps: Vec<FastHashMap<Kmer<K>, PartitionOtherEnd<K>>>,
     mask: usize,
 }
 
+/// Members of the retired owned-table strategy; see the struct above.
 impl<const K: usize> OwnedPartitionTables<K> {
     #[allow(dead_code)]
     fn new(threads: usize) -> Self {
@@ -16869,6 +16897,7 @@ struct AtomicPartitionSlot {
     value: UnsafeCell<MaybeUninit<CompactPartitionOtherEnd>>,
 }
 
+/// Open-addressed flat partition table: one dense array, linear probing, no per-slot locking.
 #[allow(dead_code)]
 struct FlatPartitionTable<const K: usize> {
     keys: Vec<u64>,
@@ -16877,6 +16906,7 @@ struct FlatPartitionTable<const K: usize> {
     mask: usize,
 }
 
+/// Members of the retired flat-table strategy; see the struct above.
 impl<const K: usize> FlatPartitionTable<K> {
     #[allow(dead_code)]
     const EMPTY: u64 = u64::MAX;
@@ -16998,6 +17028,7 @@ impl<const K: usize> AtomicPartitionTable<K> {
         vertex.hash64(Self::HASH_SEED) as usize & self.mask
     }
 
+    /// Sizes the atomic table for a partition; the production path sizes it once for the whole run.
     #[allow(dead_code)]
     fn with_max_entries(max_entries: usize) -> Self {
         let capacity = max_entries
@@ -17028,6 +17059,7 @@ impl<const K: usize> AtomicPartitionTable<K> {
         });
     }
 
+    /// Folds another table's entries in, which only the owned-table strategy needed.
     #[allow(dead_code)]
     fn absorb(
         &self,
@@ -17185,6 +17217,7 @@ impl<const K: usize> AtomicPartitionTable<K> {
         }
     }
 
+    /// Materializes the atomic table as a plain map, for the strategies that wanted owned storage.
     #[allow(dead_code)]
     fn to_fast_map(&self) -> FastHashMap<Kmer<K>, PartitionOtherEnd<K>> {
         let occupied = self
@@ -17219,6 +17252,7 @@ impl<const K: usize> AtomicPartitionTable<K> {
         }
     }
 
+    /// Single-threaded insert, used when a retired strategy filled the table outside the parallel scan.
     #[allow(dead_code)]
     fn insert_serial(&self, vertex: Kmer<K>, value: PartitionOtherEnd<K>) {
         let key = vertex.as_u128() as u64;

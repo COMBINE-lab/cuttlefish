@@ -1294,13 +1294,50 @@ Every delta except local contraction exceeds both arms' spreads. Local
 contraction being flat is the useful negative: punching a consumed bucket's
 segments costs no more than unlinking its file did.
 
-Colored is a single pair rather than two, and moves the same way: 6:39.70 to
-6:35.03, peak files 23,809 to 2,613, with an unchanged 41 GiB colour index and
-exact counts. `cf3-compare-fasta` matched all 252,487,658 strand-normalized
-unitigs against the 64-thread C++ reference.
+### End to end, against `rust-rewrite`
 
-Taken with the edge matrix, a full uncolored build now peaks at 1,795 files
-against 23,376, and its work directory at 234.2 GB against 324.3 GB.
+The staged comparisons above cannot be chained: the same edge-only binary
+measured 292.44 s in one campaign and 295.20 s in another, a drift larger than
+several of the effects, and the earlier campaigns sampled apparent size where
+the later ones sample allocated blocks. Both container stages were therefore
+measured against the baseline directly, in single interleaved campaigns.
+
+Uncolored, three pairs; colored, two:
+
+| metric | uncolored base | uncolored final | colored base | colored final |
+| --- | ---: | ---: | ---: | ---: |
+| wall | 298.27 s | **293.13 s** | 407.94 s | **396.53 s** |
+| partition | 120.694 s | **112.787 s** | 133.218 s | **122.400 s** |
+| local contraction | 125.623 s | 128.309 s | 221.626 s | 219.738 s |
+| contraction | — | — | 11.307 s | 11.302 s |
+| expansion | — | — | 30.379 s | 31.361 s |
+| peak work dir | 331.3 GB | **233.6 GB** | 528.6 GB | **357.6 GB** |
+| peak files | 23,786 | 2,423 | 24,015 | 3,376 |
+| peak RSS | — | — | 15.97 GB | 15.77 GB |
+
+That is -1.7% wall and -29.5% peak disk uncolored, and -2.8% and -32.3%
+colored. Colored gains more on both because it writes more -- 619 GB against
+439 GB -- so the flush count and the preallocation slack both scale with it.
+The colour index is unchanged at 41 GiB and every run emitted the exact
+252,487,658 unitigs and 16,417,233,428 bases.
+
+Partitioning carries the whole time win: -7.9 s uncolored and -10.8 s colored.
+It also becomes far more deterministic -- the final arm's partition spread is
+0.089 s across the colored pairs against 2.546 s for the baseline -- which is
+what removing eleven syscalls per flush across 16,385 files should look like.
+
+Colored is the useful check on the read side rather than a formality, because
+`contract_colored_impl_with` re-opens every bucket a second time to collect
+source sets. If the segment-chain reader cost anything, doubled read pressure
+would expose it in local contraction; instead colored local contraction is
+1.89 s *faster*. That also settles the uncolored reading, where local
+contraction appeared 2.69 s worse against a 6.29 s spread driven entirely by
+one outlier sample whose file-count reading (3,678 against 1,795 twice)
+suggests the sampler caught the background unlinkers still running.
+
+Taken together, a full uncolored build now peaks at 2,423 files against 23,786
+and 233.6 GB against 331.3 GB, and `cf3-compare-fasta` matched all 252,487,658
+strand-normalized unitigs against the 64-thread C++ reference.
 
 ## Colour-set encoding
 

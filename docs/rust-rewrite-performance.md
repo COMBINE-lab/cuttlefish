@@ -1424,6 +1424,36 @@ them found that even on dedicated hardware a non-interleaved comparison is
 untrustworthy at that magnitude in both directions. Timing claims belong in
 interleaved pairs on a known host, not in a check.
 
+### CI immediately found a bug nothing local could
+
+The first run failed five pipeline tests on both Linux and macOS with
+`UnexpectedEof` reading the local-unitig file, and the cause was a path that a
+development machine effectively never takes.
+
+The local-contraction sink has two implementations and the worker count picks
+between them. The serial one derived its index into the unitig file from
+`inputs.stats.local_unitigs`, which also counts *trivial* unitigs -- those with
+no discontinuity exits, which go straight to the output FASTA and are never
+written to that file. So the seek ran past the records that existed, and
+`add_prepared_edges` was handed a base naming the wrong unitig. The concurrent
+sink keeps the two apart by construction, tracking `next_unitig` for the file
+and adding the trivial count only to the reported total.
+
+It reproduces at exactly `--threads 1` and nowhere above, which is why it
+survived: workers are sized from the core count, so no machine used for this
+work ever ran it. A two-core CI runner did. It predates the container work --
+the pre-session binary fails identically -- so it had been there for some time.
+
+`normalized_uncolored_fixture_with_threads` now pins a fixture to one worker so
+the serial path is exercised wherever the tests run, and reintroducing the bug
+fails that test.
+
+Two smaller things came from the same run. CI's clippy is a newer toolchain
+than the one this was developed against, and caught three lints the older one
+had no rules for -- worth remembering that "clippy clean" is only ever a claim
+about a specific version. And `--threads 1` is now a tested configuration
+rather than an assumed one.
+
 ## Descriptor limits need no user intervention
 
 Cuttlefish 3 previously wanted `ulimit -n` raised: the C++ build needs 65,536

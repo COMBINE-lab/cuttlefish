@@ -5665,14 +5665,14 @@ impl SerialDiscontinuityExpander {
                                     changed = true;
                                 }
                             }
-                            (Some(x_info), Some(y_info)) if edge.weight == 1 => {
-                                if x_info.path_id == y_info.path_id {
-                                    edges.push(EdgePathInfo {
-                                        unitig_index: edge.unitig_index,
-                                        phantom_unitig: edge.phantom_unitig,
-                                        info: edge_path_info(edge, x_info, y_info),
-                                    });
-                                }
+                            (Some(x_info), Some(y_info))
+                                if edge.weight == 1 && x_info.path_id == y_info.path_id =>
+                            {
+                                edges.push(EdgePathInfo {
+                                    unitig_index: edge.unitig_index,
+                                    phantom_unitig: edge.phantom_unitig,
+                                    info: edge_path_info(edge, x_info, y_info),
+                                });
                             }
                             _ => {}
                         }
@@ -5685,16 +5685,16 @@ impl SerialDiscontinuityExpander {
         for edge in &expansion_edges {
             match (edge.first, edge.second) {
                 (MatrixEndpoint::Phi, MatrixEndpoint::Vertex(v))
-                | (MatrixEndpoint::Vertex(v), MatrixEndpoint::Phi) => {
-                    if !vertex_info.contains_key(&v.vertex) {
-                        unresolved_edges += 1;
-                    }
+                | (MatrixEndpoint::Vertex(v), MatrixEndpoint::Phi)
+                    if !vertex_info.contains_key(&v.vertex) =>
+                {
+                    unresolved_edges += 1;
                 }
-                (MatrixEndpoint::Vertex(x), MatrixEndpoint::Vertex(y)) => {
-                    if !vertex_info.contains_key(&x.vertex) || !vertex_info.contains_key(&y.vertex)
-                    {
-                        unresolved_edges += 1;
-                    }
+                (MatrixEndpoint::Vertex(x), MatrixEndpoint::Vertex(y))
+                    if !vertex_info.contains_key(&x.vertex)
+                        || !vertex_info.contains_key(&y.vertex) =>
+                {
+                    unresolved_edges += 1;
                 }
                 _ => {}
             }
@@ -18123,7 +18123,15 @@ fn append_local_contraction_output_to_external_inputs<const K: usize>(
     inputs.stats.local_unitigs += output.trivial_unitigs;
     inputs.stats.unitig_bases += output.trivial_bases;
     inputs.stats.weak_superkmers += output.weak_superkmers;
-    let start_unitig = usize::try_from(inputs.stats.local_unitigs).unwrap_or(usize::MAX);
+    // Index into the unitig file, which is not the reported unitig total.
+    // Trivial unitigs -- those with no discontinuity exits -- go straight to
+    // the output FASTA and are never written to `unitig_path`, so counting
+    // them here would seek past the records that are, and would hand
+    // `add_prepared_edges` a base that names the wrong unitig. The concurrent
+    // sink keeps these separate by construction, tracking `next_unitig` for
+    // the file and adding the trivial count only to the reported total.
+    let start_unitig =
+        usize::try_from(inputs.stats.local_unitigs - *trivial_unitigs).unwrap_or(usize::MAX);
     let output_unitigs = output.unitigs.len();
     let output_label_len = output.labels.len() as u64;
     let color_start = color_run_writer

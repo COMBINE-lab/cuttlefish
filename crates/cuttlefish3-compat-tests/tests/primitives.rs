@@ -42,6 +42,31 @@ fn normalized_uncolored_fixture(
     expected_unitigs: &[&str],
     expected_bases: u64,
 ) {
+    normalized_uncolored_fixture_with_threads(
+        fixture_path,
+        name,
+        expected_unitigs,
+        expected_bases,
+        None,
+    );
+}
+
+/// Builds a fixture and checks its unitigs, optionally pinning the worker count.
+///
+/// Pinning matters because the local-contraction sink has two implementations
+/// and the thread count picks between them: one worker takes a serial path that
+/// a developer machine, sizing workers from its core count, effectively never
+/// runs. That path shipped broken -- it derived the unitig file's record index
+/// from a counter that also included trivial unitigs, which are written to the
+/// FASTA and never to that file, so every read seeked past the records that
+/// existed. CI on a two-core runner caught it; nothing else did.
+fn normalized_uncolored_fixture_with_threads(
+    fixture_path: &str,
+    name: &str,
+    expected_unitigs: &[&str],
+    expected_bases: u64,
+    threads: Option<usize>,
+) {
     let output_prefix = scratch_prefix(name);
     let bucket_dir = output_prefix
         .parent()
@@ -61,6 +86,9 @@ fn normalized_uncolored_fixture(
         .seqs
         .push(fixture(fixture_path).display().to_string());
     params.work_dir = output_prefix.parent().unwrap().display().to_string();
+    if let Some(threads) = threads {
+        params.threads = threads;
+    }
 
     let emitted = emit_weak_superkmer_buckets::<7>(&params, DEFAULT_SUBGRAPH_COUNT).unwrap();
     let built = build_uncolored_from_buckets::<7>(&params, &emitted.buckets.bucket_dir).unwrap();
@@ -244,6 +272,36 @@ fn uncolored_compat_small_matches_cpp_validated_unitigs() {
             "TAGCCTTAGCCTACTGA",
         ],
         148,
+    );
+}
+
+/// The same fixture forced onto one worker.
+///
+/// The thread count selects between two local-contraction sinks, and the
+/// serial one is unreachable on any machine with cores to spare, so it went
+/// wrong unnoticed until a two-core CI runner tripped over it. This pins it.
+#[test]
+fn uncolored_compat_small_matches_cpp_validated_unitigs_single_worker() {
+    normalized_uncolored_fixture_with_threads(
+        "data/compat-small.fa",
+        "uncolored-compat-small-single-worker",
+        &[
+            "AACGGTAA",
+            "AACGGTCAA",
+            "ACCGGTAA",
+            "ACCGGTCCGATGGA",
+            "ACCGGTTA",
+            "ACCGTTAACCG",
+            "ATCGATCG",
+            "CGGTAACC",
+            "CGGTTAC",
+            "GAATTCGAAAGCTGGATCC",
+            "GTAACCTGGA",
+            "TACTGACATGCAACGTACTGA",
+            "TAGCCTTAGCCTACTGA",
+        ],
+        148,
+        Some(1),
     );
 }
 

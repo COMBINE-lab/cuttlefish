@@ -526,7 +526,7 @@ fn reverse_complement_label(label: &[u8]) -> Vec<u8> {
 
 #[inline(always)]
 fn complement_valid_ascii(base: u8) -> u8 {
-    const COMPLEMENT: [u8; 8] = [b'N', b'T', b'N', b'G', b'A', b'N', b'N', b'C'];
+    const COMPLEMENT: [u8; 8] = *b"NTNGANNC";
     COMPLEMENT[(base & 7) as usize]
 }
 

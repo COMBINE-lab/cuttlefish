@@ -413,8 +413,11 @@ fn emits_external_memory_weak_superkmer_buckets() {
     );
     for entry in &manifest {
         let BucketLocation::Container {
-            container, segments, bytes,
-        } = &entry.location else {
+            container,
+            segments,
+            bytes,
+        } = &entry.location
+        else {
             panic!("expected a container location");
         };
         assert!(*container < header.container_count);
@@ -488,9 +491,12 @@ fn constructs_local_subgraphs_from_emitted_buckets() {
     let mut observed_edges = 0u64;
     let mut unique_vertices = 0u64;
     for entry in entries {
-        let mut subgraph =
-            LocalSubgraph::<7>::from_manifest_entries(&store, std::slice::from_ref(&entry), params.cutoff())
-                .unwrap();
+        let mut subgraph = LocalSubgraph::<7>::from_manifest_entries(
+            &store,
+            std::slice::from_ref(&entry),
+            params.cutoff(),
+        )
+        .unwrap();
         assert_eq!(subgraph.graph_id, entry.graph_id);
         assert_eq!(subgraph.stats.weak_superkmers, entry.records);
         assert_eq!(

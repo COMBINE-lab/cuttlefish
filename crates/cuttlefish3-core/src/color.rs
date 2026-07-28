@@ -655,12 +655,12 @@ impl ConcurrentColorRepository {
                             .lock()
                             .map_err(|_| ColorError::PoisonedWriter)?;
                         let index = writer.records;
-                        write_color_record(&mut writer, sources, self.num_colors).map_err(|source| {
-                            ColorError::Io {
+                        write_color_record(&mut writer, sources, self.num_colors).map_err(
+                            |source| ColorError::Io {
                                 path: color_worker_path(&self.dir, worker),
                                 source,
-                            }
-                        })?;
+                            },
+                        )?;
                         writer.records = writer
                             .records
                             .checked_add(1)
@@ -760,7 +760,12 @@ impl ColorRepositoryManifest {
             .and_then(|_| writeln!(metadata, "k\t{k}"))
             .and_then(|_| writeln!(metadata, "fasta\t{}", fasta_path.display()))
             .and_then(|_| writeln!(metadata, "coordinate\tworker:u8,index:u32"))
-            .and_then(|_| writeln!(metadata, "encoding\thybrid-elias-delta: sparse gaps, bitmap, complement gaps"))
+            .and_then(|_| {
+                writeln!(
+                    metadata,
+                    "encoding\thybrid-elias-delta: sparse gaps, bitmap, complement gaps"
+                )
+            })
             .and_then(|_| writeln!(metadata, "source_count\t{}", sources.len()))
             .map_err(|source| ColorError::Io {
                 path: metadata_path.clone(),
@@ -795,11 +800,12 @@ impl ColorRepositoryManifest {
             })?,
         );
         for index in 0..=target {
-            let sources =
-                read_color_record(&mut input, self.num_colors).map_err(|source| ColorError::Io {
+            let sources = read_color_record(&mut input, self.num_colors).map_err(|source| {
+                ColorError::Io {
                     path: path.clone(),
                     source,
-                })?;
+                }
+            })?;
             if index == target {
                 return Ok(sources);
             }
@@ -869,7 +875,8 @@ impl BitWriter {
             return;
         }
         self.accumulator |= value << self.pending;
-        self.bytes.extend_from_slice(&self.accumulator.to_le_bytes());
+        self.bytes
+            .extend_from_slice(&self.accumulator.to_le_bytes());
         self.accumulator = if free == 64 { 0 } else { value >> free };
         self.pending = count - free;
     }
@@ -1237,7 +1244,12 @@ mod tests {
             encode_source_set(&mut writer, &sources, num_colors);
             let encoded = writer.finish().to_vec();
             let decoded = decode_source_set(&mut BitReader::new(&encoded), num_colors).unwrap();
-            assert_eq!(decoded, sources, "round trip failed for {} sources", sources.len());
+            assert_eq!(
+                decoded,
+                sources,
+                "round trip failed for {} sources",
+                sources.len()
+            );
         }
     }
 
@@ -1259,7 +1271,11 @@ mod tests {
             let mut reader = BitReader::new(&encoded);
             assert_eq!(reader.take(start).unwrap(), 0);
             for &(value, width) in &values {
-                assert_eq!(reader.take(width).unwrap(), value, "width {width} at start {start}");
+                assert_eq!(
+                    reader.take(width).unwrap(),
+                    value,
+                    "width {width} at start {start}"
+                );
             }
         }
     }
@@ -1267,7 +1283,9 @@ mod tests {
     #[test]
     fn elias_codes_round_trip() {
         let mut writer = BitWriter::default();
-        let values: Vec<u64> = (0..64).chain([1000, 65535, 1 << 20, u32::MAX as u64]).collect();
+        let values: Vec<u64> = (0..64)
+            .chain([1000, 65535, 1 << 20, u32::MAX as u64])
+            .collect();
         for &value in &values {
             write_gamma(&mut writer, value);
             write_delta(&mut writer, value);

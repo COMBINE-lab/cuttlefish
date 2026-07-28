@@ -7,9 +7,8 @@
 use crate::Side;
 use crate::buckets::{BucketError, BucketStore};
 use crate::discontinuity::{
-    spawn_background_dir_removal,
     SerialUncoloredCollator, emit_uncolored_external_discontinuity_inputs_with_threads_in_dir,
-    report_process_memory, trim_process_allocations,
+    report_process_memory, spawn_background_dir_removal, trim_process_allocations,
 };
 use crate::dna::{Base, complement_ascii};
 use crate::hash::FastBuildHasher;

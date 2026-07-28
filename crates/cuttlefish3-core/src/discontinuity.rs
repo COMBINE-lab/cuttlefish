@@ -1111,10 +1111,7 @@ impl ContainerPass {
 /// pass beats one `pread` per extent; extents interleaving by write order costs
 /// a streaming reader nothing, because it wants all of them anyway. The other
 /// axis passes a single block and still benefits from the coalescing.
-fn plan_container_runs(
-    container: usize,
-    blocks: &[(usize, &[BlockExtent])],
-) -> Vec<ContainerRun> {
+fn plan_container_runs(container: usize, blocks: &[(usize, &[BlockExtent])]) -> Vec<ContainerRun> {
     let mut placed = Vec::new();
     for (slot, extents) in blocks {
         let mut dest_offset = 0usize;
@@ -1313,8 +1310,7 @@ impl ConcurrentBlockedEdgeWriters {
         matrix: &mut BlockedEdgeMatrix<K>,
     ) -> Result<(), SerialCollationError> {
         let mut edges = 0u64;
-        for (block_index, (block, target)) in
-            self.blocks.iter().zip(&mut matrix.blocks).enumerate()
+        for (block_index, (block, target)) in self.blocks.iter().zip(&mut matrix.blocks).enumerate()
         {
             let mut buffer = block
                 .buffer
@@ -1421,7 +1417,6 @@ fn push_coalesced_extent(extents: &mut Vec<BlockExtent>, extent: BlockExtent) {
         _ => extents.push(extent),
     }
 }
-
 
 impl<const K: usize> BlockedEdgeMatrix<K> {
     fn create(dir: &Path, vertex_partitions: usize) -> Result<Self, SerialCollationError> {
@@ -2539,12 +2534,12 @@ impl SerialDiscontinuityContractor {
                     Some(phantom),
                 ));
                 PartitionOtherEnd {
-                        endpoint: MatrixEndpoint::Phi,
-                        side_at_current: x.side.inverse(),
-                        weight: 1,
-                        in_same_part: false,
-                        processed: false,
-                    }
+                    endpoint: MatrixEndpoint::Phi,
+                    side_at_current: x.side.inverse(),
+                    weight: 1,
+                    in_same_part: false,
+                    processed: false,
+                }
             });
 
             table.entry(y.vertex).or_insert_with(|| {
@@ -2560,12 +2555,12 @@ impl SerialDiscontinuityContractor {
                     Some(phantom),
                 ));
                 PartitionOtherEnd {
-                        endpoint: MatrixEndpoint::Phi,
-                        side_at_current: y.side.inverse(),
-                        weight: 1,
-                        in_same_part: false,
-                        processed: false,
-                    }
+                    endpoint: MatrixEndpoint::Phi,
+                    side_at_current: y.side.inverse(),
+                    weight: 1,
+                    in_same_part: false,
+                    processed: false,
+                }
             });
 
             let x_end = table.get(&x.vertex).copied().unwrap();
@@ -2817,12 +2812,12 @@ impl SerialDiscontinuityContractor {
                     Some(phantom),
                 ));
                 PartitionOtherEnd {
-                        endpoint: MatrixEndpoint::Phi,
-                        side_at_current: x.side.inverse(),
-                        weight: 1,
-                        in_same_part: false,
-                        processed: false,
-                    }
+                    endpoint: MatrixEndpoint::Phi,
+                    side_at_current: x.side.inverse(),
+                    weight: 1,
+                    in_same_part: false,
+                    processed: false,
+                }
             });
 
             table.entry(y.vertex).or_insert_with(|| {
@@ -2838,12 +2833,12 @@ impl SerialDiscontinuityContractor {
                     Some(phantom),
                 ));
                 PartitionOtherEnd {
-                        endpoint: MatrixEndpoint::Phi,
-                        side_at_current: y.side.inverse(),
-                        weight: 1,
-                        in_same_part: false,
-                        processed: false,
-                    }
+                    endpoint: MatrixEndpoint::Phi,
+                    side_at_current: y.side.inverse(),
+                    weight: 1,
+                    in_same_part: false,
+                    processed: false,
+                }
             });
 
             let x_end = table.get(&x.vertex).copied().unwrap();
@@ -3046,9 +3041,7 @@ impl SerialDiscontinuityContractor {
                 .checked_mul(record_len)
                 .and_then(|bytes| bytes.checked_sub(block.buffer.len()))
                 .ok_or_else(|| {
-                    SerialCollationError::MalformedCoordBucket(
-                        matrix.containers.path_for(block_id),
-                    )
+                    SerialCollationError::MalformedCoordBucket(matrix.containers.path_for(block_id))
                 })?;
             if flushed != expected || flushed % record_len != 0 {
                 return Err(SerialCollationError::MalformedCoordBucket(
@@ -5225,7 +5218,9 @@ impl SerialDiscontinuityExpander {
             let phi_index = matrix.block_index(0, partition);
             let phi_block = &matrix.blocks[phi_index];
             if phi_block.edges != 0 {
-                let bytes = matrix.containers.read_block(phi_index, &phi_block.extents)?;
+                let bytes = matrix
+                    .containers
+                    .read_block(phi_index, &phi_block.extents)?;
                 if bytes.len() + phi_block.buffer.len() != phi_block.edges * phi_block.record_len {
                     return Err(SerialCollationError::MalformedCoordBucket(
                         matrix.containers.path_for(phi_index),
@@ -7944,7 +7939,8 @@ impl LoadedMaterializedStitchedCoordRecord {
                 .expect("materialized label length fits C++ uni_len_t"),
             color_count: u16::try_from(color_count)
                 .expect("materialized color count fits C++ uni_len_t"),
-            flags: (u16::from(reverse) * Self::REVERSE_FLAG) | (u16::from(is_cycle) * Self::CYCLE_FLAG),
+            flags: (u16::from(reverse) * Self::REVERSE_FLAG)
+                | (u16::from(is_cycle) * Self::CYCLE_FLAG),
         }
     }
 }
@@ -13162,8 +13158,7 @@ fn coordinate_bucket_target(threads: usize, unitig_bases: u64) -> usize {
     }
     // Keep the narrow fanout only while each bucket stays under the target size;
     // otherwise fall back to Cuttlefish's 1024 so reduce workspaces stay small.
-    let narrow_bucket_bases =
-        unitig_bases / HIGH_THREAD_MAX_UNITIG_COORD_BUCKETS as u64;
+    let narrow_bucket_bases = unitig_bases / HIGH_THREAD_MAX_UNITIG_COORD_BUCKETS as u64;
     if narrow_bucket_bases <= MAX_NARROW_COORD_BUCKET_BASES {
         HIGH_THREAD_MAX_UNITIG_COORD_BUCKETS
     } else {
@@ -13200,8 +13195,8 @@ fn local_unitig_bucket_plan(file_limit: usize, open_files: usize, workers: usize
         file_limit.saturating_sub(open_files.saturating_add(concurrent_worker_files)) / 2;
     // Keep whole per-worker groups so ownership stays exclusive; fall back to one
     // bucket per worker, and then to fewer, when descriptors are scarce.
-    let per_worker = (MAX_LOCAL_UNITIG_BUCKETS / workers.max(1))
-        .clamp(1, LOCAL_UNITIG_BUCKETS_PER_WORKER);
+    let per_worker =
+        (MAX_LOCAL_UNITIG_BUCKETS / workers.max(1)).clamp(1, LOCAL_UNITIG_BUCKETS_PER_WORKER);
     let desired = workers.saturating_mul(per_worker);
     if affordable >= desired {
         return desired;
@@ -17905,8 +17900,7 @@ fn contract_local_subgraphs_into_external_inputs<const K: usize>(
                     let mut reusable_vertices = None;
                     // Each worker rotates through its own contiguous span of
                     // buckets, so no two workers ever share one.
-                    let buckets_per_worker =
-                        (local_unitig_bucket_count / workers.max(1)).max(1);
+                    let buckets_per_worker = (local_unitig_bucket_count / workers.max(1)).max(1);
                     let mut bucket_rotation = 0usize;
                     loop {
                         let bucket_id = if local_unitig_bucket_count == 0 {
@@ -19044,7 +19038,11 @@ mod materialized_record_tests {
         // Low thread counts always keep the full fanout.
         assert_eq!(
             materialized_coordinate_plan(1_048_576, 64, 64, true, SMALL_GRAPH),
-            (DEFAULT_MAX_UNITIG_COORD_BUCKETS, 64, DEFAULT_MAX_UNITIG_COORD_BUCKETS)
+            (
+                DEFAULT_MAX_UNITIG_COORD_BUCKETS,
+                64,
+                DEFAULT_MAX_UNITIG_COORD_BUCKETS
+            )
         );
         // High thread counts narrow the fanout only while buckets stay small.
         assert_eq!(
@@ -19056,9 +19054,8 @@ mod materialized_record_tests {
             )
         );
         // A large graph widens it back, so reduce workspaces stay bounded.
-        let large_graph = MAX_NARROW_COORD_BUCKET_BASES
-            * HIGH_THREAD_MAX_UNITIG_COORD_BUCKETS as u64
-            * 2;
+        let large_graph =
+            MAX_NARROW_COORD_BUCKET_BASES * HIGH_THREAD_MAX_UNITIG_COORD_BUCKETS as u64 * 2;
         assert_eq!(
             materialized_coordinate_plan(1_048_576, 64, 256, true, large_graph),
             (
@@ -19107,7 +19104,11 @@ mod materialized_record_tests {
             // Whenever every worker can have at least one bucket, the count is a
             // whole multiple of the worker count so ownership stays exclusive.
             if buckets >= workers {
-                assert_eq!(buckets % workers, 0, "{buckets} not a multiple of {workers}");
+                assert_eq!(
+                    buckets % workers,
+                    0,
+                    "{buckets} not a multiple of {workers}"
+                );
             }
             // The plan never exceeds what the descriptor budget affords.
             assert!(buckets * 2 + workers * 2 + open <= limit);

@@ -393,11 +393,9 @@ fn emit_uncolored_streamed_weak_superkmer_buckets<const K: usize>(
                         };
                         let source_id = u32::try_from(offset + 1)
                             .map_err(|_| PartitionRunError::TooManySources)?;
-                        let mut batch = pool
-                            .take_free()
-                            .ok_or(PartitionRunError::Partition(
-                                PartitionError::WorkerDisconnected,
-                            ))?;
+                        let mut batch = pool.take_free().ok_or(PartitionRunError::Partition(
+                            PartitionError::WorkerDisconnected,
+                        ))?;
                         let parsed = parse_fragments_borrowed_with(
                             &paths[offset],
                             source_id,
@@ -1391,7 +1389,10 @@ mod tests {
             );
             let stats = build(true, threads)
                 .unwrap_or_else(|e| panic!("skipping should succeed at {threads} thread(s): {e}"));
-            assert_eq!(stats.partition.input_files, 1, "only the good source counts");
+            assert_eq!(
+                stats.partition.input_files, 1,
+                "only the good source counts"
+            );
             assert!(stats.partition.weak_superkmers > 0);
         }
 

@@ -155,7 +155,11 @@ impl BucketContainers {
     }
 
     /// Opens the containers a finished manifest names, for reading.
-    fn open(bucket_dir: &Path, container_count: usize, segment_bytes: u64) -> Result<Self, BucketError> {
+    fn open(
+        bucket_dir: &Path,
+        container_count: usize,
+        segment_bytes: u64,
+    ) -> Result<Self, BucketError> {
         let mut files = Vec::with_capacity(container_count);
         for index in 0..container_count {
             let path = bucket_dir.join(format!("{index:05}.wskc"));
@@ -504,12 +508,14 @@ impl BucketManifestEntry {
     /// buckets before local contraction could sort them.
     pub fn stored_bytes(&self) -> Result<u64, BucketError> {
         match &self.location {
-            BucketLocation::File(path) => fs::metadata(path)
-                .map(|meta| meta.len())
-                .map_err(|source| BucketError::Io {
-                    path: path.clone(),
-                    source,
-                }),
+            BucketLocation::File(path) => {
+                fs::metadata(path)
+                    .map(|meta| meta.len())
+                    .map_err(|source| BucketError::Io {
+                        path: path.clone(),
+                        source,
+                    })
+            }
             BucketLocation::Container { bytes, .. } => Ok(*bytes),
         }
     }
@@ -717,7 +723,10 @@ impl BucketReader {
         let chain = SegmentChainReader {
             containers,
             container,
-            segments: segments.iter().map(|s| u64::from(*s) * segment_bytes).collect(),
+            segments: segments
+                .iter()
+                .map(|s| u64::from(*s) * segment_bytes)
+                .collect(),
             len: bytes,
             pos: 0,
         };
@@ -1251,7 +1260,8 @@ pub fn read_container_manifest(
         segment_bytes: cursor.u64()?,
         container_count: cursor.u64()? as usize,
     };
-    if header.segment_bytes == 0 || header.label_words as usize != label_word_count(k, minimizer_len)
+    if header.segment_bytes == 0
+        || header.label_words as usize != label_word_count(k, minimizer_len)
     {
         return Err(BucketError::MalformedManifest(path.clone()));
     }
@@ -2390,9 +2400,7 @@ impl SharedBucketAtlas {
         stats: &mut SharedBucketFlushStats,
     ) -> Result<(), BucketError> {
         let container = (self.first_graph_id / ATLAS_GRAPH_COUNT) % containers.len();
-        let Self {
-            files, scratch, ..
-        } = self;
+        let Self { files, scratch, .. } = self;
         let file = &mut files[local_graph_id];
         if file.buffer.is_empty() {
             return Ok(());
@@ -2450,15 +2458,14 @@ fn append_to_chain(
     while written < bytes.len() {
         if file.segments.is_empty() || file.segment_used == segment_bytes {
             let offset = containers.reserve_segment(container);
-            let index = u32::try_from(offset / segment_bytes)
-                .map_err(|_| BucketError::TooManyRecords)?;
+            let index =
+                u32::try_from(offset / segment_bytes).map_err(|_| BucketError::TooManyRecords)?;
             file.segments.push(index);
             file.segment_used = 0;
         }
         let room = (segment_bytes - file.segment_used) as usize;
         let take = room.min(bytes.len() - written);
-        let offset =
-            u64::from(*file.segments.last().unwrap()) * segment_bytes + file.segment_used;
+        let offset = u64::from(*file.segments.last().unwrap()) * segment_bytes + file.segment_used;
         containers.write_at(container, offset, &bytes[written..written + take])?;
         written += take;
         file.segment_used += take as u64;
@@ -2766,8 +2773,12 @@ fn encode_compressed_block(
     scratch.block.clear();
     scratch.block.extend_from_slice(&records_u32.to_le_bytes());
     scratch.block.extend_from_slice(&attr_len_u32.to_le_bytes());
-    scratch.block.extend_from_slice(&label_len_u32.to_le_bytes());
-    scratch.block.extend_from_slice(&scratch.encoded[..attr_len]);
+    scratch
+        .block
+        .extend_from_slice(&label_len_u32.to_le_bytes());
+    scratch
+        .block
+        .extend_from_slice(&scratch.encoded[..attr_len]);
     if label_len != 0 {
         scratch
             .block
@@ -3399,7 +3410,9 @@ mod tests {
         for case in 0..2048 {
             let mut seq = [0u8; 32];
             for (i, slot) in seq.iter_mut().enumerate() {
-                state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                state = state
+                    .wrapping_mul(6364136223846793005)
+                    .wrapping_add(1442695040888963407);
                 *slot = if case < 4 {
                     alphabet[(case + i) % 4]
                 } else {

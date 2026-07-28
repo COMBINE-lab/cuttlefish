@@ -57,9 +57,7 @@ where
             // so a generous one simply lets them stay wide.
             let (fd_before, fd_after) = raise_open_file_limit();
             if fd_after > fd_before {
-                eprintln!(
-                    "cuttlefish3-rs: raised open-file limit from {fd_before} to {fd_after}"
-                );
+                eprintln!("cuttlefish3-rs: raised open-file limit from {fd_before} to {fd_after}");
             }
             eprintln!(
                 "cuttlefish3-rs: parsed build request for k={}, l={}, cutoff={}, color={}",

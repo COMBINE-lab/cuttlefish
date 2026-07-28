@@ -169,7 +169,10 @@ impl VertexState {
 
     #[inline(always)]
     pub fn add_source_hashed(&mut self, source: u32, source_hash: u64) {
-        debug_assert!(source <= Self::MAX_SOURCE_ID, "source IDs are bounded during partitioning");
+        debug_assert!(
+            source <= Self::MAX_SOURCE_ID,
+            "source IDs are bounded during partitioning"
+        );
         let last = (self.flags & Self::SOURCE_MASK) >> Self::SOURCE_SHIFT;
         if source != last {
             self.color_hash = hash_combine(self.color_hash, source_hash);

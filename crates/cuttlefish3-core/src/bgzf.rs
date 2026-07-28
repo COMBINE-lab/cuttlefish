@@ -163,10 +163,7 @@ fn dispatch_blocks<R: Read>(source: &mut R, block_txs: &[SyncSender<Vec<u8>>]) {
         }
         let extra_len = u16::from_le_bytes([header[10], header[11]]) as usize;
         header.resize(GZIP_FIXED_HEADER + extra_len, 0);
-        if source
-            .read_exact(&mut header[GZIP_FIXED_HEADER..])
-            .is_err()
-        {
+        if source.read_exact(&mut header[GZIP_FIXED_HEADER..]).is_err() {
             return;
         }
         let Some(total) = bgzf_block_size(&header) else {

@@ -832,8 +832,8 @@ impl<const K: usize> LocalSubgraph<K> {
         F: Fn(u64) -> Option<ColorCoordinate>,
     {
         let mut unitigs = Vec::new();
-        let pending = self
-            .contract_colored_impl_with(store, entries, color_is_known, |unitig| {
+        let pending =
+            self.contract_colored_impl_with(store, entries, color_is_known, |unitig| {
                 unitigs.push(unitig)
             })?;
         Ok(PendingColoredContraction {

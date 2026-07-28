@@ -6,10 +6,9 @@
 
 use crate::color::ColorError;
 use crate::discontinuity::{
-    spawn_background_dir_removal,
     DiscontinuityInputError, SerialCollationError, SerialUncoloredCollator,
     emit_colored_external_discontinuity_inputs_with_threads_in_dir, report_process_memory,
-    trim_process_allocations,
+    spawn_background_dir_removal, trim_process_allocations,
 };
 use crate::input::{InputError, expand_input_paths};
 use crate::kmer::KmerError;
@@ -58,8 +57,8 @@ pub fn build_colored_from_buckets<const K: usize>(
     let sources = expand_input_paths(params)?;
     // Source IDs are one-based, so the regime thresholds and the bitmap width
     // are sized by the largest ID plus one, as C++ does with max_source_id + 1.
-    let num_colors = u32::try_from(sources.len() + 1)
-        .map_err(|_| ColoredBuildError::ColorRequired)?;
+    let num_colors =
+        u32::try_from(sources.len() + 1).map_err(|_| ColoredBuildError::ColorRequired)?;
 
     let local_started = Instant::now();
     report_process_memory("before colored local contraction");

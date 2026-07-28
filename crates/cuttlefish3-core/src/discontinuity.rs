@@ -2493,7 +2493,7 @@ impl SerialDiscontinuityContractor {
         let (diagonal, scan) = if threads > 1 {
             std::thread::scope(|scope| {
                 let diagonal = scope.spawn(|| Self::compress_diagonal_block(matrix, partition));
-                let scan = Self::scan_partition_column_with_threads(matrix, partition, threads);
+                let scan = Self::scan_partition_column(matrix, partition);
                 (
                     diagonal
                         .join()
@@ -2504,7 +2504,7 @@ impl SerialDiscontinuityContractor {
         } else {
             (
                 Self::compress_diagonal_block(matrix, partition),
-                Self::scan_partition_column_with_threads(matrix, partition, threads),
+                Self::scan_partition_column(matrix, partition),
             )
         };
 
@@ -3774,111 +3774,6 @@ impl SerialDiscontinuityContractor {
             meta_vertices.extend(worker_meta);
         }
         PartitionColumnScanOutput {
-            edges,
-            meta_vertices,
-            input_non_diagonal_edges,
-        }
-    }
-
-    fn scan_partition_column_with_threads<const K: usize>(
-        matrix: &SerialEdgeMatrix<K>,
-        partition: usize,
-        threads: usize,
-    ) -> PartitionColumnScan<K> {
-        let column_edges = (0..partition)
-            .map(|row| matrix.block(row, partition).len())
-            .sum::<usize>();
-        if threads <= 1 || partition < 2 || column_edges < 64 * 1024 {
-            return Self::scan_partition_column(matrix, partition);
-        }
-        if std::env::var_os("CF3_RS_PARALLEL_CONTRACTOR").is_none() {
-            return Self::scan_partition_column(matrix, partition);
-        }
-        let workers = threads.max(1).min(partition);
-        let shard_count = (workers * 8).next_power_of_two().max(8);
-        let shard_mask = shard_count - 1;
-        let mut shards = (0..shard_count)
-            .map(|_| Vec::<PartitionColumnIncoming<K>>::new())
-            .collect::<Vec<_>>();
-        let mut input_non_diagonal_edges = 0u64;
-        for row in 0..partition {
-            for edge in matrix.block(row, partition) {
-                let (lower, current) = match endpoint_in_partition(matrix, edge, partition) {
-                    Some(pair) => pair,
-                    None => continue,
-                };
-                input_non_diagonal_edges += 1;
-                let incoming = PartitionOtherEnd {
-                    endpoint: lower,
-                    side_at_current: current.side,
-                    weight: edge.weight,
-                    in_same_part: false,
-                    processed: false,
-                };
-                let shard_id = partition_column_vertex_shard(current.vertex, shard_mask);
-                shards[shard_id].push(PartitionColumnIncoming {
-                    vertex: current.vertex,
-                    end: incoming,
-                });
-            }
-        }
-
-        let shards_per_worker = shard_count.div_ceil(workers);
-        let worker_outputs = std::thread::scope(|scope| {
-            let mut handles = Vec::with_capacity(workers);
-            for shard_start in (0..shard_count).step_by(shards_per_worker) {
-                let shard_end = (shard_start + shards_per_worker).min(shard_count);
-                let shard_slice = &shards[shard_start..shard_end];
-                handles.push(scope.spawn(move || {
-                    let shard_edges = shard_slice.iter().map(Vec::len).sum::<usize>();
-                    let mut table =
-                        FastHashMap::<Kmer<K>, PartitionOtherEnd<K>>::with_capacity_and_hasher(
-                            shard_edges,
-                            FastBuildHasher::default(),
-                        );
-                    let mut edges = Vec::with_capacity(shard_edges / 2);
-                    let mut meta_vertices = Vec::new();
-                    for incoming in shard_slice.iter().flatten() {
-                        absorb_partition_other_end(
-                            incoming.vertex,
-                            incoming.end,
-                            partition,
-                            &mut table,
-                            &mut edges,
-                            &mut meta_vertices,
-                        );
-                    }
-                    (table, edges, meta_vertices)
-                }));
-            }
-
-            let mut outputs = Vec::with_capacity(handles.len());
-            for handle in handles {
-                outputs.push(
-                    handle
-                        .join()
-                        .expect("partition column scan worker panicked"),
-                );
-            }
-            outputs
-        });
-
-        let mut table = FastHashMap::<Kmer<K>, PartitionOtherEnd<K>>::with_capacity_and_hasher(
-            column_edges,
-            FastBuildHasher::default(),
-        );
-        let mut edges = Vec::with_capacity(column_edges / 2);
-        let mut meta_vertices = Vec::new();
-        for (worker_table, worker_edges, worker_meta_vertices) in worker_outputs {
-            edges.extend(worker_edges);
-            meta_vertices.extend(worker_meta_vertices);
-            table.extend(worker_table);
-        }
-        edges.shrink_to_fit();
-        meta_vertices.shrink_to_fit();
-
-        PartitionColumnScan {
-            table,
             edges,
             meta_vertices,
             input_non_diagonal_edges,
@@ -5660,27 +5555,12 @@ impl SerialUncoloredCollator {
             direct_local_unitigs
         );
 
-        if let Ok(path) = std::env::var("CF3_RS_DUMP_COLLATION_CANDIDATES") {
-            if !path.is_empty() {
-                if let Err(err) = dump_collation_candidates(
-                    std::path::Path::new(&path),
-                    &unitigs,
-                    &unitig_origins,
-                ) {
-                    eprintln!("cuttlefish3-rs: failed to dump collation candidates: {err}");
-                }
-            }
-        }
-
         let final_sort_started = Instant::now();
         unitigs = bucketed_maximal_unitig_reduce(unitigs, threads);
         eprintln!(
             "cuttlefish3-rs: collation bucket reduce completed in {:.3}s",
             final_sort_started.elapsed().as_secs_f64()
         );
-        if std::env::var_os("CF3_RS_RETAIN_MAXIMAL_LABELS").is_some() {
-            retain_maximal_labels_indexed_with_threads(&mut unitigs, threads);
-        }
 
         SerialCollation {
             stats: SerialCollationStats {
@@ -6120,9 +6000,6 @@ impl SerialUncoloredCollator {
             "cuttlefish3-rs: collation bucket reduce completed in {:.3}s",
             final_sort_started.elapsed().as_secs_f64()
         );
-        if std::env::var_os("CF3_RS_RETAIN_MAXIMAL_LABELS").is_some() {
-            retain_maximal_labels_indexed_with_threads(&mut unitigs, threads);
-        }
 
         Ok(SerialCollation {
             stats: SerialCollationStats {
@@ -6796,194 +6673,6 @@ fn reverse_complement_is_less(label: &[u8]) -> bool {
     false
 }
 
-fn retain_maximal_labels(unitigs: &mut Vec<Vec<u8>>) {
-    let mut keep = vec![true; unitigs.len()];
-    for i in 0..unitigs.len() {
-        for j in 0..unitigs.len() {
-            if i == j || unitigs[i].len() >= unitigs[j].len() {
-                continue;
-            }
-            if contains_label(&unitigs[j], &unitigs[i])
-                || contains_label(&reverse_complement_label(&unitigs[j]), &unitigs[i])
-            {
-                keep[i] = false;
-                break;
-            }
-        }
-    }
-
-    let mut idx = 0usize;
-    unitigs.retain(|_| {
-        let retain = keep[idx];
-        idx += 1;
-        retain
-    });
-}
-
-fn retain_maximal_labels_indexed_with_threads(unitigs: &mut Vec<Vec<u8>>, threads: usize) {
-    let started = Instant::now();
-    let workers = threads.max(1).min(unitigs.len().max(1));
-    eprintln!(
-        "cuttlefish3-rs: retaining maximal labels among {} unitig(s) with indexed containment and {} worker(s)",
-        unitigs.len(),
-        workers
-    );
-    if unitigs.len() <= 2048 {
-        retain_maximal_labels(unitigs);
-        return;
-    }
-
-    let mut lengths = unitigs.iter().map(Vec::len).collect::<Vec<_>>();
-    lengths.sort_unstable();
-    lengths.dedup();
-
-    let mut keep = vec![true; unitigs.len()];
-    let mut patterns_by_len = FastHashMap::<usize, FastHashMap<u128, Vec<usize>>>::default();
-    for &len in &lengths {
-        let mut patterns = FastHashMap::<u128, Vec<usize>>::default();
-        for index in unitigs
-            .iter()
-            .enumerate()
-            .filter_map(|(index, unitig)| (unitig.len() == len).then_some(index))
-        {
-            patterns
-                .entry(hash_label(&unitigs[index]))
-                .or_default()
-                .push(index);
-        }
-        patterns_by_len.insert(len, patterns);
-    }
-
-    let powers = lengths
-        .iter()
-        .map(|&len| {
-            (
-                len,
-                (hash_pow(HASH_BASE_1, len), hash_pow(HASH_BASE_2, len)),
-            )
-        })
-        .collect::<FastHashMap<_, _>>();
-
-    if workers == 1 {
-        for haystack in unitigs.iter() {
-            mark_contained_candidates_for_haystack(
-                haystack,
-                &lengths,
-                &patterns_by_len,
-                &powers,
-                unitigs,
-                &mut keep,
-            );
-            let reverse = reverse_complement_label(haystack);
-            mark_contained_candidates_for_haystack(
-                &reverse,
-                &lengths,
-                &patterns_by_len,
-                &powers,
-                unitigs,
-                &mut keep,
-            );
-        }
-    } else {
-        let chunk_len = unitigs.len().div_ceil(workers);
-        let local_keeps = std::thread::scope(|scope| {
-            let mut handles = Vec::new();
-            for chunk in unitigs.chunks(chunk_len) {
-                let lengths = &lengths;
-                let patterns_by_len = &patterns_by_len;
-                let powers = &powers;
-                let unitigs = &*unitigs;
-                handles.push(scope.spawn(move || {
-                    let mut local_keep = vec![true; unitigs.len()];
-                    for haystack in chunk {
-                        mark_contained_candidates_for_haystack(
-                            haystack,
-                            lengths,
-                            patterns_by_len,
-                            powers,
-                            unitigs,
-                            &mut local_keep,
-                        );
-                        let reverse = reverse_complement_label(haystack);
-                        mark_contained_candidates_for_haystack(
-                            &reverse,
-                            lengths,
-                            patterns_by_len,
-                            powers,
-                            unitigs,
-                            &mut local_keep,
-                        );
-                    }
-                    local_keep
-                }));
-            }
-
-            handles
-                .into_iter()
-                .map(|handle| handle.join().expect("maximal-label filter worker panicked"))
-                .collect::<Vec<_>>()
-        });
-        for local_keep in local_keeps {
-            for (dst, src) in keep.iter_mut().zip(local_keep) {
-                *dst &= src;
-            }
-        }
-    }
-
-    if let Ok(path) = std::env::var("CF3_RS_DUMP_MAXIMAL_FILTER_REMOVALS") {
-        if !path.is_empty() {
-            if let Err(err) = dump_removed_labels(std::path::Path::new(&path), unitigs, &keep) {
-                eprintln!("cuttlefish3-rs: failed to dump maximal-filter removals: {err}");
-            }
-        }
-    }
-
-    let mut idx = 0usize;
-    unitigs.retain(|_| {
-        let retain = keep[idx];
-        idx += 1;
-        retain
-    });
-    eprintln!(
-        "cuttlefish3-rs: maximal-label filter completed in {:.1}s",
-        started.elapsed().as_secs_f64()
-    );
-}
-
-fn dump_removed_labels(
-    path: &std::path::Path,
-    unitigs: &[Vec<u8>],
-    keep: &[bool],
-) -> std::io::Result<()> {
-    use std::io::Write;
-
-    let mut out = std::fs::File::create(path)?;
-    for (index, (unitig, &retain)) in unitigs.iter().zip(keep).enumerate() {
-        if !retain {
-            writeln!(out, ">{index}_len_{}", unitig.len())?;
-            out.write_all(unitig)?;
-            writeln!(out)?;
-        }
-    }
-    Ok(())
-}
-
-fn dump_collation_candidates(
-    path: &std::path::Path,
-    unitigs: &[Vec<u8>],
-    origins: &[&'static str],
-) -> std::io::Result<()> {
-    use std::io::Write;
-
-    let mut out = std::fs::File::create(path)?;
-    for (index, (unitig, origin)) in unitigs.iter().zip(origins).enumerate() {
-        writeln!(out, ">{index}_{origin}_len_{}", unitig.len())?;
-        out.write_all(unitig)?;
-        writeln!(out)?;
-    }
-    Ok(())
-}
-
 fn suppress_labels_contained_in_sources(
     labels: &mut Vec<Vec<u8>>,
     sources: &[Vec<u8>],
@@ -7096,13 +6785,6 @@ fn suppress_labels_contained_in_sources(
         retain
     });
     before - labels.len()
-}
-
-fn contains_label(haystack: &[u8], needle: &[u8]) -> bool {
-    needle.len() <= haystack.len()
-        && haystack
-            .windows(needle.len())
-            .any(|window| window == needle)
 }
 
 const HASH_BASE_1: u64 = 1_099_511_628_211;
@@ -7762,7 +7444,7 @@ fn stitch_discontinuity_paths_to_final_buckets<const K: usize>(
     coord_dir: &Path,
     final_buckets: &mut FinalUnitigBucketWriters,
 ) -> Result<u64, SerialCollationError> {
-    let debug_stitch = std::env::var_os("CF3_RS_DEBUG_STITCH").is_some();
+    let debug_stitch = false;
     let endpoint_dir = coord_dir.join("endpoints");
     let mut endpoint_writers = StitchEndpointBucketWriters::create(&endpoint_dir, threads)?;
     let build_started = Instant::now();
@@ -10252,8 +9934,8 @@ fn stitch_discontinuity_paths_impl<const K: usize>(
     threads: usize,
     coord_dir: Option<&Path>,
 ) -> Result<Vec<Vec<u8>>, SerialCollationError> {
-    let debug_stitch = std::env::var_os("CF3_RS_DEBUG_STITCH").is_some();
-    let use_adjacency_stitch = std::env::var_os("CF3_RS_ADJACENCY_STITCH").is_some();
+    let debug_stitch = false;
+    let use_adjacency_stitch = false;
     let endpoint_dir = coord_dir.map(|dir| dir.join("endpoints"));
     let mut endpoint_writers = if !use_adjacency_stitch {
         endpoint_dir
@@ -11333,52 +11015,15 @@ fn write_external_materialized_stitched_coord_buckets_from_neighbors<const K: us
         inmem_limit as f64 / (1024.0 * 1024.0)
     );
 
-    if std::env::var_os("CF3_RS_NEIGHBOR_DISK_PATH_INFO").is_none() {
-        let component_starts = stitch_component_starts_from_neighbors(half_ends, join_neighbor);
-        return write_external_materialized_stitched_coord_buckets(
-            inputs,
-            coord_dir,
-            threads,
-            half_ends,
-            join_neighbor,
-            &component_starts,
-        );
-    }
-
-    if coord_dir.exists() {
-        fs::remove_dir_all(coord_dir).map_err(|source| SerialCollationError::Io {
-            path: coord_dir.to_path_buf(),
-            source,
-        })?;
-    }
-    fs::create_dir_all(coord_dir).map_err(|source| SerialCollationError::Io {
-        path: coord_dir.to_path_buf(),
-        source,
-    })?;
-
-    let path_info_started = Instant::now();
-    let path_info_manifest = write_external_stitched_path_info_buckets_from_neighbors(
+    let component_starts = stitch_component_starts_from_neighbors(half_ends, join_neighbor);
+    write_external_materialized_stitched_coord_buckets(
         inputs,
         coord_dir,
         threads,
         half_ends,
         join_neighbor,
-    )?;
-    let path_info_elapsed = path_info_started.elapsed();
-
-    let materialize_started = Instant::now();
-    let manifest = materialize_external_stitched_coord_buckets_from_path_info::<K>(
-        inputs,
-        coord_dir,
-        threads,
-        &path_info_manifest,
-    )?;
-    eprintln!(
-        "cuttlefish3-rs: external neighbor disk path-info {:.3}s, label materialize {:.3}s",
-        path_info_elapsed.as_secs_f64(),
-        materialize_started.elapsed().as_secs_f64()
-    );
-    Ok(manifest)
+        &component_starts,
+    )
 }
 
 fn write_external_materialized_stitched_coord_buckets<const K: usize>(
@@ -11811,24 +11456,6 @@ fn push_stitched_records_to_range_buckets(
     Ok(())
 }
 
-fn write_stitched_records_to_range_bucket_writers_by_range(
-    ranges: &[ExternalLocalUnitigRange],
-    ranges_per_bucket: usize,
-    malformed_path: &Path,
-    records: &[StitchedCoordRecord],
-    writers: &mut StitchedCoordShardWriters<'_>,
-) -> Result<(), SerialCollationError> {
-    for &record in records {
-        let range_id = external_range_id_for_unitig(ranges, record.unitig_index as usize)
-            .ok_or_else(|| {
-                SerialCollationError::MalformedCoordBucket(malformed_path.to_path_buf())
-            })?;
-        let bucket_id = range_id / ranges_per_bucket;
-        writers.write_record(bucket_id, record)?;
-    }
-    Ok(())
-}
-
 #[allow(clippy::too_many_arguments)]
 fn collect_external_stitched_path_info_range_into_memory(
     ranges: &[ExternalLocalUnitigRange],
@@ -12008,92 +11635,6 @@ fn write_external_stitched_path_info_buckets<const K: usize>(
         })?
     };
 
-    manifest.sort_by(|left, right| {
-        left.bucket_id
-            .cmp(&right.bucket_id)
-            .then_with(|| left.path.cmp(&right.path))
-    });
-    Ok(manifest)
-}
-
-fn write_external_stitched_path_info_buckets_from_neighbors<const K: usize>(
-    inputs: &ExternalDiscontinuityInputs<K>,
-    coord_dir: &Path,
-    threads: usize,
-    half_ends: &[HalfEnd],
-    join_neighbor: &[u32],
-) -> Result<Vec<StitchedCoordBucketEntry>, SerialCollationError> {
-    debug_assert_eq!(half_ends.len(), join_neighbor.len());
-    debug_assert_eq!(half_ends.len() % 2, 0);
-
-    let path_info_dir = coord_dir.join("path-info");
-    fs::create_dir_all(&path_info_dir).map_err(|source| SerialCollationError::Io {
-        path: path_info_dir.clone(),
-        source,
-    })?;
-    let ranges_per_bucket = ranges_per_path_info_bucket(inputs.ranges.len(), threads.max(1));
-    let path_info_bucket_count = inputs.ranges.len().div_ceil(ranges_per_bucket).max(1);
-    let mut writers = StitchedCoordShardWriters::new(&path_info_dir, 0, path_info_bucket_count);
-    let mut visited = vec![0u8; half_ends.len().div_ceil(2)];
-    let mut path_records = Vec::new();
-    let mut path_id = 0u64;
-
-    for node in 0..join_neighbor.len() {
-        if join_neighbor[node] != STITCH_NO_NODE {
-            continue;
-        }
-        let unitig_pair = node >> 1;
-        if visited[unitig_pair] != 0 {
-            continue;
-        }
-        path_records.clear();
-        walk_simple_stitched_component_coords_marked(
-            half_ends,
-            join_neighbor,
-            node,
-            path_id,
-            &mut visited,
-            &mut path_records,
-        );
-        if !path_records.is_empty() {
-            write_stitched_records_to_range_bucket_writers_by_range(
-                &inputs.ranges,
-                ranges_per_bucket,
-                &inputs.unitig_path,
-                &path_records,
-                &mut writers,
-            )?;
-            path_id += 1;
-        }
-    }
-
-    for node in (0..join_neighbor.len()).step_by(2) {
-        let unitig_pair = node >> 1;
-        if visited[unitig_pair] != 0 {
-            continue;
-        }
-        path_records.clear();
-        walk_simple_stitched_component_coords_marked(
-            half_ends,
-            join_neighbor,
-            node,
-            path_id,
-            &mut visited,
-            &mut path_records,
-        );
-        if !path_records.is_empty() {
-            write_stitched_records_to_range_bucket_writers_by_range(
-                &inputs.ranges,
-                ranges_per_bucket,
-                &inputs.unitig_path,
-                &path_records,
-                &mut writers,
-            )?;
-            path_id += 1;
-        }
-    }
-
-    let mut manifest = writers.finish()?;
     manifest.sort_by(|left, right| {
         left.bucket_id
             .cmp(&right.bucket_id)

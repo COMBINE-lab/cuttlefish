@@ -1613,6 +1613,36 @@ way to keep dead code alive than simply forgetting to delete it. Worth probing
 the remaining `CF3_RS_*` switches the same way before trusting that any of them
 still do what their name says.
 
+### Seven more switches were dead the same way
+
+Finding the two contractors unreachable prompted probing every `CF3_RS_*`
+switch the same way. Replacing each `env::var` call with a wrapper that logs
+its name, then running uncolored, colored and read builds across thread counts,
+input fixtures, both stitch paths and full corpus scale, showed 24 of 31 being
+consulted. The remaining seven never were, and a `panic!` in each host function
+confirmed it: no build enters them at all, and only two are entered by tests.
+
+| switch | why it never fires |
+| --- | --- |
+| `CF3_RS_PARALLEL_CONTRACTOR` | same in-memory path as the two contractors, entered only at `threads = 1`, which returns first |
+| `CF3_RS_ADJACENCY_STITCH` | the legacy stitch implementation is unreachable even with `CF3_RS_ENDPOINT_STITCH` set |
+| `CF3_RS_DEBUG_STITCH` | as above, in two functions |
+| `CF3_RS_NEIGHBOR_DISK_PATH_INFO` | its branch always took the other arm |
+| `CF3_RS_RETAIN_MAXIMAL_LABELS` | gated a filter on a collation entry point the CLI never calls |
+| `CF3_RS_DUMP_COLLATION_CANDIDATES` | debug hook on that same entry point |
+| `CF3_RS_DUMP_MAXIMAL_FILTER_REMOVALS` | debug hook inside the filter that switch gated |
+
+Removing them took 468 lines with it, because each removal exposed code that
+`dead_code` then flagged in turn -- the maximal-label filter and its dump
+helper, two neighbour-based stitch writers, and the parallel column scan.
+Counts are unchanged, so none of it was doing anything.
+
+The general point is worth keeping: an `#[allow(dead_code)]` is visible in the
+source and an env-gated branch is not. A switch that selects nothing is a more
+durable hiding place for dead code than forgetting to delete it, and no lint
+will say so. Probing what the process actually reads is cheap and is the only
+way to tell.
+
 ## Colour-set encoding
 
 The colour repository is the largest artifact a colored build produces, and it

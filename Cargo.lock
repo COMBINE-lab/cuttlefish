@@ -78,6 +78,7 @@ dependencies = [
  "flate2",
  "hashbrown",
  "leapfrog",
+ "libc",
  "lz4_flex",
  "rayon",
  "scc",

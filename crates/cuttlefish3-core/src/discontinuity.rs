@@ -17852,27 +17852,25 @@ fn contract_local_subgraphs_into_external_inputs<const K: usize>(
                 &mut reusable_vertices,
                 color_repository.is_none(),
             )?;
-            append_local_contraction_output_to_external_inputs(
-                &mut trivial_output,
-                &trivial_path,
-                &mut trivial_unitigs,
-                &mut trivial_bases,
-                output,
-                &mut inputs,
-                &mut labels,
+            SerialLocalOutput {
+                trivial_output: &mut trivial_output,
+                trivial_path: &trivial_path,
+                labels: &mut labels,
                 label_path,
-                &mut unitigs,
-                &unitig_path,
-                &mut label_offset,
-                &mut ranges,
-                &mut edge_matrix,
-                &mut build_elapsed,
-                &mut contract_elapsed,
-                color_repository.as_ref(),
-                color_run_writer.as_mut(),
-                threads,
+                unitigs: &mut unitigs,
+                unitig_path: &unitig_path,
+                inputs: &mut inputs,
+                edge_matrix: &mut edge_matrix,
+                ranges: &mut ranges,
+                color_run_writer: color_run_writer.as_mut(),
+                trivial_unitigs: &mut trivial_unitigs,
+                trivial_bases: &mut trivial_bases,
+                label_offset: &mut label_offset,
+                build_elapsed: &mut build_elapsed,
+                contract_elapsed: &mut contract_elapsed,
                 compact_unitigs,
-            )?;
+            }
+            .append(output)?;
             report_local_contraction_progress(offset + 1, groups.len(), started);
         }
     } else {
@@ -18125,97 +18123,112 @@ fn unitig_table_path_for_labels(label_path: &Path) -> PathBuf {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn append_local_contraction_output_to_external_inputs<const K: usize>(
-    trivial_output: &mut BufWriter<File>,
-    trivial_path: &Path,
-    trivial_unitigs: &mut u64,
-    trivial_bases: &mut u64,
-    output: LocalContractionOutput<K>,
-    inputs: &mut DiscontinuityInputs<K>,
-    labels: &mut BufWriter<File>,
-    label_path: &Path,
-    unitigs: &mut BufWriter<File>,
-    unitig_path: &Path,
-    label_offset: &mut u64,
-    ranges: &mut Vec<ExternalLocalUnitigRange>,
-    edge_matrix: &mut BlockedEdgeMatrix<K>,
-    build_elapsed: &mut Duration,
-    contract_elapsed: &mut Duration,
-    _color_repository: Option<&ConcurrentColorRepository>,
-    mut color_run_writer: Option<&mut ColorRunSidecarWriter>,
-    _threads: usize,
+/// Where the one-worker local-contraction path sends its results.
+///
+/// The counterpart to `ConcurrentLocalOutputSink`, and it exists for the same
+/// reason that one does: the phase writes three streams, carries a running
+/// offset into two of them, and accumulates into a further four structures.
+/// Passed individually that was nineteen parameters, two of which had already
+/// stopped being read.
+struct SerialLocalOutput<'a, const K: usize> {
+    trivial_output: &'a mut BufWriter<File>,
+    trivial_path: &'a Path,
+    labels: &'a mut BufWriter<File>,
+    label_path: &'a Path,
+    unitigs: &'a mut BufWriter<File>,
+    unitig_path: &'a Path,
+    inputs: &'a mut DiscontinuityInputs<K>,
+    edge_matrix: &'a mut BlockedEdgeMatrix<K>,
+    ranges: &'a mut Vec<ExternalLocalUnitigRange>,
+    color_run_writer: Option<&'a mut ColorRunSidecarWriter>,
+    /// Running totals the caller reads back once the groups are exhausted.
+    trivial_unitigs: &'a mut u64,
+    trivial_bases: &'a mut u64,
+    label_offset: &'a mut u64,
+    build_elapsed: &'a mut Duration,
+    contract_elapsed: &'a mut Duration,
     compact_unitigs: bool,
-) -> Result<(), DiscontinuityInputError> {
-    trivial_output
-        .write_all(&output.trivial_fasta)
-        .map_err(|source| DiscontinuityInputError::Io {
-            path: trivial_path.to_path_buf(),
-            source,
-        })?;
-    *trivial_unitigs += output.trivial_unitigs;
-    *trivial_bases += output.trivial_bases;
-    inputs.stats.local_unitigs += output.trivial_unitigs;
-    inputs.stats.unitig_bases += output.trivial_bases;
-    inputs.stats.weak_superkmers += output.weak_superkmers;
-    // Index into the unitig file, which is not the reported unitig total.
-    // Trivial unitigs -- those with no discontinuity exits -- go straight to
-    // the output FASTA and are never written to `unitig_path`, so counting
-    // them here would seek past the records that are, and would hand
-    // `add_prepared_edges` a base that names the wrong unitig. The concurrent
-    // sink keeps these separate by construction, tracking `next_unitig` for
-    // the file and adding the trivial count only to the reported total.
-    let start_unitig =
-        usize::try_from(inputs.stats.local_unitigs - *trivial_unitigs).unwrap_or(usize::MAX);
-    let output_unitigs = output.unitigs.len();
-    let output_label_len = output.labels.len() as u64;
-    let color_start = color_run_writer
-        .as_deref()
-        .map(ColorRunSidecarWriter::position)
-        .unwrap_or(0);
-    if output_unitigs != 0 {
-        ranges.push(ExternalLocalUnitigRange {
-            start_unitig,
-            unitigs: output_unitigs,
-            label_start: *label_offset,
-            label_len: output_label_len,
-            color_start,
-        });
-    }
-    labels
-        .write_all(&output.labels)
-        .map_err(|source| DiscontinuityInputError::Io {
-            path: label_path.to_path_buf(),
-            source,
-        })?;
-    edge_matrix
-        .add_prepared_edges(&output.matrix_edges, start_unitig)
-        .map_err(serial_collation_to_input_error)?;
-    let mut output_colors = output.color_runs.map(Vec::into_iter);
-    for mut unitig in output.unitigs {
-        inputs.stats.local_unitigs += 1;
-        inputs.stats.discontinuity_exits +=
-            u64::from(unitig.left_exit().is_some()) + u64::from(unitig.right_exit().is_some());
-        inputs.stats.unitig_bases += unitig.label_len as u64;
-        unitig.label_start += *label_offset;
-        write_discontinuity_unitig_record(unitigs, unitig_path, &unitig, compact_unitigs)?;
-        if let Some(writer) = color_run_writer.as_deref_mut() {
-            let runs = output_colors
-                .as_mut()
-                .and_then(Iterator::next)
-                .ok_or(DiscontinuityInputError::MissingColorRuns)?;
-            writer.write_unitig(&runs)?;
+}
+
+impl<const K: usize> SerialLocalOutput<'_, K> {
+    fn append(&mut self, output: LocalContractionOutput<K>) -> Result<(), DiscontinuityInputError> {
+        self.trivial_output
+            .write_all(&output.trivial_fasta)
+            .map_err(|source| DiscontinuityInputError::Io {
+                path: self.trivial_path.to_path_buf(),
+                source,
+            })?;
+        *self.trivial_unitigs += output.trivial_unitigs;
+        *self.trivial_bases += output.trivial_bases;
+        self.inputs.stats.local_unitigs += output.trivial_unitigs;
+        self.inputs.stats.unitig_bases += output.trivial_bases;
+        self.inputs.stats.weak_superkmers += output.weak_superkmers;
+        // Index into the unitig file, which is not the reported unitig total.
+        // Trivial self.unitigs -- those with no discontinuity exits -- go straight to
+        // the output FASTA and are never written to `self.unitig_path`, so counting
+        // them here would seek past the records that are, and would hand
+        // `add_prepared_edges` a base that names the wrong unitig. The concurrent
+        // sink keeps these separate by construction, tracking `next_unitig` for
+        // the file and adding the trivial count only to the reported total.
+        let start_unitig = usize::try_from(self.inputs.stats.local_unitigs - *self.trivial_unitigs)
+            .unwrap_or(usize::MAX);
+        let output_unitigs = output.unitigs.len();
+        let output_label_len = output.labels.len() as u64;
+        let color_start = self
+            .color_run_writer
+            .as_deref()
+            .map(ColorRunSidecarWriter::position)
+            .unwrap_or(0);
+        if output_unitigs != 0 {
+            self.ranges.push(ExternalLocalUnitigRange {
+                start_unitig,
+                unitigs: output_unitigs,
+                label_start: *self.label_offset,
+                label_len: output_label_len,
+                color_start,
+            });
         }
+        self.labels
+            .write_all(&output.labels)
+            .map_err(|source| DiscontinuityInputError::Io {
+                path: self.label_path.to_path_buf(),
+                source,
+            })?;
+        self.edge_matrix
+            .add_prepared_edges(&output.matrix_edges, start_unitig)
+            .map_err(serial_collation_to_input_error)?;
+        let mut output_colors = output.color_runs.map(Vec::into_iter);
+        for mut unitig in output.unitigs {
+            self.inputs.stats.local_unitigs += 1;
+            self.inputs.stats.discontinuity_exits +=
+                u64::from(unitig.left_exit().is_some()) + u64::from(unitig.right_exit().is_some());
+            self.inputs.stats.unitig_bases += unitig.label_len as u64;
+            unitig.label_start += *self.label_offset;
+            write_discontinuity_unitig_record(
+                self.unitigs,
+                self.unitig_path,
+                &unitig,
+                self.compact_unitigs,
+            )?;
+            if let Some(writer) = self.color_run_writer.as_deref_mut() {
+                let runs = output_colors
+                    .as_mut()
+                    .and_then(Iterator::next)
+                    .ok_or(DiscontinuityInputError::MissingColorRuns)?;
+                writer.write_unitig(&runs)?;
+            }
+        }
+        if output_colors
+            .as_mut()
+            .is_some_and(|colors| colors.next().is_some())
+        {
+            return Err(DiscontinuityInputError::MissingColorRuns);
+        }
+        *self.label_offset += output.labels.len() as u64;
+        *self.build_elapsed += output.build_elapsed;
+        *self.contract_elapsed += output.contract_elapsed;
+        Ok(())
     }
-    if output_colors
-        .as_mut()
-        .is_some_and(|colors| colors.next().is_some())
-    {
-        return Err(DiscontinuityInputError::MissingColorRuns);
-    }
-    *label_offset += output.labels.len() as u64;
-    *build_elapsed += output.build_elapsed;
-    *contract_elapsed += output.contract_elapsed;
-    Ok(())
 }
 
 fn write_discontinuity_unitig_record<const K: usize>(

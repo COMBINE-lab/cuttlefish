@@ -1455,6 +1455,21 @@ Checked against `aarch64-apple-darwin` and `aarch64-unknown-linux-musl` as well
 as the native target; musl exercises the non-glibc path where `malloc_trim`
 does not exist.
 
+Hole punching lands on APFS in practice. APFS has been the default since macOS
+10.13 High Sierra for all-flash storage, and 10.14 Mojave converts startup
+disks generally, so HFS+ now survives only on external or deliberately
+formatted volumes -- reachable here only if `--work-dir` points at one, where
+the punch fails and the space is simply held until the container is unlinked.
+Both interfaces also require block-aligned ranges, and macOS returns `EINVAL`
+otherwise; every punch is a whole number of segments and the segment size
+admits only multiples of 4096, so this holds by construction.
+
+The supported floor is **macOS 11.0**. The Rust toolchain already sets one --
+`aarch64-apple-darwin` targets 11.0 and `x86_64-apple-darwin` targets 10.12 --
+and 11.0 is the Apple Silicon minimum regardless, comfortably inside the APFS
+era, and above any ambiguity about when `F_PUNCHHOLE` became available. Nothing
+in the code needs a newer API than that.
+
 ## Colour-set encoding
 
 The colour repository is the largest artifact a colored build produces, and it

@@ -266,9 +266,16 @@ impl BucketContainers {
 /// behind `target_os = "linux"` with no Apple equivalent offered. So the two
 /// are written out here.
 ///
-/// Failure is ignored on purpose. A filesystem without hole punching -- HFS+,
-/// or a network mount -- costs disk rather than correctness, because the
-/// container is unlinked wholesale at the end regardless.
+/// Both interfaces require the range to be filesystem-block aligned -- macOS
+/// returns `EINVAL` for a punch that is not a multiple of the block size --
+/// which every call here satisfies by construction, because offsets and
+/// lengths are whole segments and `bucket_segment_bytes` admits only multiples
+/// of 4096. That is a second, independent reason buckets got segments rather
+/// than the raw 16.1 KiB extents a flush would otherwise produce.
+///
+/// Failure is ignored on purpose. A filesystem without hole punching -- an old
+/// HFS+ volume, or a network mount -- costs disk rather than correctness,
+/// because the container is unlinked wholesale at the end regardless.
 #[cfg(target_os = "linux")]
 fn punch_hole(file: &File, offset: u64, len: u64) {
     use std::os::fd::AsRawFd;

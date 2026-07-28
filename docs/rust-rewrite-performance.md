@@ -1209,6 +1209,99 @@ unlinked incrementally, so what it recorded was a residual and not a high-water
 mark. The new columns change the TSV schema, so these runs are recorded in
 `results-containers.tsv` rather than `results-io.tsv`.
 
+## Weak-super-k-mer bucket containers
+
+The other 16,385 files. Buckets move into one container per atlas, 129 files,
+with each bucket owning a chain of 256 KiB segments inside its container.
+
+Three measurements shaped this, and two of them contradicted the plan.
+
+**The syscall argument is real but small.** `BucketFile::open_existing` cost an
+`openat`, seven unbuffered reads to re-read a 42-byte header, a revalidation,
+an `lseek` to the end and a `close` on every 64 KiB flush -- around eleven
+syscalls, times the 14,400,851 flushes a full-corpus uncolored build performs.
+That sounds decisive and is not: partitioning's entire system time is 436.70 s
+of CPU across 64 threads over a 114 s phase, so about 6.8 s of wall is the
+ceiling on *any* syscall saving, and that figure also covers input reads and
+page faults. The measured win was 3.3 s.
+
+**The directory is 40% larger than its contents.** XFS speculatively
+preallocates on extending writes, and 16,385 repeatedly reopened files held
+332.7 GB for 237.8 GB of data. This was invisible until measured because
+`bench_variant.sh` reported apparent size; it now records allocated blocks.
+Recovering that slack turned out to be the largest single effect of the change.
+
+**The 935 GB in the earlier notes was the uncompressed volume.** 14,400,851
+flushes times 64 KiB is 944 GB; with bucket compression on by default the
+directory is 237.8 GB, and the mean compressed flush is 16.1 KiB.
+
+Segments are sized from the measured distribution -- 16,385 buckets, mean
+14.51 MB, p1 8.80 MB, p99 22.77 MB, min 0.40, max 35.84 -- which is tight
+enough that the only real cost is each bucket's partial final segment. At
+256 KiB that is 2.15 GB, 0.90% of the directory, against 7.3 MB of chain
+metadata. Metadata is negligible at every candidate size, so it is not a design
+constraint; waste is. A flush may straddle a segment boundary rather than
+starting a fresh segment, which costs a second `pwrite` for the rare block that
+spans one and avoids wasting the tail of every segment.
+
+`BucketReader` treats its source as a sequential `Read`, so a chain adapter
+implementing `Read` left record iteration, compressed-block framing and the
+borrowed-record fast path untouched. That is what kept the change tractable.
+Two costs disappear outright: the per-bucket header becomes one per directory,
+and `finish`'s parallel pass -- which existed only to reopen all 16,384 files
+and patch a record count into each header -- is gone, because the manifest
+carries the count. `stored_bytes` likewise comes from the manifest, where the
+per-file layout had to stat every bucket before the longest-bucket-first sort
+could run.
+
+### Reclaim and teardown were both wrongly assumed unnecessary
+
+The first full-corpus A/B regressed: peak disk +24.5 GB and wall +9 s, against
+a 90% cut in file count.
+
+Deferring reclaim was justified on the grounds that containers start ~94 GB
+below the per-file layout and that the work-directory peak sits at the end of
+partitioning. The first half holds. The second only held for the layout being
+replaced: containers move the peak *into* local contraction, where they still
+hold everything while local-unitig buckets, labels and the edge matrix pile on
+top. `fallocate(FALLOC_FL_PUNCH_HOLE)` over a consumed bucket's segments
+restores the incremental release the per-file layout got from `remove_file`,
+and works because segments are reserved at a 4 KiB multiple -- raw extents,
+averaging 16.1 KiB and unaligned, would have left about a quarter of each
+behind.
+
+Removing the bucket directory had been measured as dead work: local contraction
+drains it to a single manifest file, and disabling all 16,384 incremental
+unlinks moved the phase by 0.47 s in 123 s. Containers invalidate that premise.
+The directory is no longer drained, so teardown became a bulk delete of 129
+files holding 237.8 GB in the foreground -- the same shape as the edge-matrix
+directory, whose removal cost 3.835 s. It now uses the same background
+unlinkers.
+
+With both, over two interleaved pairs at 149,998 assemblies, t64, under
+`--mem-limit 64G`, against edge-matrix containers alone:
+
+| metric | edge only | plus buckets | resolvable? |
+| --- | ---: | ---: | --- |
+| peak files | 17,277 (spread 32) | 1,795 (spread 0) | yes |
+| peak work dir | 324.3 GB (0.9) | 234.2 GB (0.4) | yes, -27.8% |
+| wall | 295.2 s (0.62) | 290.2 s (1.48) | yes, -1.7% |
+| partition | 115.7 s (0.73) | 112.4 s (0.32) | yes, -2.9% |
+| local contraction | 125.0 s (3.03) | 124.9 s (0.90) | no |
+| `wchar` | 439 GB | 438 GB | unchanged |
+
+Every delta except local contraction exceeds both arms' spreads. Local
+contraction being flat is the useful negative: punching a consumed bucket's
+segments costs no more than unlinking its file did.
+
+Colored is a single pair rather than two, and moves the same way: 6:39.70 to
+6:35.03, peak files 23,809 to 2,613, with an unchanged 41 GiB colour index and
+exact counts. `cf3-compare-fasta` matched all 252,487,658 strand-normalized
+unitigs against the 64-thread C++ reference.
+
+Taken with the edge matrix, a full uncolored build now peaks at 1,795 files
+against 23,376, and its work directory at 234.2 GB against 324.3 GB.
+
 ## Colour-set encoding
 
 The colour repository is the largest artifact a colored build produces, and it

@@ -216,6 +216,10 @@ impl<const K: usize> LocalVertexMap<K> {
         }
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
     /// Slots the map can hold without growing.
     ///
     /// Clearing walks this rather than [`len`](Self::len), so it is what decides
@@ -1608,6 +1612,7 @@ fn normalize_source_sets(source_sets: &mut [Vec<u32>]) {
     }
 }
 
+#[allow(dead_code)]
 fn canonical_vertices_from_label<const K: usize>(
     label: &[u8],
 ) -> Result<Vec<Kmer<K>>, LocalSubgraphError> {

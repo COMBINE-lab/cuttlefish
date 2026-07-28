@@ -191,6 +191,11 @@ impl BucketContainers {
     }
 
     #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.files.is_empty()
+    }
+
+    #[inline]
     fn reserve_segment(&self, container: usize) -> u64 {
         self.files[container]
             .cursor
@@ -2539,53 +2544,51 @@ impl SharedBucketEmitter {
                     true,
                 )?;
             }
-        } else {
-            if self.deferred_uncolored {
-                let atlas_id = graph_id / ATLAS_GRAPH_COUNT;
-                let pending = &mut self.uncolored_pending[atlas_id];
-                pending.graph_ids.push(graph_id as u16);
-                if !check_bases {
-                    append_uncolored_record_valid(
-                        &mut pending.bytes,
-                        attr as u16,
-                        graph_id as u16,
-                        seq,
-                        self.sink.label_words,
-                    )?;
-                } else {
-                    append_record(
-                        &mut pending.bytes,
-                        attr,
-                        graph_id,
-                        seq,
-                        self.sink.label_words,
-                        false,
-                    )?;
-                }
+        } else if self.deferred_uncolored {
+            let atlas_id = graph_id / ATLAS_GRAPH_COUNT;
+            let pending = &mut self.uncolored_pending[atlas_id];
+            pending.graph_ids.push(graph_id as u16);
+            if !check_bases {
+                append_uncolored_record_valid(
+                    &mut pending.bytes,
+                    attr as u16,
+                    graph_id as u16,
+                    seq,
+                    self.sink.label_words,
+                )?;
             } else {
-                let pending = &mut self.pending[graph_id];
-                pending.records = pending
-                    .records
-                    .checked_add(1)
-                    .ok_or(BucketError::TooManyRecords)?;
-                if !check_bases {
-                    append_uncolored_record_valid(
-                        &mut pending.bytes,
-                        attr as u16,
-                        graph_id as u16,
-                        seq,
-                        self.sink.label_words,
-                    )?;
-                } else {
-                    append_record(
-                        &mut pending.bytes,
-                        attr,
-                        graph_id,
-                        seq,
-                        self.sink.label_words,
-                        false,
-                    )?;
-                }
+                append_record(
+                    &mut pending.bytes,
+                    attr,
+                    graph_id,
+                    seq,
+                    self.sink.label_words,
+                    false,
+                )?;
+            }
+        } else {
+            let pending = &mut self.pending[graph_id];
+            pending.records = pending
+                .records
+                .checked_add(1)
+                .ok_or(BucketError::TooManyRecords)?;
+            if !check_bases {
+                append_uncolored_record_valid(
+                    &mut pending.bytes,
+                    attr as u16,
+                    graph_id as u16,
+                    seq,
+                    self.sink.label_words,
+                )?;
+            } else {
+                append_record(
+                    &mut pending.bytes,
+                    attr,
+                    graph_id,
+                    seq,
+                    self.sink.label_words,
+                    false,
+                )?;
             }
         }
         self.pending_bytes += record_len;
@@ -2861,7 +2864,6 @@ fn append_uncolored_record_valid(
 /// which dominates record packing. Each 2-bit code is a pure bitwise function of
 /// its byte, so eight bases can be reduced at a time inside a `u64` and the
 /// codes gathered with a single `PEXT`.
-#[inline]
 fn pack_valid_word_32(seq: &[u8]) -> u64 {
     debug_assert!(seq.len() >= 32);
     #[cfg(all(target_arch = "x86_64", target_feature = "bmi2"))]
@@ -2983,6 +2985,7 @@ fn force_split_compression() -> bool {
 }
 
 impl BucketFile {
+    #[allow(clippy::too_many_arguments)]
     fn create(
         bucket_dir: &Path,
         k: u16,

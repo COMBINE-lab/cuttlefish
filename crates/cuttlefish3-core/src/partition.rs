@@ -161,7 +161,6 @@ pub fn emit_weak_superkmer_buckets<const K: usize>(
     std::thread::scope(|scope| {
         let mut handles = Vec::new();
         for rx in batch_rxs {
-            let params = params;
             let sink = Arc::clone(&sink);
             handles.push(scope.spawn(move || {
                 let mut worker_stats = PartitionStats::new(graph_count);
@@ -488,7 +487,8 @@ fn emit_uncolored_direct_weak_superkmer_buckets<const K: usize>(
     let mut worker_elapsed = Duration::ZERO;
     let mut parse_elapsed = Duration::ZERO;
 
-    for (source_start, window) in [(0, paths)] {
+    {
+        let (source_start, window) = (0, paths);
         let started = Instant::now();
         let mut work_order = (0..window.len()).collect::<Vec<_>>();
         work_order.sort_unstable_by_key(|&offset| {
@@ -600,7 +600,8 @@ fn emit_colored_weak_superkmer_buckets<const K: usize>(
 
     // The reference partitioner exposes the complete size-sorted source set to
     // its dynamic scheduler and drains each worker after every source.
-    for (source_start, window) in [(0, paths)] {
+    {
+        let (source_start, window) = (0, paths);
         let parse_started = Instant::now();
         let mut work_order = (0..window.len()).collect::<Vec<_>>();
         work_order.sort_unstable_by_key(|&offset| {
@@ -948,7 +949,6 @@ pub fn partition_inputs<const K: usize>(
     std::thread::scope(|scope| {
         let mut handles = Vec::new();
         for (chunk_idx, chunk) in paths.chunks(chunk_len).enumerate() {
-            let params = params;
             let start_idx = chunk_idx * chunk_len;
             handles.push(scope.spawn(move || {
                 let mut worker_stats = PartitionStats::new(graph_count);
@@ -1113,6 +1113,14 @@ where
 
     let mut fwd = 0u64;
     let mut rev = 0u64;
+    // Indexed rather than iterated on purpose. Clippy prefers
+    // `fragment.iter().enumerate().take(minimizer_len)` here and
+    // `&fragment[minimizer_len..window_k]` below, and both measured slower:
+    // over six interleaved pairs of partition-only runs on 10,000 genomes the
+    // iterator forms cost about 0.13 s of an 8.05 s phase and were slower in
+    // five of six. This is the fused minimizer scan, the hottest loop in the
+    // build; the clearer spelling is not worth 1.6% of it.
+    #[allow(clippy::needless_range_loop)]
     for idx in 0..minimizer_len {
         let base_bits = partition_base_bits::<CHECK_BASES, E>(fragment[idx])?;
         fwd = (fwd << 2) | base_bits as u64;
@@ -1127,6 +1135,7 @@ where
 
     let mut pivot = ring_size;
     hashes[pivot] = canonical_lmer_hash(fwd, rev);
+    #[allow(clippy::needless_range_loop)]
     for idx in minimizer_len..window_k {
         let next_bits = partition_base_bits::<CHECK_BASES, E>(fragment[idx])?;
         fwd = ((fwd << 2) | next_bits as u64) & mask;

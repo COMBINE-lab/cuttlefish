@@ -376,7 +376,7 @@ impl<const K: usize> DiscontinuityUnitig<K> {
 
     #[inline]
     pub fn left_exit(&self) -> Option<DiscontinuityEndpoint<K>> {
-        (self.flags & DISCONTINUITY_LEFT_EXIT != 0).then(|| DiscontinuityEndpoint {
+        (self.flags & DISCONTINUITY_LEFT_EXIT != 0).then_some(DiscontinuityEndpoint {
             vertex: self.left_vertex,
             side: if self.flags & DISCONTINUITY_LEFT_BACK != 0 {
                 Side::Back
@@ -388,7 +388,7 @@ impl<const K: usize> DiscontinuityUnitig<K> {
 
     #[inline]
     pub fn right_exit(&self) -> Option<DiscontinuityEndpoint<K>> {
-        (self.flags & DISCONTINUITY_RIGHT_EXIT != 0).then(|| DiscontinuityEndpoint {
+        (self.flags & DISCONTINUITY_RIGHT_EXIT != 0).then_some(DiscontinuityEndpoint {
             vertex: self.right_vertex,
             side: if self.flags & DISCONTINUITY_RIGHT_BACK != 0 {
                 Side::Back
@@ -1033,6 +1033,16 @@ impl EdgeContainers {
     }
 }
 
+/// What expanding one partition yields: the phantom records it could not
+/// resolve locally, then the edge path-info, inferred-vertex and unresolved
+/// counts it accumulated.
+type ExpandedPartition<const K: usize> = (
+    Vec<(StitchedCoordRecord, DiscontinuityEndpoint<K>)>,
+    u64,
+    u64,
+    u64,
+);
+
 /// Runs merge across gaps below this. Reading a short gap costs less than a
 /// second syscall and a second seek.
 /// Descriptors left for everything the edge matrix shares the build with:
@@ -1218,6 +1228,7 @@ impl ConcurrentBlockedEdgeWriters {
         }
     }
 
+    #[allow(dead_code)]
     fn add(&self, edge: &PreparedBlockedEdge) -> Result<(), SerialCollationError> {
         let block = &self.blocks[edge.block];
         let mut buffer = block
@@ -1448,6 +1459,7 @@ impl<const K: usize> BlockedEdgeMatrix<K> {
     }
 
     #[inline]
+    #[allow(dead_code)]
     fn partition(&self, endpoint: MatrixEndpoint<K>) -> usize {
         edge_matrix_partition(self.vertex_partitions, endpoint)
     }
@@ -1457,6 +1469,7 @@ impl<const K: usize> BlockedEdgeMatrix<K> {
         row * self.partition_count() + col
     }
 
+    #[allow(dead_code)]
     fn add_edge_record(
         &mut self,
         mut edge: DiscontinuityEdge<K>,
@@ -1511,6 +1524,7 @@ impl<const K: usize> BlockedEdgeMatrix<K> {
         Ok(())
     }
 
+    #[allow(dead_code)]
     fn add_prepared_edges_absolute(
         &mut self,
         edges: &[PreparedBlockedEdge],
@@ -1600,6 +1614,7 @@ impl<const K: usize> BlockedEdgeMatrix<K> {
         Ok(records)
     }
 
+    #[allow(dead_code)]
     fn load_column(
         &mut self,
         col: usize,
@@ -2511,7 +2526,7 @@ impl SerialDiscontinuityContractor {
                 continue;
             };
 
-            if !table.contains_key(&x.vertex) {
+            table.entry(x.vertex).or_insert_with(|| {
                 phantom_edges += 1;
                 let phantom = DiscontinuityEndpoint {
                     vertex: x.vertex,
@@ -2523,19 +2538,16 @@ impl SerialDiscontinuityContractor {
                     1,
                     Some(phantom),
                 ));
-                table.insert(
-                    x.vertex,
-                    PartitionOtherEnd {
+                PartitionOtherEnd {
                         endpoint: MatrixEndpoint::Phi,
                         side_at_current: x.side.inverse(),
                         weight: 1,
                         in_same_part: false,
                         processed: false,
-                    },
-                );
-            }
+                    }
+            });
 
-            if !table.contains_key(&y.vertex) {
+            table.entry(y.vertex).or_insert_with(|| {
                 phantom_edges += 1;
                 let phantom = DiscontinuityEndpoint {
                     vertex: y.vertex,
@@ -2547,17 +2559,14 @@ impl SerialDiscontinuityContractor {
                     1,
                     Some(phantom),
                 ));
-                table.insert(
-                    y.vertex,
-                    PartitionOtherEnd {
+                PartitionOtherEnd {
                         endpoint: MatrixEndpoint::Phi,
                         side_at_current: y.side.inverse(),
                         weight: 1,
                         in_same_part: false,
                         processed: false,
-                    },
-                );
-            }
+                    }
+            });
 
             let x_end = table.get(&x.vertex).copied().unwrap();
             let y_end = table.get(&y.vertex).copied().unwrap();
@@ -2795,7 +2804,7 @@ impl SerialDiscontinuityContractor {
                 continue;
             };
 
-            if !table.contains_key(&x.vertex) {
+            table.entry(x.vertex).or_insert_with(|| {
                 phantom_edges += 1;
                 let phantom = DiscontinuityEndpoint {
                     vertex: x.vertex,
@@ -2807,19 +2816,16 @@ impl SerialDiscontinuityContractor {
                     1,
                     Some(phantom),
                 ));
-                table.insert(
-                    x.vertex,
-                    PartitionOtherEnd {
+                PartitionOtherEnd {
                         endpoint: MatrixEndpoint::Phi,
                         side_at_current: x.side.inverse(),
                         weight: 1,
                         in_same_part: false,
                         processed: false,
-                    },
-                );
-            }
+                    }
+            });
 
-            if !table.contains_key(&y.vertex) {
+            table.entry(y.vertex).or_insert_with(|| {
                 phantom_edges += 1;
                 let phantom = DiscontinuityEndpoint {
                     vertex: y.vertex,
@@ -2831,17 +2837,14 @@ impl SerialDiscontinuityContractor {
                     1,
                     Some(phantom),
                 ));
-                table.insert(
-                    y.vertex,
-                    PartitionOtherEnd {
+                PartitionOtherEnd {
                         endpoint: MatrixEndpoint::Phi,
                         side_at_current: y.side.inverse(),
                         weight: 1,
                         in_same_part: false,
                         processed: false,
-                    },
-                );
-            }
+                    }
+            });
 
             let x_end = table.get(&x.vertex).copied().unwrap();
             let y_end = table.get(&y.vertex).copied().unwrap();
@@ -2921,6 +2924,7 @@ impl SerialDiscontinuityContractor {
         }
     }
 
+    #[allow(dead_code)]
     fn scan_partition_column_atomic<const K: usize>(
         matrix: &SerialEdgeMatrix<K>,
         partition: usize,
@@ -2979,6 +2983,7 @@ impl SerialDiscontinuityContractor {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn contract_blocked_partition_atomic<const K: usize>(
         matrix: &mut BlockedEdgeMatrix<K>,
         appenders: &ConcurrentBlockedEdgeWriters,
@@ -3187,6 +3192,7 @@ impl SerialDiscontinuityContractor {
         Ok((contracted, pre_reinserted_edges))
     }
 
+    #[allow(dead_code)]
     fn contract_partition_with_owned_tables<const K: usize>(
         matrix: &SerialEdgeMatrix<K>,
         partition: usize,
@@ -3327,6 +3333,7 @@ impl SerialDiscontinuityContractor {
         }
     }
 
+    #[allow(dead_code)]
     fn contract_partition_with_atomic_table<const K: usize>(
         matrix: &SerialEdgeMatrix<K>,
         partition: usize,
@@ -3512,6 +3519,7 @@ impl SerialDiscontinuityContractor {
         }
     }
 
+    #[allow(dead_code)]
     fn contract_partition_with_flat_table<const K: usize>(
         matrix: &SerialEdgeMatrix<K>,
         partition: usize,
@@ -4609,6 +4617,7 @@ impl SerialDiscontinuityExpander {
         CompactExpansionPathInfo::new(source.path_id, rank, exit_side, source.is_cycle())
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn expand_non_diagonal_raw<const K: usize>(
         matrix: &BlockedEdgeMatrix<K>,
         partition: usize,
@@ -4620,15 +4629,7 @@ impl SerialDiscontinuityExpander {
         ranges_per_bucket: usize,
         error_path: &Path,
         pool: &ThreadPool,
-    ) -> Result<
-        (
-            Vec<(StitchedCoordRecord, DiscontinuityEndpoint<K>)>,
-            u64,
-            u64,
-            u64,
-        ),
-        SerialCollationError,
-    > {
+    ) -> Result<ExpandedPartition<K>, SerialCollationError> {
         // Expansion reads row `partition`, which under the default row axis is
         // one whole container, so this is the phase that streams: a single
         // front-to-back sweep, demultiplexed by extent. The tasks below carry
@@ -4747,7 +4748,7 @@ impl SerialDiscontinuityExpander {
                                     path: path.clone(),
                                     source,
                                 })?;
-                            file.write_all(&vertex_records)
+                            file.write_all(vertex_records)
                                 .map_err(|source| SerialCollationError::Io { path, source })?;
                         }
                         for bucket_id in used_path_buckets.drain(..) {
@@ -6930,7 +6931,7 @@ fn reduce_final_unitig_buckets_to_fasta(
                 append_decimal_u64(&mut fasta_buffer, color.raw());
             }
             fasta_buffer.push(b'\n');
-            fasta_buffer.extend_from_slice(&label);
+            fasta_buffer.extend_from_slice(label);
             fasta_buffer.push(b'\n');
             if fasta_buffer.len() >= 8 * 1024 * 1024 {
                 out.write_all(&fasta_buffer)
@@ -7154,18 +7155,18 @@ fn retain_maximal_labels_indexed_with_threads(unitigs: &mut Vec<Vec<u8>>, thread
                     for haystack in chunk {
                         mark_contained_candidates_for_haystack(
                             haystack,
-                            &lengths,
-                            &patterns_by_len,
-                            &powers,
+                            lengths,
+                            patterns_by_len,
+                            powers,
                             unitigs,
                             &mut local_keep,
                         );
                         let reverse = reverse_complement_label(haystack);
                         mark_contained_candidates_for_haystack(
                             &reverse,
-                            &lengths,
-                            &patterns_by_len,
-                            &powers,
+                            lengths,
+                            patterns_by_len,
+                            powers,
                             unitigs,
                             &mut local_keep,
                         );
@@ -7850,6 +7851,7 @@ impl DenseLocalPathInfo {
         rank_and_flags: u64::MAX,
     };
 
+    #[allow(dead_code)]
     fn from_record(record: StitchedCoordRecord) -> Self {
         Self {
             path_id: record.path_id,
@@ -7860,7 +7862,7 @@ impl DenseLocalPathInfo {
     }
 
     fn to_record(self, unitig_index: usize) -> Option<StitchedCoordRecord> {
-        (self.rank_and_flags != u64::MAX).then(|| StitchedCoordRecord {
+        (self.rank_and_flags != u64::MAX).then_some(StitchedCoordRecord {
             path_id: self.path_id,
             rank: self.rank_and_flags >> 2,
             unitig_index: unitig_index as u32,
@@ -7922,6 +7924,7 @@ impl LoadedMaterializedStitchedCoordRecord {
         u32::from(self.color_count)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn new(
         path_id: u64,
         rank: u64,
@@ -7941,7 +7944,7 @@ impl LoadedMaterializedStitchedCoordRecord {
                 .expect("materialized label length fits C++ uni_len_t"),
             color_count: u16::try_from(color_count)
                 .expect("materialized color count fits C++ uni_len_t"),
-            flags: u16::from(reverse) * Self::REVERSE_FLAG | u16::from(is_cycle) * Self::CYCLE_FLAG,
+            flags: (u16::from(reverse) * Self::REVERSE_FLAG) | (u16::from(is_cycle) * Self::CYCLE_FLAG),
         }
     }
 }
@@ -8560,6 +8563,7 @@ fn emit_contracted_edge_chunks<const K: usize>(
         .try_reduce(|| 0, |left, right| Ok(left + right))
 }
 
+#[allow(dead_code)]
 fn emit_contracted_edge_batch<const K: usize>(
     edges: Vec<DiscontinuityEdge<K>>,
     vertex_partitions: usize,
@@ -8659,6 +8663,7 @@ struct VertexPathInfoBucketWriters<const K: usize> {
 }
 
 impl<const K: usize> VertexPathInfoBucketWriters<K> {
+    #[allow(dead_code)]
     fn create(dir: &Path, bucket_count: usize) -> Result<Self, SerialCollationError> {
         if dir.exists() {
             fs::remove_dir_all(dir).map_err(|source| SerialCollationError::Io {
@@ -9011,6 +9016,7 @@ fn read_vertex_path_info_bucket_into<const K: usize>(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn push_edge_path_record_to_range_bucket_writer<const K: usize>(
     edge: &DiscontinuityEdge<K>,
     info: PathInfo<K>,
@@ -9031,6 +9037,8 @@ fn push_edge_path_record_to_range_bucket_writer<const K: usize>(
     writers.write_record(bucket_id, record)
 }
 
+#[allow(clippy::too_many_arguments)]
+#[allow(dead_code)]
 fn push_edge_path_record_to_range_buffers<const K: usize>(
     edge: &DiscontinuityEdge<K>,
     info: PathInfo<K>,
@@ -9052,6 +9060,8 @@ fn push_edge_path_record_to_range_buffers<const K: usize>(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
+#[allow(dead_code)]
 fn push_compact_edge_path_record_to_range_buffers<const K: usize>(
     edge: &DiscontinuityEdge<K>,
     info: CompactExpansionPathInfo,
@@ -9371,7 +9381,7 @@ fn map_external_cpp_path_info_buckets_to_max_unitig_buckets<const K: usize>(
                     let shared_writers = &shared_writers;
                     handles.push(scope.spawn(move || {
                         let mut writers =
-                            SharedMaterializedBatch::new(&shared_writers, max_unitig_bucket_count);
+                            SharedMaterializedBatch::new(shared_writers, max_unitig_bucket_count);
                         let mut direct_batch = Vec::with_capacity(DIRECT_FINAL_BATCH_RECORDS);
                         let mut emit_direct =
                             |unitig: FinalUnitigRecord| -> Result<(), SerialCollationError> {
@@ -10661,12 +10671,11 @@ fn stitch_discontinuity_paths_impl<const K: usize>(
     unitigs = bucketed_maximal_unitig_reduce(unitigs, threads);
     let sort_elapsed = sort_started.elapsed();
     eprintln!(
-        "cuttlefish3-rs: stitch detail: half-ends {:.3}s, endpoint sort {:.3}s, endpoint join {:.3}s, components {:.3}s, {} walk {:.3}s, bucket reduce {:.3}s",
+        "cuttlefish3-rs: stitch detail: half-ends {:.3}s, endpoint sort {:.3}s, endpoint join {:.3}s, components {:.3}s, component walk {:.3}s, bucket reduce {:.3}s",
         half_end_elapsed.as_secs_f64(),
         endpoint_sort_elapsed.as_secs_f64(),
         endpoint_join_elapsed.as_secs_f64(),
         component_elapsed.as_secs_f64(),
-        "component",
         walk_elapsed.as_secs_f64(),
         sort_elapsed.as_secs_f64()
     );
@@ -10678,6 +10687,7 @@ fn stitch_discontinuity_paths_impl<const K: usize>(
     Ok(unitigs)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn stitch_discontinuity_paths_with_adjacency<const K: usize>(
     inputs: &DiscontinuityInputs<K>,
     threads: usize,
@@ -11015,10 +11025,8 @@ fn stitch_component_starts_from_adjacency(adjacency: &[StitchAdjacencyList]) -> 
     let mut visited = vec![false; adjacency.len()];
     let mut starts = Vec::new();
 
-    for node in 0..adjacency.len() {
-        if adjacency[node].len() > 2 {
-            return None;
-        }
+    if adjacency.iter().any(|neighbours| neighbours.len() > 2) {
+        return None;
     }
 
     for node in 0..adjacency.len() {
@@ -11415,6 +11423,7 @@ fn write_stitched_coord_buckets_from_adjacency(
     Ok(manifest)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn write_neighbor_stitched_coord_shards(
     coord_dir: &Path,
     worker_id: usize,
@@ -12339,6 +12348,7 @@ fn write_external_stitched_path_info_buckets_from_neighbors<const K: usize>(
     Ok(manifest)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn write_external_stitched_path_info_range(
     path_info_dir: &Path,
     worker_id: usize,
@@ -12382,7 +12392,7 @@ fn ranges_per_path_info_bucket(range_count: usize, workers: usize) -> usize {
     // Dividing it by worker count produced multi-gigabyte sort batches at
     // HumGut scale.
     let _ = workers;
-    let bucket_count = target_buckets.min(MAX_OPEN_STITCH_PATH_INFO_WRITERS).max(1);
+    let bucket_count = target_buckets.clamp(1, MAX_OPEN_STITCH_PATH_INFO_WRITERS);
     range_count.div_ceil(bucket_count).max(1)
 }
 
@@ -13307,6 +13317,7 @@ impl<'a> SharedMaterializedWriters<'a> {
         Ok(())
     }
 
+    #[allow(dead_code)]
     fn write_colored_record(
         &self,
         bucket_id: usize,
@@ -13765,6 +13776,7 @@ impl MaterializedStitchedCoordShardWriter {
         self.write_record_with_color_index(record, label, color_index, count)
     }
 
+    #[allow(dead_code)]
     fn write_encoded_colored_record(
         &mut self,
         record: &StitchedCoordRecord,
@@ -14806,6 +14818,7 @@ fn encode_final_unitig_batch(
     }
 }
 
+#[allow(dead_code)]
 fn reduce_materialized_stitched_coord_bucket_file_group<const K: usize>(
     group: &[MaterializedStitchedCoordBucketEntry],
 ) -> Result<Vec<FinalUnitigRecord>, SerialCollationError> {
@@ -15186,6 +15199,7 @@ fn append_materialized_stitched_coord_bucket_file(
     Ok(())
 }
 
+#[allow(dead_code)]
 fn decoded_materialized_stitched_coord_record(
     bytes: &[u8],
     path: &Path,
@@ -15741,7 +15755,7 @@ fn read_exact_coord(
 
 fn reduce_stitched_coord_bucket<const K: usize>(
     inputs: &DiscontinuityInputs<K>,
-    records: &mut Vec<StitchedCoordRecord>,
+    records: &mut [StitchedCoordRecord],
     sort_records: bool,
 ) -> Vec<Vec<u8>> {
     if records.is_empty() {
@@ -16614,6 +16628,7 @@ impl<const K: usize> ExpansionPathInfoTable<K> {
         }
     }
 
+    #[allow(dead_code)]
     fn contains_key(&self, vertex: &Kmer<K>) -> bool {
         self.get(*vertex).is_some()
     }
@@ -16745,17 +16760,20 @@ impl<const K: usize> ConcurrentPathInfoTable<K> {
     }
 
     #[inline]
+    #[allow(dead_code)]
     fn contains_key(&self, vertex: &Kmer<K>) -> bool {
         self.get(*vertex).is_some()
     }
 }
 
+#[allow(dead_code)]
 struct OwnedPartitionTables<const K: usize> {
     maps: Vec<FastHashMap<Kmer<K>, PartitionOtherEnd<K>>>,
     mask: usize,
 }
 
 impl<const K: usize> OwnedPartitionTables<K> {
+    #[allow(dead_code)]
     fn new(threads: usize) -> Self {
         let count = threads.max(1).next_power_of_two();
         Self {
@@ -16765,6 +16783,7 @@ impl<const K: usize> OwnedPartitionTables<K> {
     }
 
     #[inline]
+    #[allow(dead_code)]
     fn owner(&self, vertex: Kmer<K>) -> usize {
         partition_column_vertex_shard(vertex, self.mask)
     }
@@ -16855,6 +16874,7 @@ struct AtomicPartitionSlot {
     value: UnsafeCell<MaybeUninit<CompactPartitionOtherEnd>>,
 }
 
+#[allow(dead_code)]
 struct FlatPartitionTable<const K: usize> {
     keys: Vec<u64>,
     values: Vec<MaybeUninit<PartitionOtherEnd<K>>>,
@@ -16863,8 +16883,10 @@ struct FlatPartitionTable<const K: usize> {
 }
 
 impl<const K: usize> FlatPartitionTable<K> {
+    #[allow(dead_code)]
     const EMPTY: u64 = u64::MAX;
 
+    #[allow(dead_code)]
     fn with_max_entries(max_entries: usize) -> Self {
         let capacity = max_entries
             .saturating_mul(4)
@@ -16879,6 +16901,7 @@ impl<const K: usize> FlatPartitionTable<K> {
         }
     }
 
+    #[allow(dead_code)]
     fn clear(&mut self) {
         for idx in self.occupied.drain(..) {
             self.keys[idx] = Self::EMPTY;
@@ -16886,6 +16909,7 @@ impl<const K: usize> FlatPartitionTable<K> {
     }
 
     #[inline]
+    #[allow(dead_code)]
     fn find_index(&self, vertex: Kmer<K>) -> Result<usize, usize> {
         let key = vertex.as_u128() as u64;
         let mut idx = vertex.hash64(0) as usize & self.mask;
@@ -17009,6 +17033,7 @@ impl<const K: usize> AtomicPartitionTable<K> {
         });
     }
 
+    #[allow(dead_code)]
     fn absorb(
         &self,
         vertex: Kmer<K>,
@@ -17165,6 +17190,7 @@ impl<const K: usize> AtomicPartitionTable<K> {
         }
     }
 
+    #[allow(dead_code)]
     fn to_fast_map(&self) -> FastHashMap<Kmer<K>, PartitionOtherEnd<K>> {
         let occupied = self
             .slots
@@ -17198,6 +17224,7 @@ impl<const K: usize> AtomicPartitionTable<K> {
         }
     }
 
+    #[allow(dead_code)]
     fn insert_serial(&self, vertex: Kmer<K>, value: PartitionOtherEnd<K>) {
         let key = vertex.as_u128() as u64;
         let mut idx = self.index(vertex);
@@ -17620,6 +17647,7 @@ fn external_inputs_to_memory_inputs<const K: usize>(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn contract_local_subgraphs_into_external_inputs<const K: usize>(
     store: &BucketStore,
     entries: &[BucketManifestEntry],
@@ -18068,6 +18096,7 @@ fn unitig_table_path_for_labels(label_path: &Path) -> PathBuf {
     label_path.with_file_name(unitig_name)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn append_local_contraction_output_to_external_inputs<const K: usize>(
     trivial_output: &mut BufWriter<File>,
     trivial_path: &Path,
@@ -18520,7 +18549,6 @@ fn contract_local_subgraphs<const K: usize>(
         let mut handles = Vec::new();
         for _ in 0..workers {
             let completed = Arc::clone(&completed);
-            let total_groups = total_groups;
             let next_group = &next_group;
             let groups = &groups;
             handles.push(scope.spawn(move || {

@@ -69,7 +69,7 @@ pub fn raise_open_file_limit() -> (usize, usize) {
 fn darwin_open_max() -> Option<libc::rlim_t> {
     // SAFETY: `sysconf` takes a name and returns a long; -1 signals no limit.
     let value = unsafe { libc::sysconf(libc::_SC_OPEN_MAX) };
-    (value > 0).then(|| value as libc::rlim_t)
+    (value > 0).then_some(value as libc::rlim_t)
 }
 
 #[cfg(not(target_vendor = "apple"))]

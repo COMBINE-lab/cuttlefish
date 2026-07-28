@@ -3395,6 +3395,67 @@ impl std::error::Error for BucketError {}
 
 #[cfg(test)]
 mod tests {
+    /// Reclaim must actually return blocks, not merely be called.
+    ///
+    /// A failed punch is ignored by design -- the container is unlinked
+    /// wholesale at the end regardless -- which means a filesystem or platform
+    /// where it silently does nothing costs peak disk with no other symptom.
+    /// That is exactly what happened once already: deferring reclaim left the
+    /// work directory 24.5 GB larger and presented as an unexplained number.
+    /// This asserts the blocks come back, so the macOS `fcntl(F_PUNCHHOLE)`
+    /// path is verified by CI rather than assumed from the fact that it
+    /// compiles.
+    #[test]
+    fn releasing_segments_returns_blocks_to_the_filesystem() {
+        use std::os::unix::fs::MetadataExt;
+
+        let dir = std::env::temp_dir().join(format!(
+            "cf3-punch-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+
+        let containers = BucketContainers::create(&dir, 1).unwrap();
+        let segment = containers.segment_bytes();
+        let segments: Vec<u32> = (0..8).collect();
+        let payload = vec![0xA5u8; segment as usize];
+        for &index in &segments {
+            containers
+                .write_at(0, u64::from(index) * segment, &payload)
+                .unwrap();
+        }
+
+        let path = dir.join("00000.wskc");
+        let allocated = || fs::metadata(&path).unwrap().blocks() * 512;
+        let before = allocated();
+        assert!(
+            before >= segments.len() as u64 * segment,
+            "expected {} bytes of blocks before punching, saw {before}",
+            segments.len() as u64 * segment
+        );
+
+        containers.release_segments(0, &segments);
+        let after = allocated();
+
+        assert!(
+            after < before / 2,
+            "punching {} segments freed {} of {before} bytes; this filesystem may \
+             not support hole punching, in which case consumed bucket space is \
+             held until the build ends and peak disk is higher than documented",
+            segments.len(),
+            before - after
+        );
+        // The file keeps its length; only the blocks behind it go away.
+        assert_eq!(
+            fs::metadata(&path).unwrap().len(),
+            segments.len() as u64 * segment
+        );
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
     #[test]
     fn packed_word_matches_scalar_reference() {
         fn scalar(seq: &[u8]) -> u64 {

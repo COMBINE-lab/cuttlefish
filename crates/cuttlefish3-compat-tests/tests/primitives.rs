@@ -36,6 +36,24 @@ fn scratch_prefix(name: &str) -> PathBuf {
     std::env::temp_dir().join(format!("cf3-rs-{}-{name}", std::process::id()))
 }
 
+/// Expected unitigs for `data/compat-small.fa` at k=7, shared by the
+/// default-threads test and the low-worker sweep.
+const COMPAT_SMALL_UNITIGS: &[&str] = &[
+    "AACGGTAA",
+    "AACGGTCAA",
+    "ACCGGTAA",
+    "ACCGGTCCGATGGA",
+    "ACCGGTTA",
+    "ACCGTTAACCG",
+    "ATCGATCG",
+    "CGGTAACC",
+    "CGGTTAC",
+    "GAATTCGAAAGCTGGATCC",
+    "GTAACCTGGA",
+    "TACTGACATGCAACGTACTGA",
+    "TAGCCTTAGCCTACTGA",
+];
+
 fn normalized_uncolored_fixture(
     fixture_path: &str,
     name: &str,
@@ -110,9 +128,20 @@ fn normalized_uncolored_fixture_with_threads(
     let _ = fs::remove_file(built.output_path);
 }
 
+/// Colored local runs resolve, across the low end of the worker range.
+///
+/// Colored has its own local-contraction sink and its own single-worker
+/// branches, and it reads every bucket a second time to collect source
+/// sets, so it is worth sweeping for the same reason the uncolored path is.
 #[test]
 fn colored_bucket_local_runs_resolve_after_external_collation() {
-    let root = scratch_prefix("colored-external-local");
+    for threads in [1, 2, 3] {
+        colored_bucket_local_runs_at(threads);
+    }
+}
+
+fn colored_bucket_local_runs_at(threads: usize) {
+    let root = scratch_prefix(&format!("colored-external-local-t{threads}"));
     let _ = fs::remove_dir_all(&root);
     fs::create_dir_all(&root).unwrap();
     let first = root.join("first.fa");
@@ -127,14 +156,14 @@ fn colored_bucket_local_runs_resolve_after_external_collation() {
     params.k = 7;
     params.minimizer_len = 3;
     params.color = true;
-    params.threads = 2;
+    params.threads = threads;
     params.work_dir = root.display().to_string();
     params.seqs = vec![first.display().to_string(), second.display().to_string()];
     let emitted = emit_weak_superkmer_buckets::<7>(&params, DEFAULT_SUBGRAPH_COUNT).unwrap();
     let mut inputs = emit_colored_external_discontinuity_inputs_with_threads_in_dir::<7>(
         &emitted.buckets.bucket_dir,
         1,
-        2,
+        threads,
         root.join("local.labels"),
         root.join("local.colors"),
         root.join("local.color-repository"),
@@ -145,7 +174,7 @@ fn colored_bucket_local_runs_resolve_after_external_collation() {
     let output_path = root.join("colored.fa");
     SerialUncoloredCollator::collate_external_stitched_to_fasta_with_threads_in_dir(
         &mut inputs,
-        2,
+        threads,
         &root.join("stitch-coords"),
         &root.join("final-unitigs"),
         &output_path,
@@ -256,53 +285,34 @@ fn uncolored_compat_small_matches_cpp_validated_unitigs() {
     normalized_uncolored_fixture(
         "data/compat-small.fa",
         "uncolored-compat-small-expected",
-        &[
-            "AACGGTAA",
-            "AACGGTCAA",
-            "ACCGGTAA",
-            "ACCGGTCCGATGGA",
-            "ACCGGTTA",
-            "ACCGTTAACCG",
-            "ATCGATCG",
-            "CGGTAACC",
-            "CGGTTAC",
-            "GAATTCGAAAGCTGGATCC",
-            "GTAACCTGGA",
-            "TACTGACATGCAACGTACTGA",
-            "TAGCCTTAGCCTACTGA",
-        ],
+        COMPAT_SMALL_UNITIGS,
         148,
     );
 }
 
-/// The same fixture forced onto one worker.
+/// The same fixture across the low end of the worker range.
 ///
-/// The thread count selects between two local-contraction sinks, and the
-/// serial one is unreachable on any machine with cores to spare, so it went
-/// wrong unnoticed until a two-core CI runner tripped over it. This pins it.
+/// The worker count selects between two local-contraction sinks, and the
+/// serial one is unreachable on a machine with cores to spare, so it went
+/// wrong unnoticed until a two-core CI runner tripped over it: it indexed the
+/// unitig file with a counter that also included trivial unitigs, which are
+/// written to the FASTA and never to that file.
+///
+/// Sweeping rather than pinning one value because `workers` is derived, not
+/// given -- `threads.min(groups.len())` here, and elsewhere from block counts,
+/// partition counts and bucket counts -- so the interesting boundaries sit at
+/// the bottom of the range wherever the data is small.
 #[test]
-fn uncolored_compat_small_matches_cpp_validated_unitigs_single_worker() {
-    normalized_uncolored_fixture_with_threads(
-        "data/compat-small.fa",
-        "uncolored-compat-small-single-worker",
-        &[
-            "AACGGTAA",
-            "AACGGTCAA",
-            "ACCGGTAA",
-            "ACCGGTCCGATGGA",
-            "ACCGGTTA",
-            "ACCGTTAACCG",
-            "ATCGATCG",
-            "CGGTAACC",
-            "CGGTTAC",
-            "GAATTCGAAAGCTGGATCC",
-            "GTAACCTGGA",
-            "TACTGACATGCAACGTACTGA",
-            "TAGCCTTAGCCTACTGA",
-        ],
-        148,
-        Some(1),
-    );
+fn uncolored_compat_small_matches_across_low_worker_counts() {
+    for threads in [1, 2, 3, 4] {
+        normalized_uncolored_fixture_with_threads(
+            "data/compat-small.fa",
+            &format!("uncolored-compat-small-t{threads}"),
+            COMPAT_SMALL_UNITIGS,
+            148,
+            Some(threads),
+        );
+    }
 }
 
 #[test]

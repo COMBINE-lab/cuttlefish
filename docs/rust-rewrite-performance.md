@@ -1454,6 +1454,34 @@ had no rules for -- worth remembering that "clippy clean" is only ever a claim
 about a specific version. And `--threads 1` is now a tested configuration
 rather than an assumed one.
 
+### Worker count is derived, so low-worker paths need sweeping
+
+A `--threads` floor of 2 was considered and rejected, because it would not have
+prevented the bug above. `workers` is derived rather than given -- local
+contraction uses `threads.min(groups.len())`, and other phases derive it from
+block counts, partition counts and bucket counts -- so the single-worker
+branches are reached by *input shape* at any thread count:
+
+| input | `--threads` | bucket groups | derived `workers` |
+| --- | ---: | ---: | ---: |
+| a 20-base contig | 64 | 1 | **1** |
+| `refs2.fa` | 64 | 6 | 6 |
+| `compat-small.fa` | 64 | 14 | 14 |
+
+There are 27 such branches. A floor would leave every one of them reachable on
+small or skewed inputs while removing the only cheap way to force them in a
+test, so these paths have to be correct rather than avoided. Both the uncolored
+and colored fixtures now sweep the bottom of the range instead of running at
+whatever the host's core count implies. Colored is worth sweeping separately:
+it has its own sink and reads every bucket a second time to collect source sets.
+
+Reclaim is also asserted rather than assumed. A failed punch is ignored by
+design, so a platform where `fcntl(F_PUNCHHOLE)` silently does nothing would
+cost peak disk with no other symptom -- which is precisely the shape of the
+24.5 GB regression that deferred reclaim caused. A unit test now writes eight
+segments, punches them and requires the blocks back, so the macOS path is
+verified by CI rather than inferred from the fact that it compiles.
+
 ## Descriptor limits need no user intervention
 
 Cuttlefish 3 previously wanted `ulimit -n` raised: the C++ build needs 65,536

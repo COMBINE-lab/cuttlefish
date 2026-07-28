@@ -1464,6 +1464,19 @@ Both interfaces also require block-aligned ranges, and macOS returns `EINVAL`
 otherwise; every punch is a whole number of segments and the segment size
 admits only multiples of 4096, so this holds by construction.
 
+Bumping the `x86_64-apple-darwin` deployment target above its 10.12 default
+would not help. `MACOSX_DEPLOYMENT_TARGET` governs weak linking, availability
+checking and the minimum OS the loader accepts; `F_PUNCHHOLE` is the integer
+99 passed to `fcntl`, a function present on every macOS, so there is no symbol
+to gate and whether the punch works is decided by the running kernel and
+filesystem. Raising it would only stop the binary launching on older systems,
+turning graceful degradation into a refusal to run -- and a 10.12 machine
+predates APFS, so it would be HFS+ with nothing to punch anyway.
+
+What does matter is that a failed punch used to be silent, which costs peak
+disk invisibly and is most of what the container layout is for. The first
+failure now says so once.
+
 The supported floor is **macOS 11.0**. The Rust toolchain already sets one --
 `aarch64-apple-darwin` targets 11.0 and `x86_64-apple-darwin` targets 10.12 --
 and 11.0 is the Apple Silicon minimum regardless, comfortably inside the APFS

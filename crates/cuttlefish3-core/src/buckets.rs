@@ -93,6 +93,8 @@ fn bucket_segment_bytes() -> u64 {
 pub struct BucketContainers {
     files: Vec<BucketContainerFile>,
     segment_bytes: u64,
+    /// Latched so an unsupported filesystem is reported once, not per bucket.
+    punch_unsupported: std::sync::atomic::AtomicBool,
 }
 
 #[derive(Debug)]
@@ -148,6 +150,7 @@ impl BucketContainers {
         Ok(Self {
             files,
             segment_bytes: bucket_segment_bytes(),
+            punch_unsupported: std::sync::atomic::AtomicBool::new(false),
         })
     }
 
@@ -173,6 +176,7 @@ impl BucketContainers {
         Ok(Self {
             files,
             segment_bytes,
+            punch_unsupported: std::sync::atomic::AtomicBool::new(false),
         })
     }
 
@@ -246,11 +250,29 @@ impl BucketContainers {
                 end += self.segment_bytes;
                 continue;
             }
-            punch_hole(&file.file, start, end - start);
+            self.report_punch(punch_hole(&file.file, start, end - start));
             start = offset;
             end = offset + self.segment_bytes;
         }
-        punch_hole(&file.file, start, end - start);
+        self.report_punch(punch_hole(&file.file, start, end - start));
+    }
+
+    /// Says once if the filesystem will not punch holes.
+    ///
+    /// Reclaim failing is not an error -- the container is unlinked wholesale
+    /// at the end regardless -- but it silently costs peak disk, which is most
+    /// of what the container layout is for. HFS+ and some network filesystems
+    /// do not implement it, and macOS rejects a range that is not aligned to
+    /// the filesystem block size. Better to say so than to leave someone
+    /// wondering why the work directory is larger than documented.
+    fn report_punch(&self, punched: bool) {
+        if punched || self.punch_unsupported.swap(true, Ordering::Relaxed) {
+            return;
+        }
+        eprintln!(
+            "cuttlefish3-rs: this filesystem will not punch holes, so consumed \
+             bucket space is held until the build ends; peak disk will be higher"
+        );
     }
 
     pub fn paths(&self) -> impl Iterator<Item = &Path> {
@@ -277,7 +299,7 @@ impl BucketContainers {
 /// HFS+ volume, or a network mount -- costs disk rather than correctness,
 /// because the container is unlinked wholesale at the end regardless.
 #[cfg(target_os = "linux")]
-fn punch_hole(file: &File, offset: u64, len: u64) {
+fn punch_hole(file: &File, offset: u64, len: u64) -> bool {
     use std::os::fd::AsRawFd;
     // SAFETY: the descriptor is owned by `file` and outlives the call, and the
     // kernel validates the range itself.
@@ -287,12 +309,12 @@ fn punch_hole(file: &File, offset: u64, len: u64) {
             libc::FALLOC_FL_KEEP_SIZE | libc::FALLOC_FL_PUNCH_HOLE,
             offset as libc::off_t,
             len as libc::off_t,
-        );
+        ) == 0
     }
 }
 
 #[cfg(target_vendor = "apple")]
-fn punch_hole(file: &File, offset: u64, len: u64) {
+fn punch_hole(file: &File, offset: u64, len: u64) -> bool {
     use std::os::fd::AsRawFd;
     let punch = libc::fpunchhole_t {
         fp_flags: 0,
@@ -302,13 +324,13 @@ fn punch_hole(file: &File, offset: u64, len: u64) {
     };
     // SAFETY: as above; `punch` outlives the call and F_PUNCHHOLE reads it as
     // a `*const fpunchhole_t`.
-    unsafe {
-        libc::fcntl(file.as_raw_fd(), libc::F_PUNCHHOLE, &punch);
-    }
+    unsafe { libc::fcntl(file.as_raw_fd(), libc::F_PUNCHHOLE, &punch) == 0 }
 }
 
 #[cfg(not(any(target_os = "linux", target_vendor = "apple")))]
-fn punch_hole(_file: &File, _offset: u64, _len: u64) {}
+fn punch_hole(_file: &File, _offset: u64, _len: u64) -> bool {
+    false
+}
 
 /// Sequential reader over one bucket's segment chain.
 ///

@@ -32,6 +32,10 @@ lz4_flex = { version = "0.11", default-features = false, features = [
     "safe-decode",
     "checked-decode",
 ] }
+# Bindings only, and already linked: std itself goes through libc on Linux.
+# Used for `fallocate(FALLOC_FL_PUNCH_HOLE)`, which has no std equivalent and
+# is what lets a consumed bucket release its segments from a shared container.
+libc = "0.2"
 rayon = "1.12.0"
 scc = "3.8.4"
 xxhash-rust = { version = "0.8.15", features = ["xxh3"] }

@@ -182,31 +182,68 @@ impl BucketContainers {
             })
     }
 
+    /// Releases a consumed bucket's segments without disturbing its neighbours.
+    ///
+    /// This is not optional, which measurement rather than reasoning settled.
+    /// The per-file layout unlinked each bucket as local contraction consumed
+    /// it, and containers cannot: a container is only droppable once all 128
+    /// of its buckets are done. Containers do start about 94 GB below the
+    /// per-file layout, because they do not accumulate XFS speculative
+    /// preallocation, and the expectation was that this covered it. It does
+    /// not -- the work-directory peak moves out of the end of partitioning and
+    /// into local contraction, where the containers still hold everything
+    /// while local-unitig buckets, labels and the edge matrix accumulate on
+    /// top, and peak disk rose 24.5 GB.
+    ///
+    /// Punching restores the incremental release. Segments are reserved at a
+    /// 4 KiB multiple, so a punch frees whole filesystem blocks rather than
+    /// leaving partial ones behind -- the one thing raw extents, averaging
+    /// 16.1 KiB and unaligned, could not have done. Adjacent segments are
+    /// punched in one call.
+    pub fn release_segments(&self, container: usize, segments: &[u32]) {
+        if segments.is_empty() {
+            return;
+        }
+        let mut ordered = segments.to_vec();
+        ordered.sort_unstable();
+        let file = &self.files[container];
+        let mut start = u64::from(ordered[0]) * self.segment_bytes;
+        let mut end = start + self.segment_bytes;
+        for &index in &ordered[1..] {
+            let offset = u64::from(index) * self.segment_bytes;
+            if offset == end {
+                end += self.segment_bytes;
+                continue;
+            }
+            punch_hole(&file.file, start, end - start);
+            start = offset;
+            end = offset + self.segment_bytes;
+        }
+        punch_hole(&file.file, start, end - start);
+    }
+
     pub fn paths(&self) -> impl Iterator<Item = &Path> {
         self.files.iter().map(|file| file.path.as_path())
     }
 }
 
-// Reclaim is deliberately not implemented yet.
-//
-// Today local contraction unlinks each bucket as it consumes it, and that
-// incremental release is what bounds peak disk; a container cannot be unlinked
-// until all 128 of its buckets are done, so the obvious worry is that this
-// trades a metadata win for a disk-footprint regression. Two measurements say
-// to check before building the machinery. Containers start 94.9 GB *below* the
-// per-file layout because they do not accumulate XFS speculative preallocation
-// (332.7 GB held for 237.8 GB of data across 16,385 files), and the sampled
-// work-directory peak on a full uncolored run matches the bucket directory's
-// own size, which puts the peak at the end of partitioning -- before any
-// reclaim, per-file or otherwise, has happened.
-//
-// If that holds, deferred reclaim costs nothing at the peak and the segment
-// layout is doing its job unaided. If the peak turns out to move into local
-// contraction, the fix is `fallocate(FALLOC_FL_PUNCH_HOLE)` over a consumed
-// bucket's segments, which is exactly why segments are reserved at a 4 KiB
-// multiple: a punch frees the whole range instead of leaving partial blocks
-// behind, which is the one thing raw extents could not do. Verified working on
-// this filesystem -- a 32 MiB punch freed exactly 32 MiB.
+/// Punches `len` bytes at `offset` out of `file`, ignoring an unsupported
+/// filesystem: a failed punch costs disk, not correctness.
+fn punch_hole(file: &File, offset: u64, len: u64) {
+    use std::os::fd::AsRawFd;
+    const FALLOC_FL_KEEP_SIZE: libc::c_int = 0x01;
+    const FALLOC_FL_PUNCH_HOLE: libc::c_int = 0x02;
+    // SAFETY: the descriptor is owned by `file` and outlives the call, and the
+    // kernel validates the range itself.
+    unsafe {
+        libc::fallocate(
+            file.as_raw_fd(),
+            FALLOC_FL_KEEP_SIZE | FALLOC_FL_PUNCH_HOLE,
+            offset as libc::off_t,
+            len as libc::off_t,
+        );
+    }
+}
 
 /// Sequential reader over one bucket's segment chain.
 ///

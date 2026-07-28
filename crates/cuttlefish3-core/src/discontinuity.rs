@@ -25,7 +25,7 @@ pub use resource::{report_process_memory, trim_process_allocations};
 
 use crate::DEFAULT_VERTEX_PARTITIONS;
 use crate::Side;
-use crate::buckets::{BucketError, BucketManifestEntry, BucketStore};
+use crate::buckets::{BucketError, BucketLocation, BucketManifestEntry, BucketStore};
 use crate::color::{
     ColorError, ColorRepositoryManifest, ColorRunSidecar, ColorRunSidecarWriter,
     ConcurrentColorRepository, ConcurrentColorRunSidecarWriter, append_color_runs,
@@ -8263,7 +8263,7 @@ const BACKGROUND_UNLINK_WORKERS: usize = 8;
 /// phase that produced them is done. Removing them concurrently keeps that cost
 /// off the critical path; the caller joins the handle before it returns so the
 /// work directory is still clean when the build finishes.
-fn spawn_background_dir_removal(dir: PathBuf) -> std::thread::JoinHandle<()> {
+pub(crate) fn spawn_background_dir_removal(dir: PathBuf) -> std::thread::JoinHandle<()> {
     std::thread::spawn(move || {
         let Ok(entries) = fs::read_dir(&dir) else {
             let _ = fs::remove_dir_all(&dir);
@@ -18715,7 +18715,21 @@ fn contract_local_subgraph<const K: usize>(
         // on its own; see the reclaim note in `buckets.rs` for why deferring
         // that is expected to cost nothing at the peak.
         for entry in &group.entries {
-            let Some(path) = entry.file_path() else {
+            let BucketLocation::File(path) = &entry.location else {
+                // A container's bucket cannot be unlinked on its own, so its
+                // segments are punched out instead. Same effect on peak disk,
+                // which measurement showed is not something this phase can
+                // defer: without it the work-directory peak moves into local
+                // contraction and rises 24.5 GB.
+                if let BucketLocation::Container {
+                    container,
+                    segments,
+                    ..
+                } = &entry.location
+                    && let Some(containers) = store.containers()
+                {
+                    containers.release_segments(*container, segments);
+                }
                 continue;
             };
             match fs::remove_file(path) {

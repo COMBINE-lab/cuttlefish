@@ -6,6 +6,7 @@
 
 use crate::color::ColorError;
 use crate::discontinuity::{
+    spawn_background_dir_removal,
     DiscontinuityInputError, SerialCollationError, SerialUncoloredCollator,
     emit_colored_external_discontinuity_inputs_with_threads_in_dir, report_process_memory,
     trim_process_allocations,
@@ -78,12 +79,13 @@ pub fn build_colored_from_buckets<const K: usize>(
         local_started.elapsed().as_secs_f64(),
         inputs.stats.local_unitigs,
     );
-    if std::env::var_os("CF3_RS_KEEP_INTERMEDIATES").is_none() {
-        std::fs::remove_dir_all(&bucket_dir).map_err(|source| ColoredBuildError::Cleanup {
-            path: bucket_dir.clone(),
-            source,
-        })?;
-    }
+    // With buckets in containers this is a bulk delete of 129 files holding
+    // hundreds of gigabytes, not the single leftover manifest the per-file
+    // layout left behind -- local contraction unlinked those as it consumed
+    // them. So it goes to the background unlinkers, like the edge-matrix and
+    // expansion directories, and is joined before the build returns.
+    let bucket_reclaim = (std::env::var_os("CF3_RS_KEEP_INTERMEDIATES").is_none())
+        .then(|| spawn_background_dir_removal(bucket_dir.clone()));
     trim_process_allocations();
 
     let output_path = PathBuf::from(format!("{}.fa", params.output_prefix));
@@ -104,6 +106,9 @@ pub fn build_colored_from_buckets<const K: usize>(
         .ok_or(ColoredBuildError::MissingColorArtifacts)?
         .clone();
     color_repository.write_metadata(params.k, &output_path, &sources)?;
+    if let Some(handle) = bucket_reclaim {
+        let _ = handle.join();
+    }
     Ok(ColoredBuildStats {
         input_buckets: inputs.stats.input_buckets,
         bucket_records: inputs.stats.weak_superkmers,

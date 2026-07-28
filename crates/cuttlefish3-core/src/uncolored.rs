@@ -7,6 +7,7 @@
 use crate::Side;
 use crate::buckets::{BucketError, BucketStore};
 use crate::discontinuity::{
+    spawn_background_dir_removal,
     SerialUncoloredCollator, emit_uncolored_external_discontinuity_inputs_with_threads_in_dir,
     report_process_memory, trim_process_allocations,
 };
@@ -137,12 +138,13 @@ pub fn build_uncolored_with_serial_discontinuity_pipeline<const K: usize>(
         "cuttlefish3-rs: local contraction phase completed in {:.3}s",
         local_elapsed.as_secs_f64()
     );
-    if std::env::var_os("CF3_RS_KEEP_INTERMEDIATES").is_none() {
-        std::fs::remove_dir_all(&bucket_dir).map_err(|source| UncoloredBuildError::Io {
-            path: bucket_dir.clone(),
-            source,
-        })?;
-    }
+    // With buckets in containers this is a bulk delete of 129 files holding
+    // hundreds of gigabytes, not the single leftover manifest the per-file
+    // layout left behind -- local contraction unlinked those as it consumed
+    // them. So it goes to the background unlinkers, like the edge-matrix and
+    // expansion directories, and is joined before the build returns.
+    let bucket_reclaim = (std::env::var_os("CF3_RS_KEEP_INTERMEDIATES").is_none())
+        .then(|| spawn_background_dir_removal(bucket_dir.clone()));
     trim_process_allocations();
     report_process_memory("after local contraction trim");
     eprintln!("cuttlefish3-rs: collating final unitigs");
@@ -168,6 +170,10 @@ pub fn build_uncolored_with_serial_discontinuity_pipeline<const K: usize>(
         "cuttlefish3-rs: collation and FASTA write completed in {:.3}s",
         collation_elapsed.as_secs_f64()
     );
+
+    if let Some(handle) = bucket_reclaim {
+        let _ = handle.join();
+    }
 
     Ok(UncoloredBuildStats {
         input_buckets: inputs.stats.input_buckets,

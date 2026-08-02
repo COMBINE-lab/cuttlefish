@@ -1,0 +1,11 @@
+[package]
+name = "cuttlefish-rs-compat-tests"
+description = "Graph-equivalence tests for cuttlefish-rs. Not published."
+publish = false
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+cuttlefish-rs.workspace = true

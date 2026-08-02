@@ -44,15 +44,15 @@ The executable is written to `target/release/cuttlefish3-rs`. To install it
 under a Cargo-style prefix:
 
 ```bash
-cargo install --path crates/cuttlefish3-cli
+cargo install --path crates/cuttlefish-rs-cli
 ```
 
 The default build uses jemalloc. The system allocator and mimalloc are also
 available (but generally will not perform as well):
 
 ```bash
-cargo build --release -p cuttlefish3-cli --no-default-features
-cargo build --release -p cuttlefish3-cli --no-default-features --features mimalloc
+cargo build --release -p cuttlefish-rs-cli --no-default-features
+cargo build --release -p cuttlefish-rs-cli --no-default-features --features mimalloc
 ```
 
 ## Quick Start

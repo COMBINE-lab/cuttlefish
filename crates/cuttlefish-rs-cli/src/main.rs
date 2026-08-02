@@ -1,12 +1,12 @@
-use cuttlefish3_core::colored::{ColoredBuildError, build_colored_from_buckets};
-use cuttlefish3_core::discontinuity::{raise_open_file_limit, report_process_memory};
-use cuttlefish3_core::input::InputError;
-use cuttlefish3_core::params::{BuildParams, ParamError};
-use cuttlefish3_core::partition::{
+use cuttlefish_rs::colored::{ColoredBuildError, build_colored_from_buckets};
+use cuttlefish_rs::discontinuity::{raise_open_file_limit, report_process_memory};
+use cuttlefish_rs::input::InputError;
+use cuttlefish_rs::params::{BuildParams, ParamError};
+use cuttlefish_rs::partition::{
     PartitionEmissionStats, PartitionRunError, emit_weak_superkmer_buckets,
 };
-use cuttlefish3_core::uncolored::{UncoloredBuildError, build_uncolored_from_buckets};
-use cuttlefish3_core::{
+use cuttlefish_rs::uncolored::{UncoloredBuildError, build_uncolored_from_buckets};
+use cuttlefish_rs::{
     DEFAULT_SUBGRAPH_COUNT, GraphInput, MAX_K, configure_global_parallelism, default_threads,
     default_work_dir,
 };
@@ -166,7 +166,7 @@ fn dispatch_partition(params: &BuildParams) -> Result<PartitionEmissionStats, Cl
             match params.k {
                 $($k => emit_weak_superkmer_buckets::<$k>(params, DEFAULT_SUBGRAPH_COUNT),)*
                 other => Err(PartitionRunError::Partition(
-                    cuttlefish3_core::partition::PartitionError::InvalidK(other as usize),
+                    cuttlefish_rs::partition::PartitionError::InvalidK(other as usize),
                 )),
             }
         };
@@ -181,13 +181,13 @@ fn dispatch_partition(params: &BuildParams) -> Result<PartitionEmissionStats, Cl
 fn dispatch_uncolored_build(
     params: &BuildParams,
     emission: &PartitionEmissionStats,
-) -> Result<cuttlefish3_core::uncolored::UncoloredBuildStats, CliError> {
+) -> Result<cuttlefish_rs::uncolored::UncoloredBuildStats, CliError> {
     macro_rules! dispatch {
         ($($k:literal),* $(,)?) => {
             match params.k {
                 $($k => build_uncolored_from_buckets::<$k>(params, &emission.buckets.bucket_dir),)*
                 other => Err(UncoloredBuildError::Kmer(
-                    cuttlefish3_core::kmer::KmerError::UnsupportedK(other as usize),
+                    cuttlefish_rs::kmer::KmerError::UnsupportedK(other as usize),
                 )),
             }
         };
@@ -202,13 +202,13 @@ fn dispatch_uncolored_build(
 fn dispatch_colored_build(
     params: &BuildParams,
     emission: &PartitionEmissionStats,
-) -> Result<cuttlefish3_core::colored::ColoredBuildStats, CliError> {
+) -> Result<cuttlefish_rs::colored::ColoredBuildStats, CliError> {
     macro_rules! dispatch {
         ($($k:literal),* $(,)?) => {
             match params.k {
                 $($k => build_colored_from_buckets::<$k>(params, &emission.buckets.bucket_dir),)*
                 other => Err(ColoredBuildError::Kmer(
-                    cuttlefish3_core::kmer::KmerError::UnsupportedK(other as usize),
+                    cuttlefish_rs::kmer::KmerError::UnsupportedK(other as usize),
                 )),
             }
         };

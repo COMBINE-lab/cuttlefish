@@ -1,0 +1,37 @@
+[package]
+name = "cuttlefish-rs-cli"
+description = """
+Command-line interface to Cuttlefish 3: parallel, external-memory \
+construction of uncolored and colored compacted de Bruijn graphs.\
+"""
+readme = "README.md"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories = ["science", "command-line-utilities"]
+
+# The binary keeps the "3" that the crate name drops. `cuttlefish` was already
+# taken on crates.io and `cuttlefish3` reads oddly there, but the program the
+# user invokes is still Cuttlefish 3, and every doc, script and CI job names it
+# this way.
+[[bin]]
+name = "cuttlefish3-rs"
+path = "src/main.rs"
+
+[[bin]]
+name = "cf3-compare-fasta"
+path = "src/compare_fasta.rs"
+
+[features]
+default = ["jemalloc"]
+jemalloc = ["dep:tikv-jemallocator"]
+mimalloc = ["dep:mimalloc"]
+
+[dependencies]
+cuttlefish-rs.workspace = true
+mimalloc = { version = "0.1.48", optional = true }
+tikv-jemallocator = { version = "0.5.4", optional = true }

@@ -50,24 +50,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "61803da095bee82a81bb1a452ecc25d3b2f1416d1897eb86430c6159ef717c17"
 
 [[package]]
-name = "cuttlefish3-cli"
-version = "0.1.0"
-dependencies = [
- "cuttlefish3-core",
- "mimalloc",
- "tikv-jemallocator",
-]
-
-[[package]]
-name = "cuttlefish3-compat-tests"
-version = "0.1.0"
-dependencies = [
- "cuttlefish3-core",
-]
-
-[[package]]
-name = "cuttlefish3-core"
-version = "0.1.0"
+name = "cuttlefish-rs"
+version = "0.0.0"
 dependencies = [
  "flate2",
  "hashbrown",
@@ -76,6 +60,22 @@ dependencies = [
  "rayon",
  "scc",
  "xxhash-rust",
+]
+
+[[package]]
+name = "cuttlefish-rs-cli"
+version = "0.0.0"
+dependencies = [
+ "cuttlefish-rs",
+ "mimalloc",
+ "tikv-jemallocator",
+]
+
+[[package]]
+name = "cuttlefish-rs-compat-tests"
+version = "0.0.0"
+dependencies = [
+ "cuttlefish-rs",
 ]
 
 [[package]]

@@ -25,7 +25,7 @@ def parse_args():
     parser.add_argument("--cpp-bin", required=True, help="path to the C++ cuttlefish binary")
     parser.add_argument(
         "--rust-bin",
-        help="path to cuttlefish3-rs; defaults to `cargo run -p cuttlefish3-cli --`",
+        help="path to cuttlefish3-rs; defaults to `cargo run -p cuttlefish-rs-cli --`",
     )
     parser.add_argument(
         "-s",
@@ -180,7 +180,7 @@ def rust_command(args, rust_work, rust_prefix, seqs, input_mode):
         common.extend(["-c", str(args.cutoff)])
     if args.rust_bin:
         return [args.rust_bin, *common]
-    return ["cargo", "run", "-q", "-p", "cuttlefish3-cli", "--", *common]
+    return ["cargo", "run", "-q", "-p", "cuttlefish-rs-cli", "--", *common]
 
 
 def run(cmd, env):

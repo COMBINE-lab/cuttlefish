@@ -37,7 +37,7 @@ The executable is `target/release/cuttlefish3-rs`. It can also be installed
 under the Cargo binary prefix:
 
 ```bash
-cargo install --path crates/cuttlefish3-cli
+cargo install --path crates/cuttlefish-rs-cli
 ```
 
 ## Quick Start

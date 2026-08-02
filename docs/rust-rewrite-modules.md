@@ -60,7 +60,7 @@ move only after those interfaces are stable.
 
 Each extraction must satisfy all of the following before the next one starts:
 
-1. `cargo test -p cuttlefish3-core --lib` and CLI tests pass.
+1. `cargo test -p cuttlefish-rs --lib` and CLI tests pass.
 2. `cargo doc --workspace --no-deps` reports no broken links.
 3. Compile-time packed-size assertions remain unchanged.
 4. The 1,000-genome colored topology comparator matches all canonical unitigs.

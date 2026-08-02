@@ -1,6 +1,6 @@
-use cuttlefish3_core::Side;
-use cuttlefish3_core::buckets::{BucketLocation, BucketStore, read_container_manifest};
-use cuttlefish3_core::discontinuity::{
+use cuttlefish_rs::Side;
+use cuttlefish_rs::buckets::{BucketLocation, BucketStore, read_container_manifest};
+use cuttlefish_rs::discontinuity::{
     DISCONTINUITY_PARALLELIZATION_OPPORTUNITIES, DiscontinuityEdge, DiscontinuityEndpoint,
     DiscontinuityInputStats, DiscontinuityInputs, EdgePathInfo, FullSerialContractionStats,
     FullSerialDiscontinuityContraction, MatrixEndpoint, OwnedDiscontinuityUnitig, PathInfo,
@@ -9,20 +9,18 @@ use cuttlefish3_core::discontinuity::{
     emit_colored_external_discontinuity_inputs_with_threads_in_dir,
     emit_uncolored_discontinuity_inputs,
 };
-use cuttlefish3_core::dna::Base;
-use cuttlefish3_core::input::{expand_input_paths, parse_fragments};
-use cuttlefish3_core::kmer::Kmer;
-use cuttlefish3_core::minimizer::canonical_minimizer;
-use cuttlefish3_core::params::BuildParams;
-use cuttlefish3_core::partition::{
-    emit_weak_superkmer_buckets, partition_fragment, partition_inputs,
-};
-use cuttlefish3_core::state::VertexState;
-use cuttlefish3_core::subgraph::LocalSubgraph;
-use cuttlefish3_core::uncolored::{
+use cuttlefish_rs::dna::Base;
+use cuttlefish_rs::input::{expand_input_paths, parse_fragments};
+use cuttlefish_rs::kmer::Kmer;
+use cuttlefish_rs::minimizer::canonical_minimizer;
+use cuttlefish_rs::params::BuildParams;
+use cuttlefish_rs::partition::{emit_weak_superkmer_buckets, partition_fragment, partition_inputs};
+use cuttlefish_rs::state::VertexState;
+use cuttlefish_rs::subgraph::LocalSubgraph;
+use cuttlefish_rs::uncolored::{
     build_uncolored_from_buckets, build_uncolored_with_serial_discontinuity_pipeline,
 };
-use cuttlefish3_core::{DEFAULT_SUBGRAPH_COUNT, GraphInput};
+use cuttlefish_rs::{DEFAULT_SUBGRAPH_COUNT, GraphInput};
 use std::fs;
 use std::path::PathBuf;
 
@@ -212,7 +210,7 @@ fn colored_bucket_local_runs_at(threads: usize) {
         assert_eq!(header.split_whitespace().next(), Some(">0"));
         for encoded_run in header.split_whitespace().skip(1) {
             let raw = encoded_run.parse::<u64>().unwrap();
-            let coordinate = cuttlefish3_core::state::ColorCoordinate::from_u40(raw >> 24);
+            let coordinate = cuttlefish_rs::state::ColorCoordinate::from_u40(raw >> 24);
             let sources = repository.read_color(coordinate).unwrap();
             assert!(!sources.is_empty());
             assert!(sources.windows(2).all(|pair| pair[0] < pair[1]));

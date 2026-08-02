@@ -1,15 +1,31 @@
 [workspace]
 members = [
-    "crates/cuttlefish3-core",
-    "crates/cuttlefish3-cli",
-    "crates/cuttlefish3-compat-tests",
+    "crates/cuttlefish-rs",
+    "crates/cuttlefish-rs-cli",
+    "crates/cuttlefish-rs-compat-tests",
 ]
 resolver = "2"
 
 [workspace.package]
+# One version for the whole workspace; every member inherits it, and
+# `scripts/bump_and_publish.sh` rewrites this single line. 0.0.0 means nothing
+# has been released yet -- the crates.io entries at this version exist only to
+# hold the names.
+version = "0.0.0"
 edition = "2024"
 license = "BSD-3-Clause"
 rust-version = "1.85"
+repository = "https://github.com/COMBINE-lab/cuttlefish"
+homepage = "https://github.com/COMBINE-lab/cuttlefish"
+keywords = ["bioinformatics", "de-bruijn-graph", "genomics", "unitig", "k-mer"]
+# The CLI crate adds "command-line-utilities" to this on top.
+categories = ["science"]
+
+[workspace.dependencies]
+# Path plus version: the path is what a local `cargo build` resolves, the
+# version is what the published crate requires. `bump_and_publish.sh` keeps the
+# version here in step with [workspace.package].
+cuttlefish-rs = { path = "crates/cuttlefish-rs", version = "0.0.0" }
 
 [profile.release]
 codegen-units = 8

@@ -75,8 +75,8 @@ jobs:
           targets: ${{ matrix.target }}
           components: clippy
       - uses: Swatinem/rust-cache@v2
-      - run: cargo clippy --target ${{ matrix.target }} -p cuttlefish3-core --all-targets -- -D warnings
-      - run: cargo check --target ${{ matrix.target }} -p cuttlefish3-cli --no-default-features
+      - run: cargo clippy --target ${{ matrix.target }} -p cuttlefish-rs --all-targets -- -D warnings
+      - run: cargo check --target ${{ matrix.target }} -p cuttlefish-rs-cli --no-default-features
 
   # Descriptor pressure is its own axis, and a development machine usually has
   # none -- the host this was written on runs soft = hard = 262144, so every
@@ -92,7 +92,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo build --release -p cuttlefish3-cli
+      - run: cargo build --release -p cuttlefish-rs-cli
       - name: build a graph under a tight descriptor budget
         run: |
           set -euo pipefail

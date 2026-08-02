@@ -43,7 +43,10 @@ Conda package's 127. To raise it, see [Larger *k*-mer sizes](../large-k/).
 
 ## Which branch
 
-The C++ implementation lives on the repository's default branches. Note that
-the `rust-rewrite` branch contains only the Rust Cuttlefish 3 — the C++ sources
-were removed from it, and the last state of the C++ Cuttlefish 3 is preserved
-on the `cuttlefish3-cpp` branch. See [The C++ Cuttlefish 3](../cuttlefish3/).
+Cuttlefish 1 and 2 live on the repository's default branches. The C++
+Cuttlefish 3 is developed on the `cuttlefish3-cpp` branch, in parallel with the
+Rust implementation — see [The C++ Cuttlefish 3](../cuttlefish3/).
+
+The `rust-rewrite` branch contains only the Rust Cuttlefish 3; the C++ sources
+were removed from it, so a checkout of either branch gives you one
+implementation and one build system.

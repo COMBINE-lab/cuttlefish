@@ -35,9 +35,9 @@ export default defineConfig({
         baseUrl: 'https://github.com/COMBINE-lab/cuttlefish/edit/rust-rewrite/website/',
       },
       // Two doorways, mirroring the split on the landing page: the Rust
-      // Cuttlefish 3 that is under active development, and the C++ line
-      // (Cuttlefish 1 and 2, plus the archived C++ 3) that is what most
-      // published work used.
+      // Cuttlefish 3, which is where Cuttlefish 3 is heading, and the C++ line
+      // (Cuttlefish 1 and 2, which is what most published work used, plus the
+      // C++ Cuttlefish 3 developed in parallel with the Rust one).
       sidebar: [
         {
           label: 'Cuttlefish 3 (Rust)',

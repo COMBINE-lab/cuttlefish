@@ -44,6 +44,9 @@ data/ecoli-refseq-150/genomes.list
 .vscode/
 external/
 .cache/
+# Local Cargo overrides, e.g. `target-cpu=native`, which is a property of the
+# developer's machine rather than of the project.
+.cargo/
 
 # Benchmark scratch and profiling output
 bench-tmp/

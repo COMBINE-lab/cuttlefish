@@ -8,9 +8,9 @@ resolver = "2"
 
 [workspace.package]
 # One version for the whole workspace; every member inherits it, and
-# `scripts/bump_and_publish.sh` rewrites this single line. 0.0.0 means nothing
-# has been released yet -- the crates.io entries at this version exist only to
-# hold the names.
+# `scripts/bump_and_publish.sh` rewrites this single line. The 0.0.x versions
+# on crates.io are not releases -- they exist to hold the names, and to prove
+# the publish path works. The first real release is 0.1.0.
 version = "0.0.1"
 edition = "2024"
 license = "BSD-3-Clause"

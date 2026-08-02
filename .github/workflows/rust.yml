@@ -101,7 +101,7 @@ jobs:
             local label=$1; shift
             local work; work=$(mktemp -d)
             local got
-            got=$( "$@" ./target/release/cuttlefish3-rs build --ref \
+            got=$( "$@" ./target/release/cuttlefish build --ref \
                      --seq data/refs2.fa --kmer-len 7 --min-len 3 --threads 4 \
                      --work-dir "$work" --output "$work/out" 2>&1 \
                    | grep -oP 'wrote \K[0-9]+(?= unitig)' | tail -1 )

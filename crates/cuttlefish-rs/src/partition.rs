@@ -314,7 +314,7 @@ fn emit_uncolored_streamed_weak_superkmer_buckets<const K: usize>(
     let workers = params.partition_workers(usize::MAX);
     let buffers = (2 * (workers + readers)).min(STREAM_POOL_BYTES / STREAM_BATCH_BASES);
     eprintln!(
-        "cuttlefish3-rs: uncolored partition streaming {readers} reader(s) into {workers} worker(s), {buffers} batch buffer(s)"
+        "cuttlefish: uncolored partition streaming {readers} reader(s) into {workers} worker(s), {buffers} batch buffer(s)"
     );
 
     // Readers decompress; only block-structured input can use more than one
@@ -494,7 +494,7 @@ fn emit_uncolored_direct_weak_superkmer_buckets<const K: usize>(
         });
         let next_source = AtomicUsize::new(0);
         let workers = params.partition_workers(window.len());
-        eprintln!("cuttlefish3-rs: uncolored partition using {workers} worker(s)");
+        eprintln!("cuttlefish: uncolored partition using {workers} worker(s)");
         let mut emitters = Vec::with_capacity(workers);
 
         std::thread::scope(|scope| {
@@ -607,7 +607,7 @@ fn emit_colored_weak_superkmer_buckets<const K: usize>(
         });
         let next_source = AtomicUsize::new(0);
         let workers = params.partition_workers(window.len());
-        eprintln!("cuttlefish3-rs: colored partition using {workers} worker(s)");
+        eprintln!("cuttlefish: colored partition using {workers} worker(s)");
         let mut emitters = Vec::with_capacity(workers);
         std::thread::scope(|scope| {
             let mut handles = Vec::new();
@@ -865,7 +865,7 @@ fn handle_source_failure(
         return Err(error.into());
     }
     eprintln!(
-        "cuttlefish3-rs: skipping unreadable input {}: {error}",
+        "cuttlefish: skipping unreadable input {}: {error}",
         path.display()
     );
     Ok(())

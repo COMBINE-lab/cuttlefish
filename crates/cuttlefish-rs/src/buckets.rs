@@ -279,7 +279,7 @@ impl BucketContainers {
             return;
         }
         eprintln!(
-            "cuttlefish3-rs: this filesystem will not punch holes, so consumed \
+            "cuttlefish: this filesystem will not punch holes, so consumed \
              bucket space is held until the build ends; peak disk will be higher"
         );
     }
@@ -1757,7 +1757,7 @@ impl SharedBucketSink {
         let container_count = BucketContainers::plan_container_count(atlas_count);
         if container_count < atlas_count {
             eprintln!(
-                "cuttlefish3-rs: descriptor budget allows {container_count} bucket container(s) rather than {atlas_count}"
+                "cuttlefish: descriptor budget allows {container_count} bucket container(s) rather than {atlas_count}"
             );
         }
         let containers = BucketContainers::create(&bucket_dir, container_count)?;

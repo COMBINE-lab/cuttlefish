@@ -33,7 +33,7 @@ cd cuttlefish
 cargo build --release
 ```
 
-The executable is `target/release/cuttlefish3-rs`. It can also be installed
+The executable is `target/release/cuttlefish`. It can also be installed
 under the Cargo binary prefix:
 
 ```bash
@@ -46,7 +46,7 @@ Build an uncolored reference graph:
 
 ```bash
 mkdir -p work
-target/release/cuttlefish3-rs build \
+target/release/cuttlefish build \
   --ref \
   --seq data/refs1.fa \
   --kmer-len 7 \
@@ -59,7 +59,7 @@ target/release/cuttlefish3-rs build \
 Build a colored graph in which each listed reference is a source color:
 
 ```bash
-target/release/cuttlefish3-rs build \
+target/release/cuttlefish build \
   --ref \
   --list genomes.list \
   --kmer-len 31 \
@@ -73,7 +73,7 @@ target/release/cuttlefish3-rs build \
 Build a graph from compressed sequencing reads:
 
 ```bash
-target/release/cuttlefish3-rs build \
+target/release/cuttlefish build \
   --read \
   --seq reads.fastq.gz \
   --cutoff 2 \
@@ -84,7 +84,7 @@ target/release/cuttlefish3-rs build \
 ## Command Line
 
 ```text
-cuttlefish3-rs build [OPTIONS]
+cuttlefish build [OPTIONS]
 
   -s, --seq <PATH>          input sequence file; may be repeated
   -l, --list <PATH>         file containing one input path per line

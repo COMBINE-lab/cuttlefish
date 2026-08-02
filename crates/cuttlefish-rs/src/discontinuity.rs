@@ -866,7 +866,7 @@ impl EdgeContainers {
         let container_count = partition_count.min(budget.max(1));
         if container_count < partition_count {
             eprintln!(
-                "cuttlefish3-rs: descriptor budget allows {container_count} edge-matrix container(s) rather than {partition_count}"
+                "cuttlefish: descriptor budget allows {container_count} edge-matrix container(s) rather than {partition_count}"
             );
         }
         let mut files = Vec::with_capacity(container_count);
@@ -3847,7 +3847,7 @@ impl SerialDiscontinuityContractor {
         let setup_elapsed = setup_started.elapsed();
         if let Some(table) = &atomic_table {
             eprintln!(
-                "cuttlefish3-rs: contraction table setup {:.3}s; max entries {}, capacity {}, slot {} byte(s)",
+                "cuttlefish: contraction table setup {:.3}s; max entries {}, capacity {}, slot {} byte(s)",
                 setup_elapsed.as_secs_f64(),
                 max_partition_vertices,
                 table.slots.len(),
@@ -3865,7 +3865,7 @@ impl SerialDiscontinuityContractor {
         let mut direct_timings = BlockedContractTimings::default();
         let mut meta_write_elapsed = Duration::default();
         eprintln!(
-            "cuttlefish3-rs: contracting {} blocked discontinuity partition(s) with {} worker(s)",
+            "cuttlefish: contracting {} blocked discontinuity partition(s) with {} worker(s)",
             total_partitions, threads
         );
 
@@ -3961,7 +3961,7 @@ impl SerialDiscontinuityContractor {
         working.flush_all_with_threads(threads)?;
         let block_flush_elapsed = flush_started.elapsed();
         eprintln!(
-            "cuttlefish3-rs: blocked contraction detail: setup {:.3}s, block load/decode {:.3}s, partition contraction {:.3}s, reinsertion {:.3}s, meta write {:.3}s, block flush {:.3}s",
+            "cuttlefish: blocked contraction detail: setup {:.3}s, block load/decode {:.3}s, partition contraction {:.3}s, reinsertion {:.3}s, meta write {:.3}s, block flush {:.3}s",
             setup_elapsed.as_secs_f64(),
             block_load_elapsed.as_secs_f64(),
             partition_contract_elapsed.as_secs_f64(),
@@ -3971,7 +3971,7 @@ impl SerialDiscontinuityContractor {
         );
         if atomic_table.is_some() {
             eprintln!(
-                "cuttlefish3-rs: fused contraction phases: column flush {:.3}s, table clear {:.3}s, diagonal {:.3}s, raw read {:.3}s, table scan {:.3}s, scan/diagonal join wall {:.3}s, task setup {:.3}s, gather {:.3}s, finalize {:.3}s",
+                "cuttlefish: fused contraction phases: column flush {:.3}s, table clear {:.3}s, diagonal {:.3}s, raw read {:.3}s, table scan {:.3}s, scan/diagonal join wall {:.3}s, task setup {:.3}s, gather {:.3}s, finalize {:.3}s",
                 direct_timings.flush.as_secs_f64(),
                 direct_timings.clear.as_secs_f64(),
                 direct_timings.diagonal.as_secs_f64(),
@@ -4016,7 +4016,7 @@ impl SerialDiscontinuityContractor {
         let started = Instant::now();
         if total_partitions >= 16 {
             eprintln!(
-                "cuttlefish3-rs: contracting {} discontinuity partition(s) with {} worker(s)",
+                "cuttlefish: contracting {} discontinuity partition(s) with {} worker(s)",
                 total_partitions, threads
             );
         }
@@ -4494,7 +4494,7 @@ impl SerialDiscontinuityExpander {
             .unwrap_or(1);
         let map = ExpansionPathInfoTable::<K>::with_max_entries(max_partition_entries);
         eprintln!(
-            "cuttlefish3-rs: expansion table max entries {}, capacity {}, slot {} byte(s)",
+            "cuttlefish: expansion table max entries {}, capacity {}, slot {} byte(s)",
             max_partition_entries,
             map.capacity(),
             map.slot_size(),
@@ -4967,7 +4967,7 @@ impl SerialDiscontinuityExpander {
 
         drop(vertex_writers);
         eprintln!(
-            "cuttlefish3-rs: blocked expansion detail: row load/decode {:.3}s, propagation/emission {:.3}s",
+            "cuttlefish: blocked expansion detail: row load/decode {:.3}s, propagation/emission {:.3}s",
             row_load_elapsed.as_secs_f64(),
             expansion_work_started
                 .elapsed()
@@ -4975,13 +4975,13 @@ impl SerialDiscontinuityExpander {
                 .as_secs_f64()
         );
         eprintln!(
-            "cuttlefish3-rs: path-info load phases: clear {:.3}s, read {:.3}s, decode/insert {:.3}s",
+            "cuttlefish: path-info load phases: clear {:.3}s, read {:.3}s, decode/insert {:.3}s",
             path_info_clear_elapsed.as_secs_f64(),
             path_info_read_elapsed.as_secs_f64(),
             path_info_insert_elapsed.as_secs_f64(),
         );
         eprintln!(
-            "cuttlefish3-rs: blocked expansion phases: path-info load {:.3}s, compressed diagonal {:.3}s, non-diagonal {:.3}s, original diagonal/phi {:.3}s",
+            "cuttlefish: blocked expansion phases: path-info load {:.3}s, compressed diagonal {:.3}s, non-diagonal {:.3}s, original diagonal/phi {:.3}s",
             path_info_load_elapsed.as_secs_f64(),
             compressed_diagonal_elapsed.as_secs_f64(),
             non_diagonal_elapsed.as_secs_f64(),
@@ -5399,7 +5399,7 @@ impl SerialUncoloredCollator {
         threads: usize,
     ) -> SerialCollation {
         eprintln!(
-            "cuttlefish3-rs: collating {} path edge info record(s) against {} local unitig(s)",
+            "cuttlefish: collating {} path edge info record(s) against {} local unitig(s)",
             expansion.edges.len(),
             inputs.unitigs.len()
         );
@@ -5420,7 +5420,7 @@ impl SerialUncoloredCollator {
             });
         }
         eprintln!(
-            "cuttlefish3-rs: collation collected path records in {:.3}s",
+            "cuttlefish: collation collected path records in {:.3}s",
             collect_started.elapsed().as_secs_f64()
         );
 
@@ -5433,7 +5433,7 @@ impl SerialUncoloredCollator {
             )
         });
         eprintln!(
-            "cuttlefish3-rs: collation sorted path records in {:.3}s",
+            "cuttlefish: collation sorted path records in {:.3}s",
             record_sort_started.elapsed().as_secs_f64()
         );
 
@@ -5487,11 +5487,11 @@ impl SerialUncoloredCollator {
         expanded_unitigs.sort_unstable();
         expanded_unitigs.dedup();
         eprintln!(
-            "cuttlefish3-rs: collation built expanded path unitigs in {:.3}s",
+            "cuttlefish: collation built expanded path unitigs in {:.3}s",
             expanded_started.elapsed().as_secs_f64()
         );
         eprintln!(
-            "cuttlefish3-rs: collated {} expanded path unitig(s)",
+            "cuttlefish: collated {} expanded path unitig(s)",
             expanded_unitigs.len()
         );
 
@@ -5501,11 +5501,11 @@ impl SerialUncoloredCollator {
         stitched_unitigs.dedup();
         let stitched_discontinuity_unitigs = stitched_unitigs.len() as u64;
         eprintln!(
-            "cuttlefish3-rs: collation stitched discontinuity paths in {:.3}s",
+            "cuttlefish: collation stitched discontinuity paths in {:.3}s",
             stitch_started.elapsed().as_secs_f64()
         );
         eprintln!(
-            "cuttlefish3-rs: added {} stitched discontinuity unitig(s)",
+            "cuttlefish: added {} stitched discontinuity unitig(s)",
             stitched_discontinuity_unitigs
         );
 
@@ -5513,12 +5513,12 @@ impl SerialUncoloredCollator {
         let suppressed_expanded =
             suppress_labels_contained_in_sources(&mut expanded_unitigs, &stitched_unitigs, threads);
         eprintln!(
-            "cuttlefish3-rs: collation suppressed contained expanded labels in {:.3}s",
+            "cuttlefish: collation suppressed contained expanded labels in {:.3}s",
             suppress_started.elapsed().as_secs_f64()
         );
         if suppressed_expanded > 0 {
             eprintln!(
-                "cuttlefish3-rs: suppressed {} expanded path unitig(s) contained in stitched paths",
+                "cuttlefish: suppressed {} expanded path unitig(s) contained in stitched paths",
                 suppressed_expanded
             );
         }
@@ -5547,18 +5547,18 @@ impl SerialUncoloredCollator {
             }
         }
         eprintln!(
-            "cuttlefish3-rs: collation merged direct local unitigs in {:.3}s",
+            "cuttlefish: collation merged direct local unitigs in {:.3}s",
             merge_started.elapsed().as_secs_f64()
         );
         eprintln!(
-            "cuttlefish3-rs: added {} direct local unitig(s)",
+            "cuttlefish: added {} direct local unitig(s)",
             direct_local_unitigs
         );
 
         let final_sort_started = Instant::now();
         unitigs = bucketed_maximal_unitig_reduce(unitigs, threads);
         eprintln!(
-            "cuttlefish3-rs: collation bucket reduce completed in {:.3}s",
+            "cuttlefish: collation bucket reduce completed in {:.3}s",
             final_sort_started.elapsed().as_secs_f64()
         );
 
@@ -5581,7 +5581,7 @@ impl SerialUncoloredCollator {
         threads: usize,
     ) -> SerialCollation {
         eprintln!(
-            "cuttlefish3-rs: collating {} path edge info record(s) against {} local unitig(s)",
+            "cuttlefish: collating {} path edge info record(s) against {} local unitig(s)",
             expansion.edges.len(),
             inputs.unitigs.len()
         );
@@ -5602,7 +5602,7 @@ impl SerialUncoloredCollator {
             });
         }
         eprintln!(
-            "cuttlefish3-rs: path-info collation collected records in {:.3}s",
+            "cuttlefish: path-info collation collected records in {:.3}s",
             collect_started.elapsed().as_secs_f64()
         );
 
@@ -5615,7 +5615,7 @@ impl SerialUncoloredCollator {
             )
         });
         eprintln!(
-            "cuttlefish3-rs: path-info collation sorted records in {:.3}s",
+            "cuttlefish: path-info collation sorted records in {:.3}s",
             record_sort_started.elapsed().as_secs_f64()
         );
 
@@ -5671,11 +5671,11 @@ impl SerialUncoloredCollator {
         }
         let stitched_discontinuity_unitigs = unitigs.len() as u64;
         eprintln!(
-            "cuttlefish3-rs: path-info collation built path unitigs in {:.3}s",
+            "cuttlefish: path-info collation built path unitigs in {:.3}s",
             build_started.elapsed().as_secs_f64()
         );
         eprintln!(
-            "cuttlefish3-rs: added {} path-info discontinuity unitig(s)",
+            "cuttlefish: added {} path-info discontinuity unitig(s)",
             stitched_discontinuity_unitigs
         );
 
@@ -5689,18 +5689,18 @@ impl SerialUncoloredCollator {
             }
         }
         eprintln!(
-            "cuttlefish3-rs: path-info collation merged direct local unitigs in {:.3}s",
+            "cuttlefish: path-info collation merged direct local unitigs in {:.3}s",
             merge_started.elapsed().as_secs_f64()
         );
         eprintln!(
-            "cuttlefish3-rs: added {} direct local unitig(s)",
+            "cuttlefish: added {} direct local unitig(s)",
             direct_local_unitigs
         );
 
         let final_sort_started = Instant::now();
         unitigs = bucketed_maximal_unitig_reduce(unitigs, threads);
         eprintln!(
-            "cuttlefish3-rs: path-info collation bucket reduce completed in {:.3}s",
+            "cuttlefish: path-info collation bucket reduce completed in {:.3}s",
             final_sort_started.elapsed().as_secs_f64()
         );
 
@@ -5741,7 +5741,7 @@ impl SerialUncoloredCollator {
         output_path: &Path,
     ) -> Result<SerialCollationStats, SerialCollationError> {
         eprintln!(
-            "cuttlefish3-rs: collating {} local unitig(s) by discontinuity-end stitching",
+            "cuttlefish: collating {} local unitig(s) by discontinuity-end stitching",
             inputs.unitigs.len()
         );
 
@@ -5765,15 +5765,15 @@ impl SerialUncoloredCollator {
         }
         let manifest = final_buckets.finish()?;
         eprintln!(
-            "cuttlefish3-rs: collation stitched and spilled final-label candidates in {:.3}s",
+            "cuttlefish: collation stitched and spilled final-label candidates in {:.3}s",
             spill_started.elapsed().as_secs_f64()
         );
         eprintln!(
-            "cuttlefish3-rs: added {} stitched discontinuity unitig(s)",
+            "cuttlefish: added {} stitched discontinuity unitig(s)",
             stitched_discontinuity_unitigs
         );
         eprintln!(
-            "cuttlefish3-rs: added {} direct local unitig(s)",
+            "cuttlefish: added {} direct local unitig(s)",
             direct_local_unitigs
         );
 
@@ -5781,7 +5781,7 @@ impl SerialUncoloredCollator {
         let (emitted_unitigs, emitted_bases) =
             reduce_final_unitig_buckets_to_fasta(&manifest, output_path)?;
         eprintln!(
-            "cuttlefish3-rs: collation external bucket reduce and FASTA write completed in {:.3}s",
+            "cuttlefish: collation external bucket reduce and FASTA write completed in {:.3}s",
             reduce_started.elapsed().as_secs_f64()
         );
 
@@ -5803,7 +5803,7 @@ impl SerialUncoloredCollator {
         output_path: &Path,
     ) -> Result<SerialCollationStats, SerialCollationError> {
         eprintln!(
-            "cuttlefish3-rs: collating {} local unitig(s) by external discontinuity-end stitching",
+            "cuttlefish: collating {} local unitig(s) by external discontinuity-end stitching",
             inputs.unitig_count()
         );
 
@@ -5908,7 +5908,7 @@ impl SerialUncoloredCollator {
         let finish_started = Instant::now();
         let manifest = final_buckets.finish()?;
         eprintln!(
-            "cuttlefish3-rs: collation serial detail: trivial-fasta adopt/copy {:.3}s (in-place {}), direct-local fallback {:.3}s (ran {}), cleanup {:.3}s, finish {:.3}s",
+            "cuttlefish: collation serial detail: trivial-fasta adopt/copy {:.3}s (in-place {}), direct-local fallback {:.3}s (ran {}), cleanup {:.3}s, finish {:.3}s",
             trivial_elapsed.as_secs_f64(),
             inputs.trivial_is_output,
             fallback_elapsed.as_secs_f64(),
@@ -5917,15 +5917,15 @@ impl SerialUncoloredCollator {
             finish_started.elapsed().as_secs_f64(),
         );
         eprintln!(
-            "cuttlefish3-rs: external collation stitched and spilled final-label candidates in {:.3}s",
+            "cuttlefish: external collation stitched and spilled final-label candidates in {:.3}s",
             spill_started.elapsed().as_secs_f64()
         );
         eprintln!(
-            "cuttlefish3-rs: added {} stitched discontinuity unitig(s)",
+            "cuttlefish: added {} stitched discontinuity unitig(s)",
             stitched_discontinuity_unitigs
         );
         eprintln!(
-            "cuttlefish3-rs: added {} direct local unitig(s)",
+            "cuttlefish: added {} direct local unitig(s)",
             direct_local_unitigs
         );
 
@@ -5937,7 +5937,7 @@ impl SerialUncoloredCollator {
             let _ = fs::remove_dir(final_dir);
         }
         eprintln!(
-            "cuttlefish3-rs: collation external bucket reduce and FASTA write completed in {:.3}s",
+            "cuttlefish: collation external bucket reduce and FASTA write completed in {:.3}s",
             reduce_started.elapsed().as_secs_f64()
         );
 
@@ -5957,7 +5957,7 @@ impl SerialUncoloredCollator {
         coord_dir: Option<&Path>,
     ) -> Result<SerialCollation, SerialCollationError> {
         eprintln!(
-            "cuttlefish3-rs: collating {} local unitig(s) by discontinuity-end stitching",
+            "cuttlefish: collating {} local unitig(s) by discontinuity-end stitching",
             inputs.unitigs.len()
         );
 
@@ -5969,11 +5969,11 @@ impl SerialUncoloredCollator {
         };
         let stitched_discontinuity_unitigs = unitigs.len() as u64;
         eprintln!(
-            "cuttlefish3-rs: collation stitched discontinuity paths in {:.3}s",
+            "cuttlefish: collation stitched discontinuity paths in {:.3}s",
             stitch_started.elapsed().as_secs_f64()
         );
         eprintln!(
-            "cuttlefish3-rs: added {} stitched discontinuity unitig(s)",
+            "cuttlefish: added {} stitched discontinuity unitig(s)",
             stitched_discontinuity_unitigs
         );
 
@@ -5986,18 +5986,18 @@ impl SerialUncoloredCollator {
             }
         }
         eprintln!(
-            "cuttlefish3-rs: collation merged direct local unitigs in {:.3}s",
+            "cuttlefish: collation merged direct local unitigs in {:.3}s",
             merge_started.elapsed().as_secs_f64()
         );
         eprintln!(
-            "cuttlefish3-rs: added {} direct local unitig(s)",
+            "cuttlefish: added {} direct local unitig(s)",
             direct_local_unitigs
         );
 
         let final_sort_started = Instant::now();
         unitigs = bucketed_maximal_unitig_reduce(unitigs, threads);
         eprintln!(
-            "cuttlefish3-rs: collation bucket reduce completed in {:.3}s",
+            "cuttlefish: collation bucket reduce completed in {:.3}s",
             final_sort_started.elapsed().as_secs_f64()
         );
 
@@ -7534,7 +7534,7 @@ fn stitch_discontinuity_paths_to_final_buckets<const K: usize>(
     let walk_elapsed = walk_started.elapsed();
 
     eprintln!(
-        "cuttlefish3-rs: stitch detail: half-ends {:.3}s, endpoint sort {:.3}s, endpoint join {:.3}s, components {:.3}s, materialized walk+reduce {:.3}s",
+        "cuttlefish: stitch detail: half-ends {:.3}s, endpoint sort {:.3}s, endpoint join {:.3}s, components {:.3}s, materialized walk+reduce {:.3}s",
         half_end_elapsed.as_secs_f64(),
         endpoint_sort_elapsed.as_secs_f64(),
         endpoint_join_elapsed.as_secs_f64(),
@@ -7678,7 +7678,7 @@ fn stitch_external_discontinuity_paths_to_final_buckets<const K: usize>(
         )?;
         report_process_memory("external stitch after materialized coord reduce");
         eprintln!(
-            "cuttlefish3-rs: external materialized stitch reduce {:.3}s",
+            "cuttlefish: external materialized stitch reduce {:.3}s",
             reduce_started.elapsed().as_secs_f64()
         );
         emitted
@@ -7686,7 +7686,7 @@ fn stitch_external_discontinuity_paths_to_final_buckets<const K: usize>(
     let walk_elapsed = walk_started.elapsed();
 
     eprintln!(
-        "cuttlefish3-rs: external stitch detail: half-ends {:.3}s, endpoint sort {:.3}s, endpoint join {:.3}s, components {:.3}s, stitch label materialization/reduce {:.3}s",
+        "cuttlefish: external stitch detail: half-ends {:.3}s, endpoint sort {:.3}s, endpoint join {:.3}s, components {:.3}s, stitch label materialization/reduce {:.3}s",
         half_end_elapsed.as_secs_f64(),
         endpoint_sort_elapsed.as_secs_f64(),
         endpoint_join_elapsed.as_secs_f64(),
@@ -7751,9 +7751,7 @@ fn collate_external_cpp_path_info_to_final_buckets<const K: usize>(
     coord_dir: &Path,
     final_buckets: &mut FinalUnitigBucketWriters,
 ) -> Result<ExternalCppPathInfoCollation, SerialCollationError> {
-    eprintln!(
-        "cuttlefish3-rs: deriving discontinuity path-info by C++-style contraction/expansion"
-    );
+    eprintln!("cuttlefish: deriving discontinuity path-info by C++-style contraction/expansion");
 
     let matrix_started = Instant::now();
     let matrix = inputs
@@ -7762,7 +7760,7 @@ fn collate_external_cpp_path_info_to_final_buckets<const K: usize>(
         .ok_or_else(|| SerialCollationError::MalformedCoordBucket(inputs.unitig_path.clone()))?;
     let matrix_dir = matrix.dir.clone();
     eprintln!(
-        "cuttlefish3-rs: discontinuity edge matrix handed off in {:.3}s; {} edge(s), {} phi edge(s), {} diagonal edge(s)",
+        "cuttlefish: discontinuity edge matrix handed off in {:.3}s; {} edge(s), {} phi edge(s), {} diagonal edge(s)",
         matrix_started.elapsed().as_secs_f64(),
         matrix.stats.edges,
         matrix.stats.phi_edges,
@@ -7775,7 +7773,7 @@ fn collate_external_cpp_path_info_to_final_buckets<const K: usize>(
         SerialDiscontinuityContractor::contract_blocked_external(matrix, threads)?;
     report_process_memory("after C++-style discontinuity contraction");
     eprintln!(
-        "cuttlefish3-rs: discontinuity graph contracted in {:.3}s; {} meta-vertices, {} final edge(s), {} reinserted edge(s)",
+        "cuttlefish: discontinuity graph contracted in {:.3}s; {} meta-vertices, {} final edge(s), {} reinserted edge(s)",
         contract_started.elapsed().as_secs_f64(),
         contraction.stats.meta_vertices,
         contraction.stats.final_edges,
@@ -7812,7 +7810,7 @@ fn collate_external_cpp_path_info_to_final_buckets<const K: usize>(
     )?;
     report_process_memory("after C++-style discontinuity expansion");
     eprintln!(
-        "cuttlefish3-rs: contracted graph expanded in {:.3}s; {} path-info edge record(s), {} unresolved edge(s)",
+        "cuttlefish: contracted graph expanded in {:.3}s; {} path-info edge record(s), {} unresolved edge(s)",
         expand_started.elapsed().as_secs_f64(),
         expansion.stats.edge_path_infos,
         expansion.stats.unresolved_edges
@@ -7841,7 +7839,7 @@ fn collate_external_cpp_path_info_to_final_buckets<const K: usize>(
         .filter(|_| !keep_intermediates())
         .map(spawn_background_dir_removal);
     eprintln!(
-        "cuttlefish3-rs: C++-style path-info map completed in {:.3}s",
+        "cuttlefish: C++-style path-info map completed in {:.3}s",
         map_started.elapsed().as_secs_f64()
     );
     let reduce_started = Instant::now();
@@ -7854,7 +7852,7 @@ fn collate_external_cpp_path_info_to_final_buckets<const K: usize>(
     )?;
     report_process_memory("after C++-style path-info reduce");
     eprintln!(
-        "cuttlefish3-rs: C++-style path-info reduce {:.3}s",
+        "cuttlefish: C++-style path-info reduce {:.3}s",
         reduce_started.elapsed().as_secs_f64()
     );
     let reclaim_started = Instant::now();
@@ -7864,7 +7862,7 @@ fn collate_external_cpp_path_info_to_final_buckets<const K: usize>(
         let _ = handle.join();
     }
     eprintln!(
-        "cuttlefish3-rs: waited {:.3}s for background intermediate removal",
+        "cuttlefish: waited {:.3}s for background intermediate removal",
         reclaim_started.elapsed().as_secs_f64()
     );
     Ok(ExternalCppPathInfoCollation {
@@ -8719,7 +8717,7 @@ fn map_external_cpp_path_info_buckets_to_max_unitig_buckets<const K: usize>(
             inputs.stats.unitig_bases,
         );
     eprintln!(
-        "cuttlefish3-rs: materializing final coordinates into {max_unitig_bucket_count} bucket(s) with {mapping_threads} mapping worker(s), {open_writer_limit} open writer(s); {} local unitig base(s)",
+        "cuttlefish: materializing final coordinates into {max_unitig_bucket_count} bucket(s) with {mapping_threads} mapping worker(s), {open_writer_limit} open writer(s); {} local unitig base(s)",
         inputs.stats.unitig_bases
     );
     let max_unitig_bucket_mask = max_unitig_bucket_count - 1;
@@ -9739,7 +9737,7 @@ fn emit_external_ordered_stitched_labels_to_final_buckets<const K: usize>(
     let assemble_elapsed = assemble_started.elapsed();
 
     eprintln!(
-        "cuttlefish3-rs: ordered external stitch labels: map {:.3}s, offsets {:.3}s, label spill {:.3}s, assemble {:.3}s, records {}, label bytes {}",
+        "cuttlefish: ordered external stitch labels: map {:.3}s, offsets {:.3}s, label spill {:.3}s, assemble {:.3}s, records {}, label bytes {}",
         map_elapsed.as_secs_f64(),
         offset_elapsed.as_secs_f64(),
         spill_elapsed.as_secs_f64(),
@@ -10107,7 +10105,7 @@ fn stitch_discontinuity_paths_impl<const K: usize>(
     unitigs = bucketed_maximal_unitig_reduce(unitigs, threads);
     let sort_elapsed = sort_started.elapsed();
     eprintln!(
-        "cuttlefish3-rs: stitch detail: half-ends {:.3}s, endpoint sort {:.3}s, endpoint join {:.3}s, components {:.3}s, component walk {:.3}s, bucket reduce {:.3}s",
+        "cuttlefish: stitch detail: half-ends {:.3}s, endpoint sort {:.3}s, endpoint join {:.3}s, components {:.3}s, component walk {:.3}s, bucket reduce {:.3}s",
         half_end_elapsed.as_secs_f64(),
         endpoint_sort_elapsed.as_secs_f64(),
         endpoint_join_elapsed.as_secs_f64(),
@@ -10247,7 +10245,7 @@ fn stitch_discontinuity_paths_with_adjacency<const K: usize>(
     unitigs = bucketed_maximal_unitig_reduce(unitigs, threads);
     let sort_elapsed = sort_started.elapsed();
     eprintln!(
-        "cuttlefish3-rs: stitch detail: half-ends {:.3}s, endpoint sort {:.3}s, endpoint join {:.3}s, components {:.3}s, {} walk {:.3}s, bucket reduce {:.3}s",
+        "cuttlefish: stitch detail: half-ends {:.3}s, endpoint sort {:.3}s, endpoint join {:.3}s, components {:.3}s, {} walk {:.3}s, bucket reduce {:.3}s",
         half_end_elapsed.as_secs_f64(),
         endpoint_sort_elapsed.as_secs_f64(),
         endpoint_join_elapsed.as_secs_f64(),
@@ -11010,7 +11008,7 @@ fn write_external_materialized_stitched_coord_buckets_from_neighbors<const K: us
     }
 
     eprintln!(
-        "cuttlefish3-rs: external stitch path-info estimate {:.1} MiB exceeds in-memory limit {:.1} MiB; using disk path-info buckets",
+        "cuttlefish: external stitch path-info estimate {:.1} MiB exceeds in-memory limit {:.1} MiB; using disk path-info buckets",
         estimated_path_info_bytes as f64 / (1024.0 * 1024.0),
         inmem_limit as f64 / (1024.0 * 1024.0)
     );
@@ -11051,7 +11049,7 @@ fn write_external_materialized_stitched_coord_buckets<const K: usize>(
     }
 
     eprintln!(
-        "cuttlefish3-rs: external stitch path-info estimate {:.1} MiB exceeds in-memory limit {:.1} MiB; using disk path-info buckets",
+        "cuttlefish: external stitch path-info estimate {:.1} MiB exceeds in-memory limit {:.1} MiB; using disk path-info buckets",
         estimated_path_info_bytes as f64 / (1024.0 * 1024.0),
         inmem_limit as f64 / (1024.0 * 1024.0)
     );
@@ -11086,7 +11084,7 @@ fn write_external_materialized_stitched_coord_buckets<const K: usize>(
         &path_info_manifest,
     )?;
     eprintln!(
-        "cuttlefish3-rs: external materialized stitch path-info {:.3}s, label materialize {:.3}s",
+        "cuttlefish: external materialized stitch path-info {:.3}s, label materialize {:.3}s",
         path_info_elapsed.as_secs_f64(),
         materialize_started.elapsed().as_secs_f64()
     );
@@ -11137,7 +11135,7 @@ fn write_external_materialized_stitched_coord_buckets_in_memory<const K: usize>(
         records_by_range_bucket,
     )?;
     eprintln!(
-        "cuttlefish3-rs: external in-memory stitch path-info {:.3}s ({:.1} MiB est), label materialize {:.3}s",
+        "cuttlefish: external in-memory stitch path-info {:.3}s ({:.1} MiB est), label materialize {:.3}s",
         path_info_elapsed.as_secs_f64(),
         estimated_path_info_bytes as f64 / (1024.0 * 1024.0),
         materialize_started.elapsed().as_secs_f64()
@@ -11185,7 +11183,7 @@ fn write_external_materialized_stitched_coord_buckets_from_neighbor_path_info<co
         records_by_range_bucket,
     )?;
     eprintln!(
-        "cuttlefish3-rs: external neighbor path-info {:.3}s ({:.1} MiB est), label materialize {:.3}s",
+        "cuttlefish: external neighbor path-info {:.3}s ({:.1} MiB est), label materialize {:.3}s",
         path_info_elapsed.as_secs_f64(),
         estimated_path_info_bytes as f64 / (1024.0 * 1024.0),
         materialize_started.elapsed().as_secs_f64()
@@ -14038,7 +14036,7 @@ fn reduce_materialized_groups_to_direct_fasta<const K: usize>(
     final_buckets.direct_records += emitted;
     final_buckets.direct_bases += emitted_bases.load(Ordering::Relaxed);
     eprintln!(
-        "cuttlefish3-rs: path-info reduce worker detail: load {:.3}s, sort {:.3}s, assemble/encode {:.3}s, blocked send {:.3}s; reducer wall/write-drain {:.3}s",
+        "cuttlefish: path-info reduce worker detail: load {:.3}s, sort {:.3}s, assemble/encode {:.3}s, blocked send {:.3}s; reducer wall/write-drain {:.3}s",
         load_ns.load(Ordering::Relaxed) as f64 / 1e9,
         sort_ns.load(Ordering::Relaxed) as f64 / 1e9,
         assemble_ns.load(Ordering::Relaxed) as f64 / 1e9,
@@ -14047,7 +14045,7 @@ fn reduce_materialized_groups_to_direct_fasta<const K: usize>(
     );
     if let Some(slowest) = worker_timings.iter().max_by_key(|timing| timing.elapsed_ns) {
         eprintln!(
-            "cuttlefish3-rs: path-info reduce critical worker: elapsed {:.3}s, groups {}; largest group {:.3}s (load {:.3}s, sort {:.3}s, assemble/write {:.3}s, write {:.3}s)",
+            "cuttlefish: path-info reduce critical worker: elapsed {:.3}s, groups {}; largest group {:.3}s (load {:.3}s, sort {:.3}s, assemble/write {:.3}s, write {:.3}s)",
             slowest.elapsed_ns as f64 / 1e9,
             slowest.groups,
             slowest.max_group_ns as f64 / 1e9,
@@ -17107,7 +17105,7 @@ fn contract_local_subgraphs_into_external_inputs<const K: usize>(
     let started = Instant::now();
     if groups.len() >= 1024 {
         eprintln!(
-            "cuttlefish3-rs: contracting {} local subgraph(s) from {} bucket file(s) with {} worker(s)",
+            "cuttlefish: contracting {} local subgraph(s) from {} bucket file(s) with {} worker(s)",
             groups.len(),
             entries.len(),
             workers
@@ -17288,19 +17286,19 @@ fn contract_local_subgraphs_into_external_inputs<const K: usize>(
             .map_err(|_| DiscontinuityInputError::WorkerPanic)?;
         ranges.sort_by_key(|range| range.start_unitig);
         eprintln!(
-            "cuttlefish3-rs: local edge-writer finalization {:.3}s",
+            "cuttlefish: local edge-writer finalization {:.3}s",
             edge_finish_elapsed.as_secs_f64()
         );
     }
 
     eprintln!(
-        "cuttlefish3-rs: local worker time: bucket read/build {:.3}s, unitig walk {:.3}s",
+        "cuttlefish: local worker time: bucket read/build {:.3}s, unitig walk {:.3}s",
         build_elapsed.as_secs_f64(),
         contract_elapsed.as_secs_f64()
     );
     if workers > 1 {
         eprintln!(
-            "cuttlefish3-rs: local sink worker time: label/unitig I/O {:.3}s, color resolve/write {:.3}s, edge/range emission {:.3}s",
+            "cuttlefish: local sink worker time: label/unitig I/O {:.3}s, color resolve/write {:.3}s, edge/range emission {:.3}s",
             sink_io_elapsed.as_secs_f64(),
             sink_color_elapsed.as_secs_f64(),
             sink_edge_elapsed.as_secs_f64(),
@@ -17353,7 +17351,7 @@ fn contract_local_subgraphs_into_external_inputs<const K: usize>(
     let color_repository_elapsed = color_repository_started.elapsed();
     if workers > 1 {
         eprintln!(
-            "cuttlefish3-rs: local finalization detail: streams/matrix {:.3}s, color runs {:.3}s, unitig buckets {:.3}s, color repository {:.3}s",
+            "cuttlefish: local finalization detail: streams/matrix {:.3}s, color runs {:.3}s, unitig buckets {:.3}s, color repository {:.3}s",
             stream_finish_elapsed.as_secs_f64(),
             color_runs_elapsed.as_secs_f64(),
             unitig_buckets_elapsed.as_secs_f64(),
@@ -17847,7 +17845,7 @@ fn contract_local_subgraphs<const K: usize>(
     let started = Instant::now();
     if groups.len() >= 1024 {
         eprintln!(
-            "cuttlefish3-rs: contracting {} local subgraph(s) from {} bucket file(s) with {} worker(s)",
+            "cuttlefish: contracting {} local subgraph(s) from {} bucket file(s) with {} worker(s)",
             groups.len(),
             entries.len(),
             workers
@@ -17923,7 +17921,7 @@ fn contract_local_subgraphs<const K: usize>(
         .map(|output| output.contract_elapsed)
         .sum::<Duration>();
     eprintln!(
-        "cuttlefish3-rs: local worker time: bucket read/build {:.3}s, unitig walk {:.3}s",
+        "cuttlefish: local worker time: bucket read/build {:.3}s, unitig walk {:.3}s",
         build_elapsed.as_secs_f64(),
         contract_elapsed.as_secs_f64()
     );
@@ -17970,7 +17968,7 @@ fn report_local_contraction_progress(done: usize, total: usize, started: Instant
     }
     if done == total || done % 1024 == 0 {
         eprintln!(
-            "cuttlefish3-rs: contracted {done}/{total} local subgraph bucket(s) in {:.1}s",
+            "cuttlefish: contracted {done}/{total} local subgraph bucket(s) in {:.1}s",
             started.elapsed().as_secs_f64()
         );
         report_process_memory(&format!("local contraction progress {done}/{total}"));
@@ -17983,7 +17981,7 @@ fn report_discontinuity_contraction_progress(done: usize, total: usize, started:
     }
     if done == total || done % 16 == 0 {
         eprintln!(
-            "cuttlefish3-rs: contracted {done}/{total} discontinuity partition(s) in {:.1}s",
+            "cuttlefish: contracted {done}/{total} discontinuity partition(s) in {:.1}s",
             started.elapsed().as_secs_f64()
         );
     }

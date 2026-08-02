@@ -686,7 +686,7 @@ impl ConcurrentColorRepository {
 
     pub fn finish(&self) -> Result<ColorRepositoryManifest, ColorError> {
         eprintln!(
-            "cuttlefish3-rs: color repository table capacity {}, overflow entries {}",
+            "cuttlefish: color repository table capacity {}, overflow entries {}",
             self.table.slots.len(),
             self.overflow.len()
         );

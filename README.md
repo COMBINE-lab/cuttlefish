@@ -40,7 +40,7 @@ cd cuttlefish
 cargo build --release
 ```
 
-The executable is written to `target/release/cuttlefish3-rs`. To install it
+The executable is written to `target/release/cuttlefish`. To install it
 under a Cargo-style prefix:
 
 ```bash
@@ -61,7 +61,7 @@ Construct an uncolored compacted graph from references:
 
 ```bash
 mkdir -p work
-target/release/cuttlefish3-rs build \
+target/release/cuttlefish build \
   --ref \
   --seq data/refs1.fa \
   --kmer-len 7 \
@@ -76,7 +76,7 @@ The maximal unitigs are written to `graph.fa`.
 Construct a colored graph from a collection of references:
 
 ```bash
-target/release/cuttlefish3-rs build \
+target/release/cuttlefish build \
   --ref \
   --list genomes.list \
   --kmer-len 31 \
@@ -94,7 +94,7 @@ For sequencing reads, select `--read`; the default `(k + 1)`-mer frequency
 cutoff then changes from 1 to 2:
 
 ```bash
-target/release/cuttlefish3-rs build \
+target/release/cuttlefish build \
   --read \
   --seq reads.fastq.gz \
   --cutoff 2 \
@@ -104,8 +104,11 @@ target/release/cuttlefish3-rs build \
 
 ## Command Line
 
+`cuttlefish` has two subcommands: `build` constructs a graph, and `compare`
+decides whether two unitig FASTA files describe the same one.
+
 ```text
-cuttlefish3-rs build [OPTIONS]
+cuttlefish build [OPTIONS]
 
   -s, --seq <PATH>          input sequence file; may be repeated
   -l, --list <PATH>         file containing one input path per line
@@ -161,7 +164,16 @@ use `>0`; record order and identifiers are not stable identifiers.
 
 A unitig may be emitted in either its forward or reverse-complement orientation.
 Correct graph comparisons must canonicalize strand, and cyclic unitigs must
-also account for rotation.
+also account for rotation. `cuttlefish compare` does both, so two runs that
+differ only in thread count or bucket layout still compare equal:
+
+```bash
+cuttlefish compare -a graph-a.fa -b graph-b.fa --kmer-len 31 --work-dir cmp
+```
+
+It sorts each side to disk and merges, so the comparison is bounded by
+`--chunk-records` rather than by the size of the graph. `--full-diff` reports
+every difference instead of stopping at the first.
 
 ### Colored graphs
 

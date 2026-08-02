@@ -1,6 +1,17 @@
+//! `cuttlefish compare`: decide whether two unitig FASTA files describe the
+//! same graph.
+//!
+//! A maximal unitig may be emitted in either orientation, and a cyclic one at
+//! any rotation, so two correct builds of the same input can disagree
+//! record-for-record. Comparison therefore canonicalizes each record before
+//! matching, and compares multisets rather than files.
+//!
+//! Graphs outgrow memory, so the two sides are chunk-sorted to disk in
+//! parallel and then merged, which bounds resident set by the chunk size
+//! rather than by the graph.
+
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
-use std::env;
 use std::error::Error;
 use std::fs::{self, File};
 use std::hash::{DefaultHasher, Hash, Hasher};
@@ -12,16 +23,16 @@ use std::sync::{Arc, Mutex, mpsc};
 type Result<T> = std::result::Result<T, Box<dyn Error + Send + Sync>>;
 
 struct Params {
-    cpp: PathBuf,
-    rust: PathBuf,
+    a: PathBuf,
+    b: PathBuf,
     work_dir: PathBuf,
     k: usize,
     chunk_records: usize,
     threads: usize,
     reuse_chunks: bool,
     dump_mismatch: Option<PathBuf>,
-    cpp_chunks: Option<PathBuf>,
-    rust_chunks: Option<PathBuf>,
+    a_chunks: Option<PathBuf>,
+    b_chunks: Option<PathBuf>,
     full_diff: bool,
 }
 
@@ -30,21 +41,21 @@ struct ChunkTask {
     records: Vec<Vec<u8>>,
 }
 
-fn main() {
-    if let Err(error) = run() {
-        eprintln!("cf3-compare-fasta: {error}");
-        std::process::exit(1);
-    }
-}
-
-fn run() -> Result<()> {
-    let params = parse_args()?;
+/// Entry point for the `compare` subcommand. `args` is the argument list with
+/// the subcommand name already consumed.
+pub fn run<I>(args: I) -> Result<i32>
+where
+    I: Iterator<Item = String>,
+{
+    let Some(params) = parse_args(args)? else {
+        return Ok(0); // --help
+    };
     fs::create_dir_all(&params.work_dir)?;
-    let cpp_dir = params.work_dir.join("cpp");
-    let rust_dir = params.work_dir.join("rust");
+    let a_dir = params.work_dir.join("a");
+    let b_dir = params.work_dir.join("b");
     if !params.reuse_chunks
-        && ((params.rust_chunks.is_none() && rust_dir.exists())
-            || (params.cpp_chunks.is_none() && cpp_dir.exists()))
+        && ((params.b_chunks.is_none() && b_dir.exists())
+            || (params.a_chunks.is_none() && a_dir.exists()))
     {
         return Err(format!(
             "comparison directories already exist under {}",
@@ -53,53 +64,53 @@ fn run() -> Result<()> {
         .into());
     }
 
-    let (cpp_chunks, rust_chunks) = if params.reuse_chunks {
-        (existing_chunks(&cpp_dir)?, existing_chunks(&rust_dir)?)
+    let (a_chunks, b_chunks) = if params.reuse_chunks {
+        (existing_chunks(&a_dir)?, existing_chunks(&b_dir)?)
     } else {
-        let cpp_chunks = if let Some(directory) = &params.cpp_chunks {
+        let a_chunks = if let Some(directory) = &params.a_chunks {
             existing_chunks(directory)?
         } else {
-            eprintln!("cf3-compare-fasta: sorting C++ topology");
+            eprintln!("cuttlefish compare: sorting A");
             build_chunks(
-                &params.cpp,
-                &cpp_dir,
+                &params.a,
+                &a_dir,
                 params.k,
                 params.chunk_records,
                 params.threads,
             )?
         };
-        let rust_chunks = if let Some(directory) = &params.rust_chunks {
+        let b_chunks = if let Some(directory) = &params.b_chunks {
             existing_chunks(directory)?
         } else {
-            eprintln!("cf3-compare-fasta: sorting Rust topology");
+            eprintln!("cuttlefish compare: sorting B");
             build_chunks(
-                &params.rust,
-                &rust_dir,
+                &params.b,
+                &b_dir,
                 params.k,
                 params.chunk_records,
                 params.threads,
             )?
         };
-        (cpp_chunks, rust_chunks)
+        (a_chunks, b_chunks)
     };
 
-    let mut cpp = ExternalMerge::new(&cpp_chunks)?;
-    let mut rust = ExternalMerge::new(&rust_chunks)?;
+    let mut a = ExternalMerge::new(&a_chunks)?;
+    let mut b = ExternalMerge::new(&b_chunks)?;
     if params.full_diff {
-        return compare_full_diff(&mut cpp, &mut rust);
+        return compare_full_diff(&mut a, &mut b);
     }
     let mut count = 0u64;
     loop {
-        match (cpp.next_record()?, rust.next_record()?) {
+        match (a.next_record()?, b.next_record()?) {
             (Some(left), Some(right)) if left == right => count += 1,
             (Some(left), Some(right)) => {
                 if let Some(directory) = &params.dump_mismatch {
                     fs::create_dir_all(directory)?;
-                    fs::write(directory.join("cpp.seq"), &left)?;
-                    fs::write(directory.join("rust.seq"), &right)?;
+                    fs::write(directory.join("a.seq"), &left)?;
+                    fs::write(directory.join("b.seq"), &right)?;
                 }
                 return Err(format!(
-                    "topology differs at sorted record {}:\n  C++ {}\n  Rust {}\n  common prefix={} common suffix={}",
+                    "topology differs at sorted record {}:\n  A {}\n  B {}\n  common prefix={} common suffix={}",
                     count + 1,
                     describe_record(&left),
                     describe_record(&right),
@@ -111,7 +122,7 @@ fn run() -> Result<()> {
             (None, None) => break,
             (left, right) => {
                 return Err(format!(
-                    "topology counts differ after {count} matching records (C++ remaining={}, Rust remaining={})",
+                    "topology counts differ after {count} matching records (A remaining={}, B remaining={})",
                     left.is_some(),
                     right.is_some()
                 )
@@ -119,43 +130,45 @@ fn run() -> Result<()> {
             }
         }
     }
-    println!("OK: {count} strand-normalized unitigs match C++ topology");
-    Ok(())
+    println!("OK: {count} strand-normalized unitigs match");
+    Ok(0)
 }
 
-fn parse_args() -> Result<Params> {
-    let mut cpp = None;
-    let mut rust = None;
+/// Returns `None` when `--help` was requested and already printed.
+fn parse_args<I>(args: I) -> Result<Option<Params>>
+where
+    I: Iterator<Item = String>,
+{
+    let mut a = None;
+    let mut b = None;
     let mut work_dir = None;
     let mut k = None;
     let mut chunk_records = 1_000_000usize;
     let mut threads = 8usize;
     let mut reuse_chunks = false;
     let mut dump_mismatch = None;
-    let mut cpp_chunks = None;
-    let mut rust_chunks = None;
+    let mut a_chunks = None;
+    let mut b_chunks = None;
     let mut full_diff = false;
-    let mut args = env::args().skip(1);
+    let mut args = args;
     while let Some(arg) = args.next() {
         match arg.as_str() {
-            "--cpp-fasta" => cpp = Some(PathBuf::from(argument_value(&mut args, &arg)?)),
-            "--rust-fasta" => rust = Some(PathBuf::from(argument_value(&mut args, &arg)?)),
-            "--work-dir" => work_dir = Some(PathBuf::from(argument_value(&mut args, &arg)?)),
+            "-a" | "--a" => a = Some(PathBuf::from(argument_value(&mut args, &arg)?)),
+            "-b" | "--b" => b = Some(PathBuf::from(argument_value(&mut args, &arg)?)),
+            "-w" | "--work-dir" => work_dir = Some(PathBuf::from(argument_value(&mut args, &arg)?)),
             "-k" | "--kmer-len" => k = Some(argument_value(&mut args, &arg)?.parse()?),
             "--chunk-records" => chunk_records = argument_value(&mut args, &arg)?.parse()?,
-            "--threads" => threads = argument_value(&mut args, &arg)?.parse()?,
+            "-t" | "--threads" => threads = argument_value(&mut args, &arg)?.parse()?,
             "--reuse-chunks" => reuse_chunks = true,
             "--dump-mismatch" => {
                 dump_mismatch = Some(PathBuf::from(argument_value(&mut args, &arg)?))
             }
-            "--cpp-chunks" => cpp_chunks = Some(PathBuf::from(argument_value(&mut args, &arg)?)),
-            "--rust-chunks" => rust_chunks = Some(PathBuf::from(argument_value(&mut args, &arg)?)),
+            "--a-chunks" => a_chunks = Some(PathBuf::from(argument_value(&mut args, &arg)?)),
+            "--b-chunks" => b_chunks = Some(PathBuf::from(argument_value(&mut args, &arg)?)),
             "--full-diff" => full_diff = true,
             "-h" | "--help" => {
-                println!(
-                    "usage: cf3-compare-fasta --cpp-fasta FILE --rust-fasta FILE --work-dir DIR -k K [--chunk-records N] [--threads N]"
-                );
-                std::process::exit(0);
+                print_help();
+                return Ok(None);
             }
             _ => return Err(format!("unknown argument {arg}").into()),
         }
@@ -163,78 +176,102 @@ fn parse_args() -> Result<Params> {
     if chunk_records == 0 || threads == 0 {
         return Err("--chunk-records and --threads must be positive".into());
     }
-    Ok(Params {
-        cpp: cpp.ok_or("--cpp-fasta is required")?,
-        rust: rust.ok_or("--rust-fasta is required")?,
+    Ok(Some(Params {
+        a: a.ok_or("--a is required")?,
+        b: b.ok_or("--b is required")?,
         work_dir: work_dir.ok_or("--work-dir is required")?,
         k: k.ok_or("-k is required")?,
         chunk_records,
         threads,
         reuse_chunks,
         dump_mismatch,
-        cpp_chunks,
-        rust_chunks,
+        a_chunks,
+        b_chunks,
         full_diff,
-    })
+    }))
 }
 
-fn compare_full_diff(cpp: &mut ExternalMerge, rust: &mut ExternalMerge) -> Result<()> {
+pub fn print_help() {
+    println!(
+        "Compare two unitig FASTA files for graph equivalence, up to strand and cyclic rotation."
+    );
+    println!("Usage:");
+    println!("  cuttlefish compare -a FILE -b FILE -w DIR -k K [OPTION...]");
+    println!();
+    println!(" common options:");
+    println!("  -a, --a <arg>          first unitig FASTA");
+    println!("  -b, --b <arg>          second unitig FASTA");
+    println!("  -k, --kmer-len <arg>   k-mer length the graphs were built at");
+    println!("  -w, --work-dir <arg>   scratch directory for the sorted chunks");
+    println!("  -t, --threads <arg>    sorting threads (default: 8)");
+    println!("      --full-diff        report all differences instead of the first");
+    println!();
+    println!(" diagnostic options:");
+    println!("      --chunk-records <arg> records per sorted chunk (default: 1000000)");
+    println!("      --reuse-chunks     reuse the chunks under --work-dir from a prior run");
+    println!("      --a-chunks <arg>   reuse pre-sorted chunks for A from this directory");
+    println!("      --b-chunks <arg>   reuse pre-sorted chunks for B from this directory");
+    println!("      --dump-mismatch <arg> write the first differing pair to this directory");
+    println!("  -h, --help             print usage");
+}
+
+fn compare_full_diff(a: &mut ExternalMerge, b: &mut ExternalMerge) -> Result<i32> {
     const MAX_SAMPLES: usize = 5;
-    let mut left = cpp.next_record()?;
-    let mut right = rust.next_record()?;
+    let mut left = a.next_record()?;
+    let mut right = b.next_record()?;
     let mut matching = 0u64;
-    let mut cpp_only = 0u64;
-    let mut rust_only = 0u64;
-    let mut cpp_samples = Vec::new();
-    let mut rust_samples = Vec::new();
+    let mut a_only = 0u64;
+    let mut b_only = 0u64;
+    let mut a_samples = Vec::new();
+    let mut b_samples = Vec::new();
     while left.is_some() || right.is_some() {
         match (&left, &right) {
-            (Some(cpp_record), Some(rust_record)) if cpp_record == rust_record => {
+            (Some(a_record), Some(b_record)) if a_record == b_record => {
                 matching += 1;
-                left = cpp.next_record()?;
-                right = rust.next_record()?;
+                left = a.next_record()?;
+                right = b.next_record()?;
             }
-            (Some(cpp_record), Some(rust_record)) if cpp_record < rust_record => {
-                cpp_only += 1;
-                if cpp_samples.len() < MAX_SAMPLES {
-                    cpp_samples.push(describe_record(cpp_record));
+            (Some(a_record), Some(b_record)) if a_record < b_record => {
+                a_only += 1;
+                if a_samples.len() < MAX_SAMPLES {
+                    a_samples.push(describe_record(a_record));
                 }
-                left = cpp.next_record()?;
+                left = a.next_record()?;
             }
-            (Some(_), Some(rust_record)) => {
-                rust_only += 1;
-                if rust_samples.len() < MAX_SAMPLES {
-                    rust_samples.push(describe_record(rust_record));
+            (Some(_), Some(b_record)) => {
+                b_only += 1;
+                if b_samples.len() < MAX_SAMPLES {
+                    b_samples.push(describe_record(b_record));
                 }
-                right = rust.next_record()?;
+                right = b.next_record()?;
             }
-            (Some(cpp_record), None) => {
-                cpp_only += 1;
-                if cpp_samples.len() < MAX_SAMPLES {
-                    cpp_samples.push(describe_record(cpp_record));
+            (Some(a_record), None) => {
+                a_only += 1;
+                if a_samples.len() < MAX_SAMPLES {
+                    a_samples.push(describe_record(a_record));
                 }
-                left = cpp.next_record()?;
+                left = a.next_record()?;
             }
-            (None, Some(rust_record)) => {
-                rust_only += 1;
-                if rust_samples.len() < MAX_SAMPLES {
-                    rust_samples.push(describe_record(rust_record));
+            (None, Some(b_record)) => {
+                b_only += 1;
+                if b_samples.len() < MAX_SAMPLES {
+                    b_samples.push(describe_record(b_record));
                 }
-                right = rust.next_record()?;
+                right = b.next_record()?;
             }
             (None, None) => break,
         }
     }
-    eprintln!("cf3-compare-fasta: matching={matching} C++-only={cpp_only} Rust-only={rust_only}");
-    for sample in cpp_samples {
-        eprintln!("cf3-compare-fasta: C++-only {sample}");
+    eprintln!("cuttlefish compare: matching={matching} A-only={a_only} B-only={b_only}");
+    for sample in a_samples {
+        eprintln!("cuttlefish compare: A-only {sample}");
     }
-    for sample in rust_samples {
-        eprintln!("cf3-compare-fasta: Rust-only {sample}");
+    for sample in b_samples {
+        eprintln!("cuttlefish compare: B-only {sample}");
     }
-    if cpp_only == 0 && rust_only == 0 {
-        println!("OK: {matching} strand-normalized unitigs match C++ topology");
-        Ok(())
+    if a_only == 0 && b_only == 0 {
+        println!("OK: {matching} strand-normalized unitigs match");
+        Ok(0)
     } else {
         Err("topology multisets differ".into())
     }
@@ -250,7 +287,7 @@ fn existing_chunks(directory: &Path) -> Result<Vec<PathBuf>> {
         return Err(format!("no chunks found in {}", directory.display()).into());
     }
     eprintln!(
-        "cf3-compare-fasta: reusing {} chunk(s) from {}",
+        "cuttlefish compare: reusing {} chunk(s) from {}",
         chunks.len(),
         directory.display()
     );
@@ -350,7 +387,7 @@ fn build_chunks(
         return Err("a chunk worker exited without producing output".into());
     }
     eprintln!(
-        "cf3-compare-fasta: wrote {} sorted chunk(s), {} record(s)",
+        "cuttlefish compare: wrote {} sorted chunk(s), {} record(s)",
         chunks.len(),
         record_count
     );

@@ -12,6 +12,8 @@ use cuttlefish_rs::{
 };
 use std::time::Instant;
 
+mod compare;
+
 #[cfg(all(feature = "jemalloc", feature = "mimalloc"))]
 compile_error!("allocator features `jemalloc` and `mimalloc` are mutually exclusive");
 
@@ -57,10 +59,10 @@ where
             // so a generous one simply lets them stay wide.
             let (fd_before, fd_after) = raise_open_file_limit();
             if fd_after > fd_before {
-                eprintln!("cuttlefish3-rs: raised open-file limit from {fd_before} to {fd_after}");
+                eprintln!("cuttlefish: raised open-file limit from {fd_before} to {fd_after}");
             }
             eprintln!(
-                "cuttlefish3-rs: parsed build request for k={}, l={}, cutoff={}, color={}",
+                "cuttlefish: parsed build request for k={}, l={}, cutoff={}, color={}",
                 params.k,
                 params.minimizer_len,
                 params.cutoff(),
@@ -73,11 +75,11 @@ where
             report_process_memory("after partition");
             let partition_stats = &emission.partition;
             eprintln!(
-                "cuttlefish3-rs: resolved {} input file(s)",
+                "cuttlefish: resolved {} input file(s)",
                 partition_stats.input_files
             );
             eprintln!(
-                "cuttlefish3-rs: partitioned {} record(s), {} ACTG fragment(s), {} fragment base(s), {} weak super-kmer(s), {} non-empty subgraph(s), max subgraph bucket {}",
+                "cuttlefish: partitioned {} record(s), {} ACTG fragment(s), {} fragment base(s), {} weak super-kmer(s), {} non-empty subgraph(s), max subgraph bucket {}",
                 partition_stats.records,
                 partition_stats.fragments,
                 partition_stats.fragment_bases,
@@ -86,13 +88,13 @@ where
                 partition_stats.max_graph_superkmers()
             );
             eprintln!(
-                "cuttlefish3-rs: wrote {} weak-superkmer bucket(s), {} byte(s), in {}",
+                "cuttlefish: wrote {} weak-superkmer bucket(s), {} byte(s), in {}",
                 emission.buckets.bucket_files,
                 emission.buckets.bytes_written,
                 emission.buckets.bucket_dir.display()
             );
             eprintln!(
-                "cuttlefish3-rs: partition detail: parse/send {:.3}s, worker scan+pack {:.3}s, bucket flush {} call(s) {:.3}s, finish {:.3}s",
+                "cuttlefish: partition detail: parse/send {:.3}s, worker scan+pack {:.3}s, bucket flush {} call(s) {:.3}s, finish {:.3}s",
                 emission.parse_elapsed.as_secs_f64(),
                 emission.worker_elapsed.as_secs_f64(),
                 emission.bucket_flushes,
@@ -100,13 +102,13 @@ where
                 emission.bucket_finish_elapsed.as_secs_f64()
             );
             eprintln!(
-                "cuttlefish3-rs: partition and bucket emission completed in {:.3}s",
+                "cuttlefish: partition and bucket emission completed in {:.3}s",
                 partition_elapsed.as_secs_f64()
             );
             // Diagnostic: stop after partitioning so a profiler can attribute
             // work to that phase alone.
             if std::env::var_os("CF3_RS_EXIT_AFTER_PARTITION").is_some() {
-                eprintln!("cuttlefish3-rs: exiting after partition (diagnostic)");
+                eprintln!("cuttlefish: exiting after partition (diagnostic)");
                 std::process::exit(0);
             }
             let build_start = Instant::now();
@@ -115,7 +117,7 @@ where
                 let build = dispatch_colored_build(&params, &emission)?;
                 report_process_memory("after colored build");
                 eprintln!(
-                    "cuttlefish3-rs: wrote {} colored unitig(s), {} base(s), FASTA at {}; color repository at {}",
+                    "cuttlefish: wrote {} colored unitig(s), {} base(s), FASTA at {}; color repository at {}",
                     build.unitigs,
                     build.unitig_bases,
                     build.output_path.display(),
@@ -126,18 +128,18 @@ where
                 let build = dispatch_uncolored_build(&params, &emission)?;
                 report_process_memory("after uncolored build");
                 eprintln!(
-                    "cuttlefish3-rs: graph handoff recorded {} retained/active edge(s) from {} observed exit/edge event(s)",
+                    "cuttlefish: graph handoff recorded {} retained/active edge(s) from {} observed exit/edge event(s)",
                     build.retained_edges, build.observed_edges
                 );
                 eprintln!(
-                    "cuttlefish3-rs: wrote {} unitig(s), {} base(s), FASTA at {}",
+                    "cuttlefish: wrote {} unitig(s), {} base(s), FASTA at {}",
                     build.unitigs,
                     build.unitig_bases,
                     build.output_path.display()
                 );
             }
             eprintln!(
-                "cuttlefish3-rs: graph build completed in {:.3}s",
+                "cuttlefish: graph build completed in {:.3}s",
                 build_start.elapsed().as_secs_f64()
             );
             // The build path has already flushed its output files. Exiting here
@@ -145,12 +147,13 @@ where
             // time recursively dropping them on the hot benchmark path.
             std::process::exit(0);
         }
+        "compare" => compare::run(args).map_err(|err| CliError::Compare(err.to_string())),
         "help" | "--help" | "-h" => {
             print_top_help();
             Ok(0)
         }
         "version" | "--version" | "-V" => {
-            println!("cuttlefish3-rs 0.1.0");
+            println!("cuttlefish {}", env!("CARGO_PKG_VERSION"));
             Ok(0)
         }
         _ => {
@@ -366,10 +369,11 @@ where
 }
 
 fn print_top_help() {
-    println!("cuttlefish3-rs 0.1.0");
-    println!("Supported commands: `build`, `help`, `version`.");
+    println!("cuttlefish {}", env!("CARGO_PKG_VERSION"));
+    println!("Supported commands: `build`, `compare`, `help`, `version`.");
     println!("Usage:");
-    println!("    cuttlefish3-rs build [options]");
+    println!("    cuttlefish build [options]");
+    println!("    cuttlefish compare [options]");
 }
 
 fn print_build_help() {
@@ -379,7 +383,7 @@ fn print_build_help() {
         "Efficiently construct the (colored) compacted de Bruijn graph from reference sequences or sequencing reads."
     );
     println!("Usage:");
-    println!("  cuttlefish3-rs build [OPTION...]");
+    println!("  cuttlefish build [OPTION...]");
     println!();
     println!(" common options:");
     println!("  -s, --seq <arg>       input files");
@@ -409,6 +413,7 @@ enum CliError {
     InvalidValue(&'static str),
     InputMode,
     Parallelism(String),
+    Compare(String),
     Param(ParamError),
     Input(InputError),
     Partition(PartitionRunError),
@@ -455,6 +460,7 @@ impl std::fmt::Display for CliError {
             Self::InvalidValue(arg) => write!(f, "invalid value for {arg}"),
             Self::InputMode => write!(f, "select exactly one of --read or --ref"),
             Self::Parallelism(err) => write!(f, "failed to configure worker threads: {err}"),
+            Self::Compare(err) => write!(f, "cuttlefish compare: {err}"),
             Self::Param(err) => write!(f, "{err}"),
             Self::Input(err) => write!(f, "{err}"),
             Self::Partition(err) => write!(f, "{err}"),

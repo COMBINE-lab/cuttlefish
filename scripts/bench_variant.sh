@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Run one cuttlefish3-rs (or C++ cuttlefish) build, capture wall time, peak RSS,
+# Run one Rust (or C++) cuttlefish build, capture wall time, peak RSS,
 # peak open-descriptor count, per-phase timers, and output counts, and append one
 # row to a TSV.
 #
@@ -10,7 +10,7 @@
 #   --variant NAME     label for this binary/configuration (required)
 #   --list FILE        input file list                     (required)
 #   --mode ref|read    graph input class                   (required)
-#   --bin PATH         binary (default target/release/cuttlefish3-rs)
+#   --bin PATH         binary (default target/release/cuttlefish)
 #   --impl rust|cpp    which CLI dialect to emit           (default rust)
 #   --color            build a colored graph
 #   --threads N        default 256
@@ -35,7 +35,7 @@
 set -u -o pipefail
 
 ROOT=/scratch4/rob/cf3-bench
-BIN=target/release/cuttlefish3-rs
+BIN=target/release/cuttlefish
 IMPL=rust
 THREADS=256
 K=31

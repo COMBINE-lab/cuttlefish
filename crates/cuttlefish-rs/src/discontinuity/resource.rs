@@ -127,7 +127,7 @@ pub fn report_process_memory(label: &str) {
         }
     }
     if let (Some(rss), Some(hwm)) = (rss_kib, hwm_kib) {
-        eprintln!("cuttlefish3-rs: rss {label}: current {rss} KiB, peak {hwm} KiB");
+        eprintln!("cuttlefish: rss {label}: current {rss} KiB, peak {hwm} KiB");
     }
 }
 

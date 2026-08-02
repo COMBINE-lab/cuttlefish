@@ -94,7 +94,7 @@ colored builds or to reference input.
 ### 64 threads is deterministic and correct
 
 Three repeated uncolored runs at 64 threads each emitted exactly 51,644,203 /
-4,130,164,227, and `cf3-compare-fasta` matched all 51,644,203 strand-normalized
+4,130,164,227, and `cuttlefish compare` matched all 51,644,203 strand-normalized
 unitigs against Rust. **Low-thread C++ is therefore a valid correctness
 reference**; only 128+ thread runs are unusable for topology.
 
@@ -117,7 +117,7 @@ expansion agree on the graph every time; the discrepancy appears afterwards.
 ### The defect corrupts collation, not just the final write
 
 Comparing a correct 64-thread run against a 256-thread run is not a pure
-record-deletion difference. `cf3-compare-fasta` reports differing unitig
+record-deletion difference. `cuttlefish compare` reports differing unitig
 *content*: a 1,685-base unitig in the good run appears as 1,695 bases in the bad
 one, with a 1,463-base common prefix and 223-base common suffix.
 

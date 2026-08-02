@@ -435,7 +435,7 @@ The Rust command was:
 
 ```bash
 CF3_RS_PROFILE_RSS=1 /usr/bin/time -v \
-  target/release/cuttlefish3-rs build \
+  target/release/cuttlefish build \
   --list /scratch3/tmp/humgut2/profile1000.list \
   --kmer-len 31 --min-len 12 --ref --color --threads 256 \
   --output /scratch3/tmp/humgut2/profile1000-inplace16.fa \
@@ -528,7 +528,7 @@ unchanged, so reference-mode behavior and tuning are untouched.
 
 Partitioning is 3.05 times faster and the build 1.99 times faster; against C++
 the build is 2.14 times faster using 38% less memory. Every run emitted the
-exact 13,309,867 unitigs and 1,223,963,745 bases, and `cf3-compare-fasta`
+exact 13,309,867 unitigs and 1,223,963,745 bases, and `cuttlefish compare`
 matched all 13,309,867 strand-normalized unitigs against both the previous Rust
 output and a C++ reference.
 
@@ -696,7 +696,7 @@ Smaller reference rungs at low thread counts, all counts matching:
 | 10,000 | colored | 16 | 1:56.01 | 2:05.89 | 7.0 GB | 8.6 GB |
 | 10,000 | colored | 32 | 1:08.59 | 1:15.46 | 8.8 GB | 11.7 GB |
 
-`cf3-compare-fasta` matched all 252,487,658 strand-normalized unitigs between
+`cuttlefish compare` matched all 252,487,658 strand-normalized unitigs between
 the two 64-thread outputs, so the implementations are verified identical at full
 corpus scale, not merely equal in count. C++'s 5,796-unitig deficit at 256
 threads is therefore a function of thread count rather than workload.
@@ -758,7 +758,7 @@ Four changes, measured together on interleaved repeats:
 | `SRR105788` read, 256 threads | 29.56 s | 28.98 s |
 
 Read-mode peak RSS also fell from about 9.7 GB to 9.0 GB. All counts were
-preserved and `cf3-compare-fasta` matched all 51,644,203 strand-normalized
+preserved and `cuttlefish compare` matched all 51,644,203 strand-normalized
 unitigs against the deterministic 64-thread C++ reference.
 
 ## The single-large-gzip limit
@@ -1144,7 +1144,7 @@ numbers reported for the bucket containers below.
 Only two metrics have a delta larger than either arm's spread, and they are the
 file count and the peak disk. Every run emitted the exact 252,487,658 unitigs
 and 16,417,233,428 bases with identical internal counts -- 162,177,995
-meta-vertices and 703,792,519 reinserted edges -- and `cf3-compare-fasta`
+meta-vertices and 703,792,519 reinserted edges -- and `cuttlefish compare`
 matched all 252,487,658 strand-normalized unitigs against the 64-thread C++
 reference. Colored is flat as well: 6:39.70 against 6:42.00, with an unchanged
 41 GiB colour index and exact counts.
@@ -1343,7 +1343,7 @@ one outlier sample whose file-count reading (3,678 against 1,795 twice)
 suggests the sampler caught the background unlinkers still running.
 
 Taken together, a full uncolored build now peaks at 2,423 files against 23,786
-and 233.6 GB against 331.3 GB, and `cf3-compare-fasta` matched all 252,487,658
+and 233.6 GB against 331.3 GB, and `cuttlefish compare` matched all 252,487,658
 strand-normalized unitigs against the 64-thread C++ reference.
 
 ### Stage 3 was investigated and rejected

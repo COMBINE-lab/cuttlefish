@@ -8,12 +8,15 @@ sequencing reads.
 cargo install cuttlefish-rs-cli
 ```
 
-This installs two binaries: `cuttlefish3-rs`, the graph constructor, and
-`cf3-compare-fasta`, which compares two unitig FASTA files up to strand and
-cyclic rotation.
+This installs one binary, `cuttlefish`, with two subcommands:
 
 ```bash
-cuttlefish3-rs build --ref --seq refs.fa -k 31 --work-dir work --output graph
+# construct a compacted graph
+cuttlefish build --ref --seq refs.fa -k 31 --work-dir work --output graph
+
+# decide whether two unitig FASTA files describe the same graph, up to
+# strand and cyclic rotation
+cuttlefish compare -a graph.fa -b other.fa -k 31 --work-dir cmp
 ```
 
 The default build links jemalloc. `--no-default-features` selects the system

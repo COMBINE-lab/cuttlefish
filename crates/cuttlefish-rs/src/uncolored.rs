@@ -118,7 +118,7 @@ pub fn build_uncolored_with_serial_discontinuity_pipeline<const K: usize>(
         PathBuf::from(&params.work_dir).join(format!("{output_name}.cf3rs.lmtig-labels"));
     let bucket_dir = bucket_dir.as_ref().to_path_buf();
     let local_threads = params.local_workers();
-    eprintln!("cuttlefish3-rs: local contraction using {local_threads} worker(s)");
+    eprintln!("cuttlefish: local contraction using {local_threads} worker(s)");
     let output_path = PathBuf::from(format!("{}.fa", params.output_prefix));
     let mut inputs = emit_uncolored_external_discontinuity_inputs_with_threads_in_dir::<K>(
         &bucket_dir,
@@ -130,11 +130,11 @@ pub fn build_uncolored_with_serial_discontinuity_pipeline<const K: usize>(
     let local_elapsed = local_start.elapsed();
     report_process_memory("after local contraction before trim");
     eprintln!(
-        "cuttlefish3-rs: local contraction emitted {} unitig(s), {} discontinuity exit(s)",
+        "cuttlefish: local contraction emitted {} unitig(s), {} discontinuity exit(s)",
         inputs.stats.local_unitigs, inputs.stats.discontinuity_exits
     );
     eprintln!(
-        "cuttlefish3-rs: local contraction phase completed in {:.3}s",
+        "cuttlefish: local contraction phase completed in {:.3}s",
         local_elapsed.as_secs_f64()
     );
     // With buckets in containers this is a bulk delete of 129 files holding
@@ -146,16 +146,16 @@ pub fn build_uncolored_with_serial_discontinuity_pipeline<const K: usize>(
         .then(|| spawn_background_dir_removal(bucket_dir.clone()));
     trim_process_allocations();
     report_process_memory("after local contraction trim");
-    eprintln!("cuttlefish3-rs: collating final unitigs");
+    eprintln!("cuttlefish: collating final unitigs");
     let collation_start = Instant::now();
     report_process_memory("before collation");
     let coord_dir =
         PathBuf::from(&params.work_dir).join(format!("{output_name}.cf3rs.stitch-coords"));
     let final_dir =
         PathBuf::from(&params.work_dir).join(format!("{output_name}.cf3rs.final-unitigs"));
-    eprintln!("cuttlefish3-rs: writing FASTA to {}", output_path.display());
+    eprintln!("cuttlefish: writing FASTA to {}", output_path.display());
     let post_local_threads = params.post_local_workers();
-    eprintln!("cuttlefish3-rs: collation using {post_local_threads} worker(s)");
+    eprintln!("cuttlefish: collation using {post_local_threads} worker(s)");
     let stats = SerialUncoloredCollator::collate_external_stitched_to_fasta_with_threads_in_dir(
         &mut inputs,
         post_local_threads,
@@ -166,7 +166,7 @@ pub fn build_uncolored_with_serial_discontinuity_pipeline<const K: usize>(
     let collation_elapsed = collation_start.elapsed();
     report_process_memory("after collation");
     eprintln!(
-        "cuttlefish3-rs: collation and FASTA write completed in {:.3}s",
+        "cuttlefish: collation and FASTA write completed in {:.3}s",
         collation_elapsed.as_secs_f64()
     );
 

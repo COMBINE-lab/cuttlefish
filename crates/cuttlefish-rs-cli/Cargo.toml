@@ -14,17 +14,13 @@ homepage.workspace = true
 keywords.workspace = true
 categories = ["science", "command-line-utilities"]
 
-# The binary keeps the "3" that the crate name drops. `cuttlefish` was already
-# taken on crates.io and `cuttlefish3` reads oddly there, but the program the
-# user invokes is still Cuttlefish 3, and every doc, script and CI job names it
-# this way.
+# One binary, named for the program rather than for the rewrite. This is the
+# canonical Cuttlefish, so its invocation should read the way the C++ one did;
+# only the crate name carries `-rs`, and only because `cuttlefish` was already
+# taken on crates.io.
 [[bin]]
-name = "cuttlefish3-rs"
+name = "cuttlefish"
 path = "src/main.rs"
-
-[[bin]]
-name = "cf3-compare-fasta"
-path = "src/compare_fasta.rs"
 
 [features]
 default = ["jemalloc"]

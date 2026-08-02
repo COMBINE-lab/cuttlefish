@@ -25,7 +25,7 @@ def parse_args():
     parser.add_argument("--cpp-bin", required=True, help="path to the C++ cuttlefish binary")
     parser.add_argument(
         "--rust-bin",
-        help="path to cuttlefish3-rs; defaults to `cargo run -p cuttlefish-rs-cli --`",
+        help="path to the Rust cuttlefish; defaults to `cargo run -p cuttlefish-rs-cli --`",
     )
     parser.add_argument(
         "-s",

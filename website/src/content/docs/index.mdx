@@ -1,0 +1,75 @@
+---
+title: Cuttlefish
+description: Fast, parallel, low-memory construction of compacted de Bruijn graphs from reference sequences or sequencing reads.
+template: splash
+hero:
+  tagline: Fast, parallel, low-memory construction of compacted de Bruijn graphs — from reference sequences or sequencing reads, at collection scale.
+  image:
+    file: ../../assets/cuttlefish-logo.svg
+  actions:
+    - text: Cuttlefish 3 (Rust)
+      link: rust/introduction/
+      icon: right-arrow
+    - text: Cuttlefish 1 & 2 (C++)
+      link: cpp/overview/
+      icon: document
+      variant: secondary
+    - text: View on GitHub
+      link: https://github.com/COMBINE-lab/cuttlefish
+      icon: external
+      variant: minimal
+---
+
+import { Card, CardGrid, LinkCard } from '@astrojs/starlight/components';
+
+## Two lines of Cuttlefish
+
+Cuttlefish has been through three generations. Which documentation you want
+depends on which one you are running.
+
+<CardGrid>
+  <LinkCard
+    title="Cuttlefish 3 — the Rust implementation"
+    href="rust/introduction/"
+    description="The current line of development. Uncolored and colored compacted graphs, external memory throughout, built for collections that do not fit in RAM. Under active development; the CLI and intermediate formats may still change."
+  />
+  <LinkCard
+    title="Cuttlefish 1 & 2 — the C++ implementation"
+    href="cpp/overview/"
+    description="The published, widely deployed versions, installable from Bioconda. Cuttlefish 1 emits GFA and sequence tilings; Cuttlefish 2 handles both reads and references. Also covers the archived C++ Cuttlefish 3."
+  />
+</CardGrid>
+
+Not sure which applies to you? See [which version should I
+use?](about/which-version/).
+
+## What Cuttlefish does
+
+Cuttlefish constructs the **compacted de Bruijn graph** — the graph whose
+vertices are the maximal unitigs, the non-branching paths of the de Bruijn
+graph — from a set of reference sequences or sequencing reads. It is designed
+to stay fast and lightweight as the input grows to collection scale.
+
+<CardGrid stagger>
+  <Card title="Reads or references" icon="seti:db">
+    Build a reference graph from FASTA, or a cutoff-filtered read graph from
+    FASTQ. Gzipped input is handled directly.
+  </Card>
+  <Card title="Colored graphs" icon="seti:pipeline">
+    Cuttlefish 3 emits positional colors: which input sources cover which
+    stretch of each unitig, written alongside the unitig FASTA.
+  </Card>
+  <Card title="External memory" icon="laptop">
+    Partition buckets, blocked edge matrices, and collation buckets live on
+    disk, so peak RAM tracks the worker set rather than the graph.
+  </Card>
+  <Card title="Parallel throughout" icon="rocket">
+    Partitioning, local contraction, discontinuity contraction, and final
+    collation all run multi-threaded under a worker budget you set.
+  </Card>
+</CardGrid>
+
+## Citing Cuttlefish
+
+If Cuttlefish contributed to your work, please [cite the relevant
+paper](about/citations/) — there is a separate one for Cuttlefish 1, 2, and 3.

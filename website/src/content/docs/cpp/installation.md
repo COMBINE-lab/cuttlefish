@@ -1,0 +1,49 @@
+---
+title: Installation
+description: Installing the C++ Cuttlefish from Bioconda or from source.
+---
+
+## From Bioconda
+
+```bash
+conda install -c bioconda cuttlefish
+```
+
+The Conda package supports *k* values up to **127**. For larger *k*, install
+from source and see [Larger *k*-mer sizes](../large-k/).
+
+## From source
+
+```bash
+git clone https://github.com/COMBINE-lab/cuttlefish.git
+cd cuttlefish/
+mkdir build && cd build/
+cmake -DCMAKE_INSTALL_PREFIX=../ ..
+make -j 8 install
+cd ..
+```
+
+Replace `8` in `make -j 8` with the number of threads you want to build with.
+
+This installs Cuttlefish into a `bin` subdirectory inside the project root. To
+choose a different location, pass its path as `-DCMAKE_INSTALL_PREFIX`:
+
+```bash
+cmake -DCMAKE_INSTALL_PREFIX=<custom_path>/ ..
+```
+
+The executable then lands in `<custom_path>/bin/`. Omitting
+`-DCMAKE_INSTALL_PREFIX` entirely installs to `/usr/local/bin/`, which may
+require `sudo make -j 8 install`.
+
+:::note
+A source installation supports *k* up to **63** by default — lower than the
+Conda package's 127. To raise it, see [Larger *k*-mer sizes](../large-k/).
+:::
+
+## Which branch
+
+The C++ implementation lives on the repository's default branches. Note that
+the `rust-rewrite` branch contains only the Rust Cuttlefish 3 — the C++ sources
+were removed from it, and the last state of the C++ Cuttlefish 3 is preserved
+on the `cuttlefish3-cpp` branch. See [The C++ Cuttlefish 3](../cuttlefish3/).

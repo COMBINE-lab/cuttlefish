@@ -1,0 +1,74 @@
+name: Deploy website
+
+# Publishes the Astro/Starlight site in `website/` to
+# https://combine-lab.github.io/cuttlefish/.
+#
+# This replaces the mkdocs build that previously produced the `gh-pages`
+# branch. The new site covers both implementations: the C++ Cuttlefish 1 and 2
+# documentation was ported into it, so nothing that was published before has
+# gone away.
+
+on:
+  push:
+    branches: [rust-rewrite, main, master]
+    paths:
+      - 'website/**'
+      - '.github/workflows/docs.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: website
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+        with:
+          # Switch Pages to the "workflow" build type via the API, so the
+          # deploy does not need the Settings -> Pages toggle flipped by hand.
+          # The repository currently serves Pages from the `gh-pages` branch;
+          # this is what moves it over.
+          enablement: true
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: website/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build site
+        run: npm run build
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: website/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

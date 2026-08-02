@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="25 14 205 205" width="256" height="256" role="img" aria-label="A cuttlefish whose arms are the colored paths of a de Bruijn graph">
+<g><line x1="110.00" y1="153.12" x2="88.40" y2="179.27" stroke="#E4572E" stroke-width="15.00" stroke-linecap="round"/><line x1="88.40" y1="179.27" x2="75.92" y2="204.91" stroke="#E4572E" stroke-width="2.80" stroke-linecap="round"/><line x1="122.00" y1="155.04" x2="114.73" y2="184.70" stroke="#17A398" stroke-width="15.00" stroke-linecap="round"/><line x1="114.73" y1="184.70" x2="110.74" y2="209.90" stroke="#17A398" stroke-width="2.80" stroke-linecap="round"/><line x1="134.00" y1="155.04" x2="141.27" y2="184.70" stroke="#4C6EF5" stroke-width="15.00" stroke-linecap="round"/><line x1="141.27" y1="184.70" x2="145.26" y2="209.90" stroke="#4C6EF5" stroke-width="2.80" stroke-linecap="round"/><line x1="146.00" y1="153.12" x2="167.60" y2="179.27" stroke="#F2A93B" stroke-width="15.00" stroke-linecap="round"/><line x1="167.60" y1="179.27" x2="180.08" y2="204.91" stroke="#F2A93B" stroke-width="2.80" stroke-linecap="round"/></g>
+<g><circle cx="88.40" cy="179.27" r="13.00" fill="#E4572E"/><circle cx="75.92" cy="204.91" r="3.60" fill="#E4572E"/><circle cx="114.73" cy="184.70" r="13.00" fill="#17A398"/><circle cx="110.74" cy="209.90" r="3.60" fill="#17A398"/><circle cx="141.27" cy="184.70" r="13.00" fill="#4C6EF5"/><circle cx="145.26" cy="209.90" r="3.60" fill="#4C6EF5"/><circle cx="167.60" cy="179.27" r="13.00" fill="#F2A93B"/><circle cx="180.08" cy="204.91" r="3.60" fill="#F2A93B"/></g>
+<g fill="#22303F">
+<path d="M 128 20 C 152 20 172 44 176 76 C 179 104 174 124 166 136 C 162 142 156 140 158 132 C 164 112 166 84 162 62 C 158 38 146 24 128 24 C 110 24 98 38 94 62 C 90 84 92 112 98 132 C 100 140 94 142 90 136 C 82 124 77 104 80 76 C 84 44 104 20 128 20 Z" opacity="0.38"/>
+<path d="M 128 18 C 149 18 162 40 165 70 C 167 98 163 118 156 130 L 100 130 C 93 118 89 98 91 70 C 94 40 107 18 128 18 Z"/>
+<path d="M 101 129 L 155 129 C 157 144 150 156 128 158 C 106 156 99 144 101 129 Z"/>
+</g>
+<ellipse cx="114" cy="140" rx="10.6" ry="8.2" fill="#FFFFFF"/>
+<path d="M 106.8 135.2 L 111 140.2 L 114 136.6 L 117 140.2 L 121.2 135.2 L 121.2 139.8 L 114 143.2 L 106.8 139.8 Z" fill="#22303F"/>
+<ellipse cx="142" cy="140" rx="10.6" ry="8.2" fill="#FFFFFF"/>
+<path d="M 134.8 135.2 L 139 140.2 L 142 136.6 L 145 140.2 L 149.2 135.2 L 149.2 139.8 L 142 143.2 L 134.8 139.8 Z" fill="#22303F"/>
+</svg>

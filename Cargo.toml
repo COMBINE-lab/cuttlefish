@@ -11,7 +11,7 @@ resolver = "2"
 # `scripts/bump_and_publish.sh` rewrites this single line. 0.0.0 means nothing
 # has been released yet -- the crates.io entries at this version exist only to
 # hold the names.
-version = "0.0.0"
+version = "0.0.1"
 edition = "2024"
 license = "BSD-3-Clause"
 rust-version = "1.85"
@@ -25,7 +25,7 @@ categories = ["science"]
 # Path plus version: the path is what a local `cargo build` resolves, the
 # version is what the published crate requires. `bump_and_publish.sh` keeps the
 # version here in step with [workspace.package].
-cuttlefish-rs = { path = "crates/cuttlefish-rs", version = "0.0.0" }
+cuttlefish-rs = { path = "crates/cuttlefish-rs", version = "0.0.1" }
 
 [profile.release]
 codegen-units = 8

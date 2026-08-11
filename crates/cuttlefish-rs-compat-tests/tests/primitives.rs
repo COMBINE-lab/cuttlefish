@@ -1256,7 +1256,6 @@ fn serial_discontinuity_pipeline_builds_fasta_from_emitted_buckets() {
     );
     params.k = 7;
     params.minimizer_len = 3;
-    params.vertex_partitions = 128;
     params
         .seqs
         .push(fixture("data/refs2.fa").display().to_string());

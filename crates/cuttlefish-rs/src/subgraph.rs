@@ -8,9 +8,7 @@
 use crate::Side;
 #[cfg(test)]
 use crate::buckets::BucketRecord;
-use crate::buckets::{
-    BorrowedBucketPackedRecord, BucketError, BucketLocation, BucketManifestEntry, BucketStore,
-};
+use crate::buckets::{BorrowedBucketPackedRecord, BucketError, BucketManifestEntry, BucketStore};
 use crate::color::{ColorError, ConcurrentColorRepository};
 use crate::dna::Base;
 use crate::hash::{FastBuildHasher, fast_u64_hash, hash_two_u64};
@@ -20,7 +18,6 @@ use hashbrown::HashMap;
 use hashbrown::HashTable;
 use hashbrown::hash_map::RawEntryMut;
 use std::collections::HashSet;
-use std::path::Path;
 
 #[derive(Debug, Clone)]
 pub struct DenseLocalVertexMap {
@@ -603,19 +600,6 @@ fn decode_only_diagnostic() -> bool {
 }
 
 impl<const K: usize> LocalSubgraph<K> {
-    pub fn from_bucket_path(
-        path: impl AsRef<Path>,
-        cutoff: u32,
-    ) -> Result<Self, LocalSubgraphError> {
-        let store = BucketStore::files_only();
-        let entries = [BucketManifestEntry {
-            graph_id: 0,
-            records: 0,
-            location: BucketLocation::File(path.as_ref().to_path_buf()),
-        }];
-        Self::from_entries_with_capacity(&store, &entries, cutoff, 0, None)
-    }
-
     pub fn from_manifest_entries(
         store: &BucketStore,
         entries: &[BucketManifestEntry],
@@ -720,10 +704,6 @@ impl<const K: usize> LocalSubgraph<K> {
 
     pub fn contract(&mut self) -> Result<Vec<LocalUnitig<K>>, LocalSubgraphError> {
         self.contract_internal(true)
-    }
-
-    pub fn contract_compact(&mut self) -> Result<Vec<LocalUnitig<K>>, LocalSubgraphError> {
-        self.contract_internal(false)
     }
 
     pub(crate) fn contract_compact_with<F>(&mut self, emit: F) -> Result<(), LocalSubgraphError>

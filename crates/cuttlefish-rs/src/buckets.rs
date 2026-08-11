@@ -1350,187 +1350,6 @@ pub fn read_manifest(
     Ok(out)
 }
 
-pub fn coalesce_bucket_manifest(
-    bucket_dir: &Path,
-    entries: &[BucketManifestEntry],
-) -> Result<BucketEmitStats, BucketError> {
-    coalesce_bucket_manifest_with_threads(bucket_dir, entries, 1)
-}
-
-pub fn coalesce_bucket_manifest_with_threads(
-    bucket_dir: &Path,
-    entries: &[BucketManifestEntry],
-    threads: usize,
-) -> Result<BucketEmitStats, BucketError> {
-    let mut by_graph = BTreeMap::<usize, Vec<BucketManifestEntry>>::new();
-    for entry in entries {
-        by_graph
-            .entry(entry.graph_id)
-            .or_default()
-            .push(entry.clone());
-    }
-
-    let groups = by_graph.into_iter().collect::<Vec<_>>();
-    let workers = threads.max(1).min(groups.len().max(1));
-    let mut manifest = if workers == 1 {
-        let mut manifest = Vec::with_capacity(groups.len());
-        for group in &groups {
-            manifest.push(coalesce_bucket_group(bucket_dir, group)?);
-        }
-        manifest
-    } else {
-        let next_group = AtomicUsize::new(0);
-        let mut manifest = std::thread::scope(|scope| {
-            let mut handles = Vec::new();
-            for _ in 0..workers {
-                let next_group = &next_group;
-                let groups = &groups;
-                handles.push(scope.spawn(move || {
-                    let mut local = Vec::new();
-                    loop {
-                        let group_idx = next_group.fetch_add(1, Ordering::Relaxed);
-                        let Some(group) = groups.get(group_idx) else {
-                            break;
-                        };
-                        local.push(coalesce_bucket_group(bucket_dir, group)?);
-                    }
-                    Ok::<_, BucketError>(local)
-                }));
-            }
-
-            let mut manifest = Vec::with_capacity(groups.len());
-            for handle in handles {
-                manifest.extend(handle.join().map_err(|_| BucketError::WorkerPanic)??);
-            }
-            Ok::<_, BucketError>(manifest)
-        })?;
-        manifest.sort_by_key(|(graph_id, _, path, _)| (*graph_id, path.clone()));
-        manifest
-    };
-    let total_bytes = manifest.iter().map(|(_, _, _, bytes)| *bytes).sum();
-    let public_manifest = manifest
-        .drain(..)
-        .map(|(graph_id, records, path, _)| (graph_id, records, path))
-        .collect::<Vec<_>>();
-
-    write_manifest(bucket_dir, &public_manifest)?;
-
-    Ok(BucketEmitStats {
-        bucket_dir: bucket_dir.to_path_buf(),
-        bucket_files: public_manifest.len(),
-        bytes_written: total_bytes,
-    })
-}
-
-fn coalesce_bucket_group(
-    bucket_dir: &Path,
-    group: &(usize, Vec<BucketManifestEntry>),
-) -> Result<(usize, u64, PathBuf, u64), BucketError> {
-    let (graph_id, graph_entries) = group;
-    // Coalescing concatenates raw payloads, which only whole uncompressed
-    // bucket files expose; a container's buckets are read through the store.
-    let entry_path = |entry: &BucketManifestEntry| {
-        entry
-            .file_path()
-            .map(Path::to_path_buf)
-            .ok_or_else(|| BucketError::MalformedManifest(bucket_dir.to_path_buf()))
-    };
-    let first_header = read_bucket_header(&entry_path(&graph_entries[0])?)?;
-    let mut writer = BucketFile::create(
-        bucket_dir,
-        first_header.k,
-        first_header.minimizer_len,
-        first_header.graph_count,
-        *graph_id,
-        first_header.colored,
-        first_header.label_words,
-        first_header.compressed,
-    )?;
-
-    for entry in graph_entries {
-        let path = entry_path(entry)?;
-        let copied_records = copy_bucket_payload(&path, &first_header, *graph_id, &mut writer)?;
-        if copied_records != entry.records {
-            return Err(BucketError::MalformedHeader(path));
-        }
-    }
-
-    writer.finish()?;
-    Ok((
-        *graph_id,
-        writer.records,
-        writer.path.clone(),
-        writer.bytes_written,
-    ))
-}
-
-fn read_bucket_header(path: &Path) -> Result<BucketHeader, BucketError> {
-    let mut file = File::open(path).map_err(|source| BucketError::Io {
-        path: path.to_path_buf(),
-        source,
-    })?;
-    read_header(&mut file, path)
-}
-
-fn copy_bucket_payload(
-    path: &Path,
-    expected: &BucketHeader,
-    graph_id: usize,
-    writer: &mut BucketFile,
-) -> Result<u64, BucketError> {
-    let mut file = File::open(path).map_err(|source| BucketError::Io {
-        path: path.to_path_buf(),
-        source,
-    })?;
-    let header = read_header(&mut file, path)?;
-    if header.k != expected.k
-        || header.minimizer_len != expected.minimizer_len
-        || header.graph_count != expected.graph_count
-        || header.graph_id != graph_id
-        || header.colored != expected.colored
-        || header.label_words != expected.label_words
-    {
-        return Err(BucketError::MalformedHeader(path.to_path_buf()));
-    }
-
-    let payload_bytes = header
-        .records
-        .checked_mul(record_size(header.colored, header.label_words) as u64)
-        .ok_or(BucketError::TooManyRecords)?;
-    let actual_len = file
-        .metadata()
-        .map_err(|source| BucketError::Io {
-            path: path.to_path_buf(),
-            source,
-        })?
-        .len();
-    if actual_len != HEADER_LEN + payload_bytes {
-        return Err(BucketError::MalformedHeader(path.to_path_buf()));
-    }
-
-    file.seek(SeekFrom::Start(HEADER_LEN))
-        .map_err(|source| BucketError::Io {
-            path: path.to_path_buf(),
-            source,
-        })?;
-    let copied =
-        std::io::copy(&mut file.take(payload_bytes), &mut writer.file).map_err(|source| {
-            BucketError::Io {
-                path: path.to_path_buf(),
-                source,
-            }
-        })?;
-    if copied != payload_bytes {
-        return Err(BucketError::MalformedHeader(path.to_path_buf()));
-    }
-    writer.records = writer
-        .records
-        .checked_add(header.records)
-        .ok_or(BucketError::TooManyRecords)?;
-    writer.bytes_written += copied;
-    Ok(header.records)
-}
-
 impl BucketEmitter {
     pub fn create(params: &BuildParams, graph_count: usize) -> Result<Self, BucketError> {
         Self::create_in_dir(params, graph_count, bucket_dir(params))
@@ -3502,7 +3321,6 @@ mod tests {
         let mut params = BuildParams::new(crate::GraphInput::References, "test".to_string());
         params.k = 31;
         params.minimizer_len = 15;
-        params.vertex_partitions = 1;
         params.threads = 2;
         params.work_dir = dir.to_string_lossy().into_owned();
         let sink = SharedBucketSink::create(&params, ATLAS_GRAPH_COUNT + 1).unwrap();
@@ -3563,7 +3381,6 @@ mod tests {
         params.color = true;
         params.k = 31;
         params.minimizer_len = 15;
-        params.vertex_partitions = 1;
         params.threads = 1;
         params.work_dir = dir.to_string_lossy().into_owned();
         let sink = SharedBucketSink::create(&params, 1).unwrap();

@@ -130,11 +130,6 @@ impl VertexState {
     }
 
     #[inline]
-    pub fn is_discontinuity(&self) -> bool {
-        self.is_discontinuous(Side::Front) || self.is_discontinuous(Side::Back)
-    }
-
-    #[inline]
     pub fn mark_visited(&mut self) {
         self.flags |= Self::VISITED;
     }
@@ -208,11 +203,6 @@ impl ColorCoordinate {
     const IN_PROCESS: u64 = 1u64 << 63;
     const INDEX_SHIFT: u32 = 8;
 
-    pub fn in_process(worker: u64) -> Self {
-        assert!(worker < (1u64 << Self::INDEX_SHIFT));
-        Self(Self::IN_PROCESS | worker)
-    }
-
     pub fn discovered(worker: u64, index: u64) -> Self {
         assert!(worker < (1u64 << Self::INDEX_SHIFT));
         assert!(index < (1u64 << 32));
@@ -227,12 +217,6 @@ impl ColorCoordinate {
     #[inline]
     pub fn is_in_process(self) -> bool {
         self.0 & Self::IN_PROCESS != 0
-    }
-
-    #[inline]
-    pub fn processing_worker(self) -> u64 {
-        assert!(self.is_in_process());
-        self.0 & !Self::IN_PROCESS
     }
 
     #[inline]

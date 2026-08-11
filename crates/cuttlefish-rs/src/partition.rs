@@ -6,7 +6,7 @@
 
 use crate::buckets::{BucketEmitStats, SharedBucketEmitter, SharedBucketSink};
 use crate::dna::{ascii_base_bits, valid_ascii_base_bits};
-use crate::hash::{hash_u64, wyhash_u64};
+use crate::hash::wyhash_u64;
 use crate::input::{
     BorrowedSequenceFragment, InputError, expand_input_paths, parse_fragments,
     parse_fragments_borrowed, parse_fragments_borrowed_with,
@@ -1232,11 +1232,6 @@ where
 #[inline]
 fn graph_id(hash: u64, graph_count: usize) -> usize {
     hash as usize & (graph_count - 1)
-}
-
-#[inline]
-pub fn source_hash(source_id: u32) -> u64 {
-    hash_u64(source_id as u64, 0)
 }
 
 #[derive(Debug)]

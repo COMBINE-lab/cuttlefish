@@ -47,10 +47,6 @@ pub const DEFAULT_GRAPHS_PER_ATLAS: usize = 128;
 pub const DEFAULT_SUBGRAPH_COUNT: usize = DEFAULT_ATLAS_COUNT * DEFAULT_GRAPHS_PER_ATLAS;
 /// Number of vertex partitions in the external discontinuity graph.
 pub const DEFAULT_VERTEX_PARTITIONS: usize = 128;
-/// Default number of local-unitig buckets.
-pub const DEFAULT_LMTIG_BUCKETS: usize = 1024;
-/// Default number of maximal-unitig coordinate buckets.
-pub const DEFAULT_GMTIG_BUCKETS: usize = 1024;
 /// Largest k-mer length supported by the packed two-word representation.
 pub const MAX_K: u16 = 63;
 /// Largest supported minimizer length.

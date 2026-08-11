@@ -6,8 +6,7 @@
 //! workload-sized shared tables can impose a higher minimum RSS.
 
 use crate::{
-    DEFAULT_CUTOFF_READS, DEFAULT_CUTOFF_REFS, DEFAULT_GMTIG_BUCKETS, DEFAULT_K,
-    DEFAULT_LMTIG_BUCKETS, DEFAULT_MINIMIZER_LEN, DEFAULT_VERTEX_PARTITIONS, GraphInput, MAX_K,
+    DEFAULT_CUTOFF_READS, DEFAULT_CUTOFF_REFS, DEFAULT_K, DEFAULT_MINIMIZER_LEN, GraphInput, MAX_K,
     MAX_MINIMIZER_LEN, default_threads, default_work_dir,
 };
 
@@ -62,12 +61,6 @@ pub struct BuildParams {
     pub output_prefix: String,
     /// Directory for external-memory intermediates.
     pub work_dir: String,
-    /// Number of blocked discontinuity-graph vertex partitions.
-    pub vertex_partitions: usize,
-    /// Logical local-unitig bucket count.
-    pub lmtig_buckets: usize,
-    /// Logical maximal-unitig coordinate bucket count.
-    pub gmtig_buckets: usize,
     /// Maximum worker count requested for each phase.
     pub threads: usize,
     /// Optional soft memory budget in GiB.
@@ -92,9 +85,6 @@ impl BuildParams {
             skip_unreadable: false,
             output_prefix,
             work_dir: default_work_dir(),
-            vertex_partitions: DEFAULT_VERTEX_PARTITIONS,
-            lmtig_buckets: DEFAULT_LMTIG_BUCKETS,
-            gmtig_buckets: DEFAULT_GMTIG_BUCKETS,
             threads: default_threads(),
             max_memory_gb: None,
         }
@@ -171,12 +161,6 @@ impl BuildParams {
             return Err(ParamError::InvalidCutoff);
         }
 
-        if !self.vertex_partitions.is_power_of_two()
-            || !self.lmtig_buckets.is_power_of_two()
-            || !self.gmtig_buckets.is_power_of_two()
-        {
-            return Err(ParamError::BucketCountsMustBePowersOfTwo);
-        }
         if self.threads == 0 {
             return Err(ParamError::InvalidThreadCount);
         }
@@ -197,7 +181,6 @@ pub enum ParamError {
     InvalidK(u16),
     InvalidMinimizerLen { k: u16, l: u16 },
     InvalidCutoff,
-    BucketCountsMustBePowersOfTwo,
     InvalidThreadCount,
     InvalidMemoryLimit,
 }
@@ -212,7 +195,6 @@ impl std::fmt::Display for ParamError {
                 write!(f, "minimizer length {l} is invalid for k={k}")
             }
             Self::InvalidCutoff => write!(f, "cutoff frequency must be at least 1"),
-            Self::BucketCountsMustBePowersOfTwo => write!(f, "bucket counts must be powers of two"),
             Self::InvalidThreadCount => write!(f, "thread count must be at least 1"),
             Self::InvalidMemoryLimit => write!(f, "maximum memory must be at least 1 GiB"),
         }

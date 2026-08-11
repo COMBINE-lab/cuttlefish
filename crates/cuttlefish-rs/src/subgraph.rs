@@ -358,6 +358,27 @@ pub struct ColoredLocalUnitig<const K: usize> {
     pub colors: Vec<LocalUnitigColorRun>,
 }
 
+/// A maximal local unitig whose label lives in a caller-owned scratch buffer.
+///
+/// The production emit paths hand one of these per unitig; the label bytes are
+/// valid only for the duration of the callback. This is what removes the
+/// per-unitig allocation the owned [`LocalUnitig`] requires -- roughly 1.1
+/// billion of them on the full Salmonella corpus.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct LocalUnitigRef<'a, const K: usize> {
+    pub label: &'a [u8],
+    pub left_exit: Option<(Kmer<K>, Side)>,
+    pub right_exit: Option<(Kmer<K>, Side)>,
+    pub is_cycle: bool,
+}
+
+/// Walk endpoints of a compact extraction; the label went to the scratch.
+struct CompactUnitigEnds<const K: usize> {
+    left_exit: Option<(Kmer<K>, Side)>,
+    right_exit: Option<(Kmer<K>, Side)>,
+    is_cycle: bool,
+}
+
 type PendingColorRun = (u32, u64, Option<ColorCoordinate>);
 
 struct PendingColoredContraction<const K: usize> {
@@ -552,6 +573,49 @@ fn linearize_cycle_body<const K: usize>(body: &[u8]) -> Vec<u8> {
     label
 }
 
+/// Iteration order over a subgraph's vertex table, held apart from `self` so
+/// the contraction loops can mutate vertex states while walking it.
+///
+/// One plan serves the three contraction loops (owned, compact, colored),
+/// which previously each duplicated the dense-vs-sorted dispatch.
+enum VertexOrder<const K: usize> {
+    Dense(usize),
+    Keys(Vec<Kmer<K>>),
+}
+
+impl<const K: usize> VertexOrder<K> {
+    fn plan(subgraph: &LocalSubgraph<K>) -> Self {
+        if let Some(count) = subgraph.vertices.dense_len()
+            && !sort_local_vertices_diagnostic()
+        {
+            Self::Dense(count)
+        } else {
+            let mut keys = subgraph.vertices.keys_vec();
+            if sort_local_vertices_diagnostic() {
+                keys.sort_unstable();
+            }
+            Self::Keys(keys)
+        }
+    }
+
+    fn len(&self) -> usize {
+        match self {
+            Self::Dense(count) => *count,
+            Self::Keys(keys) => keys.len(),
+        }
+    }
+
+    fn get(&self, subgraph: &LocalSubgraph<K>, index: usize) -> Option<(Kmer<K>, VertexState)> {
+        match self {
+            Self::Dense(_) => subgraph.vertices.dense_key_state(index),
+            Self::Keys(keys) => {
+                let v_hat = keys[index];
+                subgraph.vertices.get(&v_hat).copied().map(|s| (v_hat, s))
+            }
+        }
+    }
+}
+
 /// Whether to contract vertices in sorted order instead of storage order
 /// (diagnostic; makes unitig emission order deterministic for debugging).
 fn sort_local_vertices_diagnostic() -> bool {
@@ -672,11 +736,28 @@ impl<const K: usize> LocalSubgraph<K> {
         self.contract_internal(true)
     }
 
-    pub(crate) fn contract_compact_with<F>(&mut self, emit: F) -> Result<(), LocalSubgraphError>
+    pub(crate) fn contract_compact_with<F>(&mut self, mut emit: F) -> Result<(), LocalSubgraphError>
     where
-        F: FnMut(LocalUnitig<K>),
+        F: FnMut(LocalUnitigRef<'_, K>),
     {
-        self.contract_internal_with(false, emit)
+        let mut back_walk = UnitigWalk::default();
+        let mut front_walk = UnitigWalk::default();
+        let mut label = Vec::new();
+        let order = VertexOrder::plan(self);
+        for index in 0..order.len() {
+            let Some((v_hat, state)) = order.get(self, index) else {
+                continue;
+            };
+            self.contract_vertex_compact(
+                v_hat,
+                state,
+                &mut emit,
+                &mut back_walk,
+                &mut front_walk,
+                &mut label,
+            )?;
+        }
+        Ok(())
     }
 
     pub fn contract_colored(
@@ -737,7 +818,7 @@ impl<const K: usize> LocalSubgraph<K> {
         emit: F,
     ) -> Result<Vec<Vec<UnitigColor>>, LocalSubgraphError>
     where
-        F: FnMut(LocalUnitig<K>),
+        F: for<'u> FnMut(LocalUnitigRef<'u, K>),
     {
         let pending = self.contract_colored_impl_with(
             store,
@@ -780,7 +861,14 @@ impl<const K: usize> LocalSubgraph<K> {
         let mut unitigs = Vec::new();
         let pending =
             self.contract_colored_impl_with(store, entries, color_is_known, |unitig| {
-                unitigs.push(unitig)
+                unitigs.push(LocalUnitig {
+                    label: unitig.label.to_vec(),
+                    vertices: Vec::new(),
+                    color_hashes: Vec::new(),
+                    left_exit: unitig.left_exit,
+                    right_exit: unitig.right_exit,
+                    is_cycle: unitig.is_cycle,
+                })
             })?;
         Ok(PendingColoredContraction {
             unitigs,
@@ -799,7 +887,7 @@ impl<const K: usize> LocalSubgraph<K> {
     ) -> Result<PendingColoredData, LocalSubgraphError>
     where
         F: Fn(u64) -> Option<ColorCoordinate>,
-        G: FnMut(LocalUnitig<K>),
+        G: for<'u> FnMut(LocalUnitigRef<'u, K>),
     {
         if !self.colored {
             return Err(LocalSubgraphError::MalformedRecord);
@@ -811,49 +899,25 @@ impl<const K: usize> LocalSubgraph<K> {
         let mut unitig_hash_runs = Vec::new();
         let mut back_walk = UnitigWalk::default();
         let mut front_walk = UnitigWalk::default();
-        if let Some(vertex_count) = self.vertices.dense_len()
-            && !sort_local_vertices_diagnostic()
-        {
-            for index in 0..vertex_count {
-                let (v_hat, state) = self
-                    .vertices
-                    .dense_key_state(index)
-                    .expect("dense vertex index is in bounds");
-                self.contract_colored_vertex(
-                    v_hat,
-                    state,
-                    &color_is_known,
-                    &mut emit,
-                    &mut unitig_hash_runs,
-                    &mut representative_indices,
-                    &mut coordinate_cache,
-                    &mut representatives,
-                    &mut back_walk,
-                    &mut front_walk,
-                )?;
-            }
-        } else {
-            let mut vertices = self.vertices.keys_vec();
-            if sort_local_vertices_diagnostic() {
-                vertices.sort_unstable();
-            }
-            for v_hat in vertices {
-                let Some(state) = self.vertices.get(&v_hat).copied() else {
-                    continue;
-                };
-                self.contract_colored_vertex(
-                    v_hat,
-                    state,
-                    &color_is_known,
-                    &mut emit,
-                    &mut unitig_hash_runs,
-                    &mut representative_indices,
-                    &mut coordinate_cache,
-                    &mut representatives,
-                    &mut back_walk,
-                    &mut front_walk,
-                )?;
-            }
+        let mut label = Vec::new();
+        let order = VertexOrder::plan(self);
+        for index in 0..order.len() {
+            let Some((v_hat, state)) = order.get(self, index) else {
+                continue;
+            };
+            self.contract_colored_vertex(
+                v_hat,
+                state,
+                &color_is_known,
+                &mut emit,
+                &mut unitig_hash_runs,
+                &mut representative_indices,
+                &mut coordinate_cache,
+                &mut representatives,
+                &mut back_walk,
+                &mut front_walk,
+                &mut label,
+            )?;
         }
 
         let mut wanted = WantedColorMap::<K>::with_capacity(representatives.len());
@@ -889,10 +953,11 @@ impl<const K: usize> LocalSubgraph<K> {
         representatives: &mut Vec<Kmer<K>>,
         back_walk: &mut UnitigWalk<K>,
         front_walk: &mut UnitigWalk<K>,
+        label: &mut Vec<u8>,
     ) -> Result<(), LocalSubgraphError>
     where
         F: Fn(u64) -> Option<ColorCoordinate>,
-        G: FnMut(LocalUnitig<K>),
+        G: for<'u> FnMut(LocalUnitigRef<'u, K>),
     {
         if state.is_visited() {
             return Ok(());
@@ -905,17 +970,18 @@ impl<const K: usize> LocalSubgraph<K> {
             return Ok(());
         }
 
-        let unitig = self.extract_maximal_unitig_compact(v_hat, back_walk, front_walk)?;
+        let ends =
+            self.extract_maximal_unitig_compact(v_hat, back_walk, front_walk, true, label)?;
         self.stats.unitigs += 1;
-        self.stats.unitig_bases += unitig.label.len() as u64;
-        if unitig.is_cycle {
+        self.stats.unitig_bases += label.len() as u64;
+        if ends.is_cycle {
             self.stats.cyclic_unitigs += 1;
         }
-        if unitig.left_exit.is_none() && unitig.right_exit.is_none() {
+        if ends.left_exit.is_none() && ends.right_exit.is_none() {
             self.stats.trivial_unitigs += 1;
         } else {
             self.stats.discontinuity_exits +=
-                u64::from(unitig.left_exit.is_some()) + u64::from(unitig.right_exit.is_some());
+                u64::from(ends.left_exit.is_some()) + u64::from(ends.right_exit.is_some());
         }
 
         let mut runs = Vec::<(u32, u64, Option<ColorCoordinate>)>::new();
@@ -937,9 +1003,9 @@ impl<const K: usize> LocalSubgraph<K> {
                 }
             }
         };
-        if unitig.is_cycle {
-            let mut vertex = Kmer::<K>::from_ascii(&unitig.label[..K])?;
-            for offset in 0..=unitig.label.len() - K {
+        if ends.is_cycle {
+            let mut vertex = Kmer::<K>::from_ascii(&label[..K])?;
+            for offset in 0..=label.len() - K {
                 let canonical = vertex.canonical();
                 let color_hash = self
                     .vertices
@@ -947,8 +1013,8 @@ impl<const K: usize> LocalSubgraph<K> {
                     .ok_or(LocalSubgraphError::MissingVertex)?
                     .color_hash();
                 record_hash(offset, canonical, color_hash);
-                if offset < unitig.label.len() - K {
-                    vertex = vertex.roll_forward(Base::from_ascii(unitig.label[offset + K]));
+                if offset < label.len() - K {
+                    vertex = vertex.roll_forward(Base::from_ascii(label[offset + K]));
                 }
             }
         } else {
@@ -972,7 +1038,12 @@ impl<const K: usize> LocalSubgraph<K> {
                 offset += 1;
             }
         }
-        emit(unitig);
+        emit(LocalUnitigRef {
+            label,
+            left_exit: ends.left_exit,
+            right_exit: ends.right_exit,
+            is_cycle: ends.is_cycle,
+        });
         unitig_hash_runs.push(runs);
         Ok(())
     }
@@ -982,57 +1053,67 @@ impl<const K: usize> LocalSubgraph<K> {
         collect_vertices: bool,
     ) -> Result<Vec<LocalUnitig<K>>, LocalSubgraphError> {
         let mut unitigs = Vec::new();
-        self.contract_internal_with(collect_vertices, |unitig| unitigs.push(unitig))?;
+        let mut back_walk = UnitigWalk::default();
+        let mut front_walk = UnitigWalk::default();
+        let order = VertexOrder::plan(self);
+        for index in 0..order.len() {
+            let Some((v_hat, state)) = order.get(self, index) else {
+                continue;
+            };
+            self.contract_vertex(
+                v_hat,
+                state,
+                collect_vertices,
+                &mut |unitig| unitigs.push(unitig),
+                &mut back_walk,
+                &mut front_walk,
+            )?;
+        }
         Ok(unitigs)
     }
 
-    fn contract_internal_with<F>(
+    fn contract_vertex_compact<F>(
         &mut self,
-        collect_vertices: bool,
-        mut emit: F,
+        v_hat: Kmer<K>,
+        state: VertexState,
+        emit: &mut F,
+        back_walk: &mut UnitigWalk<K>,
+        front_walk: &mut UnitigWalk<K>,
+        label: &mut Vec<u8>,
     ) -> Result<(), LocalSubgraphError>
     where
-        F: FnMut(LocalUnitig<K>),
+        F: for<'u> FnMut(LocalUnitigRef<'u, K>),
     {
-        let mut back_walk = UnitigWalk::default();
-        let mut front_walk = UnitigWalk::default();
-        if let Some(vertex_count) = self.vertices.dense_len()
-            && !sort_local_vertices_diagnostic()
-        {
-            for index in 0..vertex_count {
-                let (v_hat, state) = self
-                    .vertices
-                    .dense_key_state(index)
-                    .expect("dense vertex index is in bounds");
-                self.contract_vertex(
-                    v_hat,
-                    state,
-                    collect_vertices,
-                    &mut emit,
-                    &mut back_walk,
-                    &mut front_walk,
-                )?;
+        if state.is_visited() {
+            return Ok(());
+        }
+        if state.is_isolated(self.cutoff) {
+            if let Some(st) = self.vertices.get_mut(&v_hat) {
+                st.mark_visited();
             }
-        } else {
-            let mut vertices = self.vertices.keys_vec();
-            if sort_local_vertices_diagnostic() {
-                vertices.sort_unstable();
-            }
-            for v_hat in vertices {
-                let Some(state) = self.vertices.get(&v_hat).copied() else {
-                    continue;
-                };
-                self.contract_vertex(
-                    v_hat,
-                    state,
-                    collect_vertices,
-                    &mut emit,
-                    &mut back_walk,
-                    &mut front_walk,
-                )?;
-            }
+            self.stats.isolated_vertices += 1;
+            return Ok(());
         }
 
+        let ends =
+            self.extract_maximal_unitig_compact(v_hat, back_walk, front_walk, false, label)?;
+        self.stats.unitigs += 1;
+        self.stats.unitig_bases += label.len() as u64;
+        if ends.is_cycle {
+            self.stats.cyclic_unitigs += 1;
+        }
+        if ends.left_exit.is_none() && ends.right_exit.is_none() {
+            self.stats.trivial_unitigs += 1;
+        } else {
+            self.stats.discontinuity_exits +=
+                u64::from(ends.left_exit.is_some()) + u64::from(ends.right_exit.is_some());
+        }
+        emit(LocalUnitigRef {
+            label,
+            left_exit: ends.left_exit,
+            right_exit: ends.right_exit,
+            is_cycle: ends.is_cycle,
+        });
         Ok(())
     }
 
@@ -1147,35 +1228,42 @@ impl<const K: usize> LocalSubgraph<K> {
         })
     }
 
+    /// As [`Self::extract_maximal_unitig`], but the label is written into
+    /// `label_out` instead of a fresh allocation, and only the walk endpoints
+    /// are returned. `collect_walk_vertices` keeps per-vertex color hashes in
+    /// the walk buffers for the colored run recording; the uncolored path
+    /// skips that work.
     fn extract_maximal_unitig_compact(
         &mut self,
         v_hat: Kmer<K>,
         back_walk: &mut UnitigWalk<K>,
         front_walk: &mut UnitigWalk<K>,
-    ) -> Result<LocalUnitig<K>, LocalSubgraphError> {
-        let back_term = self.walk_unitig(v_hat, Side::Back, true, back_walk)?;
+        collect_walk_vertices: bool,
+        label_out: &mut Vec<u8>,
+    ) -> Result<CompactUnitigEnds<K>, LocalSubgraphError> {
+        label_out.clear();
+        let back_term = self.walk_unitig(v_hat, Side::Back, collect_walk_vertices, back_walk)?;
 
         if back_walk.is_cycle {
-            return Ok(LocalUnitig {
-                label: canonical_cycle_label::<K>(back_walk.label.clone()),
-                vertices: Vec::new(),
-                color_hashes: Vec::new(),
+            // Cycles are rare enough that the rotation's own allocations stay.
+            label_out.extend_from_slice(&canonical_cycle_label::<K>(back_walk.label.clone()));
+            return Ok(CompactUnitigEnds {
                 left_exit: None,
                 right_exit: None,
                 is_cycle: true,
             });
         }
 
-        let front_term = self.walk_unitig(v_hat, Side::Front, true, front_walk)?;
-        let mut label = Vec::with_capacity(front_walk.label.len() + back_walk.label.len() - K);
-        label.extend(
+        let front_term = self.walk_unitig(v_hat, Side::Front, collect_walk_vertices, front_walk)?;
+        label_out.reserve(front_walk.label.len() + back_walk.label.len() - K);
+        label_out.extend(
             front_walk
                 .label
                 .iter()
                 .rev()
                 .map(|&base| complement_valid_ascii(base)),
         );
-        label.extend_from_slice(&back_walk.label[K..]);
+        label_out.extend_from_slice(&back_walk.label[K..]);
         let left_exit = match front_term {
             WalkTermination::Exited(v) => Some((v.canonical(), v.entrance_side())),
             _ => None,
@@ -1185,10 +1273,7 @@ impl<const K: usize> LocalSubgraph<K> {
             _ => None,
         };
 
-        Ok(LocalUnitig {
-            label,
-            vertices: Vec::new(),
-            color_hashes: Vec::new(),
+        Ok(CompactUnitigEnds {
             left_exit,
             right_exit,
             is_cycle: false,

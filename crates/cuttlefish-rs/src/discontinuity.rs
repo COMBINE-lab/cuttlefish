@@ -36,7 +36,7 @@ use crate::dna::{Base, complement_ascii, minimal_rotation, reverse_complement_la
 use crate::hash::{FastBuildHasher, hash_bytes, wyhash_u64};
 use crate::kmer::Kmer;
 use crate::state::{UnitigColor, VertexState};
-use crate::subgraph::{LocalSubgraph, LocalSubgraphError, LocalUnitig, LocalVertexMap};
+use crate::subgraph::{LocalSubgraph, LocalSubgraphError, LocalUnitigRef, LocalVertexMap};
 use rayon::prelude::*;
 use rayon::{ThreadPool, ThreadPoolBuilder};
 use std::cell::UnsafeCell;
@@ -322,24 +322,40 @@ impl<const K: usize> DiscontinuityInputs<K> {
     }
 
     pub fn push_unitig(&mut self, unitig: OwnedDiscontinuityUnitig<K>) -> usize {
+        self.push_unitig_parts(
+            &unitig.label,
+            unitig.left_exit,
+            unitig.right_exit,
+            unitig.is_cycle,
+        )
+    }
+
+    /// As [`Self::push_unitig`], from a borrowed label -- the production emit
+    /// path hands labels out of a reused scratch buffer, so taking a slice
+    /// here is what keeps that path allocation-free per unitig.
+    pub(crate) fn push_unitig_parts(
+        &mut self,
+        label: &[u8],
+        left_exit: Option<DiscontinuityEndpoint<K>>,
+        right_exit: Option<DiscontinuityEndpoint<K>>,
+        is_cycle: bool,
+    ) -> usize {
         let index = self.unitigs.len();
         let label_start = self.labels.len();
-        let label_len = unitig.label.len();
+        let label_len = label.len();
         assert!(u64::try_from(label_start).is_ok());
         assert!(u32::try_from(label_len).is_ok());
-        self.labels.extend_from_slice(&unitig.label);
+        self.labels.extend_from_slice(label);
         self.unitigs.push(DiscontinuityUnitig {
             label_start: label_start as u64,
-            left_vertex: unitig
-                .left_exit
+            left_vertex: left_exit
                 .map(|endpoint| endpoint.vertex)
                 .unwrap_or_else(Kmer::zero),
-            right_vertex: unitig
-                .right_exit
+            right_vertex: right_exit
                 .map(|endpoint| endpoint.vertex)
                 .unwrap_or_else(Kmer::zero),
             label_len: label_len as u32,
-            flags: discontinuity_unitig_flags(unitig.left_exit, unitig.right_exit, unitig.is_cycle),
+            flags: discontinuity_unitig_flags(left_exit, right_exit, is_cycle),
         });
         index
     }
@@ -13257,7 +13273,7 @@ fn contract_local_subgraph<const K: usize>(
     let mut trivial_unitigs = 0u64;
     let mut trivial_bases = 0u64;
     let mut matrix_edges = Vec::new();
-    let mut emit_unitig = |unitig: LocalUnitig<K>| {
+    let mut emit_unitig = |unitig: LocalUnitigRef<'_, K>| {
         let left_exit = unitig
             .left_exit
             .map(|(vertex, side)| DiscontinuityEndpoint { vertex, side });
@@ -13266,23 +13282,27 @@ fn contract_local_subgraph<const K: usize>(
             .map(|(vertex, side)| DiscontinuityEndpoint { vertex, side });
 
         if emit_trivial_fasta && left_exit.is_none() && right_exit.is_none() {
-            let label = canonical_label(unitig.label);
+            // Canonicalize straight into the FASTA buffer; no temporary.
             trivial_fasta.extend_from_slice(b">0\n");
-            trivial_fasta.extend_from_slice(&label);
+            if reverse_complement_is_less(unitig.label) {
+                trivial_fasta.extend(
+                    unitig
+                        .label
+                        .iter()
+                        .rev()
+                        .map(|&base| complement_ascii(base)),
+                );
+            } else {
+                trivial_fasta.extend_from_slice(unitig.label);
+            }
             trivial_fasta.push(b'\n');
             trivial_unitigs += 1;
-            trivial_bases += label.len() as u64;
+            trivial_bases += unitig.label.len() as u64;
             return;
         }
 
         let unitig_index = inputs.unitigs.len();
-        inputs.push_unitig(OwnedDiscontinuityUnitig {
-            graph_id,
-            label: unitig.label,
-            left_exit,
-            right_exit,
-            is_cycle: unitig.is_cycle,
-        });
+        inputs.push_unitig_parts(unitig.label, left_exit, right_exit, unitig.is_cycle);
         if let Some(edge) = prepare_unitig_blocked_edge(
             &inputs.unitigs[unitig_index],
             unitig_index,

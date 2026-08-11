@@ -17,8 +17,11 @@ flows through rapidgzip. The thread-broker half was integrated, measured, and
 turned **off by default**: on this host the static split's oversubscription
 beats every broker split, and one run in three misconverged ("A closed-loop
 split evaluated", same document); it stays behind
-`CF3_RS_DYNAMIC_INFLATE_SPLIT` as the evaluation harness. A4 was removed with
-C3.
+`CF3_RS_DYNAMIC_INFLATE_SPLIT` as the evaluation harness. B2 landed: the
+per-unitig label allocation is gone (borrowed-label emit into a reused
+scratch), measuring -3.0% uncolored / -0.9% colored local contraction with
+non-overlapping arms; B5's trivial-path allocation went with it, and the
+restructure absorbed C6's remaining dispatch fold. A4 was removed with C3.
 B2–B5, A1–A3, A5–A6, and the remaining C5 walker-family consolidation are
 open for selection.
 

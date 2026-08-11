@@ -1824,3 +1824,31 @@ evaluation harness (off by default), with the settled split, both sides' busy
 time, and the decision trajectories printed at finish. It is worth revisiting
 when `-t` is well below the core count -- the regime the budget model assumes
 -- or after upstream addresses the misconvergence.
+
+## The per-unitig label allocation
+
+Local contraction allocated one `Vec<u8>` per local unitig -- 1.14 billion on
+the full Salmonella corpus -- whose contents were immediately copied into the
+shared labels buffer and freed. `extract_maximal_unitig_compact` now writes
+into a per-contraction scratch and the emit path hands a borrowed
+`LocalUnitigRef` to the sink, which appends the slice directly. Trivial
+unitigs additionally canonicalize straight into the FASTA buffer instead of
+through an owned `canonical_label`, and the uncolored walk stops collecting
+per-vertex data it never used. The owned `LocalUnitig` survives only in the
+test-facing `contract()`/`contract_colored()` APIs. The same restructuring
+folded the dense-vs-sorted vertex dispatch, previously duplicated across all
+three contraction loops, into one `VertexOrder` plan.
+
+Two interleaved pairs per mode at t64, order alternated, `--mem-limit 64G`:
+
+| | pre | with | delta |
+| --- | ---: | ---: | ---: |
+| uncolored local contraction | 177.9 / 180.3 s | 173.9 / 173.5 s | **-3.0%** |
+| colored local contraction | 267.3 / 270.8 s | 267.0 / 266.4 s | -0.9% |
+
+Both comparisons resolve -- the arms do not overlap -- and counts are exact
+everywhere with topology equality against the pre-change output. Walls move
+inside their noise bands. The win is smaller than a billion allocations might
+suggest because jemalloc already served same-sized round trips from
+thread-local caches; what remains is the copy saved and the malloc/free pair
+gone from the hottest loop.

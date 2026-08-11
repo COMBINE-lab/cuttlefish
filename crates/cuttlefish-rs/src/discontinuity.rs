@@ -5575,226 +5575,6 @@ impl SerialUncoloredCollator {
         }
     }
 
-    pub fn collate_path_info_only_with_threads<const K: usize>(
-        inputs: &DiscontinuityInputs<K>,
-        expansion: &SerialExpansion<K>,
-        threads: usize,
-    ) -> SerialCollation {
-        eprintln!(
-            "cuttlefish: collating {} path edge info record(s) against {} local unitig(s)",
-            expansion.edges.len(),
-            inputs.unitigs.len()
-        );
-        let mut records = Vec::<CollationRecord<K>>::with_capacity(expansion.edges.len());
-        let mut missing_unitig_labels = 0u64;
-        let mut path_unitigs = vec![false; inputs.unitigs.len()];
-
-        let collect_started = Instant::now();
-        for edge in &expansion.edges {
-            let Some(label) = inputs.try_label(edge.unitig_index) else {
-                missing_unitig_labels += 1;
-                continue;
-            };
-            path_unitigs[edge.unitig_index] = true;
-            records.push(CollationRecord {
-                info: edge.info,
-                label: label.to_vec(),
-            });
-        }
-        eprintln!(
-            "cuttlefish: path-info collation collected records in {:.3}s",
-            collect_started.elapsed().as_secs_f64()
-        );
-
-        let record_sort_started = Instant::now();
-        records.sort_by_key(|record| {
-            (
-                record.info.path_id.as_u128(),
-                record.info.rank,
-                record.info.exit_side as u8,
-            )
-        });
-        eprintln!(
-            "cuttlefish: path-info collation sorted records in {:.3}s",
-            record_sort_started.elapsed().as_secs_f64()
-        );
-
-        let build_started = Instant::now();
-        let mut unitigs = Vec::new();
-        let mut start = 0;
-        while start < records.len() {
-            let path_id = records[start].info.path_id;
-            let is_cycle = records[start].info.is_cycle;
-            let mut end = start + 1;
-            while end < records.len() && records[end].info.path_id == path_id {
-                end += 1;
-            }
-
-            let mut label = Vec::new();
-            if end - start == 2
-                && !is_cycle
-                && records[start].info.rank == 0
-                && records[start + 1].info.rank == 0
-            {
-                append_or_init::<K>(
-                    &mut label,
-                    oriented_label(
-                        &records[start].label,
-                        records[start].info.exit_side == Side::Front,
-                    ),
-                );
-                append_or_init::<K>(
-                    &mut label,
-                    oriented_label(
-                        &records[start + 1].label,
-                        records[start + 1].info.exit_side != Side::Front,
-                    ),
-                );
-            } else {
-                for record in &records[start..end] {
-                    append_or_init::<K>(
-                        &mut label,
-                        oriented_label(&record.label, record.info.exit_side == Side::Front),
-                    );
-                }
-            }
-
-            if label.len() >= K {
-                if is_cycle {
-                    label.truncate(label.len().saturating_sub(K - 1));
-                    unitigs.push(normalize_stitched_cycle::<K>(&label));
-                } else {
-                    unitigs.push(canonical_label(label));
-                }
-            }
-            start = end;
-        }
-        let stitched_discontinuity_unitigs = unitigs.len() as u64;
-        eprintln!(
-            "cuttlefish: path-info collation built path unitigs in {:.3}s",
-            build_started.elapsed().as_secs_f64()
-        );
-        eprintln!(
-            "cuttlefish: added {} path-info discontinuity unitig(s)",
-            stitched_discontinuity_unitigs
-        );
-
-        let merge_started = Instant::now();
-        let mut direct_local_unitigs = 0u64;
-        for (index, unitig) in inputs.unitigs.iter().enumerate() {
-            if !path_unitigs[index] && unitig.left_exit().is_none() && unitig.right_exit().is_none()
-            {
-                unitigs.push(canonical_label(unitig.label(inputs).to_vec()));
-                direct_local_unitigs += 1;
-            }
-        }
-        eprintln!(
-            "cuttlefish: path-info collation merged direct local unitigs in {:.3}s",
-            merge_started.elapsed().as_secs_f64()
-        );
-        eprintln!(
-            "cuttlefish: added {} direct local unitig(s)",
-            direct_local_unitigs
-        );
-
-        let final_sort_started = Instant::now();
-        unitigs = bucketed_maximal_unitig_reduce(unitigs, threads);
-        eprintln!(
-            "cuttlefish: path-info collation bucket reduce completed in {:.3}s",
-            final_sort_started.elapsed().as_secs_f64()
-        );
-
-        SerialCollation {
-            stats: SerialCollationStats {
-                input_path_infos: expansion.edges.len() as u64,
-                emitted_unitigs: unitigs.len() as u64,
-                emitted_bases: unitigs.iter().map(|unitig| unitig.len() as u64).sum(),
-                missing_unitig_labels,
-                direct_local_unitigs,
-                stitched_discontinuity_unitigs,
-            },
-            unitigs,
-        }
-    }
-
-    pub fn collate_stitched_with_threads<const K: usize>(
-        inputs: &DiscontinuityInputs<K>,
-        threads: usize,
-    ) -> SerialCollation {
-        Self::collate_stitched_with_threads_impl(inputs, threads, None)
-            .expect("in-memory stitched collation cannot fail")
-    }
-
-    pub fn collate_stitched_with_threads_in_dir<const K: usize>(
-        inputs: &DiscontinuityInputs<K>,
-        threads: usize,
-        coord_dir: &Path,
-    ) -> Result<SerialCollation, SerialCollationError> {
-        Self::collate_stitched_with_threads_impl(inputs, threads, Some(coord_dir))
-    }
-
-    pub fn collate_stitched_to_fasta_with_threads_in_dir<const K: usize>(
-        inputs: &DiscontinuityInputs<K>,
-        threads: usize,
-        coord_dir: &Path,
-        final_dir: &Path,
-        output_path: &Path,
-    ) -> Result<SerialCollationStats, SerialCollationError> {
-        eprintln!(
-            "cuttlefish: collating {} local unitig(s) by discontinuity-end stitching",
-            inputs.unitigs.len()
-        );
-
-        let spill_started = Instant::now();
-        let mut final_buckets = FinalUnitigBucketWriters::create(final_dir, threads)?;
-        let stitched_discontinuity_unitigs = stitch_discontinuity_paths_to_final_buckets::<K>(
-            inputs,
-            &[],
-            threads,
-            coord_dir,
-            &mut final_buckets,
-        )?;
-
-        let mut direct_local_unitigs = 0u64;
-        for unitig in &inputs.unitigs {
-            if unitig.left_exit().is_none() && unitig.right_exit().is_none() {
-                let label = canonical_label(unitig.label(inputs).to_vec());
-                final_buckets.write_label(&label)?;
-                direct_local_unitigs += 1;
-            }
-        }
-        let manifest = final_buckets.finish()?;
-        eprintln!(
-            "cuttlefish: collation stitched and spilled final-label candidates in {:.3}s",
-            spill_started.elapsed().as_secs_f64()
-        );
-        eprintln!(
-            "cuttlefish: added {} stitched discontinuity unitig(s)",
-            stitched_discontinuity_unitigs
-        );
-        eprintln!(
-            "cuttlefish: added {} direct local unitig(s)",
-            direct_local_unitigs
-        );
-
-        let reduce_started = Instant::now();
-        let (emitted_unitigs, emitted_bases) =
-            reduce_final_unitig_buckets_to_fasta(&manifest, output_path)?;
-        eprintln!(
-            "cuttlefish: collation external bucket reduce and FASTA write completed in {:.3}s",
-            reduce_started.elapsed().as_secs_f64()
-        );
-
-        Ok(SerialCollationStats {
-            input_path_infos: 0,
-            emitted_unitigs,
-            emitted_bases,
-            missing_unitig_labels: 0,
-            direct_local_unitigs,
-            stitched_discontinuity_unitigs,
-        })
-    }
-
     pub fn collate_external_stitched_to_fasta_with_threads_in_dir<const K: usize>(
         inputs: &mut ExternalDiscontinuityInputs<K>,
         threads: usize,
@@ -5950,69 +5730,6 @@ impl SerialUncoloredCollator {
             stitched_discontinuity_unitigs,
         })
     }
-
-    fn collate_stitched_with_threads_impl<const K: usize>(
-        inputs: &DiscontinuityInputs<K>,
-        threads: usize,
-        coord_dir: Option<&Path>,
-    ) -> Result<SerialCollation, SerialCollationError> {
-        eprintln!(
-            "cuttlefish: collating {} local unitig(s) by discontinuity-end stitching",
-            inputs.unitigs.len()
-        );
-
-        let stitch_started = Instant::now();
-        let mut unitigs = if let Some(coord_dir) = coord_dir {
-            stitch_discontinuity_paths_with_coord_dir::<K>(inputs, &[], threads, coord_dir)?
-        } else {
-            stitch_discontinuity_paths::<K>(inputs, &[], threads)
-        };
-        let stitched_discontinuity_unitigs = unitigs.len() as u64;
-        eprintln!(
-            "cuttlefish: collation stitched discontinuity paths in {:.3}s",
-            stitch_started.elapsed().as_secs_f64()
-        );
-        eprintln!(
-            "cuttlefish: added {} stitched discontinuity unitig(s)",
-            stitched_discontinuity_unitigs
-        );
-
-        let merge_started = Instant::now();
-        let mut direct_local_unitigs = 0u64;
-        for unitig in &inputs.unitigs {
-            if unitig.left_exit().is_none() && unitig.right_exit().is_none() {
-                unitigs.push(canonical_label(unitig.label(inputs).to_vec()));
-                direct_local_unitigs += 1;
-            }
-        }
-        eprintln!(
-            "cuttlefish: collation merged direct local unitigs in {:.3}s",
-            merge_started.elapsed().as_secs_f64()
-        );
-        eprintln!(
-            "cuttlefish: added {} direct local unitig(s)",
-            direct_local_unitigs
-        );
-
-        let final_sort_started = Instant::now();
-        unitigs = bucketed_maximal_unitig_reduce(unitigs, threads);
-        eprintln!(
-            "cuttlefish: collation bucket reduce completed in {:.3}s",
-            final_sort_started.elapsed().as_secs_f64()
-        );
-
-        Ok(SerialCollation {
-            stats: SerialCollationStats {
-                input_path_infos: 0,
-                emitted_unitigs: unitigs.len() as u64,
-                emitted_bases: unitigs.iter().map(|unitig| unitig.len() as u64).sum(),
-                missing_unitig_labels: 0,
-                direct_local_unitigs,
-                stitched_discontinuity_unitigs,
-            },
-            unitigs,
-        })
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -6127,46 +5844,6 @@ struct FinalUnitigBucketWriters {
 }
 
 impl FinalUnitigBucketWriters {
-    fn create(dir: &Path, threads: usize) -> Result<Self, SerialCollationError> {
-        Self::create_with_color(dir, threads, false)
-    }
-
-    fn create_with_color(
-        dir: &Path,
-        threads: usize,
-        colored: bool,
-    ) -> Result<Self, SerialCollationError> {
-        if dir.exists() {
-            fs::remove_dir_all(dir).map_err(|source| SerialCollationError::Io {
-                path: dir.to_path_buf(),
-                source,
-            })?;
-        }
-        fs::create_dir_all(dir).map_err(|source| SerialCollationError::Io {
-            path: dir.to_path_buf(),
-            source,
-        })?;
-        let bucket_count = final_unitig_bucket_count(threads);
-        let mut writers = Vec::with_capacity(bucket_count);
-        writers.resize_with(bucket_count, || None);
-        Ok(Self {
-            dir: dir.to_path_buf(),
-            bucket_mask: bucket_count - 1,
-            next_bucket: 0,
-            writers,
-            records: vec![0; bucket_count],
-            bases: vec![0; bucket_count],
-            open_writers: 0,
-            colored,
-            direct_output: None,
-            direct_output_path: None,
-            direct_header_scratch: Vec::new(),
-            direct_records: 0,
-            direct_record_id_highwater: 0,
-            direct_bases: 0,
-        })
-    }
-
     fn create_direct(output_path: &Path, colored: bool) -> Result<Self, SerialCollationError> {
         let file = File::create(output_path).map_err(|source| SerialCollationError::Io {
             path: output_path.to_path_buf(),
@@ -6976,12 +6653,6 @@ fn compact_edge_path_info_with_exit(
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum LabelEnd {
-    Left,
-    Right,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct HalfEnd {
     unitig_index: u32,
 }
@@ -6990,15 +6661,6 @@ impl HalfEnd {
     #[inline]
     fn unitig_index(self) -> usize {
         self.unitig_index as usize
-    }
-}
-
-#[inline]
-fn label_end_for_node(node: usize) -> LabelEnd {
-    if node & 1 == 0 {
-        LabelEnd::Left
-    } else {
-        LabelEnd::Right
     }
 }
 
@@ -7017,37 +6679,6 @@ fn stitch_node(node: usize) -> u32 {
 #[inline]
 fn stitch_node_index(node: u32) -> usize {
     node as usize
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-struct StitchAdjacency {
-    to: usize,
-    unitig_index: Option<usize>,
-}
-
-#[derive(Debug, Clone, Copy, Default)]
-struct StitchAdjacencyList {
-    edges: [StitchAdjacency; 3],
-    len: u8,
-}
-
-impl StitchAdjacencyList {
-    fn push(&mut self, edge: StitchAdjacency) {
-        let len = self.len as usize;
-        debug_assert!(len < self.edges.len());
-        if len < self.edges.len() {
-            self.edges[len] = edge;
-            self.len += 1;
-        }
-    }
-
-    fn len(&self) -> usize {
-        self.len as usize
-    }
-
-    fn iter(&self) -> impl Iterator<Item = &StitchAdjacency> {
-        self.edges[..self.len()].iter()
-    }
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -7249,12 +6880,6 @@ impl StitchEndpointBucketWriter {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct StitchedPath {
-    label: Vec<u8>,
-    is_cycle: bool,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct StitchedCoordRecord {
     path_id: u64,
@@ -7426,122 +7051,6 @@ fn stitch_discontinuity_paths<const K: usize>(
 ) -> Vec<Vec<u8>> {
     stitch_discontinuity_paths_impl::<K>(inputs, skip_unitigs, threads, None)
         .expect("in-memory discontinuity stitching cannot fail")
-}
-
-fn stitch_discontinuity_paths_with_coord_dir<const K: usize>(
-    inputs: &DiscontinuityInputs<K>,
-    skip_unitigs: &[bool],
-    threads: usize,
-    coord_dir: &Path,
-) -> Result<Vec<Vec<u8>>, SerialCollationError> {
-    stitch_discontinuity_paths_impl::<K>(inputs, skip_unitigs, threads, Some(coord_dir))
-}
-
-fn stitch_discontinuity_paths_to_final_buckets<const K: usize>(
-    inputs: &DiscontinuityInputs<K>,
-    skip_unitigs: &[bool],
-    threads: usize,
-    coord_dir: &Path,
-    final_buckets: &mut FinalUnitigBucketWriters,
-) -> Result<u64, SerialCollationError> {
-    let debug_stitch = false;
-    let endpoint_dir = coord_dir.join("endpoints");
-    let mut endpoint_writers = StitchEndpointBucketWriters::create(&endpoint_dir, threads)?;
-    let build_started = Instant::now();
-    let mut half_ends = Vec::<HalfEnd>::new();
-
-    for (unitig_index, unitig) in inputs.unitigs.iter().enumerate() {
-        if skip_unitigs.get(unitig_index).copied().unwrap_or(false) {
-            continue;
-        }
-        if unitig.left_exit().is_none() && unitig.right_exit().is_none() {
-            continue;
-        }
-
-        let (left_endpoint, right_endpoint) = endpoints_by_label_end(unitig);
-        let left_node = half_ends.len();
-        half_ends.push(HalfEnd {
-            unitig_index: u32::try_from(unitig_index).expect("unitig index exceeds u32"),
-        });
-        if let Some(endpoint) = left_endpoint {
-            endpoint_writers.write_record(&StitchEndpointRecord {
-                vertex: endpoint.vertex,
-                side: endpoint.side,
-                node: stitch_node(left_node),
-            })?;
-        }
-
-        let right_node = half_ends.len();
-        half_ends.push(HalfEnd {
-            unitig_index: u32::try_from(unitig_index).expect("unitig index exceeds u32"),
-        });
-        if let Some(endpoint) = right_endpoint {
-            endpoint_writers.write_record(&StitchEndpointRecord {
-                vertex: endpoint.vertex,
-                side: endpoint.side,
-                node: stitch_node(right_node),
-            })?;
-        }
-    }
-    let half_end_elapsed = build_started.elapsed();
-
-    let mut join_neighbor = vec![STITCH_NO_NODE; half_ends.len()];
-    let endpoint_sort_started = Instant::now();
-    let endpoint_manifest = endpoint_writers.finish()?;
-    let endpoint_sort_elapsed = endpoint_sort_started.elapsed();
-    let endpoint_join_started = Instant::now();
-    join_neighbors_from_endpoint_buckets::<K>(&endpoint_manifest, &mut join_neighbor, threads)?;
-    let endpoint_join_elapsed = endpoint_join_started.elapsed();
-
-    if debug_stitch {
-        eprintln!("stitch inputs: {} unitigs", inputs.unitigs.len());
-        for (node, half_end) in half_ends.iter().enumerate() {
-            let (left_endpoint, right_endpoint) =
-                endpoints_by_label_end(&inputs.unitigs[half_end.unitig_index()]);
-            let label_end = label_end_for_node(node);
-            let endpoint = match label_end {
-                LabelEnd::Left => left_endpoint,
-                LabelEnd::Right => right_endpoint,
-            };
-            eprintln!(
-                "node {node}: unitig={} end={:?} endpoint={:?} join={}",
-                half_end.unitig_index(),
-                label_end,
-                endpoint.map(debug_endpoint),
-                join_neighbor[node],
-            );
-        }
-    }
-
-    let component_started = Instant::now();
-    let component_starts = stitch_component_starts_from_neighbors(&half_ends, &join_neighbor);
-    let component_elapsed = component_started.elapsed();
-    let walk_started = Instant::now();
-    let manifest = write_materialized_stitched_coord_buckets(
-        inputs,
-        coord_dir,
-        threads,
-        &half_ends,
-        &join_neighbor,
-        &component_starts,
-    )?;
-    let emitted = reduce_materialized_stitched_coord_bucket_files_to_final::<K>(
-        &manifest,
-        &[],
-        threads,
-        final_buckets,
-    )?;
-    let walk_elapsed = walk_started.elapsed();
-
-    eprintln!(
-        "cuttlefish: stitch detail: half-ends {:.3}s, endpoint sort {:.3}s, endpoint join {:.3}s, components {:.3}s, materialized walk+reduce {:.3}s",
-        half_end_elapsed.as_secs_f64(),
-        endpoint_sort_elapsed.as_secs_f64(),
-        endpoint_join_elapsed.as_secs_f64(),
-        component_elapsed.as_secs_f64(),
-        walk_elapsed.as_secs_f64(),
-    );
-    Ok(emitted)
 }
 
 fn stitch_external_discontinuity_paths_to_final_buckets<const K: usize>(
@@ -9932,24 +9441,13 @@ fn stitch_discontinuity_paths_impl<const K: usize>(
     threads: usize,
     coord_dir: Option<&Path>,
 ) -> Result<Vec<Vec<u8>>, SerialCollationError> {
-    let debug_stitch = false;
-    let use_adjacency_stitch = false;
     let endpoint_dir = coord_dir.map(|dir| dir.join("endpoints"));
-    let mut endpoint_writers = if !use_adjacency_stitch {
-        endpoint_dir
-            .as_deref()
-            .map(|dir| StitchEndpointBucketWriters::create(dir, threads))
-            .transpose()?
-    } else {
-        None
-    };
+    let mut endpoint_writers = endpoint_dir
+        .as_deref()
+        .map(|dir| StitchEndpointBucketWriters::create(dir, threads))
+        .transpose()?;
     let build_started = Instant::now();
     let mut half_ends = Vec::<HalfEnd>::new();
-    let mut segment_edges = if use_adjacency_stitch {
-        Some(Vec::<(usize, usize, usize)>::new())
-    } else {
-        None
-    };
     let mut endpoint_records = if endpoint_writers.is_none() {
         Some(Vec::<StitchEndpointRecord<K>>::new())
     } else {
@@ -10003,39 +9501,8 @@ fn stitch_discontinuity_paths_impl<const K: usize>(
                     .push(record);
             }
         }
-        if let Some(segment_edges) = &mut segment_edges {
-            segment_edges.push((left_node, right_node, unitig_index));
-        }
     }
     let half_end_elapsed = build_started.elapsed();
-
-    if debug_stitch {
-        eprintln!("stitch inputs: {} unitigs", inputs.unitigs.len());
-        for (index, unitig) in inputs.unitigs.iter().enumerate() {
-            let (left_endpoint, right_endpoint) = endpoints_by_label_end(unitig);
-            eprintln!(
-                "unitig {index}: label={} left_exit={:?} right_exit={:?} label_left={:?} label_right={:?}",
-                String::from_utf8_lossy(unitig.label(inputs)),
-                unitig.left_exit().map(debug_endpoint),
-                unitig.right_exit().map(debug_endpoint),
-                left_endpoint.map(debug_endpoint),
-                right_endpoint.map(debug_endpoint),
-            );
-        }
-    }
-
-    if use_adjacency_stitch {
-        return stitch_discontinuity_paths_with_adjacency(
-            inputs,
-            threads,
-            coord_dir,
-            debug_stitch,
-            half_ends,
-            segment_edges.expect("adjacency stitching requires segment edges"),
-            endpoint_records.expect("adjacency stitching uses in-memory endpoint records"),
-            half_end_elapsed,
-        );
-    }
 
     let mut join_neighbor = vec![STITCH_NO_NODE; half_ends.len()];
 
@@ -10057,25 +9524,6 @@ fn stitch_discontinuity_paths_impl<const K: usize>(
     let endpoint_join_elapsed = endpoint_join_started.elapsed();
     drop(endpoint_records);
     trim_process_allocations();
-
-    if debug_stitch {
-        for (node, half_end) in half_ends.iter().enumerate() {
-            let (left_endpoint, right_endpoint) =
-                endpoints_by_label_end(&inputs.unitigs[half_end.unitig_index()]);
-            let label_end = label_end_for_node(node);
-            let endpoint = match label_end {
-                LabelEnd::Left => left_endpoint,
-                LabelEnd::Right => right_endpoint,
-            };
-            eprintln!(
-                "node {node}: unitig={} end={:?} endpoint={:?} join={}",
-                half_end.unitig_index(),
-                label_end,
-                endpoint.map(debug_endpoint),
-                join_neighbor[node],
-            );
-        }
-    }
 
     let component_started = Instant::now();
     let component_starts = stitch_component_starts_from_neighbors(&half_ends, &join_neighbor);
@@ -10113,156 +9561,6 @@ fn stitch_discontinuity_paths_impl<const K: usize>(
         walk_elapsed.as_secs_f64(),
         sort_elapsed.as_secs_f64()
     );
-    if debug_stitch {
-        for unitig in &unitigs {
-            eprintln!("stitched: {}", String::from_utf8_lossy(unitig));
-        }
-    }
-    Ok(unitigs)
-}
-
-#[allow(clippy::too_many_arguments)]
-fn stitch_discontinuity_paths_with_adjacency<const K: usize>(
-    inputs: &DiscontinuityInputs<K>,
-    threads: usize,
-    coord_dir: Option<&Path>,
-    debug_stitch: bool,
-    half_ends: Vec<HalfEnd>,
-    segment_edges: Vec<(usize, usize, usize)>,
-    mut endpoint_records: Vec<StitchEndpointRecord<K>>,
-    half_end_elapsed: Duration,
-) -> Result<Vec<Vec<u8>>, SerialCollationError> {
-    let mut adjacency = vec![StitchAdjacencyList::default(); half_ends.len()];
-    for &(left_node, right_node, unitig_index) in &segment_edges {
-        push_stitch_edge(&mut adjacency, left_node, right_node, Some(unitig_index));
-    }
-
-    let endpoint_sort_started = Instant::now();
-    endpoint_records.sort_unstable_by_key(|record| record.vertex.as_u128());
-    let endpoint_sort_elapsed = endpoint_sort_started.elapsed();
-    let endpoint_join_started = Instant::now();
-    let mut start = 0;
-    while start < endpoint_records.len() {
-        let vertex = endpoint_records[start].vertex;
-        let mut end = start + 1;
-        while end < endpoint_records.len() && endpoint_records[end].vertex == vertex {
-            end += 1;
-        }
-
-        let mut ends = StitchVertexEnds::default();
-        for record in &endpoint_records[start..end] {
-            ends.push(record.side, record.node);
-        }
-        if ends.front_len == 1 && ends.back_len == 1 {
-            push_stitch_edge(
-                &mut adjacency,
-                stitch_node_index(ends.fronts[0]),
-                stitch_node_index(ends.backs[0]),
-                None,
-            );
-        } else if ends.total_len == 2 {
-            push_stitch_edge(
-                &mut adjacency,
-                stitch_node_index(ends.nodes[0]),
-                stitch_node_index(ends.nodes[1]),
-                None,
-            );
-        }
-        start = end;
-    }
-    let endpoint_join_elapsed = endpoint_join_started.elapsed();
-    drop(endpoint_records);
-    trim_process_allocations();
-
-    if debug_stitch {
-        for (node, half_end) in half_ends.iter().enumerate() {
-            let (left_endpoint, right_endpoint) =
-                endpoints_by_label_end(&inputs.unitigs[half_end.unitig_index()]);
-            let label_end = label_end_for_node(node);
-            let endpoint = match label_end {
-                LabelEnd::Left => left_endpoint,
-                LabelEnd::Right => right_endpoint,
-            };
-            let edges = adjacency[node]
-                .iter()
-                .map(|edge| format!("{}:{:?}", edge.to, edge.unitig_index))
-                .collect::<Vec<_>>()
-                .join(",");
-            eprintln!(
-                "node {node}: unitig={} end={:?} endpoint={:?} edges=[{}]",
-                half_end.unitig_index(),
-                label_end,
-                endpoint.map(debug_endpoint),
-                edges,
-            );
-        }
-    }
-
-    let mut unitigs = Vec::new();
-    let component_started = Instant::now();
-    let component_starts = stitch_component_starts_from_adjacency(&adjacency);
-    let component_elapsed = component_started.elapsed();
-    let walk_started = Instant::now();
-    let used_simple_components = component_starts.is_some();
-    if let Some(starts) = component_starts {
-        unitigs = if let Some(coord_dir) = coord_dir {
-            let manifest = write_stitched_coord_buckets_from_adjacency(
-                coord_dir, threads, &adjacency, &starts,
-            )?;
-            reduce_stitched_coord_bucket_files::<K>(inputs, &manifest, threads)?
-        } else {
-            let records = map_simple_stitched_components_with_threads_from_adjacency(
-                &adjacency, &starts, threads,
-            );
-            reduce_stitched_coord_buckets::<K>(inputs, records, threads)
-        };
-    } else {
-        let mut visited_segments = vec![false; inputs.unitigs.len()];
-
-        for start in (0..half_ends.len()).filter(|&node| adjacency[node].len() == 1) {
-            let Some(path) = walk_stitched_path(inputs, &adjacency, &mut visited_segments, start)
-            else {
-                continue;
-            };
-            push_stitched_path_label::<K>(&mut unitigs, path);
-        }
-
-        for &(left_node, _, unitig_index) in &segment_edges {
-            if visited_segments[unitig_index] {
-                continue;
-            }
-            let Some(path) =
-                walk_stitched_path(inputs, &adjacency, &mut visited_segments, left_node)
-            else {
-                continue;
-            };
-            push_stitched_path_label::<K>(&mut unitigs, path);
-        }
-    }
-    let walk_elapsed = walk_started.elapsed();
-
-    let sort_started = Instant::now();
-    unitigs = bucketed_maximal_unitig_reduce(unitigs, threads);
-    let sort_elapsed = sort_started.elapsed();
-    eprintln!(
-        "cuttlefish: stitch detail: half-ends {:.3}s, endpoint sort {:.3}s, endpoint join {:.3}s, components {:.3}s, {} walk {:.3}s, bucket reduce {:.3}s",
-        half_end_elapsed.as_secs_f64(),
-        endpoint_sort_elapsed.as_secs_f64(),
-        endpoint_join_elapsed.as_secs_f64(),
-        component_elapsed.as_secs_f64(),
-        if used_simple_components {
-            "component"
-        } else {
-            "fallback"
-        },
-        walk_elapsed.as_secs_f64(),
-        sort_elapsed.as_secs_f64()
-    );
-    if debug_stitch {
-        for unitig in &unitigs {
-            eprintln!("stitched: {}", String::from_utf8_lossy(unitig));
-        }
-    }
     Ok(unitigs)
 }
 
@@ -10455,59 +9753,6 @@ fn join_neighbors_from_sorted_endpoint_assignments<const K: usize>(
     }
 }
 
-fn stitch_component_starts_from_adjacency(adjacency: &[StitchAdjacencyList]) -> Option<Vec<usize>> {
-    let mut visited = vec![false; adjacency.len()];
-    let mut starts = Vec::new();
-
-    if adjacency.iter().any(|neighbours| neighbours.len() > 2) {
-        return None;
-    }
-
-    for node in 0..adjacency.len() {
-        if visited[node] || adjacency[node].len() != 1 {
-            continue;
-        }
-        starts.push(node);
-        mark_linear_stitch_component(adjacency, node, &mut visited);
-    }
-
-    for node in 0..adjacency.len() {
-        if visited[node] || adjacency[node].len() == 0 {
-            continue;
-        }
-        starts.push(node);
-        mark_linear_stitch_component(adjacency, node, &mut visited);
-    }
-
-    Some(starts)
-}
-
-fn mark_linear_stitch_component(
-    adjacency: &[StitchAdjacencyList],
-    start: usize,
-    visited: &mut [bool],
-) {
-    let mut previous = usize::MAX;
-    let mut current = start;
-
-    loop {
-        if visited[current] {
-            break;
-        }
-        visited[current] = true;
-
-        let next = adjacency[current]
-            .iter()
-            .map(|edge| edge.to)
-            .find(|&next| next != previous && !visited[next]);
-        let Some(next) = next else {
-            break;
-        };
-        previous = current;
-        current = next;
-    }
-}
-
 fn stitch_component_starts_from_neighbors(
     half_ends: &[HalfEnd],
     join_neighbor: &[u32],
@@ -10556,17 +9801,6 @@ fn mark_neighbor_component(join_neighbor: &[u32], start: usize, visited: &mut [u
             break;
         }
         current = stitch_node_index(next);
-    }
-}
-
-fn push_stitched_path_label<const K: usize>(unitigs: &mut Vec<Vec<u8>>, path: StitchedPath) {
-    let label = path.label;
-    if label.len() >= K {
-        if path.is_cycle {
-            unitigs.push(normalize_stitched_cycle::<K>(&label));
-        } else {
-            unitigs.push(canonical_label(label));
-        }
     }
 }
 
@@ -10669,52 +9903,6 @@ fn walk_simple_stitched_component_label<const K: usize>(
     }
 }
 
-fn map_simple_stitched_components_with_threads_from_adjacency(
-    adjacency: &[StitchAdjacencyList],
-    starts: &[usize],
-    threads: usize,
-) -> Vec<StitchedCoordRecord> {
-    let workers = threads.max(1).min(starts.len().max(1));
-    if workers == 1 || starts.len() < 1024 {
-        let mut records = Vec::new();
-        for (path_id, &start) in starts.iter().enumerate() {
-            walk_simple_stitched_component_coords_from_adjacency(
-                adjacency,
-                start,
-                path_id as u64,
-                &mut records,
-            );
-        }
-        return records;
-    }
-
-    let chunk_size = starts.len().div_ceil(workers);
-    std::thread::scope(|scope| {
-        let mut handles = Vec::new();
-        for (chunk_index, chunk) in starts.chunks(chunk_size).enumerate() {
-            let base_path_id = (chunk_index * chunk_size) as u64;
-            handles.push(scope.spawn(move || {
-                let mut records = Vec::new();
-                for (offset, &start) in chunk.iter().enumerate() {
-                    walk_simple_stitched_component_coords_from_adjacency(
-                        adjacency,
-                        start,
-                        base_path_id + offset as u64,
-                        &mut records,
-                    );
-                }
-                records
-            }));
-        }
-
-        let mut records = Vec::with_capacity(starts.len());
-        for handle in handles {
-            records.extend(handle.join().expect("stitch mapper worker panicked"));
-        }
-        records
-    })
-}
-
 fn write_stitched_coord_buckets(
     coord_dir: &Path,
     threads: usize,
@@ -10788,75 +9976,6 @@ fn write_stitched_coord_buckets(
     Ok(manifest)
 }
 
-fn write_stitched_coord_buckets_from_adjacency(
-    coord_dir: &Path,
-    threads: usize,
-    adjacency: &[StitchAdjacencyList],
-    starts: &[usize],
-) -> Result<Vec<StitchedCoordBucketEntry>, SerialCollationError> {
-    if coord_dir.exists() {
-        fs::remove_dir_all(coord_dir).map_err(|source| SerialCollationError::Io {
-            path: coord_dir.to_path_buf(),
-            source,
-        })?;
-    }
-    fs::create_dir_all(coord_dir).map_err(|source| SerialCollationError::Io {
-        path: coord_dir.to_path_buf(),
-        source,
-    })?;
-
-    let bucket_count = stitched_coord_bucket_count(threads);
-    let bucket_mask = bucket_count - 1;
-    let workers = threads.max(1).min(starts.len().max(1));
-
-    let mut manifest = if workers == 1 || starts.len() < 1024 {
-        write_adjacency_stitched_coord_shards(
-            coord_dir,
-            0,
-            bucket_count,
-            bucket_mask,
-            adjacency,
-            starts,
-            0,
-        )?
-    } else {
-        let chunk_size = starts.len().div_ceil(workers);
-        std::thread::scope(|scope| {
-            let mut handles = Vec::new();
-            for (chunk_index, chunk) in starts.chunks(chunk_size).enumerate() {
-                let base_path_id = (chunk_index * chunk_size) as u64;
-                handles.push(scope.spawn(move || {
-                    write_adjacency_stitched_coord_shards(
-                        coord_dir,
-                        chunk_index,
-                        bucket_count,
-                        bucket_mask,
-                        adjacency,
-                        chunk,
-                        base_path_id,
-                    )
-                }));
-            }
-
-            let mut manifest = Vec::new();
-            for handle in handles {
-                manifest.extend(
-                    handle
-                        .join()
-                        .map_err(|_| SerialCollationError::WorkerPanic)??,
-                );
-            }
-            Ok::<_, SerialCollationError>(manifest)
-        })?
-    };
-    manifest.sort_by(|left, right| {
-        left.bucket_id
-            .cmp(&right.bucket_id)
-            .then_with(|| left.path.cmp(&right.path))
-    });
-    Ok(manifest)
-}
-
 #[allow(clippy::too_many_arguments)]
 fn write_neighbor_stitched_coord_shards(
     coord_dir: &Path,
@@ -10883,106 +10002,6 @@ fn write_neighbor_stitched_coord_shards(
         writers.write_path_records(stitched_coord_bucket(path_id, bucket_mask), &records)?;
     }
     writers.finish()
-}
-
-fn write_adjacency_stitched_coord_shards(
-    coord_dir: &Path,
-    worker_id: usize,
-    bucket_count: usize,
-    bucket_mask: usize,
-    adjacency: &[StitchAdjacencyList],
-    starts: &[usize],
-    base_path_id: u64,
-) -> Result<Vec<StitchedCoordBucketEntry>, SerialCollationError> {
-    let mut writers = StitchedCoordShardWriters::new(coord_dir, worker_id, bucket_count);
-    let mut records = Vec::new();
-    for (offset, &start) in starts.iter().enumerate() {
-        records.clear();
-        let path_id = base_path_id + offset as u64;
-        walk_simple_stitched_component_coords_from_adjacency(
-            adjacency,
-            start,
-            path_id,
-            &mut records,
-        );
-        writers.write_path_records(stitched_coord_bucket(path_id, bucket_mask), &records)?;
-    }
-    writers.finish()
-}
-
-fn write_materialized_stitched_coord_buckets<const K: usize>(
-    inputs: &DiscontinuityInputs<K>,
-    coord_dir: &Path,
-    threads: usize,
-    half_ends: &[HalfEnd],
-    join_neighbor: &[u32],
-    starts: &[usize],
-) -> Result<Vec<MaterializedStitchedCoordBucketEntry>, SerialCollationError> {
-    if coord_dir.exists() {
-        fs::remove_dir_all(coord_dir).map_err(|source| SerialCollationError::Io {
-            path: coord_dir.to_path_buf(),
-            source,
-        })?;
-    }
-    fs::create_dir_all(coord_dir).map_err(|source| SerialCollationError::Io {
-        path: coord_dir.to_path_buf(),
-        source,
-    })?;
-
-    let bucket_count = materialized_stitched_coord_bucket_count(threads);
-    let bucket_mask = bucket_count - 1;
-    let workers = threads.max(1).min(starts.len().max(1));
-
-    let mut manifest = if workers == 1 || starts.len() < 1024 {
-        write_materialized_neighbor_stitched_coord_shards(
-            inputs,
-            coord_dir,
-            0,
-            bucket_count,
-            bucket_mask,
-            half_ends,
-            join_neighbor,
-            starts,
-            0,
-        )?
-    } else {
-        let chunk_size = starts.len().div_ceil(workers);
-        std::thread::scope(|scope| {
-            let mut handles = Vec::new();
-            for (chunk_index, chunk) in starts.chunks(chunk_size).enumerate() {
-                let base_path_id = (chunk_index * chunk_size) as u64;
-                handles.push(scope.spawn(move || {
-                    write_materialized_neighbor_stitched_coord_shards(
-                        inputs,
-                        coord_dir,
-                        chunk_index,
-                        bucket_count,
-                        bucket_mask,
-                        half_ends,
-                        join_neighbor,
-                        chunk,
-                        base_path_id,
-                    )
-                }));
-            }
-
-            let mut manifest = Vec::new();
-            for handle in handles {
-                manifest.extend(
-                    handle
-                        .join()
-                        .map_err(|_| SerialCollationError::WorkerPanic)??,
-                );
-            }
-            Ok::<_, SerialCollationError>(manifest)
-        })?
-    };
-    manifest.sort_by(|left, right| {
-        left.bucket_id
-            .cmp(&right.bucket_id)
-            .then_with(|| left.coord_path.cmp(&right.coord_path))
-    });
-    Ok(manifest)
 }
 
 fn write_external_materialized_stitched_coord_buckets_from_neighbors<const K: usize>(
@@ -12289,40 +11308,6 @@ fn read_and_discard_exact(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
-fn write_materialized_neighbor_stitched_coord_shards<const K: usize>(
-    inputs: &DiscontinuityInputs<K>,
-    coord_dir: &Path,
-    worker_id: usize,
-    bucket_count: usize,
-    bucket_mask: usize,
-    half_ends: &[HalfEnd],
-    join_neighbor: &[u32],
-    starts: &[usize],
-    base_path_id: u64,
-) -> Result<Vec<MaterializedStitchedCoordBucketEntry>, SerialCollationError> {
-    let mut writers =
-        MaterializedStitchedCoordShardWriters::new(coord_dir, worker_id, bucket_count);
-    let mut records = Vec::new();
-    for (offset, &start) in starts.iter().enumerate() {
-        records.clear();
-        let path_id = base_path_id + offset as u64;
-        walk_simple_stitched_component_coords(
-            half_ends,
-            join_neighbor,
-            start,
-            path_id,
-            &mut records,
-        );
-        writers.write_path_records(
-            inputs,
-            stitched_coord_bucket(path_id, bucket_mask),
-            &records,
-        )?;
-    }
-    writers.finish()
-}
-
 struct MaterializedStitchedCoordShardWriters<'a> {
     coord_dir: &'a Path,
     worker_id: usize,
@@ -12778,27 +11763,6 @@ impl<'a> MaterializedStitchedCoordShardWriters<'a> {
             writers,
             open_writers: 0,
         }
-    }
-
-    fn write_path_records<const K: usize>(
-        &mut self,
-        inputs: &DiscontinuityInputs<K>,
-        bucket_id: usize,
-        records: &[StitchedCoordRecord],
-    ) -> Result<(), SerialCollationError> {
-        if records.is_empty() {
-            return Ok(());
-        }
-        self.ensure_writer(bucket_id)?;
-        let writer = self.writers[bucket_id]
-            .as_mut()
-            .expect("bucket writer was just created");
-        writer.ensure_open()?;
-        for record in records {
-            let unitig = &inputs.unitigs[record.unitig_index as usize];
-            writer.write_record(record, unitig.label(inputs))?;
-        }
-        Ok(())
     }
 
     fn ensure_writer(&mut self, bucket_id: usize) -> Result<(), SerialCollationError> {
@@ -13640,12 +12604,6 @@ fn floor_power_of_two(value: usize) -> usize {
     } else {
         1usize << (usize::BITS - 1 - value.leading_zeros())
     }
-}
-
-fn final_unitig_bucket_count(threads: usize) -> usize {
-    (threads.max(1) * 8)
-        .next_power_of_two()
-        .clamp(128, MAX_OPEN_STITCH_ENDPOINT_WRITERS)
 }
 
 fn stitched_coord_bucket(path_id: u64, bucket_mask: usize) -> usize {
@@ -14702,70 +13660,6 @@ fn materialized_stitched_coord_records_are_ordered(
         .all(|pair| (pair[0].path_id, pair[0].rank) <= (pair[1].path_id, pair[1].rank))
 }
 
-fn reduce_stitched_coord_buckets<const K: usize>(
-    inputs: &DiscontinuityInputs<K>,
-    records: Vec<StitchedCoordRecord>,
-    threads: usize,
-) -> Vec<Vec<u8>> {
-    if records.is_empty() {
-        return Vec::new();
-    }
-
-    let bucket_count = (threads.max(1) * 1024)
-        .next_power_of_two()
-        .clamp(1024, 16_384);
-    let bucket_mask = bucket_count - 1;
-    let mut buckets = (0..bucket_count).map(|_| Vec::new()).collect::<Vec<_>>();
-    for record in records {
-        let bucket = (hash_u64(record.path_id, 0) as usize) & bucket_mask;
-        buckets[bucket].push(record);
-    }
-
-    let workers = threads.max(1).min(bucket_count);
-    let mut reduced_buckets = Vec::new();
-    if workers == 1 {
-        for mut bucket in buckets {
-            reduced_buckets.push(reduce_stitched_coord_bucket::<K>(
-                inputs,
-                &mut bucket,
-                false,
-            ));
-        }
-    } else {
-        let chunk_size = bucket_count.div_ceil(workers);
-        reduced_buckets = std::thread::scope(|scope| {
-            let mut handles = Vec::new();
-            for chunk in buckets.chunks_mut(chunk_size) {
-                handles.push(scope.spawn(move || {
-                    let mut chunk_unitigs = Vec::new();
-                    for bucket in chunk {
-                        chunk_unitigs
-                            .extend(reduce_stitched_coord_bucket::<K>(inputs, bucket, false));
-                    }
-                    chunk_unitigs
-                }));
-            }
-
-            let mut reduced = Vec::new();
-            for handle in handles {
-                reduced.push(
-                    handle
-                        .join()
-                        .expect("stitched coordinate reducer worker panicked"),
-                );
-            }
-            reduced
-        });
-    }
-
-    let total = reduced_buckets.iter().map(Vec::len).sum();
-    let mut unitigs = Vec::with_capacity(total);
-    for mut bucket in reduced_buckets {
-        unitigs.append(&mut bucket);
-    }
-    unitigs
-}
-
 fn reduce_stitched_coord_bucket_files<const K: usize>(
     inputs: &DiscontinuityInputs<K>,
     manifest: &[StitchedCoordBucketEntry],
@@ -15108,10 +14002,6 @@ fn reduce_stitched_coord_bucket<const K: usize>(
     unitigs
 }
 
-fn debug_endpoint<const K: usize>(endpoint: DiscontinuityEndpoint<K>) -> (String, Side) {
-    (endpoint.vertex.to_ascii_string(), endpoint.side)
-}
-
 fn endpoints_by_label_end<const K: usize>(
     unitig: &DiscontinuityUnitig<K>,
 ) -> (
@@ -15119,87 +14009,6 @@ fn endpoints_by_label_end<const K: usize>(
     Option<DiscontinuityEndpoint<K>>,
 ) {
     (unitig.left_exit(), unitig.right_exit())
-}
-
-fn push_stitch_edge(
-    adjacency: &mut [StitchAdjacencyList],
-    first: usize,
-    second: usize,
-    unitig_index: Option<usize>,
-) {
-    adjacency[first].push(StitchAdjacency {
-        to: second,
-        unitig_index,
-    });
-    adjacency[second].push(StitchAdjacency {
-        to: first,
-        unitig_index,
-    });
-}
-
-fn walk_stitched_path<const K: usize>(
-    inputs: &DiscontinuityInputs<K>,
-    adjacency: &[StitchAdjacencyList],
-    visited_segments: &mut [bool],
-    start: usize,
-) -> Option<StitchedPath> {
-    let mut label = Vec::new();
-    let mut prev = None;
-    let mut current = start;
-    let mut emitted_segment = false;
-    let mut is_cycle = false;
-
-    loop {
-        let next = adjacency[current]
-            .iter()
-            .copied()
-            .find(|edge| {
-                Some(edge.to) != prev
-                    && edge
-                        .unitig_index
-                        .is_none_or(|unitig_index| !visited_segments[unitig_index])
-            })
-            .or_else(|| {
-                adjacency[current].iter().copied().find(|edge| {
-                    edge.unitig_index
-                        .is_some_and(|unitig_index| !visited_segments[unitig_index])
-                })
-            });
-
-        let Some(edge) = next else {
-            break;
-        };
-
-        if let Some(unitig_index) = edge.unitig_index {
-            if visited_segments[unitig_index] {
-                break;
-            }
-            visited_segments[unitig_index] = true;
-            let unitig = &inputs.unitigs[unitig_index];
-            let unitig_label = unitig.label(inputs);
-            let reverse = reverse_for_stitch_node(current);
-            let mut append_reverse = reverse;
-            if !label.is_empty()
-                && !labels_overlap_oriented_fast::<K>(&label, unitig_label, reverse)
-            {
-                let alternate = oriented_label(unitig_label, !reverse);
-                if labels_overlap::<K>(&label, &alternate) {
-                    append_reverse = !reverse;
-                }
-            }
-            append_or_init_oriented_fast::<K>(&mut label, unitig_label, append_reverse);
-            emitted_segment = true;
-        }
-
-        prev = Some(current);
-        current = edge.to;
-        if emitted_segment && current == start {
-            is_cycle = true;
-            break;
-        }
-    }
-
-    emitted_segment.then_some(StitchedPath { label, is_cycle })
 }
 
 fn walk_simple_stitched_component_coords(
@@ -15239,62 +14048,6 @@ fn walk_simple_stitched_component_coords(
     }
 
     if rank == 0 {
-        records.truncate(record_start);
-        return;
-    }
-
-    if is_cycle {
-        for record in &mut records[record_start..] {
-            record.is_cycle = true;
-        }
-    }
-}
-
-fn walk_simple_stitched_component_coords_from_adjacency(
-    adjacency: &[StitchAdjacencyList],
-    start: usize,
-    path_id: u64,
-    records: &mut Vec<StitchedCoordRecord>,
-) {
-    let record_start = records.len();
-    let mut prev = None;
-    let mut current = start;
-    let mut rank = 0u64;
-    let mut emitted_segment = false;
-    let mut is_cycle = false;
-
-    loop {
-        let next = adjacency[current]
-            .iter()
-            .copied()
-            .find(|edge| Some(edge.to) != prev);
-
-        let Some(edge) = next else {
-            break;
-        };
-
-        if let Some(unitig_index) = edge.unitig_index {
-            let reverse = reverse_for_stitch_node(current);
-            records.push(StitchedCoordRecord {
-                path_id,
-                rank,
-                unitig_index: u32::try_from(unitig_index).expect("unitig index exceeds u32"),
-                reverse,
-                is_cycle: false,
-            });
-            rank += 1;
-            emitted_segment = true;
-        }
-
-        prev = Some(current);
-        current = edge.to;
-        if emitted_segment && current == start {
-            is_cycle = true;
-            break;
-        }
-    }
-
-    if !emitted_segment {
         records.truncate(record_start);
         return;
     }

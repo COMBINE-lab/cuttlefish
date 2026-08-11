@@ -1612,24 +1612,6 @@ fn normalize_source_sets(source_sets: &mut [Vec<u32>]) {
     }
 }
 
-/// Decodes a label into canonical k-mers; the subgraph builder walks them in place instead.
-#[allow(dead_code)]
-fn canonical_vertices_from_label<const K: usize>(
-    label: &[u8],
-) -> Result<Vec<Kmer<K>>, LocalSubgraphError> {
-    if label.len() < K {
-        return Err(LocalSubgraphError::MalformedRecord);
-    }
-    let mut vertices = Vec::with_capacity(label.len() - K + 1);
-    let mut vertex = Kmer::<K>::from_ascii(&label[..K])?;
-    vertices.push(vertex.canonical());
-    for &base in &label[K..] {
-        vertex = vertex.roll_forward(Base::from_ascii(base));
-        vertices.push(vertex.canonical());
-    }
-    Ok(vertices)
-}
-
 fn collect_wanted_color_relations<const K: usize>(
     record: BorrowedBucketPackedRecord<'_>,
     wanted: &WantedColorMap<K>,

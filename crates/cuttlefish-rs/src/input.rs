@@ -111,10 +111,12 @@ where
 }
 
 /// As [`parse_fragments_borrowed`], but permitted to use `inflate_workers`
-/// threads to decompress block-structured (BGZF) gzip input.
+/// threads to decompress gzip input.
 ///
 /// The decompressed byte stream is identical either way; only the work of
-/// producing it is shared out. Plain gzip ignores the budget.
+/// producing it is shared out. BGZF blocks inflate on the dedicated
+/// block-parallel reader; plain gzip members inflate through rapidgzip's
+/// speculative parallel decoder, which finds block boundaries mid-stream.
 pub fn parse_fragments_borrowed_with<P, F>(
     path: P,
     source_id: u32,
@@ -132,9 +134,10 @@ where
         source,
     })?;
     let input: Box<dyn Read> = if path.extension().is_some_and(|ext| ext == "gz") {
-        // BGZF concatenates independent gzip members, so its blocks can be
-        // inflated concurrently. A plain member cannot be split, and falls back
-        // to the serial decoder.
+        // BGZF concatenates independent gzip members, so its blocks inflate
+        // concurrently on the dedicated reader. Plain gzip has no such seams
+        // and goes through rapidgzip, whose workers split the stream
+        // speculatively instead.
         let mut head = [0u8; crate::bgzf::PROBE_BYTES];
         let probed = read_probe(&mut file, &mut head).map_err(|source| InputError::Io {
             path: path.to_path_buf(),
@@ -146,6 +149,8 @@ where
         })?;
         if inflate_workers > 1 && crate::bgzf::is_bgzf(&head[..probed]) {
             Box::new(crate::bgzf::ParallelBgzfReader::new(file, inflate_workers))
+        } else if inflate_workers > 1 && !sequential_inflate_diagnostic() {
+            Box::new(open_parallel_gzip_reader(path, inflate_workers)?)
         } else {
             Box::new(MultiGzDecoder::new(file))
         }
@@ -163,6 +168,35 @@ where
         Some(_) => Err(InputError::UnknownFormat(path.to_path_buf())),
         None => Err(InputError::EmptyFile(path.to_path_buf())),
     }
+}
+
+/// Whether to force single-threaded gzip inflation (measurement diagnostic).
+fn sequential_inflate_diagnostic() -> bool {
+    static SEQUENTIAL: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *SEQUENTIAL.get_or_init(|| std::env::var_os("CF3_RS_SEQUENTIAL_INFLATE").is_some())
+}
+
+/// Opens a plain (non-BGZF) gzip file through rapidgzip's parallel decoder.
+///
+/// rapidgzip decodes ahead speculatively from mid-stream bit positions and
+/// reconciles at member boundaries, so a single large gzip member -- which the
+/// serial decoder is bound to walk alone at roughly 150 MB/s of compressed
+/// input -- scales with the worker budget. The returned reader yields exactly
+/// the bytes `MultiGzDecoder` would.
+fn open_parallel_gzip_reader(
+    path: &Path,
+    inflate_workers: usize,
+) -> Result<rapidgzip_core::DecoderReader, InputError> {
+    let build_error = |message: String| InputError::Io {
+        path: path.to_path_buf(),
+        source: std::io::Error::other(message),
+    };
+    rapidgzip_core::Decoder::builder()
+        .decoder_threads(inflate_workers)
+        .build()
+        .map_err(|error| build_error(format!("rapidgzip configuration: {error}")))?
+        .open(path)
+        .map_err(|error| build_error(format!("rapidgzip open: {error}")))
 }
 
 /// Fills as much of `head` as the file provides, tolerating short reads.
@@ -590,6 +624,55 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![b"ACGT".as_slice(), b"TA".as_slice()]
         );
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn parallel_gzip_inflation_matches_serial() {
+        // Large enough that rapidgzip's speculative workers actually engage,
+        // and two members so the multi-member handling is covered too.
+        let mut body = Vec::new();
+        body.extend_from_slice(b">r1\n");
+        for i in 0..200_000u32 {
+            let base = match i % 4 {
+                0 => b'A',
+                1 => b'C',
+                2 => b'G',
+                _ => b'T',
+            };
+            body.push(base);
+            if i % 70 == 69 {
+                body.push(b'\n');
+            }
+        }
+        body.extend_from_slice(b"\n>r2\nACGTNNACGT\n");
+
+        let mut first = GzEncoder::new(Vec::new(), Compression::default());
+        first.write_all(&body[..body.len() / 2]).unwrap();
+        let mut bytes = first.finish().unwrap();
+        let mut second = GzEncoder::new(Vec::new(), Compression::default());
+        second.write_all(&body[body.len() / 2..]).unwrap();
+        bytes.extend_from_slice(&second.finish().unwrap());
+
+        let path =
+            std::env::temp_dir().join(format!("cf3rs-input-{}-parallel.fa.gz", std::process::id()));
+        fs::write(&path, bytes).unwrap();
+
+        let collect = |workers: usize| {
+            let mut fragments = Vec::<(u32, usize, Vec<u8>)>::new();
+            let records = parse_fragments_borrowed_with(&path, 5, 2, workers, |fragment| {
+                fragments.push((fragment.source_id, fragment.offset, fragment.seq.to_vec()));
+                Ok(())
+            })
+            .unwrap();
+            (records, fragments)
+        };
+
+        let serial = collect(1);
+        let parallel = collect(4);
+        assert_eq!(serial, parallel);
+        assert_eq!(serial.0, 2);
 
         let _ = fs::remove_file(path);
     }

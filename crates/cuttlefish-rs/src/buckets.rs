@@ -2127,7 +2127,7 @@ fn sort_colored_payload_by_source(
     if payload.is_empty() {
         return Ok(());
     }
-    if payload.len() % record_len != 0 {
+    if !payload.len().is_multiple_of(record_len) {
         return Err(BucketError::MalformedRecord);
     }
     let source_count =

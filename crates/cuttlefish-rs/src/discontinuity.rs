@@ -2892,7 +2892,7 @@ impl SerialDiscontinuityContractor {
                 .ok_or_else(|| {
                     SerialCollationError::MalformedCoordBucket(matrix.containers.path_for(block_id))
                 })?;
-            if flushed != expected || flushed % record_len != 0 {
+            if flushed != expected || !flushed.is_multiple_of(record_len) {
                 return Err(SerialCollationError::MalformedCoordBucket(
                     matrix.containers.path_for(block_id),
                 ));
@@ -4452,14 +4452,14 @@ impl SerialDiscontinuityExpander {
                 match (edge.first, edge.second) {
                     (MatrixEndpoint::Phi, MatrixEndpoint::Vertex(v))
                     | (MatrixEndpoint::Vertex(v), MatrixEndpoint::Phi) => {
-                        if edge.weight == 1 {
-                            if let Some(&info) = vertex_info.get(&v.vertex) {
-                                edges.push(EdgePathInfo {
-                                    unitig_index: edge.unitig_index,
-                                    phantom_unitig: edge.phantom_unitig,
-                                    info: phi_edge_path_info(edge, info),
-                                });
-                            }
+                        if edge.weight == 1
+                            && let Some(&info) = vertex_info.get(&v.vertex)
+                        {
+                            edges.push(EdgePathInfo {
+                                unitig_index: edge.unitig_index,
+                                phantom_unitig: edge.phantom_unitig,
+                                info: phi_edge_path_info(edge, info),
+                            });
                         }
                     }
                     (MatrixEndpoint::Vertex(x), MatrixEndpoint::Vertex(y)) => {
@@ -6808,7 +6808,7 @@ fn read_vertex_path_info_bucket_into<const K: usize>(
             source,
         })?
         .len() as usize;
-    if byte_len % record_len != 0 {
+    if !byte_len.is_multiple_of(record_len) {
         return Err(SerialCollationError::MalformedCoordBucket(
             malformed_path.to_path_buf(),
         ));
@@ -13203,7 +13203,7 @@ fn report_local_contraction_progress(done: usize, total: usize, started: Instant
     if total < 1024 {
         return;
     }
-    if done == total || done % 1024 == 0 {
+    if done == total || done.is_multiple_of(1024) {
         eprintln!(
             "cuttlefish: contracted {done}/{total} local subgraph bucket(s) in {:.1}s",
             started.elapsed().as_secs_f64()
@@ -13216,7 +13216,7 @@ fn report_discontinuity_contraction_progress(done: usize, total: usize, started:
     if total < 16 {
         return;
     }
-    if done == total || done % 16 == 0 {
+    if done == total || done.is_multiple_of(16) {
         eprintln!(
             "cuttlefish: contracted {done}/{total} discontinuity partition(s) in {:.1}s",
             started.elapsed().as_secs_f64()

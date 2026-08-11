@@ -201,8 +201,9 @@ fn emit_uncolored_streamed_weak_superkmer_buckets<const K: usize>(
         "cuttlefish: uncolored partition streaming {readers} reader(s) into {workers} worker(s), {buffers} batch buffer(s)"
     );
 
-    // Readers decompress; only block-structured input can use more than one
-    // thread for it, so the budget is shared evenly and costs nothing otherwise.
+    // Readers decompress; BGZF splits across its blocks and plain gzip across
+    // rapidgzip's speculative workers, so the whole worker budget is shared
+    // evenly among the readers either way.
     let inflate_workers = (workers / readers.max(1)).max(1);
     let pool = BatchPool::new(buffers, readers);
     let next_source = AtomicUsize::new(0);
@@ -491,7 +492,15 @@ fn emit_colored_weak_superkmer_buckets<const K: usize>(
         });
         let next_source = AtomicUsize::new(0);
         let workers = params.partition_workers(window.len());
-        eprintln!("cuttlefish: colored partition using {workers} worker(s)");
+        // A worker owns a whole source, which is what keeps each source's
+        // records grouped in the buckets -- the invariant the color-signature
+        // hash depends on. Decompression inside one file has no ordering
+        // stake, so threads beyond one sharding worker per file are spent
+        // there instead of idling when sources are few and large.
+        let inflate_workers = (params.threads.max(1) / workers.max(1)).max(1);
+        eprintln!(
+            "cuttlefish: colored partition using {workers} worker(s), {inflate_workers} inflate thread(s) each"
+        );
         let mut emitters = Vec::with_capacity(workers);
         std::thread::scope(|scope| {
             let mut handles = Vec::new();
@@ -512,10 +521,11 @@ fn emit_colored_weak_superkmer_buckets<const K: usize>(
                         };
                         let source_id = u32::try_from(source_start + offset + 1)
                             .map_err(|_| PartitionRunError::TooManySources)?;
-                        match parse_fragments_borrowed(
+                        match parse_fragments_borrowed_with(
                             &window[offset],
                             source_id,
                             K + 1,
+                            inflate_workers,
                             |fragment| {
                                 let started = Instant::now();
                                 emit_fragment_seq_weak_superkmer_buckets::<K, InputError>(
@@ -973,7 +983,7 @@ where
     E: From<PartitionError>,
     F: FnMut(WeakSuperKmer) -> Result<(), E>,
 {
-    if K < 3 || K % 2 == 0 || K > 63 {
+    if K < 3 || K.is_multiple_of(2) || K > 63 {
         return Err(PartitionError::InvalidK(K).into());
     }
     if minimizer_len == 0 || minimizer_len >= K || minimizer_len > 32 {

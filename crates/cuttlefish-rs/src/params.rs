@@ -143,7 +143,7 @@ impl BuildParams {
             return Err(ParamError::MissingOutput);
         }
 
-        if self.k <= 1 || self.k > MAX_K || self.k % 2 == 0 {
+        if self.k <= 1 || self.k > MAX_K || self.k.is_multiple_of(2) {
             return Err(ParamError::InvalidK(self.k));
         }
 

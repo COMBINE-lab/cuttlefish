@@ -95,7 +95,6 @@ pub struct ExternalDiscontinuityInputs<const K: usize> {
     unitig_path: PathBuf,
     label_path: PathBuf,
     unitigs: usize,
-    compact_unitigs: bool,
     ranges: Vec<ExternalLocalUnitigRange>,
     edge_matrix: Option<BlockedEdgeMatrix<K>>,
     color_runs: Option<ColorRunSidecar>,
@@ -200,7 +199,7 @@ impl LocalUnitigBucketWriter {
                 source,
             })?;
         for (index, unitig) in unitigs.iter().enumerate() {
-            write_discontinuity_unitig_record(&mut self.unitigs, &self.unitig_path, unitig, true)?;
+            write_discontinuity_unitig_record(&mut self.unitigs, &self.unitig_path, unitig)?;
             if let Some(colors) = colors {
                 write_unitig_color_runs(&mut self.unitigs, &colors[index]).map_err(|source| {
                     DiscontinuityInputError::Io {
@@ -401,7 +400,6 @@ struct ExternalDiscontinuityReader<const K: usize> {
     unitig_path: PathBuf,
     label_path: PathBuf,
     unitigs: usize,
-    compact_unitigs: bool,
 }
 
 impl<const K: usize> ExternalDiscontinuityReader<K> {
@@ -416,7 +414,6 @@ impl<const K: usize> ExternalDiscontinuityReader<K> {
             unitig_path: inputs.unitig_path.clone(),
             label_path: inputs.label_path.clone(),
             unitigs: inputs.unitigs,
-            compact_unitigs: inputs.compact_unitigs,
         })
     }
 
@@ -443,7 +440,6 @@ impl<const K: usize> ExternalDiscontinuityReader<K> {
             input: BufReader::with_capacity(1024 * 1024, file),
             path: self.unitig_path.clone(),
             remaining: self.unitigs,
-            compact_unitigs: self.compact_unitigs,
         })
     }
 }
@@ -452,7 +448,6 @@ struct ExternalDiscontinuityIter<const K: usize> {
     input: BufReader<File>,
     path: PathBuf,
     remaining: usize,
-    compact_unitigs: bool,
 }
 
 impl<const K: usize> ExternalDiscontinuityIter<K> {
@@ -463,7 +458,7 @@ impl<const K: usize> ExternalDiscontinuityIter<K> {
             ));
         }
         self.remaining -= 1;
-        read_discontinuity_unitig_from_reader(&mut self.input, &self.path, self.compact_unitigs)
+        read_discontinuity_unitig_from_reader(&mut self.input, &self.path)
     }
 }
 
@@ -481,47 +476,26 @@ impl<const K: usize> Iterator for ExternalDiscontinuityIter<K> {
 fn read_discontinuity_unitig_from_reader<const K: usize>(
     input: &mut BufReader<File>,
     path: &Path,
-    compact: bool,
 ) -> Result<DiscontinuityUnitig<K>, SerialCollationError> {
-    if compact {
-        let mut bytes = [0u8; 8];
-        input
-            .read_exact(&mut bytes)
-            .map_err(|source| SerialCollationError::Io {
-                path: path.to_path_buf(),
-                source,
-            })?;
-        return Ok(DiscontinuityUnitig {
-            label_start: 0,
-            left_vertex: Kmer::zero(),
-            right_vertex: Kmer::zero(),
-            label_len: u32::from_le_bytes(bytes[..4].try_into().expect("label length")),
-            flags: bytes[4],
-        });
-    }
-    let mut out = MaybeUninit::<DiscontinuityUnitig<K>>::zeroed();
-    let bytes = unsafe {
-        std::slice::from_raw_parts_mut(
-            out.as_mut_ptr().cast::<u8>(),
-            std::mem::size_of::<DiscontinuityUnitig<K>>(),
-        )
-    };
+    let mut bytes = [0u8; 8];
     input
-        .read_exact(bytes)
+        .read_exact(&mut bytes)
         .map_err(|source| SerialCollationError::Io {
             path: path.to_path_buf(),
             source,
         })?;
-    Ok(unsafe { out.assume_init() })
+    Ok(DiscontinuityUnitig {
+        label_start: 0,
+        left_vertex: Kmer::zero(),
+        right_vertex: Kmer::zero(),
+        label_len: u32::from_le_bytes(bytes[..4].try_into().expect("label length")),
+        flags: bytes[4],
+    })
 }
 
-const fn external_unitig_record_len<const K: usize>(compact: bool) -> usize {
-    if compact {
-        8
-    } else {
-        std::mem::size_of::<DiscontinuityUnitig<K>>()
-    }
-}
+/// On-disk size of one compact discontinuity-unitig record: the label length,
+/// the flag byte, and three bytes of padding.
+const EXTERNAL_UNITIG_RECORD_LEN: usize = 8;
 
 fn read_discontinuity_unitig_from_reader_for_input<const K: usize>(
     input: &mut BufReader<File>,
@@ -8516,11 +8490,8 @@ where
     let mut discard = vec![0u8; 64 * 1024];
 
     for (unitig_index, &dense_record) in path_info_by_unitig.iter().enumerate() {
-        let unitig = read_discontinuity_unitig_from_reader::<K>(
-            &mut unitig_input,
-            &bucket.unitig_path,
-            true,
-        )?;
+        let unitig =
+            read_discontinuity_unitig_from_reader::<K>(&mut unitig_input, &bucket.unitig_path)?;
         let has_colors = bucket.colored;
         if has_colors {
             read_unitig_color_runs(&mut unitig_input, &mut colors).map_err(|source| {
@@ -8848,7 +8819,6 @@ fn write_external_cpp_path_info_materialized_coord_buckets_streaming<const K: us
         input: BufReader::with_capacity(1024 * 1024, unitig_file),
         path: inputs.unitig_path.clone(),
         remaining: inputs.unitigs,
-        compact_unitigs: inputs.compact_unitigs,
     };
     let label_file = File::open(&inputs.label_path).map_err(|source| SerialCollationError::Io {
         path: inputs.label_path.clone(),
@@ -9603,7 +9573,7 @@ fn materialize_external_stitched_coord_range_group_from_records<const K: usize>(
     let mut unitig_input = BufReader::with_capacity(1024 * 1024, unitig_file);
     unitig_input
         .seek(SeekFrom::Start(
-            (start_unitig * external_unitig_record_len::<K>(inputs.compact_unitigs)) as u64,
+            (start_unitig * EXTERNAL_UNITIG_RECORD_LEN) as u64,
         ))
         .map_err(|source| SerialCollationError::Io {
             path: inputs.unitig_path.clone(),
@@ -9624,11 +9594,8 @@ fn materialize_external_stitched_coord_range_group_from_records<const K: usize>(
     let mut discard = vec![0u8; 64 * 1024];
     let mut record_count = 0usize;
     for unitig_index in start_unitig..end_unitig {
-        let unitig: DiscontinuityUnitig<K> = read_discontinuity_unitig_from_reader(
-            &mut unitig_input,
-            &inputs.unitig_path,
-            inputs.compact_unitigs,
-        )?;
+        let unitig: DiscontinuityUnitig<K> =
+            read_discontinuity_unitig_from_reader(&mut unitig_input, &inputs.unitig_path)?;
         let dense_record = &path_info_by_unitig[unitig_index - start_unitig];
         let record = (dense_record.unitig_index != u32::MAX).then_some(dense_record);
         if let Some(record) = record {
@@ -9744,7 +9711,7 @@ where
     let mut unitig_input = BufReader::with_capacity(1024 * 1024, unitig_file);
     unitig_input
         .seek(SeekFrom::Start(
-            (start_unitig * external_unitig_record_len::<K>(inputs.compact_unitigs)) as u64,
+            (start_unitig * EXTERNAL_UNITIG_RECORD_LEN) as u64,
         ))
         .map_err(|source| SerialCollationError::Io {
             path: inputs.unitig_path.clone(),
@@ -9792,11 +9759,8 @@ where
                 .transpose()?;
             current_range += 1;
         }
-        let unitig: DiscontinuityUnitig<K> = read_discontinuity_unitig_from_reader(
-            &mut unitig_input,
-            &inputs.unitig_path,
-            inputs.compact_unitigs,
-        )?;
+        let unitig: DiscontinuityUnitig<K> =
+            read_discontinuity_unitig_from_reader(&mut unitig_input, &inputs.unitig_path)?;
         let has_colors = if let Some(reader) = color_reader.as_mut() {
             reader.read_next_into(&mut colors)?;
             true
@@ -14297,7 +14261,6 @@ fn contract_local_subgraphs_into_external_inputs<const K: usize>(
     // max-unitig coordinate buckets. The representation does not depend on
     // colors; keeping uncolored on the legacy global unitig/range stream adds
     // a full random-access materialization at scale.
-    let compact_unitigs = std::env::var_os("CF3_RS_ENDPOINT_STITCH").is_none();
     let mut inputs = DiscontinuityInputs::empty(DiscontinuityInputStats {
         input_buckets: entries.len(),
         ..DiscontinuityInputStats::default()
@@ -14382,7 +14345,7 @@ fn contract_local_subgraphs_into_external_inputs<const K: usize>(
     // Each bucket is owned by one contraction worker and becomes one independent
     // mapping task. More buckets than workers add open files and buffers without
     // exposing any additional parallelism in either phase.
-    let local_unitig_bucket_count = if compact_unitigs && workers > 1 {
+    let local_unitig_bucket_count = if workers > 1 {
         local_unitig_bucket_plan(open_file_limit(), current_open_file_count(), workers)
     } else {
         0
@@ -14473,7 +14436,6 @@ fn contract_local_subgraphs_into_external_inputs<const K: usize>(
                 label_offset: &mut label_offset,
                 build_elapsed: &mut build_elapsed,
                 contract_elapsed: &mut contract_elapsed,
-                compact_unitigs,
             }
             .append(output)?;
             report_local_contraction_progress(offset + 1, groups.len(), started);
@@ -14513,7 +14475,6 @@ fn contract_local_subgraphs_into_external_inputs<const K: usize>(
             color_repository: color_repository.as_ref(),
             color_runs: concurrent_color_runs.as_ref(),
             local_unitig_writers: local_unitig_writers.as_deref(),
-            compact_unitigs,
             trivial_output: trivial_output.get_ref().try_clone().map_err(|source| {
                 DiscontinuityInputError::Io {
                     path: trivial_path.clone(),
@@ -14701,7 +14662,6 @@ fn contract_local_subgraphs_into_external_inputs<const K: usize>(
         label_path: label_path.to_path_buf(),
         // Trivial uncolored unitigs are already in the direct FASTA artifact.
         unitigs: inputs.stats.local_unitigs.saturating_sub(trivial_unitigs) as usize,
-        compact_unitigs,
         ranges,
         edge_matrix: Some(edge_matrix),
         color_runs,
@@ -14752,7 +14712,6 @@ struct SerialLocalOutput<'a, const K: usize> {
     label_offset: &'a mut u64,
     build_elapsed: &'a mut Duration,
     contract_elapsed: &'a mut Duration,
-    compact_unitigs: bool,
 }
 
 impl<const K: usize> SerialLocalOutput<'_, K> {
@@ -14809,12 +14768,7 @@ impl<const K: usize> SerialLocalOutput<'_, K> {
                 u64::from(unitig.left_exit().is_some()) + u64::from(unitig.right_exit().is_some());
             self.inputs.stats.unitig_bases += unitig.label_len as u64;
             unitig.label_start += *self.label_offset;
-            write_discontinuity_unitig_record(
-                self.unitigs,
-                self.unitig_path,
-                &unitig,
-                self.compact_unitigs,
-            )?;
+            write_discontinuity_unitig_record(self.unitigs, self.unitig_path, &unitig)?;
             if let Some(writer) = self.color_run_writer.as_deref_mut() {
                 let runs = output_colors
                     .as_mut()
@@ -14840,39 +14794,15 @@ fn write_discontinuity_unitig_record<const K: usize>(
     out: &mut BufWriter<File>,
     path: &Path,
     unitig: &DiscontinuityUnitig<K>,
-    compact: bool,
 ) -> Result<(), DiscontinuityInputError> {
-    if compact {
-        let mut bytes = [0u8; 8];
-        bytes[..4].copy_from_slice(&unitig.label_len.to_le_bytes());
-        bytes[4] = unitig.flags;
-        return out
-            .write_all(&bytes)
-            .map_err(|source| DiscontinuityInputError::Io {
-                path: path.to_path_buf(),
-                source,
-            });
-    }
-    let mut stored = MaybeUninit::<DiscontinuityUnitig<K>>::zeroed();
-    unsafe {
-        let ptr = stored.as_mut_ptr();
-        (*ptr).label_start = unitig.label_start;
-        (*ptr).left_vertex = unitig.left_vertex;
-        (*ptr).right_vertex = unitig.right_vertex;
-        (*ptr).label_len = unitig.label_len;
-        (*ptr).flags = unitig.flags;
-        let stored = stored.assume_init();
-        let bytes = std::slice::from_raw_parts(
-            (&stored as *const DiscontinuityUnitig<K>).cast::<u8>(),
-            std::mem::size_of::<DiscontinuityUnitig<K>>(),
-        );
-        out.write_all(bytes)
-            .map_err(|source| DiscontinuityInputError::Io {
-                path: path.to_path_buf(),
-                source,
-            })?;
-    }
-    Ok(())
+    let mut bytes = [0u8; 8];
+    bytes[..4].copy_from_slice(&unitig.label_len.to_le_bytes());
+    bytes[4] = unitig.flags;
+    out.write_all(&bytes)
+        .map_err(|source| DiscontinuityInputError::Io {
+            path: path.to_path_buf(),
+            source,
+        })
 }
 
 struct LocalContractionOutput<const K: usize> {
@@ -14909,7 +14839,6 @@ struct ConcurrentLocalOutputSink<'a, const K: usize> {
     color_repository: Option<&'a ConcurrentColorRepository>,
     color_runs: Option<&'a ConcurrentColorRunSidecarWriter>,
     local_unitig_writers: Option<&'a [Mutex<LocalUnitigBucketWriter>]>,
-    compact_unitigs: bool,
     trivial_output: File,
     trivial_path: &'a Path,
     next_trivial_byte: AtomicU64,
@@ -14958,9 +14887,7 @@ impl<'a, const K: usize> ConcurrentLocalOutputSink<'a, K> {
                 })?;
         }
 
-        let mut encoded_unitigs = Vec::with_capacity(
-            output_unitigs * external_unitig_record_len::<K>(self.compact_unitigs),
-        );
+        let mut encoded_unitigs = Vec::with_capacity(output_unitigs * EXTERNAL_UNITIG_RECORD_LEN);
         let mut exits = 0u64;
         let mut bases = 0u64;
         for unitig in &mut output.unitigs {
@@ -14969,15 +14896,11 @@ impl<'a, const K: usize> ConcurrentLocalOutputSink<'a, K> {
             bases += u64::from(unitig.label_len);
             if !bucket_local {
                 unitig.label_start += label_base;
-                append_encoded_discontinuity_unitig_record(
-                    &mut encoded_unitigs,
-                    unitig,
-                    self.compact_unitigs,
-                );
+                append_encoded_discontinuity_unitig_record(&mut encoded_unitigs, unitig);
             }
         }
         let unitig_offset = unitig_base
-            .checked_mul(external_unitig_record_len::<K>(self.compact_unitigs))
+            .checked_mul(EXTERNAL_UNITIG_RECORD_LEN)
             .ok_or_else(|| DiscontinuityInputError::Io {
                 path: self.unitig_path.to_path_buf(),
                 source: std::io::Error::from(std::io::ErrorKind::FileTooLarge),
@@ -15075,28 +14998,10 @@ impl<'a, const K: usize> ConcurrentLocalOutputSink<'a, K> {
 fn append_encoded_discontinuity_unitig_record<const K: usize>(
     output: &mut Vec<u8>,
     unitig: &DiscontinuityUnitig<K>,
-    compact: bool,
 ) {
-    if compact {
-        output.extend_from_slice(&unitig.label_len.to_le_bytes());
-        output.push(unitig.flags);
-        output.extend_from_slice(&[0; 3]);
-        return;
-    }
-    let mut stored = MaybeUninit::<DiscontinuityUnitig<K>>::zeroed();
-    unsafe {
-        let ptr = stored.as_mut_ptr();
-        (*ptr).label_start = unitig.label_start;
-        (*ptr).left_vertex = unitig.left_vertex;
-        (*ptr).right_vertex = unitig.right_vertex;
-        (*ptr).label_len = unitig.label_len;
-        (*ptr).flags = unitig.flags;
-        let stored = stored.assume_init();
-        output.extend_from_slice(std::slice::from_raw_parts(
-            (&stored as *const DiscontinuityUnitig<K>).cast::<u8>(),
-            std::mem::size_of::<DiscontinuityUnitig<K>>(),
-        ));
-    }
+    output.extend_from_slice(&unitig.label_len.to_le_bytes());
+    output.push(unitig.flags);
+    output.extend_from_slice(&[0; 3]);
 }
 
 #[derive(Debug, Clone)]

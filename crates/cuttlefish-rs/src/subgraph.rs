@@ -10,7 +10,7 @@ use crate::Side;
 use crate::buckets::BucketRecord;
 use crate::buckets::{BorrowedBucketPackedRecord, BucketError, BucketManifestEntry, BucketStore};
 use crate::color::{ColorError, ConcurrentColorRepository};
-use crate::dna::Base;
+use crate::dna::{Base, minimal_rotation};
 use crate::hash::{FastBuildHasher, fast_u64_hash, hash_two_u64};
 use crate::kmer::{Kmer, KmerError};
 use crate::state::{ColorCoordinate, UnitigColor, VertexState, source_hash};
@@ -552,45 +552,11 @@ fn linearize_cycle_body<const K: usize>(body: &[u8]) -> Vec<u8> {
     label
 }
 
-fn minimal_rotation(label: &[u8]) -> Vec<u8> {
-    let start = least_rotation_start(label);
-    label[start..]
-        .iter()
-        .chain(label[..start].iter())
-        .copied()
-        .collect()
-}
-
-fn least_rotation_start(s: &[u8]) -> usize {
-    let n = s.len();
-    if n <= 1 {
-        return 0;
-    }
-
-    let mut i = 0;
-    let mut j = 1;
-    let mut k = 0;
-    while i < n && j < n && k < n {
-        let a = s[(i + k) % n];
-        let b = s[(j + k) % n];
-        if a == b {
-            k += 1;
-        } else if a > b {
-            i += k + 1;
-            if i <= j {
-                i = j + 1;
-            }
-            k = 0;
-        } else {
-            j += k + 1;
-            if j <= i {
-                j = i + 1;
-            }
-            k = 0;
-        }
-    }
-
-    i.min(j)
+/// Whether to contract vertices in sorted order instead of storage order
+/// (diagnostic; makes unitig emission order deterministic for debugging).
+fn sort_local_vertices_diagnostic() -> bool {
+    static SORT: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *SORT.get_or_init(|| std::env::var_os("CF3_RS_SORT_LOCAL_VERTICES").is_some())
 }
 
 /// Whether to decode bucket records without building the graph (diagnostic).
@@ -846,7 +812,7 @@ impl<const K: usize> LocalSubgraph<K> {
         let mut back_walk = UnitigWalk::default();
         let mut front_walk = UnitigWalk::default();
         if let Some(vertex_count) = self.vertices.dense_len()
-            && std::env::var_os("CF3_RS_SORT_LOCAL_VERTICES").is_none()
+            && !sort_local_vertices_diagnostic()
         {
             for index in 0..vertex_count {
                 let (v_hat, state) = self
@@ -868,7 +834,7 @@ impl<const K: usize> LocalSubgraph<K> {
             }
         } else {
             let mut vertices = self.vertices.keys_vec();
-            if std::env::var_os("CF3_RS_SORT_LOCAL_VERTICES").is_some() {
+            if sort_local_vertices_diagnostic() {
                 vertices.sort_unstable();
             }
             for v_hat in vertices {
@@ -1031,7 +997,7 @@ impl<const K: usize> LocalSubgraph<K> {
         let mut back_walk = UnitigWalk::default();
         let mut front_walk = UnitigWalk::default();
         if let Some(vertex_count) = self.vertices.dense_len()
-            && std::env::var_os("CF3_RS_SORT_LOCAL_VERTICES").is_none()
+            && !sort_local_vertices_diagnostic()
         {
             for index in 0..vertex_count {
                 let (v_hat, state) = self
@@ -1049,7 +1015,7 @@ impl<const K: usize> LocalSubgraph<K> {
             }
         } else {
             let mut vertices = self.vertices.keys_vec();
-            if std::env::var_os("CF3_RS_SORT_LOCAL_VERTICES").is_some() {
+            if sort_local_vertices_diagnostic() {
                 vertices.sort_unstable();
             }
             for v_hat in vertices {

@@ -1,3 +1,10 @@
+//! Reference minimizer implementation, exercised only by tests.
+//!
+//! Production partitioning uses the fused rolling scan in
+//! [`crate::partition`] (`for_each_weak_superkmer_impl`), which never calls
+//! into this module. Kept as the readable specification the fused scan is
+//! checked against.
+
 use crate::dna::Base;
 use crate::hash::wyhash_u64;
 use crate::kmer::Kmer;

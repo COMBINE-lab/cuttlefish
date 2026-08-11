@@ -10,7 +10,7 @@ use crate::discontinuity::{
     SerialUncoloredCollator, emit_uncolored_external_discontinuity_inputs_with_threads_in_dir,
     report_process_memory, spawn_background_dir_removal, trim_process_allocations,
 };
-use crate::dna::{Base, complement_ascii};
+use crate::dna::{Base, reverse_complement_label};
 use crate::hash::FastBuildHasher;
 use crate::kmer::{Kmer, KmerError};
 use crate::params::BuildParams;
@@ -419,14 +419,6 @@ fn normalize_unitigs(unitigs: &mut Vec<Vec<u8>>) {
 
     unitigs.sort_unstable();
     unitigs.dedup();
-}
-
-fn reverse_complement_label(label: &[u8]) -> Vec<u8> {
-    label
-        .iter()
-        .rev()
-        .map(|&base| complement_ascii(base))
-        .collect()
 }
 
 fn canonical_label(label: Vec<u8>) -> Vec<u8> {

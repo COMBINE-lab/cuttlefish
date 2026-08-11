@@ -122,6 +122,59 @@ pub const fn ascii_complement_bits(byte: u8) -> Option<u8> {
     }
 }
 
+/// Reverse complement of an ASCII label, tolerating non-ACGT bytes.
+#[inline]
+pub(crate) fn reverse_complement_label(label: &[u8]) -> Vec<u8> {
+    label
+        .iter()
+        .rev()
+        .map(|&base| complement_ascii(base))
+        .collect()
+}
+
+/// Lexicographically least rotation of `label`, as a fresh buffer.
+pub(crate) fn minimal_rotation(label: &[u8]) -> Vec<u8> {
+    let start = least_rotation_start(label);
+    label[start..]
+        .iter()
+        .chain(label[..start].iter())
+        .copied()
+        .collect()
+}
+
+/// Booth's algorithm: start index of the lexicographically least rotation.
+pub(crate) fn least_rotation_start(s: &[u8]) -> usize {
+    let n = s.len();
+    if n <= 1 {
+        return 0;
+    }
+
+    let mut i = 0;
+    let mut j = 1;
+    let mut k = 0;
+    while i < n && j < n && k < n {
+        let a = s[(i + k) % n];
+        let b = s[(j + k) % n];
+        if a == b {
+            k += 1;
+        } else if a > b {
+            i += k + 1;
+            if i <= j {
+                i = j + 1;
+            }
+            k = 0;
+        } else {
+            j += k + 1;
+            if j <= i {
+                j = i + 1;
+            }
+            k = 0;
+        }
+    }
+
+    i.min(j)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

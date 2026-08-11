@@ -32,7 +32,7 @@ use crate::color::{
     read_unitig_color_runs, reverse_color_runs, reverse_color_runs_in_place,
     write_unitig_color_runs,
 };
-use crate::dna::{Base, complement_ascii};
+use crate::dna::{Base, complement_ascii, minimal_rotation, reverse_complement_label};
 use crate::hash::{FastBuildHasher, hash_bytes, wyhash_u64};
 use crate::kmer::Kmer;
 use crate::state::{UnitigColor, VertexState};
@@ -4913,14 +4913,6 @@ fn oriented_label(label: &[u8], reverse_complement: bool) -> Vec<u8> {
     } else {
         label.to_vec()
     }
-}
-
-fn reverse_complement_label(label: &[u8]) -> Vec<u8> {
-    label
-        .iter()
-        .rev()
-        .map(|&base| complement_ascii(base))
-        .collect()
 }
 
 fn canonical_label(label: Vec<u8>) -> Vec<u8> {
@@ -11280,47 +11272,6 @@ fn canonical_cycle_label(label: Vec<u8>) -> Vec<u8> {
     let forward = minimal_rotation(&label);
     let reverse = minimal_rotation(&reverse_complement_label(&label));
     if reverse < forward { reverse } else { forward }
-}
-
-fn minimal_rotation(label: &[u8]) -> Vec<u8> {
-    let start = least_rotation_start(label);
-    label[start..]
-        .iter()
-        .chain(label[..start].iter())
-        .copied()
-        .collect()
-}
-
-fn least_rotation_start(s: &[u8]) -> usize {
-    let n = s.len();
-    if n <= 1 {
-        return 0;
-    }
-
-    let mut i = 0;
-    let mut j = 1;
-    let mut k = 0;
-    while i < n && j < n && k < n {
-        let a = s[(i + k) % n];
-        let b = s[(j + k) % n];
-        if a == b {
-            k += 1;
-        } else if a > b {
-            i += k + 1;
-            if i <= j {
-                i = j + 1;
-            }
-            k = 0;
-        } else {
-            j += k + 1;
-            if j <= i {
-                j = i + 1;
-            }
-            k = 0;
-        }
-    }
-
-    i.min(j)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

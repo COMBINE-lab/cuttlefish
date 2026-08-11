@@ -7,7 +7,7 @@ use crate::dna::is_dna_ascii;
 use crate::params::BuildParams;
 use flate2::read::MultiGzDecoder;
 use std::fs;
-use std::io::{BufRead, BufReader, Read, Seek};
+use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -153,29 +153,17 @@ where
     F: for<'a> FnMut(BorrowedSequenceFragment<'a>) -> Result<(), InputError>,
 {
     let path = path.as_ref();
-    let mut file = fs::File::open(path).map_err(|source| InputError::Io {
+    let file = fs::File::open(path).map_err(|source| InputError::Io {
         path: path.to_path_buf(),
         source,
     })?;
     let input: Box<dyn Read> = if path.extension().is_some_and(|ext| ext == "gz") {
-        // BGZF concatenates independent gzip members, so its blocks inflate
-        // concurrently on the dedicated reader. Plain gzip has no such seams
-        // and goes through rapidgzip, whose workers split the stream
-        // speculatively instead.
-        let mut head = [0u8; crate::bgzf::PROBE_BYTES];
-        let probed = read_probe(&mut file, &mut head).map_err(|source| InputError::Io {
-            path: path.to_path_buf(),
-            source,
-        })?;
-        file.rewind().map_err(|source| InputError::Io {
-            path: path.to_path_buf(),
-            source,
-        })?;
-        let bgzf = crate::bgzf::is_bgzf(&head[..probed]);
-        if inflate_workers > 1 && bgzf && !rapidgzip_bgzf_diagnostic() {
-            Box::new(crate::bgzf::ParallelBgzfReader::new(file, inflate_workers))
-        } else if inflate_workers > 1 && !sequential_inflate_diagnostic() {
-            Box::new(open_parallel_gzip_reader(path, inflate_workers, registry)?)
+        // rapidgzip covers the whole gzip family: BGZF's independent members
+        // decode block-parallel, and plain single-member gzip decodes through
+        // speculative mid-stream splits. Measured at parity with the retired
+        // dedicated BGZF reader over three interleaved pairs.
+        if inflate_workers > 1 && !sequential_inflate_diagnostic() {
+            open_parallel_gzip_reader(path, inflate_workers, registry)?
         } else {
             Box::new(MultiGzDecoder::new(file))
         }
@@ -199,13 +187,6 @@ where
 fn sequential_inflate_diagnostic() -> bool {
     static SEQUENTIAL: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *SEQUENTIAL.get_or_init(|| std::env::var_os("CF3_RS_SEQUENTIAL_INFLATE").is_some())
-}
-
-/// Whether to route BGZF through rapidgzip instead of the dedicated
-/// block-parallel reader (evaluation diagnostic).
-fn rapidgzip_bgzf_diagnostic() -> bool {
-    static RAPIDGZIP_BGZF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *RAPIDGZIP_BGZF.get_or_init(|| std::env::var_os("CF3_RS_RAPIDGZIP_BGZF").is_some())
 }
 
 /// Live rapidgzip decoders across every open input, as one controllable pool.
@@ -387,20 +368,6 @@ fn open_parallel_gzip_reader(
             })
         }
     })
-}
-
-/// Fills as much of `head` as the file provides, tolerating short reads.
-fn read_probe<R: Read>(source: &mut R, head: &mut [u8]) -> std::io::Result<usize> {
-    let mut filled = 0;
-    while filled < head.len() {
-        match source.read(&mut head[filled..]) {
-            Ok(0) => break,
-            Ok(n) => filled += n,
-            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
-            Err(error) => return Err(error),
-        }
-    }
-    Ok(filled)
 }
 
 /// Appends a payload line, dropping embedded whitespace.

@@ -312,11 +312,17 @@ impl thread_broker::Producer for InflateProducer {
     }
 }
 
-/// Whether to pin the decompress/shard split statically (measurement
-/// diagnostic; disables the thread broker).
-fn static_inflate_split_diagnostic() -> bool {
-    static STATIC_SPLIT: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *STATIC_SPLIT.get_or_init(|| std::env::var_os("CF3_RS_STATIC_INFLATE_SPLIT").is_some())
+/// Whether to run the closed-loop thread broker over the decompress/shard
+/// split (evaluation opt-in).
+///
+/// Off by default after measurement: on this 256-core host the static split's
+/// deliberate oversubscription -- every sharding worker plus lazily-spawned
+/// decode workers, with blocking as the balancer -- beat every split the
+/// broker chose, and one run in three misconverged to a decode-starved 255/1.
+/// See rust-rewrite-performance.md, "A closed-loop split evaluated".
+fn dynamic_inflate_split_diagnostic() -> bool {
+    static DYNAMIC_SPLIT: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *DYNAMIC_SPLIT.get_or_init(|| std::env::var_os("CF3_RS_DYNAMIC_INFLATE_SPLIT").is_some())
 }
 
 /// Streams fragment batches from per-file readers to a full pool of workers.
@@ -350,7 +356,7 @@ fn emit_uncolored_streamed_weak_superkmer_buckets<const K: usize>(
         inflate_workers * readers,
     ));
     let gate = Arc::new(ShardingGate::new(workers));
-    let broker = if static_inflate_split_diagnostic() {
+    let broker = if !dynamic_inflate_split_diagnostic() {
         None
     } else {
         thread_broker::ThreadBroker::builder(
@@ -532,15 +538,28 @@ fn emit_uncolored_streamed_weak_superkmer_buckets<const K: usize>(
         Ok::<(), PartitionRunError>(())
     })?;
     if let Some(running) = broker {
+        let consumer_work = gate.meter.work();
+        let (producer_nanos, producer_bytes) = registry.cumulative_work();
         match running.finish() {
-            Ok(report) => eprintln!(
-                "cuttlefish: thread broker settled at {} shard worker(s) / {} inflate slot(s){}",
-                report.final_consumer_threads,
-                report.final_producer_limit,
-                report
-                    .time_to_converge
-                    .map_or_else(String::new, |t| format!(" after {:.1}s", t.as_secs_f64())),
-            ),
+            Ok(report) => {
+                eprintln!(
+                    "cuttlefish: thread broker settled at {} shard worker(s) / {} inflate slot(s){}",
+                    report.final_consumer_threads,
+                    report.final_producer_limit,
+                    report
+                        .time_to_converge
+                        .map_or_else(String::new, |t| format!(" after {:.1}s", t.as_secs_f64())),
+                );
+                eprintln!(
+                    "cuttlefish: thread broker detail: consumer busy {:.1}s / {} item(s), producer busy {:.1}s / {} byte(s), shard trajectory {:?}, inflate trajectory {:?}",
+                    consumer_work.busy_nanos as f64 / 1e9,
+                    consumer_work.items,
+                    producer_nanos as f64 / 1e9,
+                    producer_bytes,
+                    report.consumer_trajectory,
+                    report.producer_trajectory,
+                );
+            }
             Err(error) => eprintln!("cuttlefish: thread broker: {error}"),
         }
     }

@@ -15,7 +15,6 @@
 //! them requires both topology tests and matched scale benchmarks.
 #![warn(rustdoc::broken_intra_doc_links)]
 
-pub mod bgzf;
 pub mod buckets;
 pub mod color;
 pub mod colored;

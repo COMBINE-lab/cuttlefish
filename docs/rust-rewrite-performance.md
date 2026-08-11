@@ -1778,3 +1778,49 @@ partition time is bounded by the serial per-reader work -- line splitting,
 fragment scanning, and batch copy -- which is the seam a thread-broker
 integration would address next; rapidgzip-core's `busy-time-accounting`
 feature maps directly onto that crate's `Producer` trait.
+
+## One decoder for the whole gzip family
+
+The dedicated block-parallel BGZF reader was evaluated against routing BGZF
+through rapidgzip like every other gzip input. Three interleaved pairs on the
+1.66 GB BGZF transcode at t256, order alternated: hand-rolled partition
+5.554 / 5.570 / 5.646 s against rapidgzip 6.362 / 5.482 / 5.553 s, identical
+counts, wall inside the noise band. Parity -- so `bgzf.rs` (293 lines, plus a
+fresh `inflate_workers + 1` thread set spawned and joined per file, plus a
+strict-rotation reorder buffer and an extra whole-stream memcpy) is deleted,
+and every compressed input now flows through one decoder that the inflate
+registry can control. The 64-byte BGZF probe and its rewind disappear with it.
+
+## A closed-loop split evaluated, and why the static one stays
+
+`thread-broker` v0.1.0 was integrated over the streamed partitioner's
+decompress/shard split: every rapidgzip decoder registers in an
+`InflateRegistry` (exact busy time via `busy-time-accounting`), sharding
+workers park at a `ShardingGate` when the consumer target shrinks, and busy
+time is metered with `BatchTimer`s constructed after the blocking pool take so
+queue waits are never charged as work. The consumer meter cross-checks the
+partitioner's own worker timer to within 0.1 s, so the measurements feeding
+the control law are sound.
+
+Measured on `mbal` at t256 against the static `workers/readers` split
+(65.1 / 66.7 s partition), three broker runs settled at three different
+splits: 91/165 (74.2 s), 255/1 (120.6 s -- decode starved, converged in
+2.2 s), and 18/238 (69.8 s). Two findings worth recording:
+
+- **The measured cost ratio is real but the budget model loses anyway.** The
+  instrumented run measured 3072 s of decoder busy CPU against 669 s of
+  sharding busy CPU -- rapidgzip's speculative decode costs ~5.7x the CPU of
+  sequential inflate for the same 191.6 GB, so the law's decode-heavy answer
+  is correct *for a hard shared budget*. But the static path oversubscribes:
+  all 256 sharding workers exist alongside lazily-spawned decode workers, and
+  blocked threads cost nothing, so blocking itself balances the pipeline and
+  strictly dominates any hard split on a host with cores >= threads.
+- **One run in three misconverged** to 255/1 in 2.2 s, doubling partition
+  time; the ratification guard did not catch it. Reported upstream with the
+  trajectories.
+
+The broker integration stays behind `CF3_RS_DYNAMIC_INFLATE_SPLIT` as the
+evaluation harness (off by default), with the settled split, both sides' busy
+time, and the decision trajectories printed at finish. It is worth revisiting
+when `-t` is well below the core count -- the regime the budget model assumes
+-- or after upstream addresses the misconvergence.

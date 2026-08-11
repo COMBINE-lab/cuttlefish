@@ -11,8 +11,14 @@ implemented until chosen, except where a decision is already recorded.*
 removed, no measured regression across uncolored/colored/mbal interleaved
 pairs — see "The dead-code removal campaign" in `rust-rewrite-performance.md`).
 B1's rapidgzip half landed and measured a 52% partition / 45% wall win on
-`mbal` ("Parallel plain-gzip inflation", same document); the thread-broker
-half and the BGZF-reader replacement remain open. A4 was removed with C3.
+`mbal` ("Parallel plain-gzip inflation", same document). The BGZF-reader
+replacement measured parity and landed: `bgzf.rs` is deleted and all gzip
+flows through rapidgzip. The thread-broker half was integrated, measured, and
+turned **off by default**: on this host the static split's oversubscription
+beats every broker split, and one run in three misconverged ("A closed-loop
+split evaluated", same document); it stays behind
+`CF3_RS_DYNAMIC_INFLATE_SPLIT` as the evaluation harness. A4 was removed with
+C3.
 B2–B5, A1–A3, A5–A6, and the remaining C5 walker-family consolidation are
 open for selection.
 

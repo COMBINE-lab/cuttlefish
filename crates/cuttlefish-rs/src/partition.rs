@@ -13,8 +13,8 @@ use crate::input::{
 };
 use crate::params::{BuildParams, ParamError};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
 
 const PARTITION_FRAGMENT_BATCH: usize = 16 * 1024;
@@ -141,123 +141,7 @@ pub fn emit_weak_superkmer_buckets<const K: usize>(
         }
         return emit_colored_weak_superkmer_buckets::<K>(params, graph_count, &paths);
     }
-    if std::env::var_os("CF3_RS_LEGACY_UNCOLORED_PARTITION").is_none() {
-        return emit_uncolored_windowed_weak_superkmer_buckets::<K>(params, graph_count, &paths);
-    }
-    let mut stats = PartitionStats::new(graph_count);
-    let workers = params.threads.max(1);
-    let mut batch_txs = Vec::with_capacity(workers);
-    let mut batch_rxs = Vec::with_capacity(workers);
-    for _ in 0..workers {
-        let (tx, rx) = mpsc::sync_channel::<PartitionFragmentBatch>(4);
-        batch_txs.push(tx);
-        batch_rxs.push(rx);
-    }
-    let sink = SharedBucketSink::create(params, graph_count)?;
-    let mut worker_elapsed = Duration::ZERO;
-    let parse_started = Instant::now();
-    let mut parse_elapsed = Duration::ZERO;
-
-    std::thread::scope(|scope| {
-        let mut handles = Vec::new();
-        for rx in batch_rxs {
-            let sink = Arc::clone(&sink);
-            handles.push(scope.spawn(move || {
-                let mut worker_stats = PartitionStats::new(graph_count);
-                let mut worker_elapsed = Duration::ZERO;
-                let mut buckets = sink.emitter();
-                loop {
-                    let batch = rx.recv();
-                    let Ok(batch) = batch else {
-                        break;
-                    };
-                    for fragment in &batch.fragments {
-                        let seq = &batch.bases[fragment.offset..fragment.offset + fragment.len];
-                        let fragment_started = Instant::now();
-                        emit_fragment_seq_weak_superkmer_buckets::<K, PartitionRunError>(
-                            params,
-                            graph_count,
-                            fragment.source_id,
-                            seq,
-                            &mut buckets,
-                            &mut worker_stats,
-                        )?;
-                        worker_elapsed += fragment_started.elapsed();
-                    }
-                }
-                buckets.finish()?;
-                Ok::<_, PartitionRunError>(PartitionWorkerOutput {
-                    stats: worker_stats,
-                    elapsed: worker_elapsed,
-                })
-            }));
-        }
-
-        let mut producer_handles = Vec::new();
-        for (path_idx, path) in paths.iter().enumerate() {
-            let source_id =
-                u32::try_from(path_idx + 1).map_err(|_| PartitionRunError::TooManySources)?;
-            let txs = batch_txs.clone();
-            producer_handles.push(scope.spawn(move || {
-                let mut batch = PartitionFragmentBatch::new();
-                let mut next_worker = path_idx % txs.len();
-                let records = parse_fragments_borrowed(path, source_id, K + 1, |fragment| {
-                    batch.push(fragment);
-                    if batch.fragments.len() >= PARTITION_FRAGMENT_BATCH
-                        || batch.bases.len() >= PARTITION_BATCH_BASES
-                    {
-                        txs[next_worker]
-                            .send(std::mem::take(&mut batch))
-                            .map_err(|_| {
-                                InputError::Partition(PartitionError::WorkerDisconnected)
-                            })?;
-                        next_worker = (next_worker + 1) % txs.len();
-                    }
-                    Ok(())
-                })?;
-                if !batch.fragments.is_empty() {
-                    txs[next_worker]
-                        .send(batch)
-                        .map_err(|_| InputError::Partition(PartitionError::WorkerDisconnected))?;
-                }
-                Ok::<_, InputError>(records)
-            }));
-        }
-        drop(batch_txs);
-        for handle in producer_handles {
-            let records = handle
-                .join()
-                .map_err(|_| PartitionRunError::WorkerPanic)??;
-            stats.input_files += 1;
-            stats.records += records;
-        }
-        parse_elapsed = parse_started.elapsed();
-
-        for handle in handles {
-            let worker_stats = handle
-                .join()
-                .map_err(|_| PartitionRunError::WorkerPanic)??;
-            worker_elapsed += worker_stats.elapsed;
-            stats.merge_from(&worker_stats.stats);
-        }
-        Ok::<(), PartitionRunError>(())
-    })?;
-
-    let (bucket_flushes, bucket_flush_elapsed) = sink.flush_stats();
-    let bucket_finish_started = Instant::now();
-    let bucket_stats = sink.finish()?;
-    let bucket_finish_elapsed = bucket_finish_started.elapsed();
-    populate_emitted_graph_histogram(&mut stats, &bucket_stats)?;
-
-    Ok(PartitionEmissionStats {
-        partition: stats,
-        buckets: bucket_stats,
-        parse_elapsed,
-        worker_elapsed,
-        bucket_flush_elapsed,
-        bucket_flushes,
-        bucket_finish_elapsed,
-    })
+    emit_uncolored_windowed_weak_superkmer_buckets::<K>(params, graph_count, &paths)
 }
 
 /// Returns the reader count for the streamed partitioner, or `None` when

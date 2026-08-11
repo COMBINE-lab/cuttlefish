@@ -210,7 +210,9 @@ fi
 # Phase timers and counts from the tool's own stderr.
 PART=$(grep -oP 'partition and bucket emission completed in \K[0-9.]+' "$LOG" | tail -1)
 BUILD=$(grep -oP 'graph build completed in \K[0-9.]+' "$LOG" | tail -1)
-LOCAL=$(grep -oP 'local contraction phase completed in \K[0-9.]+' "$LOG" | tail -1)
+# The two modes phrase this differently: uncolored says "local contraction
+# phase completed in", colored says "colored local contraction completed in".
+LOCAL=$(grep -oP '(?:local contraction phase|colored local contraction) completed in \K[0-9.]+' "$LOG" | tail -1)
 CONTRACT=$(grep -oP 'discontinuity graph contracted in \K[0-9.]+' "$LOG" | tail -1)
 EXPAND=$(grep -oP 'contracted graph expanded in \K[0-9.]+' "$LOG" | tail -1)
 PARTWORKERS=$(grep -oP '(?:(?:uncolored|colored) partition using |partition streaming [0-9]+ reader\(s\) into )\K[0-9]+' "$LOG" | tail -1)

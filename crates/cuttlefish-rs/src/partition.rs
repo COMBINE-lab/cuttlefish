@@ -180,6 +180,145 @@ fn emit_uncolored_windowed_weak_superkmer_buckets<const K: usize>(
     emit_uncolored_direct_weak_superkmer_buckets::<K>(params, graph_count, paths)
 }
 
+/// Parks sharding workers above the thread broker's consumer target.
+///
+/// The broker owns no threads; this gate is the [`thread_broker::Consumer`]
+/// actuation surface. Workers check in between batches, so a shrink settles
+/// within one batch (~1 MiB of bases) and a parked worker costs one condvar
+/// wait. The target never drops below one, so the pool always drains.
+struct ShardingGate {
+    target: std::sync::Mutex<usize>,
+    changed: std::sync::Condvar,
+    live: AtomicUsize,
+    meter: thread_broker::BusyMeter,
+}
+
+impl ShardingGate {
+    fn new(workers: usize) -> Self {
+        Self {
+            target: std::sync::Mutex::new(workers),
+            changed: std::sync::Condvar::new(),
+            live: AtomicUsize::new(workers),
+            meter: thread_broker::BusyMeter::new(),
+        }
+    }
+
+    /// Blocks while `worker_id` is outside the admitted range.
+    fn wait_admitted(&self, worker_id: usize) {
+        let mut target = self.target.lock().unwrap_or_else(|p| p.into_inner());
+        if worker_id < *target {
+            return;
+        }
+        self.live.fetch_sub(1, Ordering::Relaxed);
+        while worker_id >= *target {
+            target = self.changed.wait(target).unwrap_or_else(|p| p.into_inner());
+        }
+        self.live.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn set_target(&self, n: usize, ceiling: usize) {
+        let mut target = self.target.lock().unwrap_or_else(|p| p.into_inner());
+        *target = n.clamp(1, ceiling);
+        self.changed.notify_all();
+    }
+
+    /// Admits everyone so parked workers can observe shutdown and exit.
+    fn release_all(&self, ceiling: usize) {
+        self.set_target(ceiling, ceiling.max(1));
+    }
+}
+
+/// Releases the gate on every exit path.
+///
+/// `std::thread::scope` joins its threads even when the closure returns early
+/// through `?`, so a parked worker must be woken by drop rather than by
+/// straight-line code -- an errored reader otherwise deadlocks the implicit
+/// join. Found the hard way: the unreadable-input test hung exactly there.
+struct ShardingGateRelease<'a> {
+    gate: &'a ShardingGate,
+    ceiling: usize,
+}
+
+impl Drop for ShardingGateRelease<'_> {
+    fn drop(&mut self) {
+        self.gate.release_all(self.ceiling);
+    }
+}
+
+struct ShardingConsumer {
+    gate: Arc<ShardingGate>,
+    ceiling: usize,
+}
+
+impl thread_broker::Consumer for ShardingConsumer {
+    fn set_threads(&self, n: usize) -> Result<(), thread_broker::ResizeError> {
+        self.gate.set_target(n, self.ceiling);
+        Ok(())
+    }
+
+    fn live_threads(&self) -> usize {
+        self.gate.live.load(Ordering::Relaxed)
+    }
+
+    fn work(&self) -> thread_broker::Work {
+        self.gate.meter.work()
+    }
+}
+
+/// The registry of live rapidgzip decoders, viewed as one producer pool.
+struct InflateProducer {
+    registry: Arc<crate::input::InflateRegistry>,
+}
+
+impl thread_broker::Producer for InflateProducer {
+    fn set_limit(&self, n: usize) -> Result<(), thread_broker::ResizeError> {
+        self.registry.set_aggregate_limit(n);
+        Ok(())
+    }
+
+    fn limit(&self) -> usize {
+        self.registry.aggregate_limit()
+    }
+
+    fn active_slots(&self) -> usize {
+        self.registry.sum_stats(|stats| stats.busy_workers)
+    }
+
+    fn auxiliary_threads(&self) -> usize {
+        self.registry.sum_stats(|stats| stats.auxiliary_threads)
+    }
+
+    fn pressure(&self) -> thread_broker::ProducerPressure {
+        use rapidgzip_core::DecoderPressure;
+        let pressures = self.registry.pressures();
+        if pressures.is_empty() {
+            // No decoder is open: nothing to grow, and the consumer may well
+            // be starving on plain uncompressed input.
+            return thread_broker::ProducerPressure::SourceBound;
+        }
+        if pressures
+            .iter()
+            .any(|p| matches!(p, DecoderPressure::DecoderBound { .. }))
+        {
+            thread_broker::ProducerPressure::Starved
+        } else {
+            thread_broker::ProducerPressure::Satisfied
+        }
+    }
+
+    fn work(&self) -> thread_broker::Work {
+        let (busy_nanos, items) = self.registry.cumulative_work();
+        thread_broker::Work { busy_nanos, items }
+    }
+}
+
+/// Whether to pin the decompress/shard split statically (measurement
+/// diagnostic; disables the thread broker).
+fn static_inflate_split_diagnostic() -> bool {
+    static STATIC_SPLIT: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *STATIC_SPLIT.get_or_init(|| std::env::var_os("CF3_RS_STATIC_INFLATE_SPLIT").is_some())
+}
+
 /// Streams fragment batches from per-file readers to a full pool of workers.
 ///
 /// Decompression and record assembly stay on the reader threads while every
@@ -202,9 +341,41 @@ fn emit_uncolored_streamed_weak_superkmer_buckets<const K: usize>(
     );
 
     // Readers decompress; BGZF splits across its blocks and plain gzip across
-    // rapidgzip's speculative workers, so the whole worker budget is shared
-    // evenly among the readers either way.
+    // rapidgzip's speculative workers. The static split shares the budget
+    // evenly among readers; when the broker is active this is only the
+    // opening, and the closed loop moves slots to whichever side's measured
+    // busy time says it owns them.
     let inflate_workers = (workers / readers.max(1)).max(1);
+    let registry = Arc::new(crate::input::InflateRegistry::new(
+        inflate_workers * readers,
+    ));
+    let gate = Arc::new(ShardingGate::new(workers));
+    let broker = if static_inflate_split_diagnostic() {
+        None
+    } else {
+        thread_broker::ThreadBroker::builder(
+            ShardingConsumer {
+                gate: Arc::clone(&gate),
+                ceiling: workers,
+            },
+            InflateProducer {
+                registry: Arc::clone(&registry),
+            },
+        )
+        .budget(workers)
+        .initial_producer_slots(inflate_workers * readers)
+        .min_consumer_threads(1)
+        .min_producer_slots(1)
+        .build()
+        .map_err(|error| eprintln!("cuttlefish: thread broker disabled: {error}"))
+        .ok()
+        .and_then(|broker| {
+            broker
+                .start()
+                .map_err(|error| eprintln!("cuttlefish: thread broker failed to start: {error}"))
+                .ok()
+        })
+    };
     let pool = BatchPool::new(buffers, readers);
     let next_source = AtomicUsize::new(0);
     let mut work_order = (0..paths.len()).collect::<Vec<_>>();
@@ -215,17 +386,29 @@ fn emit_uncolored_streamed_weak_superkmer_buckets<const K: usize>(
     let started = Instant::now();
     let mut emitters = Vec::with_capacity(workers);
     std::thread::scope(|scope| {
+        let _gate_release = ShardingGateRelease {
+            gate: &gate,
+            ceiling: workers,
+        };
         let mut worker_handles = Vec::with_capacity(workers);
-        for _ in 0..workers {
+        for worker_id in 0..workers {
             let sink = Arc::clone(&sink);
             let pool = &pool;
+            let gate = &gate;
             worker_handles.push(scope.spawn(move || {
                 let mut worker_stats = PartitionStats::new(graph_count);
                 let mut elapsed = Duration::ZERO;
                 let mut buckets = sink.deferred_uncolored_emitter();
                 let result = (|| -> Result<(), PartitionRunError> {
-                    while let Some(batch) = pool.take_ready() {
+                    loop {
+                        gate.wait_admitted(worker_id);
+                        let Some(batch) = pool.take_ready() else {
+                            break;
+                        };
                         let fragment_started = Instant::now();
+                        // Constructed after the blocking take, so pool waits
+                        // land between timers and are not charged as work.
+                        let mut busy = gate.meter.timer();
                         let outcome = (|| -> Result<(), PartitionRunError> {
                             for fragment in &batch.fragments {
                                 let seq =
@@ -238,9 +421,11 @@ fn emit_uncolored_streamed_weak_superkmer_buckets<const K: usize>(
                                     &mut buckets,
                                     &mut worker_stats,
                                 )?;
+                                busy.tick();
                             }
                             Ok(())
                         })();
+                        drop(busy);
                         elapsed += fragment_started.elapsed();
                         pool.release(batch);
                         outcome?;
@@ -267,6 +452,7 @@ fn emit_uncolored_streamed_weak_superkmer_buckets<const K: usize>(
             let pool = &pool;
             let next_source = &next_source;
             let work_order = &work_order;
+            let registry = &registry;
             reader_handles.push(scope.spawn(move || {
                 let result = (|| -> Result<(u64, usize), PartitionRunError> {
                     let mut records = 0u64;
@@ -281,11 +467,12 @@ fn emit_uncolored_streamed_weak_superkmer_buckets<const K: usize>(
                         let mut batch = pool.take_free().ok_or(PartitionRunError::Partition(
                             PartitionError::WorkerDisconnected,
                         ))?;
-                        let parsed = parse_fragments_borrowed_with(
+                        let parsed = crate::input::parse_fragments_borrowed_with_registry(
                             &paths[offset],
                             source_id,
                             K + 1,
                             inflate_workers,
+                            Some(registry),
                             |fragment| {
                                 batch.push(fragment);
                                 if batch.is_full() {
@@ -331,6 +518,9 @@ fn emit_uncolored_streamed_weak_superkmer_buckets<const K: usize>(
             stats.records += records;
             stats.input_files += input_files;
         }
+        // Input is exhausted: admit every parked worker so it can observe the
+        // drained pool and exit.
+        gate.release_all(workers);
         for handle in worker_handles {
             let (output, buckets) = handle
                 .join()
@@ -341,6 +531,19 @@ fn emit_uncolored_streamed_weak_superkmer_buckets<const K: usize>(
         }
         Ok::<(), PartitionRunError>(())
     })?;
+    if let Some(running) = broker {
+        match running.finish() {
+            Ok(report) => eprintln!(
+                "cuttlefish: thread broker settled at {} shard worker(s) / {} inflate slot(s){}",
+                report.final_consumer_threads,
+                report.final_producer_limit,
+                report
+                    .time_to_converge
+                    .map_or_else(String::new, |t| format!(" after {:.1}s", t.as_secs_f64())),
+            ),
+            Err(error) => eprintln!("cuttlefish: thread broker: {error}"),
+        }
+    }
     let parse_elapsed = started.elapsed();
     sink.flush_uncolored_emitters(emitters)?;
 

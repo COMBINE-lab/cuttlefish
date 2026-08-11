@@ -122,6 +122,30 @@ pub fn parse_fragments_borrowed_with<P, F>(
     source_id: u32,
     min_len: usize,
     inflate_workers: usize,
+    on_fragment: F,
+) -> Result<u64, InputError>
+where
+    P: AsRef<Path>,
+    F: for<'a> FnMut(BorrowedSequenceFragment<'a>) -> Result<(), InputError>,
+{
+    parse_fragments_borrowed_with_registry(
+        path,
+        source_id,
+        min_len,
+        inflate_workers,
+        None,
+        on_fragment,
+    )
+}
+
+/// As [`parse_fragments_borrowed_with`], with an optional [`InflateRegistry`]
+/// that gains control of every rapidgzip decoder opened for this file.
+pub(crate) fn parse_fragments_borrowed_with_registry<P, F>(
+    path: P,
+    source_id: u32,
+    min_len: usize,
+    inflate_workers: usize,
+    registry: Option<&std::sync::Arc<InflateRegistry>>,
     mut on_fragment: F,
 ) -> Result<u64, InputError>
 where
@@ -147,10 +171,11 @@ where
             path: path.to_path_buf(),
             source,
         })?;
-        if inflate_workers > 1 && crate::bgzf::is_bgzf(&head[..probed]) {
+        let bgzf = crate::bgzf::is_bgzf(&head[..probed]);
+        if inflate_workers > 1 && bgzf && !rapidgzip_bgzf_diagnostic() {
             Box::new(crate::bgzf::ParallelBgzfReader::new(file, inflate_workers))
         } else if inflate_workers > 1 && !sequential_inflate_diagnostic() {
-            Box::new(open_parallel_gzip_reader(path, inflate_workers)?)
+            Box::new(open_parallel_gzip_reader(path, inflate_workers, registry)?)
         } else {
             Box::new(MultiGzDecoder::new(file))
         }
@@ -176,6 +201,154 @@ fn sequential_inflate_diagnostic() -> bool {
     *SEQUENTIAL.get_or_init(|| std::env::var_os("CF3_RS_SEQUENTIAL_INFLATE").is_some())
 }
 
+/// Whether to route BGZF through rapidgzip instead of the dedicated
+/// block-parallel reader (evaluation diagnostic).
+fn rapidgzip_bgzf_diagnostic() -> bool {
+    static RAPIDGZIP_BGZF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *RAPIDGZIP_BGZF.get_or_init(|| std::env::var_os("CF3_RS_RAPIDGZIP_BGZF").is_some())
+}
+
+/// Live rapidgzip decoders across every open input, as one controllable pool.
+///
+/// This is the seam a closed-loop thread broker drives: it aggregates busy
+/// time and consumed bytes across decoders (including ones that have already
+/// closed), and fans an aggregate worker limit out as an even per-decoder
+/// share. Registration happens inside [`parse_fragments_borrowed_with_registry`]
+/// when a rapidgzip reader is opened; a guard carried by the reader retires
+/// the handle and banks its final counters on drop.
+pub struct InflateRegistry {
+    handles: std::sync::Mutex<Vec<Option<rapidgzip_core::DecoderHandle>>>,
+    aggregate_limit: std::sync::atomic::AtomicUsize,
+    finished_busy_nanos: std::sync::atomic::AtomicU64,
+    finished_bytes: std::sync::atomic::AtomicU64,
+}
+
+impl InflateRegistry {
+    pub fn new(aggregate_limit: usize) -> Self {
+        Self {
+            handles: std::sync::Mutex::new(Vec::new()),
+            aggregate_limit: std::sync::atomic::AtomicUsize::new(aggregate_limit.max(1)),
+            finished_busy_nanos: std::sync::atomic::AtomicU64::new(0),
+            finished_bytes: std::sync::atomic::AtomicU64::new(0),
+        }
+    }
+
+    /// Sets the aggregate decoder-worker ceiling and redistributes it.
+    pub fn set_aggregate_limit(&self, limit: usize) {
+        self.aggregate_limit
+            .store(limit.max(1), std::sync::atomic::Ordering::Relaxed);
+        self.redistribute(&self.handles.lock().unwrap_or_else(|p| p.into_inner()));
+    }
+
+    pub fn aggregate_limit(&self) -> usize {
+        self.aggregate_limit
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Sums a stat over the live decoders.
+    pub fn sum_stats<T: Default + std::ops::Add<Output = T>>(
+        &self,
+        mut field: impl FnMut(&rapidgzip_core::DecoderStats) -> T,
+    ) -> T {
+        let handles = self.handles.lock().unwrap_or_else(|p| p.into_inner());
+        handles
+            .iter()
+            .flatten()
+            .map(|handle| field(&handle.stats()))
+            .fold(T::default(), |acc, v| acc + v)
+    }
+
+    /// Cumulative decoder busy nanoseconds and consumed bytes, closed
+    /// decoders included.
+    pub fn cumulative_work(&self) -> (u64, u64) {
+        let handles = self.handles.lock().unwrap_or_else(|p| p.into_inner());
+        let (mut nanos, mut bytes) = (
+            self.finished_busy_nanos
+                .load(std::sync::atomic::Ordering::Relaxed),
+            self.finished_bytes
+                .load(std::sync::atomic::Ordering::Relaxed),
+        );
+        for handle in handles.iter().flatten() {
+            let stats = handle.stats();
+            nanos += stats
+                .accounted_busy_time
+                .map_or(0, |t| u64::try_from(t.as_nanos()).unwrap_or(u64::MAX));
+            bytes += stats.consumed_bytes;
+        }
+        (nanos, bytes)
+    }
+
+    /// Snapshot of every live decoder's pressure classification.
+    pub fn pressures(&self) -> Vec<rapidgzip_core::DecoderPressure> {
+        let handles = self.handles.lock().unwrap_or_else(|p| p.into_inner());
+        handles
+            .iter()
+            .flatten()
+            .map(|handle| handle.stats().pressure)
+            .collect()
+    }
+
+    fn register(&self, handle: rapidgzip_core::DecoderHandle) -> usize {
+        let mut handles = self.handles.lock().unwrap_or_else(|p| p.into_inner());
+        let slot = handles.iter().position(Option::is_none).unwrap_or_else(|| {
+            handles.push(None);
+            handles.len() - 1
+        });
+        handles[slot] = Some(handle);
+        self.redistribute(&handles);
+        slot
+    }
+
+    fn unregister(&self, slot: usize) {
+        let mut handles = self.handles.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(handle) = handles[slot].take() {
+            let stats = handle.stats();
+            self.finished_busy_nanos.fetch_add(
+                stats
+                    .accounted_busy_time
+                    .map_or(0, |t| u64::try_from(t.as_nanos()).unwrap_or(u64::MAX)),
+                std::sync::atomic::Ordering::Relaxed,
+            );
+            self.finished_bytes
+                .fetch_add(stats.consumed_bytes, std::sync::atomic::Ordering::Relaxed);
+        }
+        self.redistribute(&handles);
+    }
+
+    /// Fans the aggregate limit out as an even share per live decoder.
+    fn redistribute(&self, handles: &[Option<rapidgzip_core::DecoderHandle>]) {
+        let live = handles.iter().flatten().count();
+        if live == 0 {
+            return;
+        }
+        let share = (self.aggregate_limit() / live).max(1);
+        for handle in handles.iter().flatten() {
+            // A failed resize leaves the previous per-decoder limit standing,
+            // which is safe; the broker re-issues limits every window.
+            let _ = handle.set_worker_limit(share);
+        }
+    }
+}
+
+/// A rapidgzip reader that stays registered for as long as it is open.
+struct RegisteredReader {
+    inner: rapidgzip_core::DecoderReader,
+    registry: std::sync::Arc<InflateRegistry>,
+    slot: usize,
+}
+
+impl Read for RegisteredReader {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        self.inner.read(buf)
+    }
+}
+
+impl Drop for RegisteredReader {
+    fn drop(&mut self) {
+        self.registry.unregister(self.slot);
+    }
+}
+
 /// Opens a plain (non-BGZF) gzip file through rapidgzip's parallel decoder.
 ///
 /// rapidgzip decodes ahead speculatively from mid-stream bit positions and
@@ -186,17 +359,34 @@ fn sequential_inflate_diagnostic() -> bool {
 fn open_parallel_gzip_reader(
     path: &Path,
     inflate_workers: usize,
-) -> Result<rapidgzip_core::DecoderReader, InputError> {
+    registry: Option<&std::sync::Arc<InflateRegistry>>,
+) -> Result<Box<dyn Read>, InputError> {
     let build_error = |message: String| InputError::Io {
         path: path.to_path_buf(),
         source: std::io::Error::other(message),
     };
-    rapidgzip_core::Decoder::builder()
-        .decoder_threads(inflate_workers)
+    // Under a registry the per-decoder ceiling is owned by the broker, so the
+    // builder gets the whole aggregate as immutable headroom and the live
+    // limit is applied through the handle at registration.
+    let headroom = registry.map_or(inflate_workers, |r| r.aggregate_limit());
+    let reader = rapidgzip_core::Decoder::builder()
+        .decoder_threads(headroom.max(inflate_workers))
         .build()
         .map_err(|error| build_error(format!("rapidgzip configuration: {error}")))?
         .open(path)
-        .map_err(|error| build_error(format!("rapidgzip open: {error}")))
+        .map_err(|error| build_error(format!("rapidgzip open: {error}")))?;
+    Ok(match registry {
+        None => Box::new(reader),
+        Some(registry) => {
+            let registry = std::sync::Arc::clone(registry);
+            let slot = registry.register(reader.handle());
+            Box::new(RegisteredReader {
+                inner: reader,
+                registry,
+                slot,
+            })
+        }
+    })
 }
 
 /// Fills as much of `head` as the file provides, tolerating short reads.

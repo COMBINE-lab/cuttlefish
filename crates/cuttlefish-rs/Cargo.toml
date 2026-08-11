@@ -47,4 +47,5 @@ libc = "0.2"
 rayon = "1.12.0"
 scc = "3.8.4"
 xxhash-rust = { version = "0.8.15", features = ["xxh3"] }
-rapidgzip-core = "0.3.1"
+rapidgzip-core = { version = "0.3.1", features = ["busy-time-accounting"] }
+thread-broker = "0.1.0"

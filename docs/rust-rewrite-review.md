@@ -7,6 +7,15 @@ against source at review time; file:line references are to the tree at the
 review commit. Items are numbered for selection — nothing in section B or C is
 implemented until chosen, except where a decision is already recorded.*
 
+**Outcome status.** Section C landed in full (seven commits, ~5,300 lines
+removed, no measured regression across uncolored/colored/mbal interleaved
+pairs — see "The dead-code removal campaign" in `rust-rewrite-performance.md`).
+B1's rapidgzip half landed and measured a 52% partition / 45% wall win on
+`mbal` ("Parallel plain-gzip inflation", same document); the thread-broker
+half and the BGZF-reader replacement remain open. A4 was removed with C3.
+B2–B5, A1–A3, A5–A6, and the remaining C5 walker-family consolidation are
+open for selection.
+
 The review deliberately does not re-propose anything in the rejected-approaches
 record of `rust-rewrite-performance.md`: LTO, mimalloc, container axis changes,
 stage-3 containers, fused path-info preads, Elias-append fusion, retained

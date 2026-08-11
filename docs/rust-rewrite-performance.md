@@ -783,6 +783,13 @@ Surveyed options, none currently adoptable under a pure-Rust dependency policy:
 There is no pure-Rust parallel gzip decoder. The `flate2` maintainers have
 discussed adopting the rapidgzip approach but nothing exists.
 
+**This survey is now obsolete.** `rapidgzip-core` -- a pure-Rust
+reimplementation of the rapidgzip algorithm on the same zlib-rs backend
+`flate2` already uses here -- has since been published and is adopted; route 3
+below happened, externally. See "Parallel plain-gzip inflation" at the end of
+this document for the measured result: `mbal` partitioning fell from 135.1 s
+to 64.1 s and wall from 2:35.2 to 1:24.0, means of two order-alternated pairs.
+
 Three routes remain, in increasing order of effort:
 
 1. **Exploit block-structured input when present.** Implemented. BGZF
@@ -1711,3 +1718,63 @@ The repository also now defaults to `<output_prefix>.cf3rs.color-repository`,
 beside the FASTA. It was written into `--work-dir`, which callers treat as
 scratch; C++ likewise writes its own colour files next to the FASTA as
 `<output>.fa.col.N`.
+
+## The dead-code removal campaign, and an order-bias lesson
+
+The code-review cleanup (see `rust-rewrite-review.md`, section C) removed about
+5,300 lines: both stitch subsystems, every retired strategy implementation
+behind `#[allow(dead_code)]`, the never-read public surface, the legacy
+uncolored partition path, and duplicated helpers. `discontinuity.rs` shrank
+from 18,643 to 13,922 lines and the release binary by 3.8 MB. Most tranches
+are zero-codegen by construction; the one that is not -- specializing the
+discontinuity-unitig stream to the compact record layout, which touches the
+live local-contraction sink -- is why the whole batch was gated on interleaved
+pairs across all three workloads.
+
+The first campaign taught a methodology lesson worth recording. Its script ran
+the baseline *first* in every pair, and the cleaned arm trailed by 4-7 s
+consistently -- across uncolored, colored, and mbal alike, with the seconds
+landing in *expansion*, a phase the cleanup does not touch. Two facts unmasked
+it: the only pair that ran after the concurrent build activity on the host had
+stopped showed parity, and a second campaign with the order flipped reversed
+the sign in every pair (uncolored -0.55 s and -3.21 s, colored -5.00 s, clean
+arm first). Scripted pairs must alternate order; a fixed order turns any
+drift, including the operator's own compile jobs, into a systematic bias
+against the second arm.
+
+Verdict across the quiet-machine pairs: no regression on any of the three
+workloads, exact counts everywhere (252,487,658 / 16,417,233,428 uncolored and
+colored; 59,972,805 / 2,799,494,155 mbal), and topology equality between the
+cleaned and baseline binaries' FASTAs. Uncolored peak RSS is ~220 MB lower in
+both first-campaign pairs (9.64 vs 9.86 GB).
+
+A harness fix landed with this campaign: colored rows now record `local_s`
+(the scrape only matched the uncolored message), so colored local contraction
+-- 267-272 s of the 7:30-7:43 colored wall at t64 -- appears in the TSV for
+the first time.
+
+## Parallel plain-gzip inflation through rapidgzip
+
+`rapidgzip-core` 0.3.1 (pure Rust, zlib-rs backend, MSRV 1.88) now decodes
+plain gzip whenever the inflate budget exceeds one thread; BGZF keeps the
+dedicated block-parallel reader, and `CF3_RS_SEQUENTIAL_INFLATE` forces the
+serial decoder for measurement. The colored partitioner, previously hardwired
+to one inflate thread per source, now spends `threads / workers` threads per
+file on decompression -- within-source byte order has no stake in the
+color-signature grouping invariant, so this is safe by construction.
+
+On `mbal` (read mode, a single large plain-gzip input, t256, `--mem-limit
+64G`), same binary, decoder switched by environment, order alternated across
+two pairs:
+
+| arm | wall | partition |
+| --- | ---: | ---: |
+| sequential inflate | 2:35.64 / 2:34.72 | 135.19 / 135.02 |
+| rapidgzip | 1:26.76 / 1:21.23 | 66.97 / 61.13 |
+
+Partitioning falls 52%, wall 45%, with identical unitig and base counts and
+canonical topology equality between the arms' FASTAs. The remaining 64 s of
+partition time is bounded by the serial per-reader work -- line splitting,
+fragment scanning, and batch copy -- which is the seam a thread-broker
+integration would address next; rapidgzip-core's `busy-time-accounting`
+feature maps directly onto that crate's `Producer` trait.

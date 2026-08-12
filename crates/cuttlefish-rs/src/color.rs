@@ -851,8 +851,9 @@ fn color_worker_path(dir: &Path, worker: usize) -> PathBuf {
 /// distinct sets.
 pub struct ColorRepositoryReader {
     manifest: ColorRepositoryManifest,
-    /// Per worker, the byte offset of every record, plus a trailing end offset.
-    offsets: Vec<Vec<u64>>,
+    /// Per worker, once indexed, the byte offset of every record plus a
+    /// trailing end offset.
+    offsets: Vec<Option<Vec<u64>>>,
     sources: Vec<PathBuf>,
     k: u16,
     workers: Vec<Option<BufReader<File>>>,
@@ -860,7 +861,14 @@ pub struct ColorRepositoryReader {
 
 impl ColorRepositoryReader {
     /// Opens the repository written under `dir`, reading its manifest and
-    /// metadata and indexing every worker file.
+    /// metadata.
+    ///
+    /// Worker files are indexed lazily, on the first lookup that lands in
+    /// them. That matters at scale: a 150000-genome colored build holds 87
+    /// million distinct sets across 41 GB, so indexing eagerly would read the
+    /// whole repository and hold 700 MB of offsets before answering anything
+    /// -- and callers that only stream ([`for_each_record`](Self::for_each_record))
+    /// never need an index at all.
     pub fn open(dir: impl AsRef<Path>) -> Result<Self, ColorError> {
         let dir = dir.as_ref().to_path_buf();
         let (k, num_colors, sources) = Self::read_metadata(&dir)?;
@@ -870,10 +878,7 @@ impl ColorRepositoryReader {
             records,
             num_colors,
         };
-        let mut offsets = Vec::with_capacity(manifest.records.len());
-        for (worker, &count) in manifest.records.iter().enumerate() {
-            offsets.push(Self::index_worker(&manifest.dir, worker, count)?);
-        }
+        let offsets = (0..manifest.records.len()).map(|_| None).collect();
         let workers = (0..manifest.records.len()).map(|_| None).collect();
         Ok(Self {
             manifest,
@@ -924,10 +929,18 @@ impl ColorRepositoryReader {
     ) -> Result<(), ColorError> {
         let worker = coordinate.worker();
         let index = coordinate.index() as usize;
-        let offset = self
-            .offsets
+        let count = *self
+            .manifest
+            .records
             .get(worker)
-            .and_then(|offsets| offsets.get(index))
+            .ok_or(ColorError::MalformedCoordinate(coordinate.as_u40()))?;
+        if self.offsets[worker].is_none() {
+            self.offsets[worker] = Some(Self::index_worker(&self.manifest.dir, worker, count)?);
+        }
+        let offset = self.offsets[worker]
+            .as_ref()
+            .expect("worker was just indexed")
+            .get(index)
             .copied()
             .ok_or(ColorError::MalformedCoordinate(coordinate.as_u40()))?;
         let path = color_worker_path(&self.manifest.dir, worker);

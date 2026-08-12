@@ -8,11 +8,14 @@
 //! Elias-delta bit streams -- so these subcommands are the supported way to
 //! get at them.
 //!
-//! Everything here streams. `dump` on a real corpus emits a line per color run
-//! per unitig, which is larger than the graph itself; it is written through an
-//! optional gzip encoder and never materialized. The one bounded allocation is
-//! a cache of decoded sets, because consecutive runs repeat coordinates
-//! heavily and decoding is the expensive part.
+//! Everything here streams, and the access pattern is chosen for the scale
+//! these graphs actually reach: a 150000-genome colored build holds 87 million
+//! distinct color sets across a 41 GB repository. `dump` emits a line per
+//! color run per unitig -- more output than the graph itself -- through an
+//! optional gzip encoder, resolving coordinates through a bounded cache since
+//! consecutive runs repeat them heavily. `grep` never resolves per run at all:
+//! it decides the predicate once per set in one sequential pass and carries
+//! the answer in a bitset. `sets` is a pure stream and never builds an index.
 
 use cuttlefish_rs::color::ColorRepositoryReader;
 use cuttlefish_rs::state::ColorCoordinate;
@@ -136,11 +139,20 @@ fn sets(reader: &ColorRepositoryReader, params: &Params, out: &mut Output) -> Re
 }
 
 /// Unitigs with at least one run whose set satisfies the source predicate.
+///
+/// The predicate is decided once per *set*, not once per run, by streaming the
+/// repository and recording the answer in a bitset over coordinates. That is
+/// what keeps this linear on real data: a 150000-genome build has 87 million
+/// distinct sets in 41 GB, which is one sequential pass and an 11 MB bitset,
+/// against 41 GB of random reads if each run were resolved on demand. The
+/// FASTA pass that follows then never touches the repository at all --
+/// except, when the matched sets are to be printed, for the ones that matched.
 fn grep(reader: &mut ColorRepositoryReader, params: &Params, out: &mut Output) -> Result<()> {
     let fasta = params.fasta.as_ref().ok_or("-i/--input is required")?;
     if params.any_of.is_empty() && params.all_of.is_empty() && params.none_of.is_empty() {
         return Err("grep needs at least one of --any-of, --all-of, --none-of".into());
     }
+    let selected = select_coordinates(reader, params)?;
     let mut cache = SetCache::default();
     let mut line = String::new();
     let mut label = String::new();
@@ -156,8 +168,7 @@ fn grep(reader: &mut ColorRepositoryReader, params: &Params, out: &mut Output) -
         let mut hit = false;
         for (index, &(offset, coordinate)) in runs.iter().enumerate() {
             let end = runs.get(index + 1).map_or(vertices, |next| next.0);
-            let sources = cache.get(reader, coordinate)?;
-            if !matches(sources, params) {
+            if !selected.contains(coordinate) {
                 continue;
             }
             hit = true;
@@ -171,6 +182,7 @@ fn grep(reader: &mut ColorRepositoryReader, params: &Params, out: &mut Output) -
             write!(out, "{unitig}\t{offset}\t{end}\t")?;
             out.write_all(label.as_bytes().get(start..stop).unwrap_or_default())?;
             out.write_all(b"\t")?;
+            let sources = cache.get(reader, coordinate)?;
             write_sources(out, sources, reader, params.names)?;
             out.write_all(b"\n")?;
         }
@@ -183,6 +195,51 @@ fn grep(reader: &mut ColorRepositoryReader, params: &Params, out: &mut Output) -
         eprintln!("cuttlefish colors: {matched} of {unitig} unitig(s) matched");
     }
     Ok(())
+}
+
+/// One bit per repository record: does this set satisfy the predicate?
+struct CoordinateSet {
+    words: Vec<Vec<u64>>,
+}
+
+impl CoordinateSet {
+    fn new(records_per_worker: &[u32]) -> Self {
+        Self {
+            words: records_per_worker
+                .iter()
+                .map(|&count| vec![0u64; (count as usize).div_ceil(64)])
+                .collect(),
+        }
+    }
+
+    fn insert(&mut self, coordinate: ColorCoordinate) {
+        let index = coordinate.index() as usize;
+        self.words[coordinate.worker()][index / 64] |= 1u64 << (index % 64);
+    }
+
+    #[inline]
+    fn contains(&self, coordinate: u64) -> bool {
+        let coordinate = ColorCoordinate::from_u40(coordinate);
+        let index = coordinate.index() as usize;
+        self.words
+            .get(coordinate.worker())
+            .and_then(|words| words.get(index / 64))
+            .is_some_and(|word| word & (1u64 << (index % 64)) != 0)
+    }
+}
+
+/// Streams every set once, marking the coordinates the predicate accepts.
+fn select_coordinates(reader: &ColorRepositoryReader, params: &Params) -> Result<CoordinateSet> {
+    let mut selected = CoordinateSet::new(reader.records_per_worker());
+    for worker in 0..reader.records_per_worker().len() {
+        reader.for_each_record(worker, |coordinate, sources| {
+            if matches(sources, params) {
+                selected.insert(coordinate);
+            }
+            Ok(())
+        })?;
+    }
+    Ok(selected)
 }
 
 #[inline]

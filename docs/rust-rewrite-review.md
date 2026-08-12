@@ -22,8 +22,10 @@ per-unitig label allocation is gone (borrowed-label emit into a reused
 scratch), measuring -3.0% uncolored / -0.9% colored local contraction with
 non-overlapping arms; B5's trivial-path allocation went with it, and the
 restructure absorbed C6's remaining dispatch fold. A4 was removed with C3.
-B2–B5, A1–A3, A5–A6, and the remaining C5 walker-family consolidation are
-open for selection.
+B3 was withdrawn after quantification and B4 closed measured-and-retained
+(lock profiling shows no actionable contention); A1/A3/A5 hygiene landed.
+Still open: A2 and A6 (do-if-touching), the C5 walker-family consolidation,
+and the deferred bucket segment-size sweep.
 
 The review deliberately does not re-propose anything in the rejected-approaches
 record of `rust-rewrite-performance.md`: LTO, mimalloc, container axis changes,

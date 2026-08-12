@@ -1654,56 +1654,6 @@ impl<const K: usize> BlockedEdgeMatrix<K> {
         Ok(records)
     }
 
-    fn load_column_into(
-        &mut self,
-        col: usize,
-        threads: usize,
-        column: &mut SerialEdgeMatrix<K>,
-    ) -> Result<(), SerialCollationError> {
-        for row in 0..=col {
-            self.flush_block(row, col)?;
-        }
-        let workers = threads.max(1).min(col + 1);
-        let chunk = (col + 1).div_ceil(workers);
-        let block_groups = std::thread::scope(|scope| {
-            let mut handles = Vec::with_capacity(workers);
-            let matrix = &*self;
-            for row_start in (0..=col).step_by(chunk) {
-                let row_end = (row_start + chunk).min(col + 1);
-                handles.push(scope.spawn(move || {
-                    let mut blocks = Vec::with_capacity(row_end - row_start);
-                    for row in row_start..row_end {
-                        blocks.push((row, matrix.read_flushed_block(row, col)?));
-                    }
-                    Ok::<_, SerialCollationError>(blocks)
-                }));
-            }
-            let mut groups = Vec::with_capacity(handles.len());
-            for handle in handles {
-                groups.push(
-                    handle
-                        .join()
-                        .map_err(|_| SerialCollationError::WorkerPanic)??,
-                );
-            }
-            Ok::<_, SerialCollationError>(groups)
-        })?;
-        column.stats = SerialEdgeMatrixStats::default();
-        for group in block_groups {
-            for (row, edges) in group {
-                column.stats.edges += edges.len() as u64;
-                column.stats.phi_edges += edges
-                    .iter()
-                    .filter(|edge| edge.first.is_phi() || edge.second.is_phi())
-                    .count() as u64;
-                column.stats.diagonal_edges += u64::from(row == col) * edges.len() as u64;
-                let old = std::mem::replace(&mut column.blocks[row][col], edges);
-                drop(old);
-            }
-        }
-        Ok(())
-    }
-
     fn read_flushed_row(
         &self,
         row: usize,
@@ -2951,7 +2901,7 @@ impl SerialDiscontinuityContractor {
         diagonal_matrix: &mut SerialEdgeMatrix<K>,
         partition: usize,
         threads: usize,
-        table: &AtomicPartitionTable<K>,
+        table: &PartitionTable<K>,
         diagonal_ends: &mut FastHashMap<Kmer<K>, DiagonalOtherEnd<K>>,
         pool: &ThreadPool,
         timings: &mut BlockedContractTimings,
@@ -3154,7 +3104,7 @@ impl SerialDiscontinuityContractor {
     fn finish_atomic_partition<const K: usize>(
         partition: usize,
         threads: usize,
-        table: &AtomicPartitionTable<K>,
+        table: &PartitionTable<K>,
         pool: &ThreadPool,
         diagonal: DiagonalCompression<K>,
         scan: PartitionColumnScanOutput<K>,
@@ -3241,57 +3191,44 @@ impl SerialDiscontinuityContractor {
             phantom_edges += local_phantoms;
         }
 
-        let scan_chunk = table.slots.len().div_ceil(threads.max(1)).max(1);
-        let phantom_outputs = pool.install(|| {
-            table
-                .slots
-                .par_chunks(scan_chunk)
-                .map(|slots| {
-                    let mut local_edges = Vec::new();
-                    let mut local_expansion = Vec::new();
-                    let mut local_meta = Vec::new();
-                    let mut local_phantoms = 0u64;
-                    for slot in slots {
-                        let key = slot.key.load(Ordering::Relaxed);
-                        if key == AtomicPartitionTable::<K>::EMPTY {
-                            continue;
-                        }
-                        let end = unsafe { (*slot.value.get()).assume_init() }.unpack::<K>();
-                        if end.processed {
-                            continue;
-                        }
-                        let vertex = Kmer::from_bits(key as u128);
-                        local_phantoms += 1;
-                        let phantom = DiscontinuityEndpoint {
-                            vertex,
-                            side: end.side_at_current.inverse(),
-                        };
-                        local_expansion.push(join_other_ends_with_phantom(
-                            MatrixEndpoint::Phi,
-                            MatrixEndpoint::Vertex(phantom),
-                            1,
-                            Some(phantom),
-                        ));
-                        if end.endpoint.is_phi() {
-                            local_meta.push(two_weight_meta_vertex(
-                                vertex,
-                                partition,
-                                end.side_at_current,
-                                end.weight,
-                                1,
-                                false,
-                            ));
-                        } else {
-                            local_edges.push(join_other_ends(
-                                MatrixEndpoint::Phi,
-                                end.endpoint,
-                                1 + end.weight,
-                            ));
-                        }
-                    }
-                    (local_edges, local_expansion, local_meta, local_phantoms)
-                })
-                .collect::<Vec<_>>()
+        let phantom_outputs = table.map_live_chunks(threads, pool, |entries| {
+            let mut local_edges = Vec::new();
+            let mut local_expansion = Vec::new();
+            let mut local_meta = Vec::new();
+            let mut local_phantoms = 0u64;
+            for (vertex, end) in entries {
+                if end.processed {
+                    continue;
+                }
+                local_phantoms += 1;
+                let phantom = DiscontinuityEndpoint {
+                    vertex,
+                    side: end.side_at_current.inverse(),
+                };
+                local_expansion.push(join_other_ends_with_phantom(
+                    MatrixEndpoint::Phi,
+                    MatrixEndpoint::Vertex(phantom),
+                    1,
+                    Some(phantom),
+                ));
+                if end.endpoint.is_phi() {
+                    local_meta.push(two_weight_meta_vertex(
+                        vertex,
+                        partition,
+                        end.side_at_current,
+                        end.weight,
+                        1,
+                        false,
+                    ));
+                } else {
+                    local_edges.push(join_other_ends(
+                        MatrixEndpoint::Phi,
+                        end.endpoint,
+                        1 + end.weight,
+                    ));
+                }
+            }
+            (local_edges, local_expansion, local_meta, local_phantoms)
         });
         for (local_edges, local_expansion, local_meta, local_phantoms) in phantom_outputs {
             edges.extend(local_edges);
@@ -3358,8 +3295,6 @@ impl SerialDiscontinuityContractor {
         })?;
         let mut meta_vertex_count = 0u64;
         let mut meta_vertices_per_partition = vec![0usize; partition_count];
-        let mut reusable_table =
-            FastHashMap::<Kmer<K>, PartitionOtherEnd<K>>::with_hasher(FastBuildHasher::default());
         let mut diagonal_ends =
             FastHashMap::<Kmer<K>, DiagonalOtherEnd<K>>::with_hasher(FastBuildHasher::default());
         let mut column = SerialEdgeMatrix::new(working.vertex_partitions)
@@ -3373,29 +3308,25 @@ impl SerialDiscontinuityContractor {
             })
             .max()
             .unwrap_or(1);
-        let atomic_table =
-            (K <= 31).then(|| AtomicPartitionTable::<K>::with_max_entries(max_partition_vertices));
+        let table = PartitionTable::<K>::with_max_entries(max_partition_vertices);
         let contraction_pool = ThreadPoolBuilder::new()
             .num_threads(threads.max(1))
             .build()
             .map_err(|_| SerialCollationError::WorkerPanic)?;
         let appenders = ConcurrentBlockedEdgeWriters::new(&working);
         let setup_elapsed = setup_started.elapsed();
-        if let Some(table) = &atomic_table {
-            eprintln!(
-                "cuttlefish: contraction table setup {:.3}s; max entries {}, capacity {}, slot {} byte(s)",
-                setup_elapsed.as_secs_f64(),
-                max_partition_vertices,
-                table.slots.len(),
-                std::mem::size_of::<AtomicPartitionSlot>(),
-            );
-        }
+        eprintln!(
+            "cuttlefish: contraction table setup {:.3}s; max entries {}, capacity {}, slot {} byte(s)",
+            setup_elapsed.as_secs_f64(),
+            max_partition_vertices,
+            table.slot_count(),
+            table.slot_bytes(),
+        );
         let mut stats = FullSerialContractionStats {
             input_edges: working.stats.edges,
             ..FullSerialContractionStats::default()
         };
         let started = Instant::now();
-        let mut block_load_elapsed = Duration::default();
         let mut partition_contract_elapsed = Duration::default();
         let mut reinsert_elapsed = Duration::default();
         let mut direct_timings = BlockedContractTimings::default();
@@ -3407,49 +3338,17 @@ impl SerialDiscontinuityContractor {
 
         for (completed, partition) in (1..partition_count).rev().enumerate() {
             let phase_started = Instant::now();
-            let (mut contracted, pre_reinserted_edges) = if let Some(table) = &atomic_table {
-                Self::contract_blocked_partition_atomic(
-                    &mut working,
-                    &appenders,
-                    &mut column,
-                    partition,
-                    threads,
-                    table,
-                    &mut diagonal_ends,
-                    &contraction_pool,
-                    &mut direct_timings,
-                )?
-            } else {
-                let load_started = Instant::now();
-                // Edges reinserted by the partitions already contracted live in
-                // the appenders' private extent lists, not in the matrix, so the
-                // column has to absorb them before it is read. The atomic arm
-                // does this inside `contract_blocked_partition_atomic`; without
-                // it here, every path spanning three or more partitions loses
-                // the joined edge and its unitigs never reach the output.
-                for row in 0..=partition {
-                    // Matrix buffer first, so the merged extents stay in write
-                    // order, exactly as the atomic arm orders them.
-                    working.flush_block(row, partition)?;
-                    let added = appenders.merge_block_into(&mut working, row, partition)?;
-                    if added != 0 {
-                        working.stats.edges += added as u64;
-                        working.stats.phi_edges += u64::from(row == 0) * added as u64;
-                        working.stats.diagonal_edges += u64::from(row == partition) * added as u64;
-                    }
-                }
-                working.load_column_into(partition, threads, &mut column)?;
-                block_load_elapsed += load_started.elapsed();
-                (
-                    Self::contract_partition_with_reusable_table(
-                        &column,
-                        partition,
-                        threads,
-                        &mut reusable_table,
-                    ),
-                    0,
-                )
-            };
+            let (mut contracted, pre_reinserted_edges) = Self::contract_blocked_partition_atomic(
+                &mut working,
+                &appenders,
+                &mut column,
+                partition,
+                threads,
+                &table,
+                &mut diagonal_ends,
+                &contraction_pool,
+                &mut direct_timings,
+            )?;
             partition_contract_elapsed += phase_started.elapsed();
             stats.partition_output_edges += contracted.stats.output_edges;
             stats.phantom_edges += contracted.stats.phantom_edges;
@@ -3515,15 +3414,14 @@ impl SerialDiscontinuityContractor {
         working.flush_all_with_threads(threads)?;
         let block_flush_elapsed = flush_started.elapsed();
         eprintln!(
-            "cuttlefish: blocked contraction detail: setup {:.3}s, block load/decode {:.3}s, partition contraction {:.3}s, reinsertion {:.3}s, meta write {:.3}s, block flush {:.3}s",
+            "cuttlefish: blocked contraction detail: setup {:.3}s, partition contraction {:.3}s, reinsertion {:.3}s, meta write {:.3}s, block flush {:.3}s",
             setup_elapsed.as_secs_f64(),
-            block_load_elapsed.as_secs_f64(),
             partition_contract_elapsed.as_secs_f64(),
             reinsert_elapsed.as_secs_f64(),
             meta_write_elapsed.as_secs_f64(),
             block_flush_elapsed.as_secs_f64(),
         );
-        if atomic_table.is_some() {
+        {
             eprintln!(
                 "cuttlefish: fused contraction phases: column flush {:.3}s, table clear {:.3}s, diagonal {:.3}s, raw read {:.3}s, table scan {:.3}s, scan/diagonal join wall {:.3}s, task setup {:.3}s, gather {:.3}s, finalize {:.3}s",
                 direct_timings.flush.as_secs_f64(),
@@ -12123,6 +12021,323 @@ impl<const K: usize> AtomicPartitionTable<K> {
             assert_ne!(observed, Self::EMPTY, "partition endpoint disappeared");
             idx = (idx + 1) & self.mask;
         }
+    }
+}
+
+/// The K > 31 twin of [`AtomicPartitionSlot`].
+///
+/// The compact slot packs the vertex into its `key` word and uses that word as
+/// both the identity and the lock, which two-word k-mers cannot do. Here a
+/// separate tag word carries the state -- empty, locked, or a published hash
+/// tag -- and the key lives beside the value. Nothing else about the protocol
+/// differs, so both tables absorb, join, and sweep identically.
+struct WidePartitionSlot<const K: usize> {
+    tag: AtomicU64,
+    key: UnsafeCell<MaybeUninit<Kmer<K>>>,
+    value: UnsafeCell<MaybeUninit<PartitionOtherEnd<K>>>,
+}
+
+unsafe impl<const K: usize> Sync for WidePartitionSlot<K> {}
+
+struct WidePartitionTable<const K: usize> {
+    slots: Vec<WidePartitionSlot<K>>,
+    mask: usize,
+}
+
+impl<const K: usize> WidePartitionTable<K> {
+    const EMPTY: u64 = 0;
+    const LOCKED: u64 = 1;
+    const HASH_SEED: u64 = 0xAAAA_AAAA_5555_5555;
+
+    /// Published tags avoid both sentinels, so a tag never reads as a state.
+    #[inline(always)]
+    fn tag(vertex: Kmer<K>) -> u64 {
+        vertex.hash64(Self::HASH_SEED) | (1 << 63)
+    }
+
+    #[inline(always)]
+    fn index(&self, vertex: Kmer<K>) -> usize {
+        vertex.hash64(Self::HASH_SEED) as usize & self.mask
+    }
+
+    fn with_max_entries(max_entries: usize) -> Self {
+        let capacity = max_entries
+            .saturating_mul(4)
+            .div_ceil(3)
+            .next_power_of_two()
+            .max(8);
+        Self {
+            slots: (0..capacity)
+                .map(|_| WidePartitionSlot {
+                    tag: AtomicU64::new(Self::EMPTY),
+                    key: UnsafeCell::new(MaybeUninit::uninit()),
+                    value: UnsafeCell::new(MaybeUninit::uninit()),
+                })
+                .collect(),
+            mask: capacity - 1,
+        }
+    }
+
+    fn clear(&self, threads: usize, pool: &ThreadPool) {
+        let workers = threads.max(1).min(self.slots.len());
+        let chunk = self.slots.len().div_ceil(workers);
+        pool.install(|| {
+            self.slots.par_chunks(chunk).for_each(|slots| {
+                for slot in slots {
+                    slot.tag.store(Self::EMPTY, Ordering::Relaxed);
+                }
+            })
+        });
+    }
+
+    fn absorb_prepared(
+        &self,
+        vertex: Kmer<K>,
+        incoming: PartitionOtherEnd<K>,
+        partition: usize,
+        vertex_partitions: usize,
+        edges: &mut Vec<PreparedBlockedEdge>,
+        meta_vertices: &mut Vec<SerialMetaVertex<K>>,
+    ) {
+        let tag = Self::tag(vertex);
+        let mut idx = self.index(vertex);
+        loop {
+            let slot = &self.slots[idx];
+            let observed = slot.tag.load(Ordering::Acquire);
+            if observed == Self::LOCKED {
+                std::hint::spin_loop();
+                continue;
+            }
+            if observed == Self::EMPTY {
+                if slot
+                    .tag
+                    .compare_exchange_weak(
+                        Self::EMPTY,
+                        Self::LOCKED,
+                        Ordering::Acquire,
+                        Ordering::Relaxed,
+                    )
+                    .is_err()
+                {
+                    std::hint::spin_loop();
+                    continue;
+                }
+                unsafe {
+                    (*slot.key.get()).write(vertex);
+                    (*slot.value.get()).write(incoming);
+                }
+                slot.tag.store(tag, Ordering::Release);
+                return;
+            }
+            if observed != tag || unsafe { (*slot.key.get()).assume_init() } != vertex {
+                idx = (idx + 1) & self.mask;
+                continue;
+            }
+            if slot
+                .tag
+                .compare_exchange_weak(tag, Self::LOCKED, Ordering::Acquire, Ordering::Relaxed)
+                .is_err()
+            {
+                std::hint::spin_loop();
+                continue;
+            }
+            let existing = unsafe { (*slot.value.get()).assume_init() };
+            if existing.endpoint.is_phi() && incoming.endpoint.is_phi() {
+                meta_vertices.push(two_weight_meta_vertex(
+                    vertex,
+                    partition,
+                    incoming.side_at_current,
+                    incoming.weight,
+                    existing.weight,
+                    false,
+                ));
+            } else if !existing.in_same_part {
+                edges.push(prepare_existing_blocked_edge(
+                    join_other_ends(
+                        incoming.endpoint,
+                        existing.endpoint,
+                        incoming.weight + existing.weight,
+                    ),
+                    vertex_partitions,
+                ));
+            }
+            let mut updated = existing;
+            if updated.in_same_part {
+                updated = incoming;
+            }
+            updated.processed = true;
+            unsafe { (*slot.value.get()).write(updated) };
+            slot.tag.store(tag, Ordering::Release);
+            return;
+        }
+    }
+
+    fn get(&self, vertex: Kmer<K>) -> Option<PartitionOtherEnd<K>> {
+        let tag = Self::tag(vertex);
+        let mut idx = self.index(vertex);
+        loop {
+            let slot = &self.slots[idx];
+            let observed = slot.tag.load(Ordering::Acquire);
+            if observed == Self::EMPTY {
+                return None;
+            }
+            if observed == tag && unsafe { (*slot.key.get()).assume_init() } == vertex {
+                return Some(unsafe { (*slot.value.get()).assume_init() });
+            }
+            idx = (idx + 1) & self.mask;
+        }
+    }
+
+    fn mark_processed(&self, vertex: Kmer<K>) {
+        let tag = Self::tag(vertex);
+        let mut idx = self.index(vertex);
+        loop {
+            let slot = &self.slots[idx];
+            let observed = slot.tag.load(Ordering::Relaxed);
+            assert_ne!(observed, Self::EMPTY, "partition endpoint disappeared");
+            if observed == tag && unsafe { (*slot.key.get()).assume_init() } == vertex {
+                let mut value = unsafe { (*slot.value.get()).assume_init() };
+                value.processed = true;
+                unsafe { (*slot.value.get()).write(value) };
+                return;
+            }
+            idx = (idx + 1) & self.mask;
+        }
+    }
+}
+
+/// The parallel partition table, in whichever width this K needs.
+///
+/// Both arms run the same blocked contraction; only the slot layout differs.
+/// Before this existed, K > 31 fell back to a single-threaded `HashMap` scan
+/// per partition, which cost 15.0 s of a 30.6 s k = 55 build against 2.2 s for
+/// the same graph at k = 31.
+enum PartitionTable<const K: usize> {
+    Compact(AtomicPartitionTable<K>),
+    Wide(WidePartitionTable<K>),
+}
+
+impl<const K: usize> PartitionTable<K> {
+    fn with_max_entries(max_entries: usize) -> Self {
+        if K <= 31 {
+            Self::Compact(AtomicPartitionTable::with_max_entries(max_entries))
+        } else {
+            Self::Wide(WidePartitionTable::with_max_entries(max_entries))
+        }
+    }
+
+    fn slot_count(&self) -> usize {
+        match self {
+            Self::Compact(table) => table.slots.len(),
+            Self::Wide(table) => table.slots.len(),
+        }
+    }
+
+    fn slot_bytes(&self) -> usize {
+        match self {
+            Self::Compact(_) => std::mem::size_of::<AtomicPartitionSlot>(),
+            Self::Wide(_) => std::mem::size_of::<WidePartitionSlot<K>>(),
+        }
+    }
+
+    fn clear(&self, threads: usize, pool: &ThreadPool) {
+        match self {
+            Self::Compact(table) => table.clear(threads, pool),
+            Self::Wide(table) => table.clear(threads, pool),
+        }
+    }
+
+    #[inline(always)]
+    fn absorb_prepared(
+        &self,
+        vertex: Kmer<K>,
+        incoming: PartitionOtherEnd<K>,
+        partition: usize,
+        vertex_partitions: usize,
+        edges: &mut Vec<PreparedBlockedEdge>,
+        meta_vertices: &mut Vec<SerialMetaVertex<K>>,
+    ) {
+        match self {
+            Self::Compact(table) => table.absorb_prepared(
+                vertex,
+                incoming,
+                partition,
+                vertex_partitions,
+                edges,
+                meta_vertices,
+            ),
+            Self::Wide(table) => table.absorb_prepared(
+                vertex,
+                incoming,
+                partition,
+                vertex_partitions,
+                edges,
+                meta_vertices,
+            ),
+        }
+    }
+
+    #[inline(always)]
+    fn get(&self, vertex: Kmer<K>) -> Option<PartitionOtherEnd<K>> {
+        match self {
+            Self::Compact(table) => table.get(vertex),
+            Self::Wide(table) => table.get(vertex),
+        }
+    }
+
+    #[inline(always)]
+    fn mark_processed(&self, vertex: Kmer<K>) {
+        match self {
+            Self::Compact(table) => table.mark_processed(vertex),
+            Self::Wide(table) => table.mark_processed(vertex),
+        }
+    }
+
+    /// Runs `f` over every live entry, in parallel chunks of the slot array.
+    ///
+    /// The unprocessed-entry sweep is the one place that reads the table as
+    /// storage rather than by key, so it is expressed here once instead of
+    /// being written against either slot layout.
+    fn map_live_chunks<T, F>(&self, threads: usize, pool: &ThreadPool, f: F) -> Vec<T>
+    where
+        F: Fn(&mut dyn Iterator<Item = (Kmer<K>, PartitionOtherEnd<K>)>) -> T + Sync + Send,
+        T: Send,
+    {
+        let chunk = self.slot_count().div_ceil(threads.max(1)).max(1);
+        pool.install(|| match self {
+            Self::Compact(table) => table
+                .slots
+                .par_chunks(chunk)
+                .map(|slots| {
+                    f(&mut slots.iter().filter_map(|slot| {
+                        let key = slot.key.load(Ordering::Relaxed);
+                        (key != AtomicPartitionTable::<K>::EMPTY).then(|| {
+                            (
+                                Kmer::from_bits(key as u128),
+                                unsafe { (*slot.value.get()).assume_init() }.unpack::<K>(),
+                            )
+                        })
+                    }))
+                })
+                .collect::<Vec<_>>(),
+            Self::Wide(table) => table
+                .slots
+                .par_chunks(chunk)
+                .map(|slots| {
+                    f(&mut slots.iter().filter_map(|slot| {
+                        if slot.tag.load(Ordering::Relaxed) == WidePartitionTable::<K>::EMPTY {
+                            return None;
+                        }
+                        Some(unsafe {
+                            (
+                                (*slot.key.get()).assume_init(),
+                                (*slot.value.get()).assume_init(),
+                            )
+                        })
+                    }))
+                })
+                .collect::<Vec<_>>(),
+        })
     }
 }
 

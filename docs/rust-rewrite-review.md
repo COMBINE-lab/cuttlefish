@@ -119,12 +119,16 @@ sharding; parallel inflate for colored readers (invariant-safe — see the
 source-grouping note below). Adoption is decided **conditional on winning**
 on `mbal`/`SRR105788`/`ggallus` without regressing either 150k gate.
 
-*Constraint recorded for any colored-partitioning change:* the color-signature
-hash requires each source's records to be **contiguous per bucket**
-(`add_source_hashed` dedups only against the last source; XOR-combining makes
-group order free but interleaving fatal). One worker per source + per-source
-drains is what enforces it today. Parallel decompression *within* a file
-preserves it; mixed-source batch pools do not.
+*Constraint recorded for any colored-partitioning change — corrected during
+R3:* the color-signature hash prefers each source's records **contiguous per
+bucket** (`add_source_hashed` dedups only against the last source). Tracing
+the production flow shows mid-run atlas flushes can already split a source's
+records mid-window, and the pipeline stays correct: the second pass rebuilds
+exact source sets (`normalize_source_sets`), so an interleave only fragments
+color-hash classes and costs extra unknown-color resolution — a performance
+property, not a correctness invariant. Colored-partitioning redesigns are
+therefore *not* hard-blocked on grouping; they trade grouping quality against
+resolution work.
 
 **B2. Per-unitig label allocation in local contraction.**
 `extract_maximal_unitig_compact` (`subgraph.rs:1224`) allocates a fresh

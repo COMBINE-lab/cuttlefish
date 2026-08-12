@@ -423,6 +423,7 @@ pub struct SharedBucketEmitter {
     colored_pending: Vec<PendingColoredAtlas>,
     pending_bytes: usize,
     deferred_uncolored: bool,
+    sort_scratch: AtlasSortScratch,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -442,6 +443,69 @@ struct PendingBucket {
 struct PendingColoredAtlas {
     graph_ids: Vec<u16>,
     bytes: Vec<u8>,
+}
+
+/// Reusable workspace for grouping a pending atlas chunk by subgraph before
+/// it goes under the atlas lock.
+///
+/// The R3 attribution put 35% of colored partition worker time in the
+/// per-source drain, and the mechanism was this append dispatching every
+/// record individually while holding the lock. A stable counting sort by
+/// local graph id runs on the worker's own time instead, so the locked
+/// section handles one contiguous run per touched subgraph: one bookkeeping
+/// update and one memcpy each. Stability is what keeps each source's records
+/// contiguous within the chunk.
+#[derive(Default)]
+struct AtlasSortScratch {
+    counts: Vec<u32>,
+    offsets: Vec<u32>,
+    sorted: Vec<u8>,
+    /// `(local_graph_id, record_count)` in ascending local id order.
+    runs: Vec<(u16, u32)>,
+}
+
+impl AtlasSortScratch {
+    /// Groups `pending` by local graph id into `self.sorted` / `self.runs`.
+    fn group_by_graph(
+        &mut self,
+        atlas_id: usize,
+        pending: &PendingColoredAtlas,
+        record_len: usize,
+    ) -> Result<(), BucketError> {
+        let first_graph_id = atlas_id * ATLAS_GRAPH_COUNT;
+        self.counts.clear();
+        self.counts.resize(ATLAS_GRAPH_COUNT, 0);
+        for &graph_id in &pending.graph_ids {
+            let local = usize::from(graph_id)
+                .checked_sub(first_graph_id)
+                .filter(|&local| local < ATLAS_GRAPH_COUNT)
+                .ok_or(BucketError::InvalidGraphId(usize::from(graph_id)))?;
+            self.counts[local] += 1;
+        }
+        self.offsets.clear();
+        self.runs.clear();
+        let mut prefix = 0u32;
+        for (local, &count) in self.counts.iter().enumerate() {
+            self.offsets.push(prefix);
+            if count > 0 {
+                self.runs.push((local as u16, count));
+            }
+            prefix += count;
+        }
+        self.sorted.clear();
+        self.sorted.resize(pending.bytes.len(), 0);
+        for (&graph_id, record) in pending
+            .graph_ids
+            .iter()
+            .zip(pending.bytes.chunks_exact(record_len))
+        {
+            let local = usize::from(graph_id) - first_graph_id;
+            let output = self.offsets[local] as usize * record_len;
+            self.sorted[output..output + record_len].copy_from_slice(record);
+            self.offsets[local] += 1;
+        }
+        Ok(())
+    }
 }
 
 #[derive(Default)]
@@ -1645,6 +1709,7 @@ impl SharedBucketSink {
             },
             pending_bytes: 0,
             deferred_uncolored,
+            sort_scratch: AtlasSortScratch::default(),
         }
     }
 
@@ -1685,8 +1750,14 @@ impl SharedBucketSink {
                             continue;
                         }
                         let mut stats = SharedBucketFlushStats::default();
+                        let mut scratch = AtlasSortScratch::default();
                         for chunk in pending {
-                            self.append_uncolored_atlas_inner(atlas_id, chunk, &mut stats)?;
+                            self.append_uncolored_atlas_inner(
+                                atlas_id,
+                                chunk,
+                                &mut stats,
+                                &mut scratch,
+                            )?;
                         }
                         let mut atlas = self.atlases[atlas_id]
                             .lock()
@@ -1717,10 +1788,11 @@ impl SharedBucketSink {
         &self,
         atlas_id: usize,
         pending: PendingColoredAtlas,
+        scratch: &mut AtlasSortScratch,
     ) -> Result<(), BucketError> {
         let started = Instant::now();
         let mut stats = SharedBucketFlushStats::default();
-        self.append_uncolored_atlas_inner(atlas_id, pending, &mut stats)?;
+        self.append_uncolored_atlas_inner(atlas_id, pending, &mut stats, scratch)?;
         self.record_flush_stats(stats, started.elapsed());
         Ok(())
     }
@@ -1730,6 +1802,7 @@ impl SharedBucketSink {
         atlas_id: usize,
         pending: PendingColoredAtlas,
         stats: &mut SharedBucketFlushStats,
+        scratch: &mut AtlasSortScratch,
     ) -> Result<(), BucketError> {
         if pending.bytes.is_empty() {
             return Ok(());
@@ -1738,35 +1811,31 @@ impl SharedBucketSink {
         if pending.graph_ids.len() * record_len != pending.bytes.len() {
             return Err(BucketError::MalformedRecord);
         }
+        scratch.group_by_graph(atlas_id, &pending, record_len)?;
         let wait = crate::discontinuity::LockWait::start(&ATLAS_LOCK_PROFILE);
         let mut atlas = self.atlases[atlas_id]
             .lock()
             .map_err(|_| BucketError::WorkerPanic)?;
         let _hold = wait.acquired();
-        for (&graph_id, record) in pending
-            .graph_ids
-            .iter()
-            .zip(pending.bytes.chunks_exact(record_len))
-        {
-            let graph_id = usize::from(graph_id);
-            let Some(local_graph_id) = graph_id.checked_sub(atlas.first_graph_id) else {
-                return Err(BucketError::InvalidGraphId(graph_id));
-            };
-            let Some(file) = atlas.files.get_mut(local_graph_id) else {
-                return Err(BucketError::InvalidGraphId(graph_id));
-            };
+        let mut consumed = 0usize;
+        for &(local_graph_id, records) in &scratch.runs {
+            let run_bytes = records as usize * record_len;
+            let file = &mut atlas.files[usize::from(local_graph_id)];
             file.total_records = file
                 .total_records
-                .checked_add(1)
+                .checked_add(u64::from(records))
                 .ok_or(BucketError::TooManyRecords)?;
             file.buffer_records = file
                 .buffer_records
-                .checked_add(1)
+                .checked_add(u64::from(records))
                 .ok_or(BucketError::TooManyRecords)?;
-            file.buffer.extend_from_slice(record);
+            file.buffer
+                .extend_from_slice(&scratch.sorted[consumed..consumed + run_bytes]);
+            consumed += run_bytes;
         }
         atlas.buffered_bytes += pending.bytes.len();
-        for local_graph_id in 0..atlas.files.len() {
+        for &(local_graph_id, _) in &scratch.runs {
+            let local_graph_id = usize::from(local_graph_id);
             if atlas.files[local_graph_id].buffer.len() >= SUBGRAPH_CHUNK_BYTES {
                 atlas.flush_subgraph(
                     local_graph_id,
@@ -1818,6 +1887,7 @@ impl SharedBucketSink {
         &self,
         atlas_id: usize,
         pending: PendingColoredAtlas,
+        scratch: &mut AtlasSortScratch,
     ) -> Result<(), BucketError> {
         if pending.bytes.is_empty() {
             return Ok(());
@@ -1826,37 +1896,34 @@ impl SharedBucketSink {
         if pending.graph_ids.len() * record_len != pending.bytes.len() {
             return Err(BucketError::MalformedRecord);
         }
+        // Group on the worker's own time; the lock sees runs, not records.
+        scratch.group_by_graph(atlas_id, &pending, record_len)?;
         let started = Instant::now();
         let wait = crate::discontinuity::LockWait::start(&ATLAS_LOCK_PROFILE);
         let mut atlas = self.atlases[atlas_id]
             .lock()
             .map_err(|_| BucketError::WorkerPanic)?;
         let _hold = wait.acquired();
-        for (&graph_id, record) in pending
-            .graph_ids
-            .iter()
-            .zip(pending.bytes.chunks_exact(record_len))
-        {
-            let graph_id = usize::from(graph_id);
-            let Some(local_graph_id) = graph_id.checked_sub(atlas.first_graph_id) else {
-                return Err(BucketError::InvalidGraphId(graph_id));
-            };
-            let Some(file) = atlas.files.get_mut(local_graph_id) else {
-                return Err(BucketError::InvalidGraphId(graph_id));
-            };
+        let mut consumed = 0usize;
+        for &(local_graph_id, records) in &scratch.runs {
+            let run_bytes = records as usize * record_len;
+            let file = &mut atlas.files[usize::from(local_graph_id)];
             file.total_records = file
                 .total_records
-                .checked_add(1)
+                .checked_add(u64::from(records))
                 .ok_or(BucketError::TooManyRecords)?;
             file.buffer_records = file
                 .buffer_records
-                .checked_add(1)
+                .checked_add(u64::from(records))
                 .ok_or(BucketError::TooManyRecords)?;
-            file.buffer.extend_from_slice(record);
+            file.buffer
+                .extend_from_slice(&scratch.sorted[consumed..consumed + run_bytes]);
+            consumed += run_bytes;
         }
         atlas.buffered_bytes += pending.bytes.len();
         let mut flush_stats = SharedBucketFlushStats::default();
-        for local_graph_id in 0..atlas.files.len() {
+        for &(local_graph_id, _) in &scratch.runs {
+            let local_graph_id = usize::from(local_graph_id);
             if atlas.files[local_graph_id].buffer.len() >= SUBGRAPH_CHUNK_BYTES {
                 atlas.flush_subgraph(
                     local_graph_id,
@@ -2488,7 +2555,8 @@ impl SharedBucketEmitter {
         }
         let pending = std::mem::take(&mut self.colored_pending[atlas_id]);
         self.pending_bytes -= pending.bytes.len();
-        self.sink.append_colored_atlas(atlas_id, pending)
+        self.sink
+            .append_colored_atlas(atlas_id, pending, &mut self.sort_scratch)
     }
 
     fn flush_pending_uncolored_atlas(&mut self, atlas_id: usize) -> Result<(), BucketError> {
@@ -2497,7 +2565,8 @@ impl SharedBucketEmitter {
         }
         let pending = std::mem::take(&mut self.uncolored_pending[atlas_id]);
         self.pending_bytes -= pending.bytes.len();
-        self.sink.append_uncolored_atlas(atlas_id, pending)
+        self.sink
+            .append_uncolored_atlas(atlas_id, pending, &mut self.sort_scratch)
     }
 
     pub fn finish(mut self) -> Result<(), BucketError> {

@@ -713,6 +713,8 @@ fn emit_colored_weak_superkmer_buckets<const K: usize>(
             std::cmp::Reverse(window[offset].metadata().map_or(0, |meta| meta.len()))
         });
         let next_source = AtomicUsize::new(0);
+        let parse_only_nanos = std::sync::atomic::AtomicU64::new(0);
+        let source_drain_nanos = std::sync::atomic::AtomicU64::new(0);
         let workers = params.partition_workers(window.len());
         // A worker owns a whole source, which is what keeps each source's
         // records grouped in the buckets -- the invariant the color-signature
@@ -730,9 +732,13 @@ fn emit_colored_weak_superkmer_buckets<const K: usize>(
                 let sink = Arc::clone(&sink);
                 let next_source = &next_source;
                 let work_order = &work_order;
+                let parse_only_nanos = &parse_only_nanos;
+                let source_drain_nanos = &source_drain_nanos;
                 handles.push(scope.spawn(move || {
                     let mut worker_stats = PartitionStats::new(graph_count);
                     let mut elapsed = Duration::ZERO;
+                    let mut parse_call_elapsed = Duration::ZERO;
+                    let mut drain_elapsed = Duration::ZERO;
                     let mut input_files = 0usize;
                     let mut records = 0u64;
                     let mut buckets = sink.emitter();
@@ -743,6 +749,7 @@ fn emit_colored_weak_superkmer_buckets<const K: usize>(
                         };
                         let source_id = u32::try_from(source_start + offset + 1)
                             .map_err(|_| PartitionRunError::TooManySources)?;
+                        let parse_call_started = Instant::now();
                         match parse_fragments_borrowed_with(
                             &window[offset],
                             source_id,
@@ -770,8 +777,20 @@ fn emit_colored_weak_superkmer_buckets<const K: usize>(
                                 handle_source_failure(params, &window[offset], error)?;
                             }
                         }
+                        parse_call_elapsed += parse_call_started.elapsed();
+                        let drain_started = Instant::now();
                         buckets.flush_colored_worker_if_required()?;
+                        drain_elapsed += drain_started.elapsed();
                     }
+                    // The parse call interleaves decompression, record
+                    // assembly, and the scan callback on one thread; the scan
+                    // share is `elapsed`, so call-minus-scan is parse proper.
+                    parse_only_nanos.fetch_add(
+                        parse_call_elapsed.saturating_sub(elapsed).as_nanos() as u64,
+                        Ordering::Relaxed,
+                    );
+                    source_drain_nanos
+                        .fetch_add(drain_elapsed.as_nanos() as u64, Ordering::Relaxed);
                     Ok::<_, PartitionRunError>((
                         records,
                         input_files,
@@ -796,6 +815,11 @@ fn emit_colored_weak_superkmer_buckets<const K: usize>(
             Ok::<_, PartitionRunError>(())
         })?;
         parse_elapsed += parse_started.elapsed();
+        eprintln!(
+            "cuttlefish: colored partition worker detail: parse-only {:.3}s, per-source drain {:.3}s (worker-seconds)",
+            parse_only_nanos.load(Ordering::Relaxed) as f64 / 1e9,
+            source_drain_nanos.load(Ordering::Relaxed) as f64 / 1e9,
+        );
 
         sink.flush_colored_emitters(emitters)?;
     }

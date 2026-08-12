@@ -1963,3 +1963,42 @@ explosion. Recorded as a possible future redesign, not attempted. The walk
 (8%), delta encoding (4.9%, already word-optimized), and repository ops
 (~3%) offer no lever above the noise floor. R2 closes with the second pass
 measured and understood.
+
+## R3: the colored partition's missing half, attributed and halved
+
+Colored partition workers were 50% scan-busy against uncolored's 84% on the
+same inputs. New per-worker timers attribute the difference exactly: of the
+122.5 s phase, scan+pack held 60.6 s/worker, the per-source drain 43.4
+s/worker (35% -- the answer), parse-only 14.9 s/worker, and scheduling 3.6 s.
+The drain's mechanism was `append_colored_atlas` dispatching every record
+individually under the atlas lock: a graph-id lookup, two checked adds, and a
+~36-byte copy, times billions, because pending chunks arrive with subgraphs
+interleaved in arrival order. The uncolored deferred append shared the shape.
+
+The fix moves the grouping off the lock: a stable counting sort by local
+graph id (`AtlasSortScratch::group_by_graph`) runs on the worker's own time,
+and the locked section then appends one contiguous run per touched subgraph
+-- one bookkeeping update and one memcpy each -- with the post-append flush
+sweep visiting only touched subgraphs instead of all 128. Stability preserves
+each source's contiguity within a chunk.
+
+Order-alternated pairs at t64, `--mem-limit 64G` (the uncolored arm got four
+effective pairs after a campaign-script slip ran the colored labels
+uncolored; the numbers agreed so completely that they are kept):
+
+| | pre | run-sorted | delta |
+| --- | ---: | ---: | ---: |
+| colored partition | 122.1 / 122.5 s | 112.9 / 113.1 s | **-7.7%** |
+| colored per-source drain | 2,777 worker-s | 2,084 worker-s | -25% |
+| uncolored partition | 112.1 s (4 runs) | 104.9 s (4 runs) | **-6.4%** |
+
+Exact counts everywhere, local contraction at parity, topology equality in
+both modes. The attribution timers stay in the colored worker loop; they are
+per-source granularity and cost nothing measurable.
+
+Also corrected during R3, in the review document: the color-signature
+grouping property is a performance matter, not a correctness invariant --
+mid-run atlas flushes already interleave sources occasionally, and the
+second pass rebuilds exact source sets regardless; an interleave only
+fragments color-hash classes and costs extra resolution. Colored-partition
+redesigns are therefore not hard-blocked on grouping.

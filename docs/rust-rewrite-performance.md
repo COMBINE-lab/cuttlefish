@@ -2135,3 +2135,67 @@ means a wide twin of the streaming loop, because the compact record packs the
 vertex into a `u64` -- roughly 120 lines. Left undone at parity; it is the
 first thing to try if k > 31 needs to be faster than C++ rather than level
 with it.
+
+## Where the k = 55 time actually goes, phase by phase
+
+Parity was not the end of it. Attributing the wide arm's cost needs the *same
+input at both widths*, which the 1000-genome runs above did not give at scale.
+On 10000 Salmonella genomes, t64, no memory cap (so these walls sit below the
+capped ones elsewhere in this record, and only the phase split matters):
+
+| phase | k = 55 | k = 31 | wide delta |
+|---|---|---|---|
+| partition + bucket emission | 6.17 s | 7.76 s | **−1.59** |
+| local contraction | 16.77 s | 12.08 s | **+4.69** |
+| blocked contraction | 3.41 s | 3.93 s | −0.52 |
+| expansion: row load/decode | 2.46 s | 0.17 s | **+2.29** |
+| expansion: propagation/emission | 9.80 s | 9.76 s | +0.04 |
+| collation + FASTA | 19.41 s | 17.63 s | +1.78 |
+| **wall** | **36.18 s** | **29.71 s** | +6.47 |
+
+Read that against the graphs' sizes and it says something sharper. At k = 55
+the corpus yields 1.594 G weak super-k-mers and 31.9 M unitigs; at k = 31,
+3.509 G and 51.6 M. Partitioning is *faster* at k = 55 because there is less of
+it to do -- which is why the partition row is a credit, not a debit -- and
+`local contraction is 39% slower on 55% fewer records`. Per vertex, wide local
+contraction costs about **1.45x** narrow: 592 worker-s of bucket read/build
+against 414, and 399 of unitig walk against 269.
+
+**The row load/decode line was the one structural defect, and it is fixed.**
+Expansion materialised a whole matrix row into `Vec<DiscontinuityEdge<K>>`
+before propagating, where the narrow arm streams the same bytes and decodes
+into registers. That is a 14x gap on the same phase. The blocker was that the
+compact path-info form packs the path id into a `u64`, which a k-mer path id
+cannot fit -- but wide path ids became dense integers when the K > 31 build was
+fixed, so they do fit. One streaming loop now serves both widths: **row
+load/decode 2.458 s -> 0.145 s, build 36.18 s -> 34.36 s**, and two
+materialising branches plus `read_flushed_row` and three helpers are gone.
+
+Which lands k = 55 uncolored here, 10000 genomes, `--mem-limit 64G`,
+interleaved order-alternated:
+
+| | Rust | C++ |
+|---|---|---|
+| wall | 40.60 / 41.10 / 40.63 s | 41.77 / 42.35 / 42.44 s |
+| mean | **40.78 s** | 42.19 s |
+| peak RSS | 8.3 GB | 15.0 GB |
+
+**3.3% faster than C++ at k = 55, on 45% of the memory** -- where before this
+section it was 2.4% slower.
+
+**The remaining 1.45x in local contraction is not obviously recoverable.** The
+wide slot is 32 bytes against the narrow 24 (a `u128` key beside a 16-byte
+`VertexState`, no padding wasted), so probe traffic is 1.33x, and the k-mer
+arithmetic -- roll, reverse-complement, canonicalize -- is two-word throughout.
+Both are inherent to the width. The one layout lever that remains is splitting
+keys from states so a probe touches 16 bytes instead of 32, and the R1 record
+above is explicit that rearranging *which* lines a probe touches has already
+been tried and measured worse: the cost is one DRAM miss per probe, the flat
+table already hides it with the prefetch that R1's second attempt introduced,
+and the wide table inherited that. Anyone attacking this should come with a
+cycles profile showing something other than the entry miss.
+
+Also observed across these runs: **C++ is nondeterministic at k = 55 in
+uncolored mode too**, not only colored. Two of three C++ runs on identical
+input returned 31,949,227 and 31,949,225 unitigs where its own third run, and
+all six Rust runs, returned 31,949,232.

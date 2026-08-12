@@ -19,6 +19,144 @@ use hashbrown::HashTable;
 use hashbrown::hash_map::RawEntryMut;
 use std::collections::HashSet;
 
+/// Open-addressed vertex map for k-mers that fit 62 bits (K <= 31), with a
+/// probe loop this crate owns so record processing can software-prefetch.
+///
+/// The R1 profile put ~39% of uncolored local contraction in the vertex-map
+/// probe chain, and the inline-entry rearrangement measured *worse* (+16%
+/// local_s): the cost is one DRAM miss per probe, not the number of lines
+/// touched, so the only lever left is hiding that miss. `prefetch` computes
+/// the home slot for a key about to be probed and pulls its line while the
+/// caller still has register work to do; `add_packed_parts` pre-rolls each
+/// record and prefetches every vertex before the state-update loop begins.
+///
+/// `u64::MAX` marks an empty slot, unreachable while keys carry at most 62
+/// bits -- which is why K == 32 stays on [`DenseLocalVertexMap`].
+#[derive(Debug, Clone)]
+pub struct FlatVertexMap {
+    slots: Vec<(u64, VertexState)>,
+    /// Insertion order, for the dispatch iteration.
+    keys: Vec<u64>,
+    mask: usize,
+}
+
+const FLAT_EMPTY_KEY: u64 = u64::MAX;
+
+impl FlatVertexMap {
+    /// Slot count giving <= 4/5 load for `capacity` live keys.
+    fn slot_count(capacity: usize) -> usize {
+        (capacity.max(8) * 5 / 4 + 1).next_power_of_two()
+    }
+
+    fn with_capacity(capacity: usize) -> Self {
+        let slots = Self::slot_count(capacity);
+        Self {
+            slots: vec![(FLAT_EMPTY_KEY, VertexState::default()); slots],
+            keys: Vec::with_capacity(capacity),
+            mask: slots - 1,
+        }
+    }
+
+    fn clear_and_reserve(&mut self, capacity: usize) {
+        let needed = Self::slot_count(capacity.max(self.keys.len()));
+        if self.slots.len() < needed {
+            self.slots = vec![(FLAT_EMPTY_KEY, VertexState::default()); needed];
+            self.mask = needed - 1;
+        } else {
+            self.slots.fill((FLAT_EMPTY_KEY, VertexState::default()));
+        }
+        self.keys.clear();
+        if self.keys.capacity() < capacity {
+            self.keys.reserve(capacity - self.keys.capacity());
+        }
+    }
+
+    #[inline(always)]
+    fn prefetch(&self, key: u64) {
+        #[cfg(target_arch = "x86_64")]
+        unsafe {
+            use std::arch::x86_64::{_MM_HINT_T0, _mm_prefetch};
+            let index = (local_u64_hash(key) as usize) & self.mask;
+            // SAFETY: `index` is masked into `slots`, and prefetching any
+            // mapped address is side-effect free.
+            _mm_prefetch(self.slots.as_ptr().add(index).cast::<i8>(), _MM_HINT_T0);
+        }
+        #[cfg(not(target_arch = "x86_64"))]
+        let _ = key;
+    }
+
+    #[inline(always)]
+    fn probe(&self, key: u64) -> (usize, bool) {
+        let mut index = (local_u64_hash(key) as usize) & self.mask;
+        loop {
+            let stored = self.slots[index].0;
+            if stored == key {
+                return (index, true);
+            }
+            if stored == FLAT_EMPTY_KEY {
+                return (index, false);
+            }
+            index = (index + 1) & self.mask;
+        }
+    }
+
+    #[inline(always)]
+    fn get(&self, key: u64) -> Option<&VertexState> {
+        let (index, hit) = self.probe(key);
+        hit.then(|| &self.slots[index].1)
+    }
+
+    #[inline(always)]
+    fn get_mut(&mut self, key: u64) -> Option<&mut VertexState> {
+        let (index, hit) = self.probe(key);
+        hit.then(|| &mut self.slots[index].1)
+    }
+
+    #[inline(always)]
+    fn state_or_default(&mut self, key: u64) -> &mut VertexState {
+        let (index, hit) = self.probe(key);
+        if hit {
+            return &mut self.slots[index].1;
+        }
+        if (self.keys.len() + 1) * 5 > self.slots.len() * 4 {
+            self.grow();
+            let (index, _) = self.probe(key);
+            self.keys.push(key);
+            self.slots[index] = (key, VertexState::default());
+            return &mut self.slots[index].1;
+        }
+        self.keys.push(key);
+        self.slots[index] = (key, VertexState::default());
+        &mut self.slots[index].1
+    }
+
+    #[cold]
+    fn grow(&mut self) {
+        let new_len = self.slots.len() * 2;
+        let old = std::mem::replace(
+            &mut self.slots,
+            vec![(FLAT_EMPTY_KEY, VertexState::default()); new_len],
+        );
+        self.mask = new_len - 1;
+        for (key, state) in old {
+            if key != FLAT_EMPTY_KEY {
+                let (index, hit) = self.probe(key);
+                debug_assert!(!hit);
+                self.slots[index] = (key, state);
+            }
+        }
+    }
+}
+
+impl PartialEq for FlatVertexMap {
+    fn eq(&self, other: &Self) -> bool {
+        self.keys.len() == other.keys.len()
+            && self.keys.iter().all(|&key| other.get(key) == self.get(key))
+    }
+}
+
+impl Eq for FlatVertexMap {}
+
 #[derive(Debug, Clone)]
 pub struct DenseLocalVertexMap {
     indices: HashTable<u32>,
@@ -175,6 +313,7 @@ impl<const K: usize> WantedColorMap<K> {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LocalVertexMap<const K: usize> {
+    Flat(FlatVertexMap),
     OneWord(DenseLocalVertexMap),
     TwoWord(HashMap<Kmer<K>, VertexState, FastBuildHasher>),
 }
@@ -182,7 +321,10 @@ pub enum LocalVertexMap<const K: usize> {
 impl<const K: usize> LocalVertexMap<K> {
     #[inline(always)]
     fn with_capacity(capacity: usize) -> Self {
-        if K <= 32 {
+        if K <= 31 {
+            // 62-bit keys leave u64::MAX free as the flat map's empty marker.
+            Self::Flat(FlatVertexMap::with_capacity(capacity))
+        } else if K == 32 {
             Self::OneWord(DenseLocalVertexMap::with_capacity(capacity))
         } else {
             Self::TwoWord(HashMap::with_capacity_and_hasher(
@@ -194,6 +336,9 @@ impl<const K: usize> LocalVertexMap<K> {
 
     fn clear_and_reserve(&mut self, capacity: usize) {
         match self {
+            Self::Flat(map) => {
+                map.clear_and_reserve(capacity);
+            }
             Self::OneWord(map) => {
                 map.clear_and_reserve(capacity);
             }
@@ -206,8 +351,35 @@ impl<const K: usize> LocalVertexMap<K> {
         }
     }
 
+    /// Pulls the home cache line of every vertex in a packed record before
+    /// the state-update loop probes them. Flat map only: it is the one table
+    /// whose slot addresses this crate can compute.
+    #[inline]
+    fn prefetch_packed_record(&self, words: &[u64], len: usize) {
+        let Self::Flat(map) = self else {
+            return;
+        };
+        let last_vertex_offset = len - K;
+        let mut observed = Kmer::<K>::from_bits(packed_prefix_bits::<K>(words));
+        let mut reverse = observed.reverse_complement();
+        for offset in 0..=last_vertex_offset {
+            let canonical = if observed <= reverse {
+                observed
+            } else {
+                reverse
+            };
+            map.prefetch(canonical.as_u128() as u64);
+            if offset < last_vertex_offset {
+                let succ_base = packed_base(words, offset + K);
+                observed = observed.roll_forward(succ_base);
+                reverse = reverse.roll_backward(succ_base.complement());
+            }
+        }
+    }
+
     pub fn len(&self) -> usize {
         match self {
+            Self::Flat(map) => map.keys.len(),
             Self::OneWord(map) => map.entries.len(),
             Self::TwoWord(map) => map.len(),
         }
@@ -223,6 +395,7 @@ impl<const K: usize> LocalVertexMap<K> {
     /// whether carrying the map to a smaller subgraph is worth the cost.
     pub fn capacity(&self) -> usize {
         match self {
+            Self::Flat(map) => map.slots.len() * 4 / 5,
             Self::OneWord(map) => map.indices.capacity(),
             Self::TwoWord(map) => map.capacity(),
         }
@@ -231,6 +404,7 @@ impl<const K: usize> LocalVertexMap<K> {
     #[inline(always)]
     fn get(&self, kmer: &Kmer<K>) -> Option<&VertexState> {
         match self {
+            Self::Flat(map) => map.get(kmer.as_u128() as u64),
             Self::OneWord(map) => map.get(kmer.as_u128() as u64),
             Self::TwoWord(map) => map.get(kmer),
         }
@@ -239,6 +413,7 @@ impl<const K: usize> LocalVertexMap<K> {
     #[inline(always)]
     fn get_mut(&mut self, kmer: &Kmer<K>) -> Option<&mut VertexState> {
         match self {
+            Self::Flat(map) => map.get_mut(kmer.as_u128() as u64),
             Self::OneWord(map) => map.get_mut(kmer.as_u128() as u64),
             Self::TwoWord(map) => map.get_mut(kmer),
         }
@@ -246,6 +421,11 @@ impl<const K: usize> LocalVertexMap<K> {
 
     fn keys_vec(&self) -> Vec<Kmer<K>> {
         match self {
+            Self::Flat(map) => map
+                .keys
+                .iter()
+                .map(|&key| Kmer::<K>::from_bits(key as u128))
+                .collect(),
             Self::OneWord(map) => map
                 .entries
                 .iter()
@@ -257,6 +437,11 @@ impl<const K: usize> LocalVertexMap<K> {
 
     fn dense_key_state(&self, index: usize) -> Option<(Kmer<K>, VertexState)> {
         match self {
+            Self::Flat(map) => {
+                let &key = map.keys.get(index)?;
+                map.get(key)
+                    .map(|&state| (Kmer::<K>::from_bits(key as u128), state))
+            }
             Self::OneWord(map) => map
                 .entries
                 .get(index)
@@ -267,6 +452,7 @@ impl<const K: usize> LocalVertexMap<K> {
 
     fn dense_len(&self) -> Option<usize> {
         match self {
+            Self::Flat(map) => Some(map.keys.len()),
             Self::OneWord(map) => Some(map.entries.len()),
             Self::TwoWord(_) => None,
         }
@@ -275,6 +461,7 @@ impl<const K: usize> LocalVertexMap<K> {
     #[inline(always)]
     fn state_or_default(&mut self, kmer: Kmer<K>) -> &mut VertexState {
         match self {
+            Self::Flat(map) => map.state_or_default(kmer.as_u128() as u64),
             Self::OneWord(map) => {
                 let key = kmer.as_u128() as u64;
                 map.state_or_default(key)
@@ -1507,6 +1694,7 @@ impl<const K: usize> LocalSubgraph<K> {
         self.stats.weak_superkmers += 1;
         self.stats.weak_superkmer_bases += len as u64;
 
+        self.vertices.prefetch_packed_record(words, len);
         let last_vertex_offset = len - K;
         let observed_bits = packed_prefix_bits::<K>(words);
         let mut observed = Kmer::<K>::from_bits(observed_bits);

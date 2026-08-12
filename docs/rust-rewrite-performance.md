@@ -1887,3 +1887,55 @@ escalate spin -> yield -> 50 us sleep (`crossbeam_utils::Backoff`, the
 libradicl policy); two colored pairs confirm neutrality. Comments now record
 why poison-swallowing locks are sound under `panic = "abort"` and why the
 color-repository worker cap of 256 is load-bearing.
+
+## R1, first attempt: inline vertex-map entries -- rejected by measurement
+
+The R1 cycles profile put ~39% of the uncolored local-contraction phase in
+the vertex-map probe chain (hashbrown control bytes -> u32 index slot ->
+24-byte entry), and the obvious fix -- store `(key, VertexState)` inline in
+the table, two lines per probe instead of three -- measured as a large
+regression over two order-alternated pairs per mode: uncolored local
+contraction 178.4 -> 206.8 s (+16%), colored 267.9 -> 284.3 s (+6%), peak
+RSS +0.9 GB. Reverted.
+
+The lesson is worth the failed pairs: the three-line chain was not three
+misses. The control bytes and the dense 4-byte index array are small enough
+to stay cache-resident, so the old layout pays roughly one DRAM miss per
+probe -- the entry itself -- and inlining 24-byte entries grew the probed
+array ~6x, evicted it, and turned one miss into two. A cycles profile
+attributes time to the instruction touching the entry either way; only the
+A/B distinguishes a cached line from a missed one. Any further attack on
+this cost must *hide* the entry miss (software-pipelined probing with
+explicit prefetch, which requires owning the probe loop rather than using
+hashbrown) instead of re-arranging which lines are touched.
+
+## R1, second attempt: a probe loop the crate owns, so records can prefetch
+
+The failed inline attempt reduced the fix to one requirement: hide the single
+DRAM miss each vertex probe pays, which means owning the probe loop --
+hashbrown exposes no slot addresses. `FlatVertexMap` is open addressing with
+linear probing over inline `(u64, VertexState)` slots at <= 4/5 load,
+`u64::MAX` as the empty marker (unreachable for keys of at most 62 bits, so
+K <= 31 rides it; K = 32 keeps the previous dense map and K > 32 the inline
+`HashMap`). `add_packed_parts` pre-rolls each record -- at most ~20 k-mers of
+register work -- issuing a prefetch for every vertex's home slot, then runs
+the unchanged state-update loop against lines already in flight.
+
+Two order-alternated pairs per mode at t64, `--mem-limit 64G`:
+
+| | pre | flat + prefetch | delta |
+| --- | ---: | ---: | ---: |
+| uncolored local contraction | 178.4 / 178.9 s | 109.3 / 108.2 s | **-39%** |
+| uncolored wall | 6:02.0 / 5:57.3 | 4:44.5 / 4:38.9 | **-22%** |
+| colored local contraction | 267.6 / 266.8 s | 195.6 / 192.5 s | **-27%** |
+| colored wall | 7:38.9 / 7:32.7 | 6:24.1 / 6:15.6 | **-17%** |
+
+Exact counts on every run and strand-normalized topology equality in both
+modes. The cost is the flat table's footprint: peak RSS 9.9 -> 10.7 GB
+uncolored, 16.5 -> 18.2 GB colored. Against a ~76-78 s wall win per mode the
+trade is not close, but it is a real cost and recorded as such.
+
+This is the largest single win in the rewrite's history, and the pairing
+with the failed attempt is the point of recording both: the same profile
+justified both changes; only interleaved measurement could tell a layout
+that touches fewer lines from one that misses fewer.

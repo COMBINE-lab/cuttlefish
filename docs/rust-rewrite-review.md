@@ -24,8 +24,12 @@ non-overlapping arms; B5's trivial-path allocation went with it, and the
 restructure absorbed C6's remaining dispatch fold. A4 was removed with C3.
 B3 was withdrawn after quantification and B4 closed measured-and-retained
 (lock profiling shows no actionable contention); A1/A3/A5 hygiene landed.
-Still open: A2 and A6 (do-if-touching), the C5 walker-family consolidation,
-and the deferred bucket segment-size sweep.
+A2 landed: debug-only occupancy tokens now prove the per-slot exclusivity
+the `ConcurrentStitchedCoordWriters` Sync impl asserts, and the PathInfoSlot
+publication protocol is documented at the impl. Still open: A6
+(do-if-touching), the C5 walker-family consolidation, the deferred bucket
+segment-size sweep, and the R-series opportunity map at the end of this
+document.
 
 The review deliberately does not re-propose anything in the rejected-approaches
 record of `rust-rewrite-performance.md`: LTO, mimalloc, container axis changes,
@@ -251,3 +255,58 @@ every colored TSV row had an empty `local_s`; fixed as part of this review
 `CF3_RS_PARSE_ONLY` / `CF3_RS_SCAN_ONLY` diagnostics were re-verified live —
 they provide the decompress/parse vs shard attribution B1's measurements need
 with no new instrumentation.
+
+---
+
+## Remaining opportunity map, from the profiled pipeline
+
+*Appended 2026-08-11 after the B/C campaigns. Source: full fine-grained timer
+output of lock-profiled 150k Salmonella runs at t64, both modes (uncolored
+wall 113 s partition + 179 s local + 66 s collation; colored 124 + 269 + 60).
+Worker-seconds below are sums across 64 workers; divide by 64 for per-worker
+time against the phase wall.*
+
+**R1. Local-contraction bucket read/build — the dominant cost in the whole
+build.** 10,290 worker-s uncolored, 10,841 colored: ~90% of the largest
+phase's worker time in the uncolored build (the walk is only 898 worker-s).
+This is segment reads, LZ4 decode, record unpacking, and vertex-table
+insertion for 51.9 G weak super-k-mer records. Even 10% here is ~16 s of
+wall per mode — more than every remaining item combined. Next step is a
+cycles profile (`perf record` on the phase; `perf_event_paranoid=2` permits
+self-profiling) to split decode vs unpack vs hash-insert before choosing a
+mechanism. One colored-specific mechanism is already visible without a
+profile: the wanted-color pass re-reads and re-decodes every bucket a second
+time (`collect_wanted_color_relations`); caching the *decoded* records of the
+bucket being contracted (~22 MB per worker, ~1.4 GB at t64) would delete the
+second decode outright.
+
+**R2. The colored unitig walk is 6.7x the uncolored walk.** 6,052 worker-s
+against 898. The delta is the color-run machinery: per-vertex color-hash
+fetches, run-boundary comparison, and the per-subgraph coordinate-cache
+HashMap lookups in `record_hash`. A cycles profile splitting walk vs
+`record_hash` vs cache would say whether the cache or the hash fetches
+dominate. Roughly 80 s of colored wall sits in this delta.
+
+**R3. Colored partition workers are only 50% scan-busy.** Uncolored direct
+workers spend 95 of 113 wall-seconds in scan+pack (84%); colored spend 62 of
+124 (50%). Same input files, same scan. The colored remainder is parsing plus
+the source-window collation machinery (per-source drains, the 128 MiB pending
+window, atlas hold 2,490 worker-s vs 1,990 uncolored). Attribution needs one
+targeted timer around the per-source drain path; if drains serialize workers
+at source boundaries, batching or backgrounding them is the candidate.
+
+**R4. Partition bucket flush: 1,724-2,352 worker-s of LZ4+copy.** Measured
+uncontended (B4), so this is pure work, 27-37% of partition worker time.
+lz4_flex is already the fast path; the only real lever is compressing larger
+units than the 64 KiB staging chunk, which is a format change and interacts
+with the staging-memory budget. Low leverage until R1-R3 are exhausted.
+
+**R5. Expansion propagation/emission: 35-40 s wall with no internal split.**
+Third-largest single block, currently one timer. Add sub-timers (edge decode,
+table lookups, record emission) before considering anything.
+
+Not re-proposed: everything in the rejected-approaches record, the atlas and
+edge-buffer lock scopes (B4: measured, retained), and the broker (measured,
+opt-in). The color-table overflow map holding 36.8 M entries looks alarming
+but was measured flat when eliminated (2^27-slot experiment in the
+performance record).

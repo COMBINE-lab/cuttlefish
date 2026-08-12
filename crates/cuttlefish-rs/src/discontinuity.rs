@@ -9388,12 +9388,42 @@ struct StitchedCoordShardWriters<'a> {
     writers: Vec<Option<StitchedCoordShardWriter>>,
 }
 
+/// Debug-build occupancy token: claims an `AtomicBool`, asserting it was
+/// free, and releases it on drop.
+#[cfg(debug_assertions)]
+struct SlotOccupancy<'a>(&'a std::sync::atomic::AtomicBool);
+
+#[cfg(debug_assertions)]
+impl<'a> SlotOccupancy<'a> {
+    fn claim(flag: &'a std::sync::atomic::AtomicBool) -> Self {
+        assert!(
+            !flag.swap(true, Ordering::Acquire),
+            "worker buffer slot claimed by two threads at once",
+        );
+        Self(flag)
+    }
+}
+
+#[cfg(debug_assertions)]
+impl Drop for SlotOccupancy<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
+}
+
 struct ConcurrentStitchedCoordWriters<'a> {
     coord_dir: &'a Path,
     writers: Vec<Mutex<Option<StitchedCoordShardWriter>>>,
     worker_buffers: Vec<UnsafeCell<Vec<Option<Vec<StitchedCoordRecord>>>>>,
     /// Records held per (worker, bucket) pair before flushing.
     worker_buffer_capacity: usize,
+    /// Debug-only occupancy tokens proving the exclusivity the `Sync` impl
+    /// asserts: a slot claimed twice concurrently -- two non-pool callers on
+    /// the serial slot, or a foreign rayon pool aliasing the expansion pool's
+    /// index space -- aborts a debug build at the aliasing site instead of
+    /// corrupting a buffer.
+    #[cfg(debug_assertions)]
+    slot_busy: Vec<std::sync::atomic::AtomicBool>,
 }
 
 // A Rayon worker exclusively accesses the buffer at its worker index. The final
@@ -9413,6 +9443,10 @@ impl<'a> ConcurrentStitchedCoordWriters<'a> {
                 })
                 .collect(),
             worker_buffer_capacity: stitched_coord_worker_buffer_records(bucket_count, workers),
+            #[cfg(debug_assertions)]
+            slot_busy: (0..workers.max(1) + 1)
+                .map(|_| std::sync::atomic::AtomicBool::new(false))
+                .collect(),
         }
     }
 
@@ -9451,7 +9485,11 @@ impl<'a> ConcurrentStitchedCoordWriters<'a> {
             .filter(|&worker_id| worker_id < serial_slot)
             .unwrap_or(serial_slot);
         // SAFETY: each Rayon worker has a unique index in the expansion pool,
-        // and non-pool calls are serial and use the dedicated final slot.
+        // and non-pool calls are serial and use the dedicated final slot. The
+        // debug occupancy token turns a violation of either clause into an
+        // assertion at the aliasing site.
+        #[cfg(debug_assertions)]
+        let _slot_token = SlotOccupancy::claim(&self.slot_busy[worker_id]);
         let buckets = unsafe { &mut *self.worker_buffers[worker_id].get() };
         let capacity = self.worker_buffer_capacity;
         let buffer = buckets[bucket_id].get_or_insert_with(|| Vec::with_capacity(capacity));
@@ -11413,6 +11451,11 @@ struct PathInfoSlot<const K: usize> {
     value: UnsafeCell<MaybeUninit<PathInfo<K>>>,
 }
 
+// The `tag` atomic is the publication protocol: a writer claims a slot by
+// CAS on the tag, fully initializes `key` and `value`, then releases the
+// final tag; readers acquire the tag before touching either cell and never
+// read a slot whose tag still marks it in-progress. `MaybeUninit` is never
+// observed uninitialized outside that window.
 unsafe impl<const K: usize> Sync for PathInfoSlot<K> {}
 
 struct ConcurrentPathInfoTable<const K: usize> {

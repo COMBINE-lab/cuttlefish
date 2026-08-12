@@ -2030,3 +2030,40 @@ edge work -- inference, record construction, staged emission, occasional
 file writes -- gives out-of-order execution enough to chew on that the probe
 latency is already substantially hidden. R5 closes with expansion attributed
 (propagation/emission is the phase; load/decode is 0.4 s) and unchanged.
+
+## Exact colors at write time: the windowed sort, measured to parity
+
+The read-side sort (preserved on branch `color-exact-read-sort`) proved the
+exactness mechanism but cost +29% colored local contraction by destroying
+the streaming read's cache behavior. The production fix is C++'s own
+discipline, ported: sources are assigned in ascending id order through
+byte-budgeted windows; colored records never leave the atlas buffers
+mid-window; at each boundary the workers rendezvous and the last arriver
+counting-sorts every bucket's staged records by source and flushes.
+Ascending windows plus per-window sorting make every bucket globally
+source-sorted, so the color-class hash is exact by construction and the
+read side keeps streaming.
+
+The first cut measured +49% partition (166-170 s against 113): 213 windows
+of stop-the-world flush, with the sort itself running at ~0.3 GB/s per
+worker -- fresh output allocations and their first-touch faults, the exact
+allocation lesson B2/R1 already taught. Scratch reuse
+(`sort_colored_payload_by_source_with`) cut the sort 9x (2,300 -> 250
+worker-s), and a 12 GiB window default (memory-scaled under `--max-memory`,
+`CF3_RS_COLOR_WINDOW_BYTES` to override) cut 213 windows to 78. Result over
+interleaved runs at t64:
+
+| | approximate (pre-window) | exact (windowed) | C++ (its own log) |
+| --- | ---: | ---: | ---: |
+| colored partition | 113.4 s | 121.7 s | 115.9 s |
+| colored local contraction | 193.0 s | 187.8 s | 282.3 s |
+| colored wall | 6:02.2 | 6:03.7 | 7:33.8 |
+| peak RSS | 18.2 GB | 29.3 GB | 28.3 GB |
+
+Exactness costs zero wall: the +8 s of partition is paid back by local
+contraction, where source-sorted buckets make the last-source dedup branch
+predictable. The partition phase sits 5% over C++'s equivalent; the
+residual is the ~31 s stop-the-world flush wall, reclaimable with
+double-buffered atlases and an overlapped flush crew if that 5% ever
+matters -- recorded as the known lever, not built. Peak RSS lands at C++'s
+own level, from the staged window.

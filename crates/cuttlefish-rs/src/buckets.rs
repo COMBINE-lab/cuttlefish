@@ -2003,6 +2003,7 @@ impl SharedBucketSink {
                 handles.push(scope.spawn(|| {
                     let mut stats = SharedBucketFlushStats::default();
                     let mut sort_nanos = 0u64;
+                    let mut scratch = SourceSortScratch::default();
                     loop {
                         let atlas_id = next_atlas.fetch_add(1, Ordering::Relaxed);
                         let Some(atlas) = self.atlases.get(atlas_id) else {
@@ -2014,11 +2015,12 @@ impl SharedBucketSink {
                                 continue;
                             }
                             let sort_started = Instant::now();
-                            sort_colored_payload_by_source(
+                            sort_colored_payload_by_source_with(
                                 &mut atlas.files[local_graph_id].buffer,
                                 record_len,
                                 source_min,
                                 source_max,
+                                &mut scratch,
                             )?;
                             sort_nanos += sort_started.elapsed().as_nanos() as u64;
                             atlas.flush_subgraph(
@@ -2243,11 +2245,31 @@ fn append_colored_atlas_record(
     Ok(())
 }
 
+/// Reusable buffers for [`sort_colored_payload_by_source`]; one per sorting
+/// thread. Fresh allocations here measured at ~0.3 GB/s per worker from
+/// first-touch faults alone -- reuse is what makes per-window sorting cheap.
+#[derive(Default)]
+struct SourceSortScratch {
+    offsets: Vec<usize>,
+    sorted: Vec<u8>,
+}
+
 fn sort_colored_payload_by_source(
     payload: &mut Vec<u8>,
     record_len: usize,
     source_min: u32,
     source_max: u32,
+) -> Result<(), BucketError> {
+    let mut scratch = SourceSortScratch::default();
+    sort_colored_payload_by_source_with(payload, record_len, source_min, source_max, &mut scratch)
+}
+
+fn sort_colored_payload_by_source_with(
+    payload: &mut Vec<u8>,
+    record_len: usize,
+    source_min: u32,
+    source_max: u32,
+    scratch: &mut SourceSortScratch,
 ) -> Result<(), BucketError> {
     if payload.is_empty() {
         return Ok(());
@@ -2257,7 +2279,9 @@ fn sort_colored_payload_by_source(
     }
     let source_count =
         usize::try_from(source_max - source_min + 1).map_err(|_| BucketError::MalformedRecord)?;
-    let mut offsets = vec![0usize; source_count];
+    scratch.offsets.clear();
+    scratch.offsets.resize(source_count, 0);
+    let offsets = &mut scratch.offsets;
     for record in payload.chunks_exact(record_len) {
         let attr = u32::from_le_bytes(record[..4].try_into().expect("colored attribute"));
         let source = attr >> 10;
@@ -2267,20 +2291,21 @@ fn sort_colored_payload_by_source(
         offsets[(source - source_min) as usize] += 1;
     }
     let mut prefix = 0usize;
-    for offset in &mut offsets {
+    for offset in offsets.iter_mut() {
         let count = *offset;
         *offset = prefix;
         prefix += count;
     }
-    let mut sorted = vec![0u8; payload.len()];
+    scratch.sorted.clear();
+    scratch.sorted.resize(payload.len(), 0);
     for record in payload.chunks_exact(record_len) {
         let attr = u32::from_le_bytes(record[..4].try_into().expect("colored attribute"));
         let source = ((attr >> 10) - source_min) as usize;
         let output = offsets[source] * record_len;
-        sorted[output..output + record_len].copy_from_slice(record);
+        scratch.sorted[output..output + record_len].copy_from_slice(record);
         offsets[source] += 1;
     }
-    *payload = sorted;
+    std::mem::swap(payload, &mut scratch.sorted);
     Ok(())
 }
 

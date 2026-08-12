@@ -704,17 +704,26 @@ fn emit_uncolored_direct_weak_superkmer_buckets<const K: usize>(
     })
 }
 
-/// Default staged-record budget per colored source window.
-const DEFAULT_COLOR_WINDOW_BYTES: u64 = 4 * 1024 * 1024 * 1024;
+/// Default staged-record budget per colored source window. Larger windows
+/// mean fewer stop-the-world flushes at proportionally more staged RAM; the
+/// flush-wall total is roughly window-count-independent, so this mainly
+/// buys back per-window straggler spread.
+const DEFAULT_COLOR_WINDOW_BYTES: u64 = 12 * 1024 * 1024 * 1024;
 
-fn color_window_bytes() -> u64 {
-    static BYTES: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
-    *BYTES.get_or_init(|| {
-        std::env::var("CF3_RS_COLOR_WINDOW_BYTES")
-            .ok()
-            .and_then(|value| value.parse().ok())
-            .unwrap_or(DEFAULT_COLOR_WINDOW_BYTES)
-    })
+fn color_window_bytes(params: &BuildParams) -> u64 {
+    if let Some(bytes) = std::env::var("CF3_RS_COLOR_WINDOW_BYTES")
+        .ok()
+        .and_then(|value| value.parse().ok())
+    {
+        return bytes;
+    }
+    // Under an explicit memory budget the window takes a fixed share of it;
+    // otherwise the default assumes a machine sized for the corpus.
+    match params.max_memory_gb {
+        Some(gb) => ((gb as u64) * 1024 * 1024 * 1024 / 6)
+            .clamp(1024 * 1024 * 1024, DEFAULT_COLOR_WINDOW_BYTES),
+        None => DEFAULT_COLOR_WINDOW_BYTES,
+    }
 }
 
 /// Releases waiting workers when one exits early through `?` -- the same
@@ -882,7 +891,7 @@ fn emit_colored_weak_superkmer_buckets<const K: usize>(
         let window_flush_nanos = std::sync::atomic::AtomicU64::new(0);
         let window_count = std::sync::atomic::AtomicU64::new(0);
         let workers = params.partition_workers(window.len());
-        let gate = ColorWindowGate::new(window.len(), workers, color_window_bytes());
+        let gate = ColorWindowGate::new(window.len(), workers, color_window_bytes(params));
         // A worker owns a whole source, which is what keeps each source's
         // records grouped in the buckets. Decompression inside one file has
         // no ordering stake, but the thread budget caps *total* concurrency,

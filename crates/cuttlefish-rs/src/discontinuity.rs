@@ -1653,46 +1653,6 @@ impl<const K: usize> BlockedEdgeMatrix<K> {
         }
         Ok(records)
     }
-
-    fn read_flushed_row(
-        &self,
-        row: usize,
-        threads: usize,
-    ) -> Result<Vec<Vec<DiscontinuityEdge<K>>>, SerialCollationError> {
-        let partition_count = self.partition_count();
-        let block_count = partition_count - row;
-        let workers = threads.max(1).min(block_count);
-        let chunk = block_count.div_ceil(workers);
-        let groups = std::thread::scope(|scope| {
-            let mut handles = Vec::with_capacity(workers);
-            for col_start in (row..partition_count).step_by(chunk) {
-                let col_end = (col_start + chunk).min(partition_count);
-                handles.push(scope.spawn(move || {
-                    let mut blocks = Vec::with_capacity(col_end - col_start);
-                    for col in col_start..col_end {
-                        blocks.push((col, self.read_flushed_block(row, col)?));
-                    }
-                    Ok::<_, SerialCollationError>(blocks)
-                }));
-            }
-            let mut groups = Vec::with_capacity(handles.len());
-            for handle in handles {
-                groups.push(
-                    handle
-                        .join()
-                        .map_err(|_| SerialCollationError::WorkerPanic)??,
-                );
-            }
-            Ok::<_, SerialCollationError>(groups)
-        })?;
-        let mut row_blocks = (0..block_count).map(|_| Vec::new()).collect::<Vec<_>>();
-        for group in groups {
-            for (col, edges) in group {
-                row_blocks[col - row] = edges;
-            }
-        }
-        Ok(row_blocks)
-    }
 }
 
 #[derive(Debug)]
@@ -3941,15 +3901,19 @@ impl SerialDiscontinuityExpander {
         let mut original_edge_elapsed = Duration::default();
         let expansion_work_started = Instant::now();
 
+        // Indexes several per-partition arrays and drives the matrix by
+        // partition id, so the counter is the subject here, not an iterator.
+        #[allow(clippy::needless_range_loop)]
         for partition in 1..partition_count {
             let row_load_started = Instant::now();
-            let row_blocks = if K <= 31 {
-                vec![matrix.read_flushed_block(partition, partition)?]
-            } else {
-                matrix.read_flushed_row(partition, threads)?
-            };
+            // Only the diagonal block is materialized. The rest of the row is
+            // streamed and decoded in place by `expand_non_diagonal_raw`,
+            // which is what keeps this phase from paying for a whole row of
+            // `DiscontinuityEdge<K>` -- 2.46 s against 0.17 s at k = 55 when
+            // the wide arm materialized instead.
+            let diagonal_block = matrix.read_flushed_block(partition, partition)?;
             row_load_elapsed += row_load_started.elapsed();
-            let diagonal_block = &row_blocks[0];
+            let diagonal_block = &diagonal_block;
             let phase_started = Instant::now();
             map.clear();
             path_info_clear_elapsed += phase_started.elapsed();
@@ -4004,199 +3968,23 @@ impl SerialDiscontinuityExpander {
             compressed_diagonal_elapsed += phase_started.elapsed();
 
             let phase_started = Instant::now();
-            let non_diagonal_cols = partition_count.saturating_sub(partition + 1);
-            let non_diagonal_edges = row_blocks[1..].iter().map(Vec::len).sum::<usize>();
-            let workers = threads.max(1).min(non_diagonal_cols.max(1));
-            if K <= 31 {
-                let (local_phantoms, local_unresolved, local_inferred, local_edge_infos) =
-                    Self::expand_non_diagonal_raw(
-                        matrix,
-                        partition,
-                        &map,
-                        &vertex_path_info_dir,
-                        &edge_writers,
-                        ranges,
-                        &range_index,
-                        ranges_per_bucket,
-                        error_path,
-                        &expansion_pool,
-                    )?;
-                phantom_records.extend(local_phantoms);
-                unresolved_edges += local_unresolved;
-                inferred_vertices += local_inferred;
-                edge_path_infos += local_edge_infos;
-            } else if workers == 1 || non_diagonal_cols < 2 || non_diagonal_edges < 64 * 1024 {
-                for col in partition + 1..partition_count {
-                    for edge in &row_blocks[col - partition] {
-                        let (MatrixEndpoint::Vertex(x), MatrixEndpoint::Vertex(y)) =
-                            (edge.first, edge.second)
-                        else {
-                            continue;
-                        };
-                        let Some(x_info) = map.get(x.vertex) else {
-                            unresolved_edges += 1;
-                            continue;
-                        };
-                        let y_info = Self::infer(x_info, x.side, y.side, edge.weight);
-                        if y_info.rank > 0 {
-                            vertex_writers.write_record(
-                                col,
-                                &VertexPathInfo {
-                                    vertex: y.vertex,
-                                    info: y_info,
-                                },
-                            )?;
-                            inferred_vertices += 1;
-                        }
-                        if edge.weight == 1 {
-                            push_edge_path_record_to_range_bucket_writer(
-                                edge,
-                                edge_path_info(edge, x_info, y_info),
-                                ranges,
-                                &range_index,
-                                ranges_per_bucket,
-                                &edge_writers,
-                                &mut phantom_records,
-                                error_path,
-                            )?;
-                            edge_path_infos += 1;
-                        }
-                    }
-                }
-            } else {
-                for col in partition + 1..partition_count {
-                    vertex_writers.flush_bucket(col)?;
-                }
-                let chunk = non_diagonal_cols.div_ceil(workers);
-                let worker_outputs = expansion_pool.install(|| {
-                    (0..workers)
-                        .into_par_iter()
-                        .map(|worker_id| {
-                            let col_start = partition + 1 + worker_id * chunk;
-                            if col_start >= partition_count {
-                                return Ok(None);
-                            }
-                            let col_end = (col_start + chunk).min(partition_count);
-                            let map = &map;
-                            let row_blocks = &row_blocks;
-                            let edge_writers = &edge_writers;
-                            let vertex_path_info_dir = &vertex_path_info_dir;
-                            let mut range_records = (0..bucket_count)
-                                .map(|_| Vec::<StitchedCoordRecord>::new())
-                                .collect::<Vec<_>>();
-                            let mut local_phantoms =
-                                Vec::<(StitchedCoordRecord, DiscontinuityEndpoint<K>)>::new();
-                            let mut local_unresolved = 0u64;
-                            let mut local_inferred = 0u64;
-                            let mut local_edge_infos = 0u64;
-
-                            for col in col_start..col_end {
-                                let vertex_path =
-                                    vertex_path_info_bucket_path(vertex_path_info_dir, col);
-                                let mut vertex_out: Option<BufWriter<File>> = None;
-                                for edge in &row_blocks[col - partition] {
-                                    let (MatrixEndpoint::Vertex(x), MatrixEndpoint::Vertex(y)) =
-                                        (edge.first, edge.second)
-                                    else {
-                                        continue;
-                                    };
-                                    let Some(x_info) = map.get(x.vertex) else {
-                                        local_unresolved += 1;
-                                        continue;
-                                    };
-                                    let y_info = Self::infer(x_info, x.side, y.side, edge.weight);
-                                    if y_info.rank > 0 {
-                                        if vertex_out.is_none() {
-                                            let file = OpenOptions::new()
-                                                .create(true)
-                                                .append(true)
-                                                .open(&vertex_path)
-                                                .map_err(|source| SerialCollationError::Io {
-                                                    path: vertex_path.clone(),
-                                                    source,
-                                                })?;
-                                            vertex_out = Some(BufWriter::with_capacity(
-                                                VERTEX_PATH_INFO_WRITE_BUFFER,
-                                                file,
-                                            ));
-                                        }
-                                        vertex_out
-                                            .as_mut()
-                                            .expect("vertex writer was just created")
-                                            .write_all(
-                                                &encoded_vertex_path_info_record(&VertexPathInfo {
-                                                    vertex: y.vertex,
-                                                    info: y_info,
-                                                })[..vertex_path_info_record_len::<K>()],
-                                            )
-                                            .map_err(|source| SerialCollationError::Io {
-                                                path: vertex_path.clone(),
-                                                source,
-                                            })?;
-                                        local_inferred += 1;
-                                    }
-                                    if edge.weight == 1 {
-                                        let info = edge_path_info(edge, x_info, y_info);
-                                        let record = stitched_record_from_edge_path_info(
-                                            edge, info, error_path,
-                                        )?;
-                                        if let Some(phantom) = edge.phantom_unitig {
-                                            local_phantoms.push((record, phantom));
-                                        } else {
-                                            let bucket_id = edge_path_info_bucket(
-                                                edge,
-                                                ranges,
-                                                &range_index,
-                                                ranges_per_bucket,
-                                            )
-                                            .ok_or_else(|| {
-                                                SerialCollationError::MalformedCoordBucket(
-                                                    error_path.to_path_buf(),
-                                                )
-                                            })?;
-                                            range_records
-                                                .get_mut(bucket_id)
-                                                .ok_or_else(|| {
-                                                    SerialCollationError::MalformedCoordBucket(
-                                                        error_path.to_path_buf(),
-                                                    )
-                                                })?
-                                                .push(record);
-                                        }
-                                        local_edge_infos += 1;
-                                    }
-                                }
-                                if let Some(mut out) = vertex_out {
-                                    out.flush().map_err(|source| SerialCollationError::Io {
-                                        path: vertex_path,
-                                        source,
-                                    })?;
-                                }
-                            }
-
-                            for (bucket_id, records) in range_records.iter().enumerate() {
-                                edge_writers.write_path_records(bucket_id, records)?;
-                            }
-
-                            Ok::<_, SerialCollationError>(Some((
-                                local_phantoms,
-                                local_unresolved,
-                                local_inferred,
-                                local_edge_infos,
-                            )))
-                        })
-                        .collect::<Result<Vec<_>, SerialCollationError>>()
-                })?;
-
-                for (local_phantoms, local_unresolved, local_inferred, local_edge_infos) in
-                    worker_outputs.into_iter().flatten()
-                {
-                    unresolved_edges += local_unresolved;
-                    inferred_vertices += local_inferred;
-                    edge_path_infos += local_edge_infos;
-                    phantom_records.extend(local_phantoms);
-                }
-            }
+            let (local_phantoms, local_unresolved, local_inferred, local_edge_infos) =
+                Self::expand_non_diagonal_raw(
+                    matrix,
+                    partition,
+                    &map,
+                    &vertex_path_info_dir,
+                    &edge_writers,
+                    ranges,
+                    &range_index,
+                    ranges_per_bucket,
+                    error_path,
+                    &expansion_pool,
+                )?;
+            phantom_records.extend(local_phantoms);
+            unresolved_edges += local_unresolved;
+            inferred_vertices += local_inferred;
+            edge_path_infos += local_edge_infos;
             non_diagonal_elapsed += phase_started.elapsed();
 
             let phase_started = Instant::now();
@@ -6614,23 +6402,6 @@ impl<const K: usize> VertexPathInfoBucketWriters<K> {
         }
     }
 
-    fn write_record(
-        &mut self,
-        bucket_id: usize,
-        record: &VertexPathInfo<K>,
-    ) -> Result<(), SerialCollationError> {
-        if bucket_id >= self.writers.len() {
-            return Err(SerialCollationError::MalformedCoordBucket(self.dir.clone()));
-        }
-        self.buffers[bucket_id].extend_from_slice(
-            &encoded_vertex_path_info_record::<K>(record)[..vertex_path_info_record_len::<K>()],
-        );
-        if self.buffers[bucket_id].len() >= VERTEX_PATH_INFO_WRITE_BUFFER {
-            self.write_buffer(bucket_id, false)?;
-        }
-        Ok(())
-    }
-
     fn flush_bucket(&mut self, bucket_id: usize) -> Result<(), SerialCollationError> {
         self.write_buffer(bucket_id, true)
     }
@@ -6793,7 +6564,24 @@ fn append_encoded_compact_vertex_path_info<const K: usize>(
     vertex: Kmer<K>,
     info: CompactExpansionPathInfo,
 ) {
-    debug_assert!(K <= 31);
+    if K > 31 {
+        // The vertex needs the full width even though the path id does not,
+        // and the bucket reader picks its layout by K, so wide records must go
+        // out in the wide form.
+        let record = VertexPathInfo {
+            vertex,
+            info: PathInfo {
+                path_id: Kmer::from_bits(u128::from(info.path_id)),
+                rank: info.rank(),
+                exit_side: info.exit_side(),
+                is_cycle: info.is_cycle(),
+            },
+        };
+        output.extend_from_slice(
+            &encoded_vertex_path_info_record(&record)[..vertex_path_info_record_len::<K>()],
+        );
+        return;
+    }
     output.extend_from_slice(&(vertex.as_u128() as u64).to_le_bytes());
     output.extend_from_slice(&info.path_id.to_le_bytes());
     output.extend_from_slice(&info.rank_and_flags.to_le_bytes());
@@ -6944,27 +6732,6 @@ fn read_vertex_path_info_bucket_into<const K: usize>(
     });
     *insert_elapsed += phase.elapsed();
     Ok(())
-}
-
-#[allow(clippy::too_many_arguments)]
-fn push_edge_path_record_to_range_bucket_writer<const K: usize>(
-    edge: &DiscontinuityEdge<K>,
-    info: PathInfo<K>,
-    ranges: &[ExternalLocalUnitigRange],
-    range_index: &ExternalRangeIndex,
-    ranges_per_bucket: usize,
-    writers: &ConcurrentStitchedCoordWriters<'_>,
-    phantom_records: &mut Vec<(StitchedCoordRecord, DiscontinuityEndpoint<K>)>,
-    error_path: &Path,
-) -> Result<(), SerialCollationError> {
-    let record = stitched_record_from_edge_path_info(edge, info, error_path)?;
-    if let Some(phantom) = edge.phantom_unitig {
-        phantom_records.push((record, phantom));
-        return Ok(());
-    }
-    let bucket_id = edge_path_info_bucket(edge, ranges, range_index, ranges_per_bucket)
-        .ok_or_else(|| SerialCollationError::MalformedCoordBucket(error_path.to_path_buf()))?;
-    writers.write_record(bucket_id, record)
 }
 
 #[inline]
@@ -9449,14 +9216,6 @@ impl<'a> ConcurrentStitchedCoordWriters<'a> {
         Ok(())
     }
 
-    fn write_record(
-        &self,
-        bucket_id: usize,
-        record: StitchedCoordRecord,
-    ) -> Result<(), SerialCollationError> {
-        self.write_path_records(bucket_id, std::slice::from_ref(&record))
-    }
-
     fn finish(
         self,
         pool: &ThreadPool,
@@ -11638,11 +11397,24 @@ impl<const K: usize> ExpansionPathInfoTable<K> {
         }
     }
 
+    /// The packed form of [`get`](Self::get), for both widths.
+    ///
+    /// A wide path id is a dense integer assigned per meta-vertex, not a
+    /// k-mer, so it fits the compact form's `u64` even when the *vertex* it is
+    /// keyed by does not. That is what lets one streaming expansion loop serve
+    /// both widths.
     #[inline(always)]
     fn get_compact(&self, vertex: Kmer<K>) -> Option<CompactExpansionPathInfo> {
         match self {
             Self::Compact(table) => table.get_compact(vertex),
-            Self::Wide(_) => unreachable!("compact path info is only used for k <= 31"),
+            Self::Wide(table) => table.get(vertex).map(|info| {
+                CompactExpansionPathInfo::new(
+                    info.path_id.as_u128() as u64,
+                    info.rank,
+                    info.exit_side,
+                    info.is_cycle,
+                )
+            }),
         }
     }
 

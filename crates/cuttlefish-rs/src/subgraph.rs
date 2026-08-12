@@ -1979,6 +1979,7 @@ impl std::error::Error for LocalSubgraphError {}
 
 #[cfg(test)]
 mod tests {
+
     use super::*;
     use crate::GraphInput;
     use crate::buckets::BucketEmitter;

@@ -704,6 +704,160 @@ fn emit_uncolored_direct_weak_superkmer_buckets<const K: usize>(
     })
 }
 
+/// Default staged-record budget per colored source window.
+const DEFAULT_COLOR_WINDOW_BYTES: u64 = 4 * 1024 * 1024 * 1024;
+
+fn color_window_bytes() -> u64 {
+    static BYTES: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    *BYTES.get_or_init(|| {
+        std::env::var("CF3_RS_COLOR_WINDOW_BYTES")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(DEFAULT_COLOR_WINDOW_BYTES)
+    })
+}
+
+/// Releases waiting workers when one exits early through `?` -- the same
+/// scope-join deadlock the sharding gate's drop guard prevents.
+struct ColorWindowFailGuard<'a> {
+    gate: &'a ColorWindowGate,
+    armed: bool,
+}
+
+impl Drop for ColorWindowFailGuard<'_> {
+    fn drop(&mut self) {
+        if self.armed {
+            self.gate.fail();
+        }
+    }
+}
+
+/// What a colored partition worker should do next.
+enum ColorWindowStep {
+    /// Parse and scan this source offset.
+    Assign(usize),
+    /// The window closed: drain local pendings and rendezvous. The bounds are
+    /// inclusive source *offsets* of the window.
+    Drain {
+        first: usize,
+        last: usize,
+    },
+    Done,
+}
+
+/// Source-window scheduler for the colored partitioner.
+///
+/// Sources are assigned in ascending id order; when the sink's staged bytes
+/// cross the window budget, assignment stops, every worker drains its local
+/// pendings and rendezvouses, and the last arriver sorts-and-flushes the
+/// window (`flush_colored_window`). Ascending windows plus per-window sorting
+/// give every bucket globally source-sorted records -- the structural
+/// guarantee that keeps color-class hashes exact, exactly as the C++
+/// partitioner's window collation does.
+struct ColorWindowGate {
+    state: std::sync::Mutex<ColorWindowState>,
+    changed: std::sync::Condvar,
+    workers: usize,
+    budget: u64,
+}
+
+struct ColorWindowState {
+    next_source: usize,
+    total: usize,
+    window_first: usize,
+    draining_through: Option<usize>,
+    arrived: usize,
+    epoch: u64,
+    failed: bool,
+}
+
+impl ColorWindowGate {
+    fn new(total: usize, workers: usize, budget: u64) -> Self {
+        Self {
+            state: std::sync::Mutex::new(ColorWindowState {
+                next_source: 0,
+                total,
+                window_first: 0,
+                draining_through: None,
+                arrived: 0,
+                epoch: 0,
+                failed: false,
+            }),
+            changed: std::sync::Condvar::new(),
+            workers,
+            budget: budget.max(1),
+        }
+    }
+
+    fn next(&self, sink: &SharedBucketSink) -> ColorWindowStep {
+        let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        if state.failed {
+            return ColorWindowStep::Done;
+        }
+        if let Some(last) = state.draining_through {
+            return ColorWindowStep::Drain {
+                first: state.window_first,
+                last,
+            };
+        }
+        if state.next_source == state.total {
+            if state.window_first == state.total {
+                return ColorWindowStep::Done;
+            }
+            let last = state.total - 1;
+            state.draining_through = Some(last);
+            self.changed.notify_all();
+            return ColorWindowStep::Drain {
+                first: state.window_first,
+                last,
+            };
+        }
+        if sink.colored_staged_bytes() >= self.budget && state.next_source > state.window_first {
+            let last = state.next_source - 1;
+            state.draining_through = Some(last);
+            self.changed.notify_all();
+            return ColorWindowStep::Drain {
+                first: state.window_first,
+                last,
+            };
+        }
+        let offset = state.next_source;
+        state.next_source += 1;
+        ColorWindowStep::Assign(offset)
+    }
+
+    /// Rendezvous after draining. Returns `true` for the one worker that must
+    /// run the window flush and then call [`Self::release`]; everyone else
+    /// blocks here until the epoch advances.
+    fn arrive(&self) -> bool {
+        let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        state.arrived += 1;
+        if state.arrived == self.workers {
+            return true;
+        }
+        let epoch = state.epoch;
+        while state.epoch == epoch && !state.failed {
+            state = self.changed.wait(state).unwrap_or_else(|p| p.into_inner());
+        }
+        false
+    }
+
+    fn release(&self, flushed_through: usize) {
+        let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        state.window_first = flushed_through + 1;
+        state.draining_through = None;
+        state.arrived = 0;
+        state.epoch += 1;
+        self.changed.notify_all();
+    }
+
+    fn fail(&self) {
+        let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        state.failed = true;
+        self.changed.notify_all();
+    }
+}
+
 fn emit_colored_weak_superkmer_buckets<const K: usize>(
     params: &BuildParams,
     graph_count: usize,
@@ -714,19 +868,21 @@ fn emit_colored_weak_superkmer_buckets<const K: usize>(
     let mut worker_elapsed = Duration::ZERO;
     let mut parse_elapsed = Duration::ZERO;
 
-    // The reference partitioner exposes the complete size-sorted source set to
-    // its dynamic scheduler and drains each worker after every source.
+    // Sources are processed in ascending id order through byte-budgeted
+    // windows, matching the C++ partitioner's scheme: each window's staged
+    // records are sorted by source and flushed at the window boundary, so
+    // every bucket ends up globally source-sorted and the color-class hash
+    // stays exact by construction.
     {
         let (source_start, window) = (0, paths);
         let parse_started = Instant::now();
-        let mut work_order = (0..window.len()).collect::<Vec<_>>();
-        work_order.sort_unstable_by_key(|&offset| {
-            std::cmp::Reverse(window[offset].metadata().map_or(0, |meta| meta.len()))
-        });
-        let next_source = AtomicUsize::new(0);
         let parse_only_nanos = std::sync::atomic::AtomicU64::new(0);
         let source_drain_nanos = std::sync::atomic::AtomicU64::new(0);
+        let barrier_wait_nanos = std::sync::atomic::AtomicU64::new(0);
+        let window_flush_nanos = std::sync::atomic::AtomicU64::new(0);
+        let window_count = std::sync::atomic::AtomicU64::new(0);
         let workers = params.partition_workers(window.len());
+        let gate = ColorWindowGate::new(window.len(), workers, color_window_bytes());
         // A worker owns a whole source, which is what keeps each source's
         // records grouped in the buckets. Decompression inside one file has
         // no ordering stake, but the thread budget caps *total* concurrency,
@@ -756,10 +912,12 @@ fn emit_colored_weak_superkmer_buckets<const K: usize>(
             let mut handles = Vec::new();
             for _ in 0..workers {
                 let sink = Arc::clone(&sink);
-                let next_source = &next_source;
-                let work_order = &work_order;
+                let gate = &gate;
                 let parse_only_nanos = &parse_only_nanos;
                 let source_drain_nanos = &source_drain_nanos;
+                let barrier_wait_nanos = &barrier_wait_nanos;
+                let window_flush_nanos = &window_flush_nanos;
+                let window_count = &window_count;
                 let inflate_pool = &inflate_pool;
                 handles.push(scope.spawn(move || {
                     let mut worker_stats = PartitionStats::new(graph_count);
@@ -769,10 +927,42 @@ fn emit_colored_weak_superkmer_buckets<const K: usize>(
                     let mut input_files = 0usize;
                     let mut records = 0u64;
                     let mut buckets = sink.emitter();
+                    let mut fail_guard = ColorWindowFailGuard { gate, armed: true };
                     loop {
-                        let order_idx = next_source.fetch_add(1, Ordering::Relaxed);
-                        let Some(&offset) = work_order.get(order_idx) else {
-                            break;
+                        let offset = match gate.next(&sink) {
+                            ColorWindowStep::Assign(offset) => offset,
+                            ColorWindowStep::Drain { first, last } => {
+                                let drain_started = Instant::now();
+                                buckets.flush_colored_worker_all()?;
+                                source_drain_nanos.fetch_add(
+                                    drain_started.elapsed().as_nanos() as u64,
+                                    Ordering::Relaxed,
+                                );
+                                let wait_started = Instant::now();
+                                if gate.arrive() {
+                                    let flush_started = Instant::now();
+                                    let flush_result = sink.flush_colored_window(
+                                        u32::try_from(source_start + first + 1)
+                                            .map_err(|_| PartitionRunError::TooManySources)?,
+                                        u32::try_from(source_start + last + 1)
+                                            .map_err(|_| PartitionRunError::TooManySources)?,
+                                    );
+                                    window_flush_nanos.fetch_add(
+                                        flush_started.elapsed().as_nanos() as u64,
+                                        Ordering::Relaxed,
+                                    );
+                                    window_count.fetch_add(1, Ordering::Relaxed);
+                                    gate.release(last);
+                                    flush_result?;
+                                } else {
+                                    barrier_wait_nanos.fetch_add(
+                                        wait_started.elapsed().as_nanos() as u64,
+                                        Ordering::Relaxed,
+                                    );
+                                }
+                                continue;
+                            }
+                            ColorWindowStep::Done => break,
                         };
                         let source_id = u32::try_from(source_start + offset + 1)
                             .map_err(|_| PartitionRunError::TooManySources)?;
@@ -811,6 +1001,7 @@ fn emit_colored_weak_superkmer_buckets<const K: usize>(
                         buckets.flush_colored_worker_if_required()?;
                         drain_elapsed += drain_started.elapsed();
                     }
+                    fail_guard.armed = false;
                     // The parse call interleaves decompression, record
                     // assembly, and the scan callback on one thread; the scan
                     // share is `elapsed`, so call-minus-scan is parse proper.
@@ -845,9 +1036,16 @@ fn emit_colored_weak_superkmer_buckets<const K: usize>(
         })?;
         parse_elapsed += parse_started.elapsed();
         eprintln!(
-            "cuttlefish: colored partition worker detail: parse-only {:.3}s, per-source drain {:.3}s (worker-seconds)",
+            "cuttlefish: colored partition worker detail: parse-only {:.3}s, drain {:.3}s, barrier wait {:.3}s (worker-seconds)",
             parse_only_nanos.load(Ordering::Relaxed) as f64 / 1e9,
             source_drain_nanos.load(Ordering::Relaxed) as f64 / 1e9,
+            barrier_wait_nanos.load(Ordering::Relaxed) as f64 / 1e9,
+        );
+        eprintln!(
+            "cuttlefish: colored window detail: {} window(s), flush wall {:.3}s, source sort {:.3}s (worker-seconds)",
+            window_count.load(Ordering::Relaxed),
+            window_flush_nanos.load(Ordering::Relaxed) as f64 / 1e9,
+            sink.window_sort_seconds(),
         );
 
         sink.flush_colored_emitters(emitters)?;

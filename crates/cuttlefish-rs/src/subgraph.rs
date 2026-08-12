@@ -2032,6 +2032,82 @@ mod tests {
     }
 
     #[test]
+    fn source_sorted_buckets_make_color_hashes_exact() {
+        // A vertex whose records arrive interleaved (source 1, then 2, then 1
+        // again) would hash h(1)^h(2)^h(1) = h(2) if buckets were written in
+        // arrival order: exactly the hash of a genuine {2}-only class, which
+        // the reuse path would silently conflate. Source-sorted buckets keep
+        // the classes distinct and make the hash order-independent.
+        let build = |orders: &[(u32, &[u8; 5])], tag: &str| {
+            let dir = std::env::temp_dir().join(format!(
+                "cf3-colored-exact-{}-{:?}-{tag}",
+                std::process::id(),
+                std::thread::current().id(),
+            ));
+            let mut params = BuildParams::new(GraphInput::References, "colored-exact".into());
+            params.k = 3;
+            params.minimizer_len = 2;
+            params.color = true;
+            let mut emitter = BucketEmitter::create_in_dir(&params, 1, dir.clone()).unwrap();
+            for &(source_id, seq) in orders {
+                emitter
+                    .add(
+                        &WeakSuperKmer {
+                            graph_id: 0,
+                            offset: 0,
+                            len: 5,
+                            source_id: Some(source_id),
+                            left_discontinuous: false,
+                            right_discontinuous: false,
+                        },
+                        seq,
+                    )
+                    .unwrap();
+            }
+            emitter.finish().unwrap();
+            let (store, entries) = BucketStore::open_dir(&dir).unwrap();
+            let mut subgraph =
+                LocalSubgraph::<3>::from_manifest_entries(&store, &entries, 1).unwrap();
+            let mut unitigs = subgraph.contract_colored(&store, &entries).unwrap();
+            unitigs.sort_by(|a, b| a.unitig.label.cmp(&b.unitig.label));
+            fs::remove_dir_all(dir).unwrap();
+            unitigs
+        };
+
+        // Interleaved arrival order: {1,2}-vertex records split around the
+        // {2}-only sequence.
+        let interleaved = build(
+            &[(1, b"AACGT"), (2, b"TGCAA"), (2, b"AACGT"), (1, b"AACGT")],
+            "interleaved",
+        );
+        // The same records already grouped by source.
+        let grouped = build(
+            &[(1, b"AACGT"), (1, b"AACGT"), (2, b"AACGT"), (2, b"TGCAA")],
+            "grouped",
+        );
+
+        assert_eq!(interleaved.len(), 2);
+        let hashes = |unitigs: &[ColoredLocalUnitig<3>]| {
+            unitigs
+                .iter()
+                .map(|u| (u.unitig.label.clone(), u.colors[0].color_hash))
+                .collect::<Vec<_>>()
+        };
+        // Order-independence: both arrival orders hash identically.
+        assert_eq!(hashes(&interleaved), hashes(&grouped));
+        // Distinctness: the {1,2} class must not alias the {2} class.
+        assert_ne!(
+            interleaved[0].colors[0].color_hash,
+            interleaved[1].colors[0].color_hash
+        );
+        let sets = interleaved
+            .iter()
+            .map(|u| u.colors[0].sources.clone())
+            .collect::<Vec<_>>();
+        assert!(sets.contains(&vec![1, 2]) && sets.contains(&vec![2]));
+    }
+
+    #[test]
     fn colored_contraction_extracts_source_sets_at_color_transitions() {
         let dir = std::env::temp_dir().join(format!(
             "cf3-colored-local-{}-{:?}",

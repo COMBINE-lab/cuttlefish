@@ -397,6 +397,8 @@ pub struct BucketEmitter {
     files: BTreeMap<usize, BucketFileMeta>,
     writers: BTreeMap<usize, BucketFile>,
     pending: Vec<PendingBucket>,
+    source_min: u32,
+    source_max: u32,
     pending_bytes: usize,
     scratch: CompressionScratch,
 }
@@ -414,6 +416,12 @@ pub struct SharedBucketSink {
     atlases: Vec<Mutex<SharedBucketAtlas>>,
     flush_calls: AtomicU64,
     flush_nanos: AtomicU64,
+    /// Colored record bytes staged in atlas buffers since the last window
+    /// flush; the partitioner closes a source window when this crosses its
+    /// budget. See [`Self::flush_colored_window`].
+    colored_staged_bytes: AtomicU64,
+    /// Cumulative wall time inside the per-window source sorts (diagnostics).
+    window_sort_nanos: AtomicU64,
 }
 
 pub struct SharedBucketEmitter {
@@ -1455,6 +1463,8 @@ impl BucketEmitter {
             writers: BTreeMap::new(),
             pending: vec![PendingBucket::default(); graph_count],
             pending_bytes: 0,
+            source_min: u32::MAX,
+            source_max: 0,
         })
     }
 
@@ -1500,11 +1510,20 @@ impl BucketEmitter {
             self.colored,
         )?;
         self.pending_bytes += record_len;
+        if let Some(source) = superkmer.source_id {
+            self.source_min = self.source_min.min(source);
+            self.source_max = self.source_max.max(source);
+        }
 
-        if self.pending[graph_id].bytes.len() >= MAX_PENDING_BUCKET_BYTES {
-            self.flush_pending_bucket(graph_id)?;
-        } else if self.pending_bytes >= MAX_TOTAL_PENDING_BYTES {
-            self.flush_largest_pending_bucket()?;
+        // The serial emitter accumulates colored buckets whole so `finish`
+        // can sort each one by source in a single pass; it exists for tests
+        // and small serial runs, so unbounded staging is acceptable there.
+        if !self.colored {
+            if self.pending[graph_id].bytes.len() >= MAX_PENDING_BUCKET_BYTES {
+                self.flush_pending_bucket(graph_id)?;
+            } else if self.pending_bytes >= MAX_TOTAL_PENDING_BYTES {
+                self.flush_largest_pending_bucket()?;
+            }
         }
         Ok(())
     }
@@ -1596,8 +1615,20 @@ impl BucketEmitter {
 
     pub fn finish(mut self) -> Result<BucketEmitStats, BucketError> {
         let mut manifest = Vec::new();
+        let record_len = record_size(self.colored, self.label_words);
         for graph_id in 0..self.pending.len() {
             if !self.pending[graph_id].bytes.is_empty() {
+                if self.colored && self.source_min <= self.source_max {
+                    // Sorted-by-source buckets keep the color-class hash
+                    // exact; the parallel sink gets the same guarantee from
+                    // per-window sorting.
+                    sort_colored_payload_by_source(
+                        &mut self.pending[graph_id].bytes,
+                        record_len,
+                        self.source_min,
+                        self.source_max,
+                    )?;
+                }
                 self.flush_pending_bucket(graph_id)?;
             }
         }
@@ -1674,6 +1705,8 @@ impl SharedBucketSink {
                 .collect(),
             flush_calls: AtomicU64::new(0),
             flush_nanos: AtomicU64::new(0),
+            colored_staged_bytes: AtomicU64::new(0),
+            window_sort_nanos: AtomicU64::new(0),
         }))
     }
 
@@ -1921,22 +1954,28 @@ impl SharedBucketSink {
             consumed += run_bytes;
         }
         atlas.buffered_bytes += pending.bytes.len();
-        let mut flush_stats = SharedBucketFlushStats::default();
-        for &(local_graph_id, _) in &scratch.runs {
-            let local_graph_id = usize::from(local_graph_id);
-            if atlas.files[local_graph_id].buffer.len() >= SUBGRAPH_CHUNK_BYTES {
-                atlas.flush_subgraph(
-                    local_graph_id,
-                    &self.containers,
-                    true,
-                    self.label_words,
-                    self.compress_buckets,
-                    &mut flush_stats,
-                )?;
-            }
-        }
-        self.record_flush_stats(flush_stats, started.elapsed());
+        drop(atlas);
+        drop(_hold);
+        // Colored buckets are written only at source-window boundaries, where
+        // `flush_colored_window` sorts each bucket's staged records by source
+        // -- the ordering that keeps color-class hashes exact. Nothing leaves
+        // the atlas buffers mid-window; the window byte budget bounds the RAM
+        // this stages.
+        self.colored_staged_bytes
+            .fetch_add(pending.bytes.len() as u64, Ordering::Relaxed);
+        self.record_flush_stats(SharedBucketFlushStats::default(), started.elapsed());
         Ok(())
+    }
+
+    /// Colored record bytes staged in atlas buffers since the last window
+    /// flush.
+    pub fn colored_staged_bytes(&self) -> u64 {
+        self.colored_staged_bytes.load(Ordering::Relaxed)
+    }
+
+    /// Cumulative wall time spent in per-window source sorts, across workers.
+    pub fn window_sort_seconds(&self) -> f64 {
+        self.window_sort_nanos.load(Ordering::Relaxed) as f64 / 1e9
     }
 
     pub fn flush_stats(&self) -> (u64, Duration) {
@@ -1963,6 +2002,7 @@ impl SharedBucketSink {
             for _ in 0..workers {
                 handles.push(scope.spawn(|| {
                     let mut stats = SharedBucketFlushStats::default();
+                    let mut sort_nanos = 0u64;
                     loop {
                         let atlas_id = next_atlas.fetch_add(1, Ordering::Relaxed);
                         let Some(atlas) = self.atlases.get(atlas_id) else {
@@ -1970,22 +2010,29 @@ impl SharedBucketSink {
                         };
                         let mut atlas = atlas.lock().map_err(|_| BucketError::WorkerPanic)?;
                         for local_graph_id in 0..atlas.files.len() {
+                            if atlas.files[local_graph_id].buffer.is_empty() {
+                                continue;
+                            }
+                            let sort_started = Instant::now();
                             sort_colored_payload_by_source(
                                 &mut atlas.files[local_graph_id].buffer,
                                 record_len,
                                 source_min,
                                 source_max,
                             )?;
+                            sort_nanos += sort_started.elapsed().as_nanos() as u64;
                             atlas.flush_subgraph(
                                 local_graph_id,
                                 &self.containers,
                                 true,
                                 self.label_words,
-                                true,
+                                self.compress_buckets,
                                 &mut stats,
                             )?;
                         }
                     }
+                    self.window_sort_nanos
+                        .fetch_add(sort_nanos, Ordering::Relaxed);
                     Ok::<_, BucketError>(stats.calls)
                 }));
             }
@@ -1995,6 +2042,7 @@ impl SharedBucketSink {
             }
             Ok::<_, BucketError>(calls)
         })?;
+        self.colored_staged_bytes.store(0, Ordering::Relaxed);
         self.record_flush_stats(
             SharedBucketFlushStats { calls: flush_calls },
             started.elapsed(),
@@ -2378,6 +2426,18 @@ impl SharedBucketEmitter {
             if self.colored_pending[atlas_id].bytes.len() >= SUBGRAPH_CHUNK_BYTES {
                 self.flush_pending_colored_atlas(atlas_id)?;
             }
+        }
+        Ok(())
+    }
+
+    /// Drains every colored pending chunk regardless of size; a window flush
+    /// must see every record of its window in the atlas buffers.
+    pub fn flush_colored_worker_all(&mut self) -> Result<(), BucketError> {
+        if !self.sink.colored {
+            return Err(BucketError::MalformedRecord);
+        }
+        for atlas_id in 0..self.colored_pending.len() {
+            self.flush_pending_colored_atlas(atlas_id)?;
         }
         Ok(())
     }

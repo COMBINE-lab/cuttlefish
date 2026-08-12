@@ -123,6 +123,11 @@ failure.
 Reference builds use a default `(k + 1)`-mer cutoff of 1; read builds use 2.
 Use `--cutoff` to override either default.
 
+Besides `build`, the binary carries `compare`, which decides whether two unitig
+FASTA files describe the same graph up to strand and rotation, and `colors`,
+which reads a colored build's repository back (see [Output](#output)). Both
+print their own `--help`.
+
 ## Resource Control
 
 `--threads` is a maximum rather than a promise that every phase uses the same
@@ -168,7 +173,31 @@ run combines a unitig offset with a coordinate into
 - `manifest.tsv` with shard sizes and paths
 - `NNN.colors` files containing delta-coded source sets
 
-The current color repository format is `cf3rs-color-repository-v1`.
+The current color repository format is `cf3rs-color-repository-v2`: source
+sets are stored in a hybrid Elias-delta encoding that picks per record between
+sparse gap codes, a plain bitmap, and gap codes over the complement.
+
+### Reading colors
+
+The packed runs and the coded sets are not meant to be read by hand.
+`cuttlefish colors` is the supported way in:
+
+```bash
+# every color run of every unitig, gzipped because a dump outgrows the graph
+cuttlefish colors dump -r graph.cf3rs.color-repository -i graph.fa -o dump.tsv.gz
+
+# the distinct source sets the repository holds
+cuttlefish colors sets -r graph.cf3rs.color-repository --names
+
+# unitigs carrying source 3 but not source 7
+cuttlefish colors grep -r graph.cf3rs.color-repository -i graph.fa \
+    --all-of 3 --none-of 7
+```
+
+All three stream and accept `-o`/`-z`; `--names` prints source paths instead of
+one-based ids. Queries by *sequence* rather than by color would need a k-mer
+locator, which is sketched in [color query index](color-query-index.md) and not
+built.
 
 ## Pipeline
 
@@ -190,8 +219,9 @@ cargo doc --workspace --no-deps --open
 ```
 
 Implementation notes include the [module decomposition plan](rust-rewrite-modules.md),
-[performance record](rust-rewrite-performance.md), and
-[compatibility harness](rust-rewrite-harness.md).
+[performance record](rust-rewrite-performance.md),
+[compatibility harness](rust-rewrite-harness.md), and the
+[color query index sketch](color-query-index.md).
 
 ## Testing
 

@@ -93,8 +93,98 @@ def read_varint(source):
             raise ValueError("invalid color varint")
 
 
+class _BitReader:
+    """Reads the LSB-first bit stream the repository's BitWriter produces."""
+
+    def __init__(self, data):
+        self.data = data
+        self.pos = 0
+
+    def bit(self):
+        byte = self.data[self.pos >> 3]
+        bit = (byte >> (self.pos & 7)) & 1
+        self.pos += 1
+        return bit
+
+    def take(self, count):
+        value = 0
+        for index in range(count):
+            value |= self.bit() << index
+        return value
+
+    def skip_zeros(self):
+        zeros = 0
+        while self.bit() == 0:
+            zeros += 1
+        return zeros
+
+
+def _read_gamma(reader):
+    bits = reader.skip_zeros()
+    return (reader.take(bits) | (1 << bits)) - 1
+
+
+def _read_delta(reader):
+    bits = _read_gamma(reader)
+    return (reader.take(bits) | (1 << bits)) - 1
+
+
+def _decode_source_set(data, num_colors):
+    """Inverse of the repository's hybrid encoding (v2): sparse sets are
+    delta gap-coded, middling ones a plain bitmap, dense ones gap-coded over
+    the complement."""
+    reader = _BitReader(data)
+    length = _read_delta(reader)
+    if length == 0:
+        return ()
+    sparse_threshold = num_colors // 4
+    dense_threshold = num_colors * 3 // 4
+    if length < sparse_threshold:
+        values = []
+        previous = _read_delta(reader)
+        values.append(previous)
+        for _ in range(length - 1):
+            previous += _read_delta(reader) + 1
+            values.append(previous)
+        return tuple(values)
+    if length < dense_threshold:
+        values = []
+        base = 0
+        remaining = num_colors
+        while remaining > 0:
+            width = min(64, remaining)
+            word = reader.take(width)
+            while word:
+                low = word & -word
+                values.append(base + low.bit_length() - 1)
+                word ^= low
+            base += width
+            remaining -= width
+        return tuple(values)
+    absent = set()
+    previous = None
+    for _ in range(num_colors - length):
+        gap = _read_delta(reader)
+        current = gap if previous is None else previous + 1 + gap
+        absent.add(current)
+        previous = current
+    return tuple(value for value in range(num_colors) if value not in absent)
+
+
 def load_rust_repository(path):
     path = Path(path)
+    num_colors = None
+    with (path / "metadata.tsv").open() as metadata:
+        for line in metadata:
+            fields = line.rstrip("\n").split("\t")
+            if fields[0] == "format" and fields[1] != "cf3rs-color-repository-v2":
+                raise ValueError(f"unsupported repository format {fields[1]}")
+            if fields[0] == "source_count":
+                # Source ids are one-based; the encoder sizes its universe by
+                # the largest id plus one.
+                num_colors = int(fields[1]) + 1
+    if num_colors is None:
+        raise ValueError("metadata.tsv lacks source_count")
     colors = {}
     with (path / "manifest.tsv").open() as manifest:
         next(manifest)
@@ -106,13 +196,13 @@ def load_rust_repository(path):
                 file_path = path / file_path
             with file_path.open("rb") as source:
                 for index in range(int(records_text)):
-                    count = read_varint(source)
-                    values = []
-                    previous = 0
-                    for _ in range(count):
-                        previous += read_varint(source)
-                        values.append(previous)
-                    colors[worker | (index << 8)] = tuple(values)
+                    byte_len = read_varint(source)
+                    encoded = source.read(byte_len)
+                    if len(encoded) != byte_len:
+                        raise ValueError("truncated color record")
+                    colors[worker | (index << 8)] = _decode_source_set(
+                        encoded, num_colors
+                    )
     return colors
 
 

@@ -2067,3 +2067,71 @@ residual is the ~31 s stop-the-world flush wall, reclaimable with
 double-buffered atlases and an overlapped flush crew if that 5% ever
 matters -- recorded as the known lever, not built. Peak RSS lands at C++'s
 own level, from the staged window.
+
+## K > 31 taken from 2.2x slower than C++ to parity
+
+Release 2's performance half. The starting point, once the k > 31 path
+produced correct output at all (see the review record for the three defects
+that had to be fixed first), was 1000 Salmonella genomes at k = 55, t64,
+`--mem-limit 64G`:
+
+| | wall | RSS | partition | local | contract | expand |
+|---|---|---|---|---|---|---|
+| Rust k = 55, as found | 30.58 s | 13.6 GB | 1.02 | 6.13 | 15.03 | 6.54 |
+| C++ k = 55 | 14.01 s | 12.6 GB | | | | |
+| Rust k = 31, same input | 14.23 s | 7.7 GB | 1.23 | 3.43 | 2.19 | 5.29 |
+| C++ k = 31 | 16.54 s | 12.3 GB | | | | |
+
+Two things stand out. Rust *wins* at k = 31 by 14% on the very same input, so
+nothing about the workload disadvantages it. And contraction costs 15.0 s at
+k = 55 against 2.19 s at k = 31 -- on a graph that is *smaller* (10.4 M
+unitigs against 18.9 M). That is not a data effect; it is the wide arm.
+
+**Contraction was single-threaded above k = 31.** The atomic partition table
+packs the vertex into its key word and uses that word as both the identity and
+the lock, which two-word k-mers cannot do, so K > 31 fell back to a serial
+`HashMap` scan per partition. Giving it a wide slot -- state in a separate tag
+word, key beside the value, same protocol -- put both widths back on one
+parallel driver: **contraction 15.03 s -> 1.94 s, wall 30.58 s -> 17.62 s, RSS
+13.6 GB -> 7.3 GB.** k = 31 was unchanged (13.75 s), as it must be: it still
+takes the compact slot.
+
+**Local contraction was using a HashMap.** With contraction fixed, local
+contraction was the largest remaining wide-vs-narrow gap. The one-word path
+has a flat open-addressed table whose probe loop the crate owns, specifically
+so record processing can software-prefetch the home slot (R1, above); the wide
+path had none of that, and it also lost the dense iteration order, because a
+hash map cannot index its keys so every subgraph materialised a key vector.
+The two-word twin -- `u128::MAX` as the empty marker, free because k is capped
+at 63 -- took **local contraction 25.19 s -> 16.87 s and wall 52.12 s ->
+43.53 s** on 10000 genomes.
+
+Where that leaves k = 55 against C++, on 10000 genomes at t64, interleaved
+order-alternated pairs:
+
+| | Rust | C++ | Rust RSS | C++ RSS |
+|---|---|---|---|---|
+| uncolored | 43.53 / 42.88 / 43.12 s | 41.41 / 42.42 / 42.26 / 42.61 s | 8.4 GB | 15.0 GB |
+| colored | 53.14 / 53.42 s | 53.05 / 52.11 s | 27.0 GB | 23.7 GB |
+
+Uncolored is +2.4% on the means, colored +1.3% -- inside the run-to-run spread
+C++ shows against itself in the colored pair (52.11-53.05 s). Unitig and base
+counts are identical in every pair. Uncolored peak RSS is 44% below C++;
+colored is 14% above.
+
+Worth recording from those runs: **C++ colored is not deterministic at
+k = 55.** One of the two C++ colored runs on 10000 genomes returned
+31,949,223 unitigs / 4,630,190,503 bases where its own other run, and both
+Rust runs, returned 31,949,232 / 4,630,190,998. Nine unitigs. This is the C++
+implementation disagreeing with itself on identical input, not a Rust
+discrepancy, but any future colored comparison at k > 31 has to expect it.
+
+**The remaining wide-arm lever, not built.** Expansion still materialises a
+whole matrix row into `Vec<DiscontinuityEdge<K>>` before propagating
+(`read_flushed_row`), where the one-word path streams the same bytes through
+`expand_non_diagonal_raw`, decoding into registers. At 1000 genomes that row
+load/decode is 1.385 s of a 6.10 s expansion, about 8% of wall. Closing it
+means a wide twin of the streaming loop, because the compact record packs the
+vertex into a `u64` -- roughly 120 lines. Left undone at parity; it is the
+first thing to try if k > 31 needs to be faster than C++ rather than level
+with it.

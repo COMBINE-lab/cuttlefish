@@ -2002,3 +2002,31 @@ mid-run atlas flushes already interleave sources occasionally, and the
 second pass rebuilds exact source sets regardless; an interleave only
 fragments color-hash classes and costs extra resolution. Colored-partition
 redesigns are therefore not hard-blocked on grouping.
+
+## R4: the flush unit is right where it is
+
+Post-R3, the bucket flush envelope averages ~90 us per 64 KiB call, which
+made per-call overhead the natural suspect and doubling the chunk the
+natural experiment. Measured over two order-alternated uncolored pairs,
+128 KiB chunks are 3% *worse* in partition (104.0 -> 107.1 s) -- and the
+counters explain it: calls halved (14.2 M -> 7.1 M) while the flush envelope
+stayed flat (1,287 -> 1,269 worker-s), so the envelope is proportional work,
+not call overhead, and the doubled staging (2 GB across 16,384 buckets) only
+added cache pressure. The 64 KiB unit stands, now by measurement rather than
+by the memory-budget argument alone. R4 closes with nothing changed.
+
+## R5: expansion resists the prefetch that local contraction rewarded
+
+The propagation/emission block (~30 s wall at t64) probes the compact
+path-info table once per edge -- 1.05 G probes against 162 M meta-vertices,
+structurally the same memory-latency pattern R1 cut by 39%, on a table this
+crate already owns. An eight-edge look-ahead prefetch in four of the five
+probe loops measured null over three order-alternated pairs: 30.3 s with
+against 30.8 s without, arms fully interleaved. Reverted.
+
+The asymmetry against R1 is instructive: local contraction's probe loop does
+little else per vertex, so the miss was the critical path; expansion's per-
+edge work -- inference, record construction, staged emission, occasional
+file writes -- gives out-of-order execution enough to chew on that the probe
+latency is already substantially hidden. R5 closes with expansion attributed
+(propagation/emission is the phase; load/decode is 0.4 s) and unchanged.

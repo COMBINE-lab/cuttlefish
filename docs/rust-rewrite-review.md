@@ -264,6 +264,17 @@ with no new instrumentation.
 
 ## Remaining opportunity map, from the profiled pipeline
 
+**R-series outcomes (2026-08-12).** R1: flat prefetched vertex map, local
+contraction -39% uncolored / -27% colored, wall -22% / -17% (after a
+measured-and-reverted inline-layout attempt). R2: second pass is re-roll
+work, not probes; flat-map attempt reverted (+9%); pass fusion recorded as
+the only lever and not attempted. R3: per-source drain attributed (35% of
+colored partition worker time) and cut 25% by run-sorted atlas appends;
+partition -7.7% colored / -6.4% uncolored. R4: 128 KiB flush units measured
+3% worse; 64 KiB stands by measurement. R5: expansion prefetch null over
+three pairs; phase attributed and unchanged. Full records in
+`rust-rewrite-performance.md`.
+
 *Appended 2026-08-11 after the B/C campaigns. Source: full fine-grained timer
 output of lock-profiled 150k Salmonella runs at t64, both modes (uncolored
 wall 113 s partition + 179 s local + 66 s collation; colored 124 + 269 + 60).

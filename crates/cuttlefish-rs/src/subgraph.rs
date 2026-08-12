@@ -31,7 +31,8 @@ use std::collections::HashSet;
 /// record and prefetches every vertex before the state-update loop begins.
 ///
 /// `u64::MAX` marks an empty slot, unreachable while keys carry at most 62
-/// bits -- which is why K == 32 stays on [`DenseLocalVertexMap`].
+/// bits. K = 32 would collide with the marker, but k must be odd, so the
+/// next reachable size after 31 is 33 -- served by the two-word map.
 #[derive(Debug, Clone)]
 pub struct FlatVertexMap {
     slots: Vec<(u64, VertexState)>,
@@ -157,84 +158,6 @@ impl PartialEq for FlatVertexMap {
 
 impl Eq for FlatVertexMap {}
 
-#[derive(Debug, Clone)]
-pub struct DenseLocalVertexMap {
-    indices: HashTable<u32>,
-    entries: Vec<(u64, VertexState)>,
-}
-
-impl DenseLocalVertexMap {
-    fn with_capacity(capacity: usize) -> Self {
-        Self {
-            indices: HashTable::with_capacity(capacity),
-            entries: Vec::with_capacity(capacity),
-        }
-    }
-
-    fn clear_and_reserve(&mut self, capacity: usize) {
-        self.indices.clear();
-        self.entries.clear();
-        if self.entries.capacity() < capacity {
-            self.entries.reserve(capacity - self.entries.capacity());
-        }
-        if self.indices.capacity() < capacity {
-            let entries = &self.entries;
-            self.indices
-                .reserve(capacity - self.indices.capacity(), |&index| {
-                    local_u64_hash(entries[index as usize].0)
-                });
-        }
-    }
-
-    #[inline(always)]
-    fn get(&self, key: u64) -> Option<&VertexState> {
-        let hash = local_u64_hash(key);
-        let index = *self
-            .indices
-            .find(hash, |&index| self.entries[index as usize].0 == key)?;
-        Some(&self.entries[index as usize].1)
-    }
-
-    #[inline(always)]
-    fn get_mut(&mut self, key: u64) -> Option<&mut VertexState> {
-        let hash = local_u64_hash(key);
-        let index = *self
-            .indices
-            .find(hash, |&index| self.entries[index as usize].0 == key)?;
-        Some(&mut self.entries[index as usize].1)
-    }
-
-    #[inline(always)]
-    fn state_or_default(&mut self, key: u64) -> &mut VertexState {
-        let hash = local_u64_hash(key);
-        if let Some(&index) = self
-            .indices
-            .find(hash, |&index| self.entries[index as usize].0 == key)
-        {
-            return &mut self.entries[index as usize].1;
-        }
-        let index = self.entries.len() as u32;
-        self.entries.push((key, VertexState::default()));
-        let entries = &self.entries;
-        self.indices.insert_unique(hash, index, |&stored| {
-            local_u64_hash(entries[stored as usize].0)
-        });
-        &mut self.entries[index as usize].1
-    }
-}
-
-impl PartialEq for DenseLocalVertexMap {
-    fn eq(&self, other: &Self) -> bool {
-        self.entries.len() == other.entries.len()
-            && self
-                .entries
-                .iter()
-                .all(|&(key, state)| other.get(key) == Some(&state))
-    }
-}
-
-impl Eq for DenseLocalVertexMap {}
-
 #[derive(Default)]
 struct DenseWantedColorMap {
     indices: HashTable<u32>,
@@ -314,7 +237,6 @@ impl<const K: usize> WantedColorMap<K> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LocalVertexMap<const K: usize> {
     Flat(FlatVertexMap),
-    OneWord(DenseLocalVertexMap),
     TwoWord(HashMap<Kmer<K>, VertexState, FastBuildHasher>),
 }
 
@@ -323,9 +245,9 @@ impl<const K: usize> LocalVertexMap<K> {
     fn with_capacity(capacity: usize) -> Self {
         if K <= 31 {
             // 62-bit keys leave u64::MAX free as the flat map's empty marker.
+            // K = 32 would collide with it, but k must be odd, so the next
+            // reachable size after 31 is 33 -- straight to the two-word map.
             Self::Flat(FlatVertexMap::with_capacity(capacity))
-        } else if K == 32 {
-            Self::OneWord(DenseLocalVertexMap::with_capacity(capacity))
         } else {
             Self::TwoWord(HashMap::with_capacity_and_hasher(
                 capacity,
@@ -337,9 +259,6 @@ impl<const K: usize> LocalVertexMap<K> {
     fn clear_and_reserve(&mut self, capacity: usize) {
         match self {
             Self::Flat(map) => {
-                map.clear_and_reserve(capacity);
-            }
-            Self::OneWord(map) => {
                 map.clear_and_reserve(capacity);
             }
             Self::TwoWord(map) => {
@@ -380,7 +299,6 @@ impl<const K: usize> LocalVertexMap<K> {
     pub fn len(&self) -> usize {
         match self {
             Self::Flat(map) => map.keys.len(),
-            Self::OneWord(map) => map.entries.len(),
             Self::TwoWord(map) => map.len(),
         }
     }
@@ -396,7 +314,6 @@ impl<const K: usize> LocalVertexMap<K> {
     pub fn capacity(&self) -> usize {
         match self {
             Self::Flat(map) => map.slots.len() * 4 / 5,
-            Self::OneWord(map) => map.indices.capacity(),
             Self::TwoWord(map) => map.capacity(),
         }
     }
@@ -405,7 +322,6 @@ impl<const K: usize> LocalVertexMap<K> {
     fn get(&self, kmer: &Kmer<K>) -> Option<&VertexState> {
         match self {
             Self::Flat(map) => map.get(kmer.as_u128() as u64),
-            Self::OneWord(map) => map.get(kmer.as_u128() as u64),
             Self::TwoWord(map) => map.get(kmer),
         }
     }
@@ -414,7 +330,6 @@ impl<const K: usize> LocalVertexMap<K> {
     fn get_mut(&mut self, kmer: &Kmer<K>) -> Option<&mut VertexState> {
         match self {
             Self::Flat(map) => map.get_mut(kmer.as_u128() as u64),
-            Self::OneWord(map) => map.get_mut(kmer.as_u128() as u64),
             Self::TwoWord(map) => map.get_mut(kmer),
         }
     }
@@ -425,11 +340,6 @@ impl<const K: usize> LocalVertexMap<K> {
                 .keys
                 .iter()
                 .map(|&key| Kmer::<K>::from_bits(key as u128))
-                .collect(),
-            Self::OneWord(map) => map
-                .entries
-                .iter()
-                .map(|&(key, _)| Kmer::<K>::from_bits(key as u128))
                 .collect(),
             Self::TwoWord(map) => map.keys().copied().collect(),
         }
@@ -442,10 +352,6 @@ impl<const K: usize> LocalVertexMap<K> {
                 map.get(key)
                     .map(|&state| (Kmer::<K>::from_bits(key as u128), state))
             }
-            Self::OneWord(map) => map
-                .entries
-                .get(index)
-                .map(|&(key, state)| (Kmer::<K>::from_bits(key as u128), state)),
             Self::TwoWord(_) => None,
         }
     }
@@ -453,7 +359,6 @@ impl<const K: usize> LocalVertexMap<K> {
     fn dense_len(&self) -> Option<usize> {
         match self {
             Self::Flat(map) => Some(map.keys.len()),
-            Self::OneWord(map) => Some(map.entries.len()),
             Self::TwoWord(_) => None,
         }
     }
@@ -462,10 +367,6 @@ impl<const K: usize> LocalVertexMap<K> {
     fn state_or_default(&mut self, kmer: Kmer<K>) -> &mut VertexState {
         match self {
             Self::Flat(map) => map.state_or_default(kmer.as_u128() as u64),
-            Self::OneWord(map) => {
-                let key = kmer.as_u128() as u64;
-                map.state_or_default(key)
-            }
             Self::TwoWord(map) => {
                 let hash = local_vertex_hash(kmer);
                 match map

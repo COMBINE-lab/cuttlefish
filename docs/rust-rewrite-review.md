@@ -325,3 +325,65 @@ edge-buffer lock scopes (B4: measured, retained), and the broker (measured,
 opt-in). The color-table overflow map holding 36.8 M entries looks alarming
 but was measured flat when eliminated (2^27-slot experiment in the
 performance record).
+
+## The K > 31 path had never run end to end
+
+Release 2's brief was to test k > 31 for correctness and performance. Testing
+found the path broken from the first non-trivial graph: a single unbranched
+300-base sequence at k = 33 produced no unitigs at all, and a 51-base one
+produced a 46-base label with an interior segment repeated. Everything below
+k = 32 was unaffected, because every one of these defects sits in an arm that
+only compiles into the two-word instantiations.
+
+Three defects, each independently fatal:
+
+**The wide edge record was two bytes short.** `discontinuity_edge_record_len`
+returned `3 * kmer_bytes + 24` where the fields need `3 * kmer_bytes + 26`:
+two `(present, kmer, side)` endpoints, an 8-byte weight, an 8-byte unitig
+index, three flag bytes, a `(kmer, side)` phantom endpoint, and a trailing
+2-byte unitig bucket. The bucket therefore landed on the phantom endpoint's
+last k-mer byte and its side byte, corrupting exactly the edges that carry
+phantoms. The unit test `wide_discontinuity_edge_roundtrips_phantom_and_bucket`
+covers the arithmetic at both k = 33 and k = 63, where the record is widest and
+must still fit the encoder's fixed buffer.
+
+**Path ids did not fit their field.** `PathInfo::path_id` is a `Kmer<K>`, and
+for k <= 31 the meta-vertex k-mer travels in the `u64 path_id` of
+`StitchedCoordRecord` unchanged. Above 31 the k-mer does not fit, so
+`u64::try_from` failed and the build aborted on a malformed-bucket error. Path
+ids are only ever compared, sorted, and hashed -- never decoded back into a
+vertex -- so the wide arms now assign a dense integer instead: the count of
+meta-vertices written by preceding partitions plus the record's position. One
+meta-vertex is emitted per contracted path, so this is one id per path, which
+is what the narrow arm gets from the k-mer.
+
+**The wide contraction never absorbed reinserted edges.** This is the defect
+that ate whole unitigs. When a partition contracts, the edges it joins are
+reinserted for lower partitions through `ConcurrentBlockedEdgeWriters`, which
+records its spilled extents in private per-block lists; those reach the matrix
+only via `merge_block_into`. The atomic (k <= 31) arm merges at the top of
+every partition, inside `contract_blocked_partition_atomic`. The wide arm
+called `load_column_into`, which reads only the matrix's own extents, and
+merged just once after the whole loop. So any path spanning three or more
+partitions lost its joined edge: the endpoints were finished as phantoms with
+the wrong weights, and the edge surfaced in the expansion matrix too late to
+resolve. On the 51-base case above, exactly one local unitig of three never
+received a coordinate record, and the assembler joined what was left.
+
+A fourth, latent one turned up in the same audit and is fixed here too:
+`ConcurrentPathInfoTable::insert` (the wide expansion table) advanced to the
+next slot when its `EMPTY -> BUSY` exchange lost the race, instead of
+re-reading the slot the winner was filling. Two threads inserting the same
+vertex could both return `true` and leave two entries, making `get`
+probe-order-dependent. The compact table re-examines the slot; the wide one
+now does the same.
+
+Coverage added so that none of this can regress silently: `data/generated/
+k-large-synthetic.fa` (records built around a shared 120-base core so the graph
+still branches at k = 63, plus an `N` split and a reverse-complement repeat)
+with C++-validated expectations at k = 33 and k = 63, and the edge-record
+round-trip test. Beyond the checked-in tests, the fixes were validated against
+the C++ implementation on 72 uncolored (k = 33/41/45/55/63, including tandem
+repeats, reverse-complement repeats, multi-`N` splits, and 20 kb inputs) and 9
+colored graph/k combinations, all matching, with colored content checked
+against both C++ and source-derived ground truth.

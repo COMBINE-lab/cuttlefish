@@ -1241,7 +1241,7 @@ struct BlockedEdgeMatrix<const K: usize> {
 
 struct PreparedBlockedEdge {
     block: usize,
-    bytes: [u8; 72],
+    bytes: [u8; 74],
     phi: bool,
     diagonal: bool,
 }
@@ -1789,8 +1789,8 @@ fn flush_blocked_edge_block(
     Ok(())
 }
 
-fn encode_discontinuity_edge<const K: usize>(edge: &DiscontinuityEdge<K>) -> [u8; 72] {
-    let mut bytes = [0u8; 72];
+fn encode_discontinuity_edge<const K: usize>(edge: &DiscontinuityEdge<K>) -> [u8; 74] {
+    let mut bytes = [0u8; 74];
     if K <= 31 {
         let endpoint_bits = |endpoint: MatrixEndpoint<K>| match endpoint {
             MatrixEndpoint::Phi => u64::MAX,
@@ -2036,7 +2036,11 @@ const fn discontinuity_edge_record_len<const K: usize>() -> usize {
     if K <= 31 {
         25
     } else {
-        3 * discontinuity_edge_kmer_bytes::<K>() + 24
+        // Two (present, kmer, side) endpoints, the 8-byte weight, the 8-byte
+        // unitig index, three flag bytes, the (kmer, side) phantom endpoint,
+        // and the trailing 2-byte unitig bucket:
+        // 2*(kb+2) + 8 + 8 + 3 + (kb+1) + 2.
+        3 * discontinuity_edge_kmer_bytes::<K>() + 26
     }
 }
 
@@ -2050,7 +2054,7 @@ const fn blocked_edge_unitig_offset<const K: usize>() -> usize {
 }
 
 fn add_unitig_base_to_encoded_edge<const K: usize>(
-    bytes: &mut [u8; 72],
+    bytes: &mut [u8; 74],
     unitig_off: usize,
     unitig_base: usize,
 ) {
@@ -2073,7 +2077,7 @@ fn add_unitig_base_to_encoded_edge<const K: usize>(
 }
 
 #[inline]
-fn set_encoded_edge_unitig_bucket<const K: usize>(bytes: &mut [u8; 72], bucket: u16) {
+fn set_encoded_edge_unitig_bucket<const K: usize>(bytes: &mut [u8; 74], bucket: u16) {
     let offset = discontinuity_edge_record_len::<K>() - 2;
     bytes[offset..offset + 2].copy_from_slice(&bucket.to_le_bytes());
 }
@@ -3417,6 +3421,23 @@ impl SerialDiscontinuityContractor {
                 )?
             } else {
                 let load_started = Instant::now();
+                // Edges reinserted by the partitions already contracted live in
+                // the appenders' private extent lists, not in the matrix, so the
+                // column has to absorb them before it is read. The atomic arm
+                // does this inside `contract_blocked_partition_atomic`; without
+                // it here, every path spanning three or more partitions loses
+                // the joined edge and its unitigs never reach the output.
+                for row in 0..=partition {
+                    // Matrix buffer first, so the merged extents stay in write
+                    // order, exactly as the atomic arm orders them.
+                    working.flush_block(row, partition)?;
+                    let added = appenders.merge_block_into(&mut working, row, partition)?;
+                    if added != 0 {
+                        working.stats.edges += added as u64;
+                        working.stats.phi_edges += u64::from(row == 0) * added as u64;
+                        working.stats.diagonal_edges += u64::from(row == partition) * added as u64;
+                    }
+                }
                 working.load_column_into(partition, threads, &mut column)?;
                 block_load_elapsed += load_started.elapsed();
                 (
@@ -3468,6 +3489,7 @@ impl SerialDiscontinuityContractor {
                 &meta_vertex_dir,
                 partition,
                 &contracted.meta_vertices,
+                meta_vertex_count,
                 &contraction_pool,
             )?;
             meta_write_elapsed += meta_write_started.elapsed();
@@ -4530,11 +4552,18 @@ impl SerialDiscontinuityExpander {
         let mut edges = Vec::new();
         let mut unresolved_edges = 0u64;
 
-        for meta in &contraction.meta_vertices {
+        for (index, meta) in contraction.meta_vertices.iter().enumerate() {
+            // Same dense-id substitution as `write_meta_vertex_bucket_parallel`:
+            // wide path ids must survive the u64 stitched-coordinate field.
+            let path_id = if K <= 31 {
+                meta.vertex
+            } else {
+                Kmer::from_bits(index as u128)
+            };
             vertex_info.insert(
                 meta.vertex,
                 PathInfo {
-                    path_id: meta.vertex,
+                    path_id,
                     rank: meta.weight,
                     exit_side: meta.entry_side,
                     is_cycle: meta.is_cycle,
@@ -6794,10 +6823,20 @@ fn encoded_vertex_path_info_record<const K: usize>(record: &VertexPathInfo<K>) -
     bytes
 }
 
+/// Writes one partition's meta-vertices as vertex path-info records.
+///
+/// A path's identifier must survive the `u64` field of the stitched
+/// coordinate records downstream. The meta-vertex k-mer itself only fits for
+/// K <= 31, so the wide arms replace it with a dense id: `path_id_base` is
+/// the count of meta-vertices written by preceding partitions, and each
+/// record adds its position, giving every path a unique small integer. Path
+/// ids are only ever compared, sorted, and hashed, never decoded back into a
+/// vertex, so the substitution is invisible downstream.
 fn write_meta_vertex_bucket_parallel<const K: usize>(
     dir: &Path,
     bucket_id: usize,
     records: &[SerialMetaVertex<K>],
+    path_id_base: u64,
     pool: &ThreadPool,
 ) -> Result<(), SerialCollationError> {
     if records.is_empty() {
@@ -6821,11 +6860,17 @@ fn write_meta_vertex_bucket_parallel<const K: usize>(
             .enumerate()
             .try_for_each(|(chunk_id, chunk)| {
                 let mut encoded = Vec::with_capacity(chunk.len() * record_len);
-                for meta in chunk {
+                for (offset, meta) in chunk.iter().enumerate() {
+                    let path_id = if K <= 31 {
+                        meta.vertex
+                    } else {
+                        let index = chunk_id * records_per_chunk + offset;
+                        Kmer::from_bits(u128::from(path_id_base) + index as u128)
+                    };
                     let record = VertexPathInfo {
                         vertex: meta.vertex,
                         info: PathInfo {
-                            path_id: meta.vertex,
+                            path_id,
                             rank: meta.weight,
                             exit_side: meta.entry_side,
                             is_cycle: meta.is_cycle,
@@ -11798,8 +11843,8 @@ impl<const K: usize> ConcurrentPathInfoTable<K> {
         loop {
             let slot = &self.slots[idx];
             let observed = slot.tag.load(Ordering::Acquire);
-            if observed == Self::EMPTY
-                && slot
+            if observed == Self::EMPTY {
+                if slot
                     .tag
                     .compare_exchange(
                         Self::EMPTY,
@@ -11808,13 +11853,20 @@ impl<const K: usize> ConcurrentPathInfoTable<K> {
                         Ordering::Relaxed,
                     )
                     .is_ok()
-            {
-                unsafe {
-                    (*slot.key.get()).write(vertex);
-                    (*slot.value.get()).write(value);
+                {
+                    unsafe {
+                        (*slot.key.get()).write(vertex);
+                        (*slot.value.get()).write(value);
+                    }
+                    slot.tag.store(tag, Ordering::Release);
+                    return true;
                 }
-                slot.tag.store(tag, Ordering::Release);
-                return true;
+                // Someone else claimed this slot between the load and the
+                // exchange. Re-read it rather than probing on: the winner may
+                // be inserting this very key, and skipping past would store a
+                // second entry for it. The compact table gets this right by
+                // re-examining the slot on a failed exchange.
+                continue;
             }
             if observed == Self::BUSY {
                 std::hint::spin_loop();
@@ -13654,6 +13706,47 @@ mod materialized_record_tests {
             decode_discontinuity_edge::<31>(&encoded[..25]).unitig_bucket,
             511
         );
+    }
+
+    /// The wide (K > 31) edge record must round-trip a phantom endpoint.
+    ///
+    /// The record length used to be two bytes short for K > 31, so the
+    /// trailing unitig-bucket write landed on the phantom endpoint's last
+    /// k-mer byte and its side byte, corrupting exactly the edges that carry
+    /// phantoms. K = 63 is also the widest record: it must fit the buffer.
+    #[test]
+    fn wide_discontinuity_edge_roundtrips_phantom_and_bucket() {
+        fn roundtrip<const K: usize>() {
+            let phantom = DiscontinuityEndpoint::<K> {
+                vertex: Kmer::from_bits((1u128 << (2 * K - 1)) | 0xABCD),
+                side: Side::Back,
+            };
+            let edge = DiscontinuityEdge::<K> {
+                first: MatrixEndpoint::Vertex(DiscontinuityEndpoint {
+                    vertex: Kmer::from_bits((1u128 << (2 * K - 2)) | 0x1234),
+                    side: Side::Back,
+                }),
+                second: MatrixEndpoint::Phi,
+                weight: 1 << 40,
+                unitig_bucket: 1_023,
+                unitig_index: (1usize << 33) + 7,
+                unitig_exit_side: Side::Back,
+                phantom_unitig: Some(phantom),
+                swapped: true,
+            };
+
+            let record_len = discontinuity_edge_record_len::<K>();
+            let mut encoded = encode_discontinuity_edge(&edge);
+            assert!(record_len <= encoded.len());
+            assert_eq!(decode_discontinuity_edge::<K>(&encoded[..record_len]), edge);
+
+            set_encoded_edge_unitig_bucket::<K>(&mut encoded, 511);
+            let reread = decode_discontinuity_edge::<K>(&encoded[..record_len]);
+            assert_eq!(reread.unitig_bucket, 511);
+            assert_eq!(reread.phantom_unitig, Some(phantom));
+        }
+        roundtrip::<33>();
+        roundtrip::<63>();
     }
 
     /// Both writers on one block, reconciled the way contraction does.

@@ -495,12 +495,6 @@ pub struct LocalSubgraph<const K: usize> {
     pub vertices: LocalVertexMap<K>,
     pub edges: LocalEdgeSet<K>,
     pub stats: LocalSubgraphStats,
-    /// The bucket's records sorted by source id, held between the first pass
-    /// (which must hash sources in sorted order for exact color classes) and
-    /// the wanted-color second pass (which reuses them instead of re-reading
-    /// the bucket from disk). `None` for uncolored subgraphs and after the
-    /// second pass consumes them.
-    colored_records: Option<crate::buckets::ColoredBucketRecords>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -873,29 +867,11 @@ impl<const K: usize> LocalSubgraph<K> {
             vertices,
             edges: HashSet::with_hasher(FastBuildHasher::default()),
             stats: LocalSubgraphStats::default(),
-            colored_records: None,
         };
 
         // Diagnostic: `CF3_RS_DECODE_ONLY` reads and decodes bucket records
         // without inserting vertices, separating decode cost from table cost.
         let decode_only = decode_only_diagnostic();
-        if colored {
-            // Colored buckets are consumed in source-sorted order so the
-            // color-class hash sees each source's occurrences of a vertex
-            // consecutively -- the exactness guarantee C++ gets from sorting
-            // buckets at write time. See `ColoredBucketRecords`.
-            drop(reader);
-            let records = crate::buckets::ColoredBucketRecords::load_sorted(store, entries)?;
-            records.try_for_each(|record| {
-                if decode_only {
-                    std::hint::black_box(record.words.first());
-                    return Ok(());
-                }
-                subgraph.add_borrowed_packed_record(record)
-            })?;
-            subgraph.colored_records = Some(records);
-            return Ok(subgraph);
-        }
         reader.try_for_each_borrowed_packed_record(|record| {
             if decode_only {
                 std::hint::black_box(record.words.first());
@@ -971,18 +947,24 @@ impl<const K: usize> LocalSubgraph<K> {
         Ok(())
     }
 
-    pub fn contract_colored(&mut self) -> Result<Vec<ColoredLocalUnitig<K>>, LocalSubgraphError> {
-        self.contract_colored_with_known(|_| None)
+    pub fn contract_colored(
+        &mut self,
+        store: &BucketStore,
+        entries: &[BucketManifestEntry],
+    ) -> Result<Vec<ColoredLocalUnitig<K>>, LocalSubgraphError> {
+        self.contract_colored_with_known(store, entries, |_| None)
     }
 
     pub fn contract_colored_with_known<F>(
         &mut self,
+        store: &BucketStore,
+        entries: &[BucketManifestEntry],
         color_is_known: F,
     ) -> Result<Vec<ColoredLocalUnitig<K>>, LocalSubgraphError>
     where
         F: Fn(u64) -> Option<ColorCoordinate>,
     {
-        let pending = self.contract_colored_impl(color_is_known)?;
+        let pending = self.contract_colored_impl(store, entries, color_is_known)?;
         pending
             .unitigs
             .into_iter()
@@ -1016,6 +998,8 @@ impl<const K: usize> LocalSubgraph<K> {
 
     pub(crate) fn contract_colored_resolved_with<F>(
         &mut self,
+        store: &BucketStore,
+        entries: &[BucketManifestEntry],
         repository: &ConcurrentColorRepository,
         worker: usize,
         emit: F,
@@ -1023,8 +1007,12 @@ impl<const K: usize> LocalSubgraph<K> {
     where
         F: for<'u> FnMut(LocalUnitigRef<'u, K>),
     {
-        let pending =
-            self.contract_colored_impl_with(|color_hash| repository.get(color_hash), emit)?;
+        let pending = self.contract_colored_impl_with(
+            store,
+            entries,
+            |color_hash| repository.get(color_hash),
+            emit,
+        )?;
         let mut color_runs = Vec::with_capacity(pending.runs.len());
         for runs in pending.runs {
             let mut packed = Vec::with_capacity(runs.len());
@@ -1050,22 +1038,25 @@ impl<const K: usize> LocalSubgraph<K> {
 
     fn contract_colored_impl<F>(
         &mut self,
+        store: &BucketStore,
+        entries: &[BucketManifestEntry],
         color_is_known: F,
     ) -> Result<PendingColoredContraction<K>, LocalSubgraphError>
     where
         F: Fn(u64) -> Option<ColorCoordinate>,
     {
         let mut unitigs = Vec::new();
-        let pending = self.contract_colored_impl_with(color_is_known, |unitig| {
-            unitigs.push(LocalUnitig {
-                label: unitig.label.to_vec(),
-                vertices: Vec::new(),
-                color_hashes: Vec::new(),
-                left_exit: unitig.left_exit,
-                right_exit: unitig.right_exit,
-                is_cycle: unitig.is_cycle,
-            })
-        })?;
+        let pending =
+            self.contract_colored_impl_with(store, entries, color_is_known, |unitig| {
+                unitigs.push(LocalUnitig {
+                    label: unitig.label.to_vec(),
+                    vertices: Vec::new(),
+                    color_hashes: Vec::new(),
+                    left_exit: unitig.left_exit,
+                    right_exit: unitig.right_exit,
+                    is_cycle: unitig.is_cycle,
+                })
+            })?;
         Ok(PendingColoredContraction {
             unitigs,
             runs: pending.runs,
@@ -1076,6 +1067,8 @@ impl<const K: usize> LocalSubgraph<K> {
 
     fn contract_colored_impl_with<F, G>(
         &mut self,
+        store: &BucketStore,
+        entries: &[BucketManifestEntry],
         color_is_known: F,
         mut emit: G,
     ) -> Result<PendingColoredData, LocalSubgraphError>
@@ -1119,14 +1112,12 @@ impl<const K: usize> LocalSubgraph<K> {
             wanted.insert(vertex, index);
         }
         let mut source_sets = vec![Vec::<u32>::new(); representatives.len()];
-        let records = self
-            .colored_records
-            .take()
-            .ok_or(LocalSubgraphError::MalformedRecord)?;
-        records.try_for_each(|record| {
-            collect_wanted_color_relations::<K>(record, &wanted, &mut source_sets)
-        })?;
-        drop(records);
+        for entry in entries {
+            let mut reader = store.reader(entry)?;
+            reader.try_for_each_borrowed_packed_record(|record| {
+                collect_wanted_color_relations::<K>(record, &wanted, &mut source_sets)
+            })?;
+        }
         normalize_source_sets(&mut source_sets);
 
         Ok(PendingColoredData {
@@ -2001,7 +1992,6 @@ mod tests {
             vertices: LocalVertexMap::with_capacity(0),
             edges: HashSet::with_hasher(FastBuildHasher::default()),
             stats: LocalSubgraphStats::default(),
-            colored_records: None,
         };
 
         subgraph.add_record(&record).unwrap();
@@ -2042,77 +2032,6 @@ mod tests {
     }
 
     #[test]
-    fn read_side_sort_makes_color_hashes_exact() {
-        // A vertex whose records arrive interleaved (source 1, then 2, then 1
-        // again) would hash h(1)^h(2)^h(1) = h(2) without the read-side sort:
-        // exactly the hash of a genuine {2}-only class, which the reuse path
-        // would then silently conflate. Sorted consumption keeps the two
-        // classes distinct and makes the hash order-independent.
-        let build = |orders: &[(u32, &[u8; 5])]| {
-            let dir = std::env::temp_dir().join(format!(
-                "cf3-colored-exact-{}-{:?}-{}",
-                std::process::id(),
-                std::thread::current().id(),
-                orders.len(),
-            ));
-            let mut params = BuildParams::new(GraphInput::References, "colored-exact".into());
-            params.k = 3;
-            params.minimizer_len = 2;
-            params.color = true;
-            let mut emitter = BucketEmitter::create_in_dir(&params, 1, dir.clone()).unwrap();
-            for &(source_id, seq) in orders {
-                emitter
-                    .add(
-                        &WeakSuperKmer {
-                            graph_id: 0,
-                            offset: 0,
-                            len: 5,
-                            source_id: Some(source_id),
-                            left_discontinuous: false,
-                            right_discontinuous: false,
-                        },
-                        seq,
-                    )
-                    .unwrap();
-            }
-            emitter.finish().unwrap();
-            let (store, entries) = BucketStore::open_dir(&dir).unwrap();
-            let mut subgraph =
-                LocalSubgraph::<3>::from_manifest_entries(&store, &entries, 1).unwrap();
-            let mut unitigs = subgraph.contract_colored().unwrap();
-            unitigs.sort_by(|a, b| a.unitig.label.cmp(&b.unitig.label));
-            fs::remove_dir_all(dir).unwrap();
-            unitigs
-        };
-
-        // Interleaved arrival order: {1,2}-vertex records split around the
-        // {2}-only sequence.
-        let interleaved = build(&[(1, b"AACGT"), (2, b"TGCAA"), (2, b"AACGT"), (1, b"AACGT")]);
-        // The same records already grouped by source.
-        let grouped = build(&[(1, b"AACGT"), (1, b"AACGT"), (2, b"AACGT"), (2, b"TGCAA")]);
-
-        assert_eq!(interleaved.len(), 2);
-        let hashes = |unitigs: &[ColoredLocalUnitig<3>]| {
-            unitigs
-                .iter()
-                .map(|u| (u.unitig.label.clone(), u.colors[0].color_hash))
-                .collect::<Vec<_>>()
-        };
-        // Order-independence: both arrival orders hash identically.
-        assert_eq!(hashes(&interleaved), hashes(&grouped));
-        // Distinctness: the {1,2} class must not alias the {2} class.
-        assert_ne!(
-            interleaved[0].colors[0].color_hash,
-            interleaved[1].colors[0].color_hash
-        );
-        let sets = interleaved
-            .iter()
-            .map(|u| u.colors[0].sources.clone())
-            .collect::<Vec<_>>();
-        assert!(sets.contains(&vec![1, 2]) && sets.contains(&vec![2]));
-    }
-
-    #[test]
     fn colored_contraction_extracts_source_sets_at_color_transitions() {
         let dir = std::env::temp_dir().join(format!(
             "cf3-colored-local-{}-{:?}",
@@ -2142,7 +2061,7 @@ mod tests {
         emitter.finish().unwrap();
         let (store, entries) = BucketStore::open_dir(&dir).unwrap();
         let mut subgraph = LocalSubgraph::<3>::from_manifest_entries(&store, &entries, 1).unwrap();
-        let unitigs = subgraph.contract_colored().unwrap();
+        let unitigs = subgraph.contract_colored(&store, &entries).unwrap();
         assert_eq!(unitigs.len(), 1);
         assert_eq!(unitigs[0].colors.len(), 1);
         assert_eq!(unitigs[0].colors[0].offset, 0);

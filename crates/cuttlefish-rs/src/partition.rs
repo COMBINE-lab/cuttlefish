@@ -9,7 +9,7 @@ use crate::dna::{ascii_base_bits, valid_ascii_base_bits};
 use crate::hash::wyhash_u64;
 use crate::input::{
     BorrowedSequenceFragment, InputError, expand_input_paths, parse_fragments,
-    parse_fragments_borrowed, parse_fragments_borrowed_with,
+    parse_fragments_borrowed,
 };
 use crate::params::{BuildParams, ParamError};
 use std::path::{Path, PathBuf};
@@ -340,21 +340,30 @@ fn emit_uncolored_streamed_weak_superkmer_buckets<const K: usize>(
     let sink = SharedBucketSink::create(params, graph_count)?;
     let mut stats = PartitionStats::new(graph_count);
     let mut worker_elapsed = Duration::ZERO;
-    let workers = params.partition_workers(usize::MAX);
+    // The user's thread budget caps *total* concurrency: reader threads,
+    // sharding workers, and decode slots together must not exceed it. Decode
+    // gets half the post-reader budget -- read-mode partitioning measured
+    // decode-heavy -- and the shared DecoderPool makes that half one
+    // aggregate ceiling: decoders spawn lazily against it, rapidgzip's
+    // per-stream calibration trims what each file uses, and an early
+    // finisher's capacity flows to the laggards instead of being stranded by
+    // a per-reader division. When the (opt-in) broker is active this is only
+    // the opening split.
+    let budget = params.partition_workers(usize::MAX);
+    let inflate_workers = (budget.saturating_sub(readers) / 2).max(1);
+    let workers = budget
+        .saturating_sub(readers)
+        .saturating_sub(inflate_workers)
+        .max(1);
     let buffers = (2 * (workers + readers)).min(STREAM_POOL_BYTES / STREAM_BATCH_BASES);
     eprintln!(
-        "cuttlefish: uncolored partition streaming {readers} reader(s) into {workers} worker(s), {buffers} batch buffer(s)"
+        "cuttlefish: uncolored partition streaming {readers} reader(s) into {workers} worker(s), pooled inflate budget {inflate_workers}, {buffers} batch buffer(s)"
     );
-
-    // Readers decompress; BGZF splits across its blocks and plain gzip across
-    // rapidgzip's speculative workers. The static split shares the budget
-    // evenly among readers; when the broker is active this is only the
-    // opening, and the closed loop moves slots to whichever side's measured
-    // busy time says it owns them.
-    let inflate_workers = (workers / readers.max(1)).max(1);
-    let registry = Arc::new(crate::input::InflateRegistry::new(
-        inflate_workers * readers,
-    ));
+    let inflate_pool = rapidgzip_core::DecoderPool::builder()
+        .workers(inflate_workers)
+        .build()
+        .ok();
+    let registry = Arc::new(crate::input::InflateRegistry::new(inflate_workers));
     let gate = Arc::new(ShardingGate::new(workers));
     let broker = if !dynamic_inflate_split_diagnostic() {
         None
@@ -459,6 +468,7 @@ fn emit_uncolored_streamed_weak_superkmer_buckets<const K: usize>(
             let next_source = &next_source;
             let work_order = &work_order;
             let registry = &registry;
+            let inflate_pool = &inflate_pool;
             reader_handles.push(scope.spawn(move || {
                 let result = (|| -> Result<(u64, usize), PartitionRunError> {
                     let mut records = 0u64;
@@ -478,6 +488,7 @@ fn emit_uncolored_streamed_weak_superkmer_buckets<const K: usize>(
                             source_id,
                             K + 1,
                             inflate_workers,
+                            inflate_pool.as_ref(),
                             Some(registry),
                             |fragment| {
                                 batch.push(fragment);
@@ -717,13 +728,28 @@ fn emit_colored_weak_superkmer_buckets<const K: usize>(
         let source_drain_nanos = std::sync::atomic::AtomicU64::new(0);
         let workers = params.partition_workers(window.len());
         // A worker owns a whole source, which is what keeps each source's
-        // records grouped in the buckets -- the invariant the color-signature
-        // hash depends on. Decompression inside one file has no ordering
-        // stake, so threads beyond one sharding worker per file are spent
-        // there instead of idling when sources are few and large.
-        let inflate_workers = (params.threads.max(1) / workers.max(1)).max(1);
+        // records grouped in the buckets. Decompression inside one file has
+        // no ordering stake, but the thread budget caps *total* concurrency,
+        // so the decode pool gets exactly what the sharding workers leave:
+        // few large sources leave most of the budget to decode; many small
+        // sources leave none, and stay on the serial decoder regardless via
+        // the compressed-size threshold.
+        let inflate_workers = params.threads.max(1).saturating_sub(workers).max(1);
+        let inflate_pool = (params.threads.max(1) > workers)
+            .then(|| {
+                rapidgzip_core::DecoderPool::builder()
+                    .workers(inflate_workers)
+                    .build()
+                    .ok()
+            })
+            .flatten();
         eprintln!(
-            "cuttlefish: colored partition using {workers} worker(s), {inflate_workers} inflate thread(s) each"
+            "cuttlefish: colored partition using {workers} worker(s), pooled inflate budget {}",
+            if inflate_pool.is_some() {
+                inflate_workers
+            } else {
+                0
+            },
         );
         let mut emitters = Vec::with_capacity(workers);
         std::thread::scope(|scope| {
@@ -734,6 +760,7 @@ fn emit_colored_weak_superkmer_buckets<const K: usize>(
                 let work_order = &work_order;
                 let parse_only_nanos = &parse_only_nanos;
                 let source_drain_nanos = &source_drain_nanos;
+                let inflate_pool = &inflate_pool;
                 handles.push(scope.spawn(move || {
                     let mut worker_stats = PartitionStats::new(graph_count);
                     let mut elapsed = Duration::ZERO;
@@ -750,11 +777,13 @@ fn emit_colored_weak_superkmer_buckets<const K: usize>(
                         let source_id = u32::try_from(source_start + offset + 1)
                             .map_err(|_| PartitionRunError::TooManySources)?;
                         let parse_call_started = Instant::now();
-                        match parse_fragments_borrowed_with(
+                        match crate::input::parse_fragments_borrowed_with_registry(
                             &window[offset],
                             source_id,
                             K + 1,
                             inflate_workers,
+                            inflate_pool.as_ref(),
+                            None,
                             |fragment| {
                                 let started = Instant::now();
                                 emit_fragment_seq_weak_superkmer_buckets::<K, InputError>(

@@ -134,17 +134,28 @@ where
         min_len,
         inflate_workers,
         None,
+        None,
         on_fragment,
     )
 }
 
-/// As [`parse_fragments_borrowed_with`], with an optional [`InflateRegistry`]
-/// that gains control of every rapidgzip decoder opened for this file.
+/// Files whose compressed size falls below this go through the serial
+/// decoder even when a parallel budget exists: rapidgzip's speculative
+/// startup only pays for itself on streams with room to split, and the
+/// many-tiny-files regime (a pangenome of per-genome gzips) would otherwise
+/// spend more on per-file decoder setup than on inflation.
+const PARALLEL_INFLATE_MIN_COMPRESSED_BYTES: u64 = 4 * 1024 * 1024;
+
+/// As [`parse_fragments_borrowed_with`], with an optional shared
+/// [`rapidgzip_core::DecoderPool`] bounding aggregate decode slots across
+/// every open file, and an optional [`InflateRegistry`] that gains control of
+/// every rapidgzip decoder opened for this file.
 pub(crate) fn parse_fragments_borrowed_with_registry<P, F>(
     path: P,
     source_id: u32,
     min_len: usize,
     inflate_workers: usize,
+    pool: Option<&rapidgzip_core::DecoderPool>,
     registry: Option<&std::sync::Arc<InflateRegistry>>,
     mut on_fragment: F,
 ) -> Result<u64, InputError>
@@ -162,8 +173,12 @@ where
         // decode block-parallel, and plain single-member gzip decodes through
         // speculative mid-stream splits. Measured at parity with the retired
         // dedicated BGZF reader over three interleaved pairs.
-        if inflate_workers > 1 && !sequential_inflate_diagnostic() {
-            open_parallel_gzip_reader(path, inflate_workers, registry)?
+        let large_enough = file
+            .metadata()
+            .map(|meta| meta.len() >= PARALLEL_INFLATE_MIN_COMPRESSED_BYTES)
+            .unwrap_or(false);
+        if inflate_workers > 1 && large_enough && !sequential_inflate_diagnostic() {
+            open_parallel_gzip_reader(path, inflate_workers, pool, registry)?
         } else {
             Box::new(MultiGzDecoder::new(file))
         }
@@ -340,6 +355,7 @@ impl Drop for RegisteredReader {
 fn open_parallel_gzip_reader(
     path: &Path,
     inflate_workers: usize,
+    pool: Option<&rapidgzip_core::DecoderPool>,
     registry: Option<&std::sync::Arc<InflateRegistry>>,
 ) -> Result<Box<dyn Read>, InputError> {
     let build_error = |message: String| InputError::Io {
@@ -348,10 +364,16 @@ fn open_parallel_gzip_reader(
     };
     // Under a registry the per-decoder ceiling is owned by the broker, so the
     // builder gets the whole aggregate as immutable headroom and the live
-    // limit is applied through the handle at registration.
+    // limit is applied through the handle at registration. Under a shared
+    // pool the pool arbitrates aggregate slots, so per-decoder headroom is
+    // likewise the full budget.
     let headroom = registry.map_or(inflate_workers, |r| r.aggregate_limit());
-    let reader = rapidgzip_core::Decoder::builder()
-        .decoder_threads(headroom.max(inflate_workers))
+    let mut builder =
+        rapidgzip_core::Decoder::builder().decoder_threads(headroom.max(inflate_workers));
+    if let Some(pool) = pool {
+        builder = builder.decoder_pool(pool.clone());
+    }
+    let reader = builder
         .build()
         .map_err(|error| build_error(format!("rapidgzip configuration: {error}")))?
         .open(path)

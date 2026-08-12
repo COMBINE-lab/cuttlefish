@@ -119,16 +119,20 @@ sharding; parallel inflate for colored readers (invariant-safe — see the
 source-grouping note below). Adoption is decided **conditional on winning**
 on `mbal`/`SRR105788`/`ggallus` without regressing either 150k gate.
 
-*Constraint recorded for any colored-partitioning change — corrected during
-R3:* the color-signature hash prefers each source's records **contiguous per
-bucket** (`add_source_hashed` dedups only against the last source). Tracing
-the production flow shows mid-run atlas flushes can already split a source's
-records mid-window, and the pipeline stays correct: the second pass rebuilds
-exact source sets (`normalize_source_sets`), so an interleave only fragments
-color-hash classes and costs extra unknown-color resolution — a performance
-property, not a correctness invariant. Colored-partitioning redesigns are
-therefore *not* hard-blocked on grouping; they trade grouping quality against
-resolution work.
+*Constraint history, finally settled:* the color-class hash is exact only
+when each source's occurrences of a vertex are consecutive per bucket. The
+R3-era note claiming this was "a performance property, not a correctness
+invariant" was itself wrong for the class-reuse path: a repeated k-mer whose
+records interleave with another of its sources can alias a different class's
+hash, which `resolve_or_insert` reuses without set comparison. C++ closes
+this structurally by sorting each bucket per source window at write time.
+The Rust pipeline now closes it at *read* time — every colored bucket is
+counting-sorted by source before the first pass hashes anything
+(`ColoredBucketRecords::load_sorted`) — which restores exact C++-level
+fidelity (only true 64-bit set-hash collisions remain), hands the second
+pass an in-memory copy instead of a disk re-read, and makes write-side
+record ordering entirely irrelevant, freeing any future colored-partition
+parallelization from color coupling.
 
 **B2. Per-unitig label allocation in local contraction.**
 `extract_maximal_unitig_compact` (`subgraph.rs:1224`) allocates a fresh

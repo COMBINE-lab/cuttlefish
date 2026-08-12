@@ -632,6 +632,118 @@ pub struct BucketPackedRecord {
     pub words: Vec<u64>,
 }
 
+/// One colored bucket's records, materialized and sorted by source id.
+///
+/// The color-class hash is exact only when every source's occurrences of a
+/// vertex are consecutive in the bucket's record order -- C++ guarantees
+/// this by counting-sorting each bucket per source window at write time.
+/// The Rust partitioner's source-ownership scheme approximates it, and a
+/// repeated k-mer whose records straddle a chunk boundary could alias
+/// another class's hash. Sorting at read time restores the guarantee
+/// exactly, makes write-side ordering irrelevant, and hands the second
+/// (wanted-color) pass an in-memory copy instead of a disk re-read.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ColoredBucketRecords {
+    graph_id: usize,
+    label_words: usize,
+    /// Per record, ascending after the sort.
+    sources: Vec<u32>,
+    lens: Vec<u8>,
+    /// Bit 0: left-discontinuous; bit 1: right-discontinuous.
+    flags: Vec<u8>,
+    /// `label_words` words per record.
+    words: Vec<u64>,
+}
+
+impl ColoredBucketRecords {
+    pub(crate) fn load_sorted(
+        store: &BucketStore,
+        entries: &[BucketManifestEntry],
+    ) -> Result<Self, BucketError> {
+        let total_records = entries.iter().map(|entry| entry.records as usize).sum();
+        let mut graph_id = usize::MAX;
+        let mut label_words = 0usize;
+        let mut sources = Vec::with_capacity(total_records);
+        let mut lens = Vec::with_capacity(total_records);
+        let mut flags = Vec::with_capacity(total_records);
+        let mut words = Vec::new();
+        let mut max_source = 0u32;
+        for entry in entries {
+            let mut reader = store.reader(entry)?;
+            if !reader.header().colored {
+                return Err(BucketError::MalformedRecord);
+            }
+            if graph_id == usize::MAX {
+                graph_id = reader.header().graph_id;
+                label_words = reader.header().label_words;
+                words.reserve(total_records * label_words);
+            }
+            reader.try_for_each_borrowed_packed_record(|record| {
+                let source = record.source_id.ok_or(BucketError::MalformedRecord)?;
+                max_source = max_source.max(source);
+                sources.push(source);
+                lens.push(u8::try_from(record.len).map_err(|_| BucketError::MalformedRecord)?);
+                flags.push(
+                    u8::from(record.left_discontinuous)
+                        | (u8::from(record.right_discontinuous) << 1),
+                );
+                debug_assert_eq!(record.words.len(), label_words);
+                words.extend_from_slice(record.words);
+                Ok::<(), BucketError>(())
+            })?;
+        }
+
+        // Stable counting sort by source id.
+        let mut counts = vec![0u32; max_source as usize + 2];
+        for &source in &sources {
+            counts[source as usize + 1] += 1;
+        }
+        for index in 1..counts.len() {
+            counts[index] += counts[index - 1];
+        }
+        let mut sorted_sources = vec![0u32; sources.len()];
+        let mut sorted_lens = vec![0u8; lens.len()];
+        let mut sorted_flags = vec![0u8; flags.len()];
+        let mut sorted_words = vec![0u64; words.len()];
+        for (index, &source) in sources.iter().enumerate() {
+            let output = counts[source as usize] as usize;
+            counts[source as usize] += 1;
+            sorted_sources[output] = source;
+            sorted_lens[output] = lens[index];
+            sorted_flags[output] = flags[index];
+            sorted_words[output * label_words..(output + 1) * label_words]
+                .copy_from_slice(&words[index * label_words..(index + 1) * label_words]);
+        }
+
+        Ok(Self {
+            graph_id,
+            label_words,
+            sources: sorted_sources,
+            lens: sorted_lens,
+            flags: sorted_flags,
+            words: sorted_words,
+        })
+    }
+
+    pub(crate) fn try_for_each<E, F>(&self, mut f: F) -> Result<(), E>
+    where
+        E: From<BucketError>,
+        F: for<'a> FnMut(BorrowedBucketPackedRecord<'a>) -> Result<(), E>,
+    {
+        for index in 0..self.sources.len() {
+            f(BorrowedBucketPackedRecord {
+                graph_id: self.graph_id,
+                len: self.lens[index] as usize,
+                source_id: Some(self.sources[index]),
+                left_discontinuous: self.flags[index] & 1 != 0,
+                right_discontinuous: self.flags[index] & 2 != 0,
+                words: &self.words[index * self.label_words..(index + 1) * self.label_words],
+            })?;
+        }
+        Ok(())
+    }
+}
+
 pub(crate) struct BorrowedBucketPackedRecord<'a> {
     pub graph_id: usize,
     pub len: usize,

@@ -13459,8 +13459,6 @@ fn contract_local_subgraph<const K: usize>(
     if subgraph.colored {
         let repository = color_repository.ok_or(DiscontinuityInputError::MissingColorRuns)?;
         let runs = subgraph.contract_colored_resolved_with(
-            store,
-            &group.entries,
             repository,
             group.index % repository.worker_count(),
             &mut emit_unitig,

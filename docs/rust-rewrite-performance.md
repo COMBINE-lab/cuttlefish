@@ -1939,3 +1939,27 @@ This is the largest single win in the rewrite's history, and the pairing
 with the failed attempt is the point of recording both: the same profile
 justified both changes; only interleaved measurement could tell a layout
 that touches fewer lines from one that misses fewer.
+
+## R2: the colored second pass is the roll, not the probes
+
+Applying the R1 flat-and-prefetch treatment to the wanted-color map -- the
+structure the colored second pass probes once per vertex, 25.7% of the
+post-R1 phase -- regressed colored local contraction 194.2 -> 212.1 s (+9%)
+over two order-alternated pairs, and was reverted. The diagnosis inverts
+R1's: the wanted map holds only the color-class representatives of one
+subgraph, small enough to live in cache, so its probes never missed; the
+second pass's cost is the k-mer re-roll itself (packed-base extraction,
+roll, canonical-min), and the prefetch pre-pass doubled exactly that roll.
+The same profile shape -- a hot per-vertex loop over a map -- meant opposite
+things at two sizes of map, which is now the second entry in this record
+proving that cycles profiles cannot substitute for interleaved measurement.
+
+Where that leaves colored local contraction (194 s at t64, against 109 s
+uncolored): the second pass's ~50 s is fundamental re-roll work, removable
+only by fusing the passes -- collecting source relations during the first
+read requires knowing the wanted set before contraction has produced it, so
+a fusion would have to collect speculatively for every vertex, a memory
+explosion. Recorded as a possible future redesign, not attempted. The walk
+(8%), delta encoding (4.9%, already word-optimized), and repository ops
+(~3%) offer no lever above the noise floor. R2 closes with the second pass
+measured and understood.

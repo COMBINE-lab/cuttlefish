@@ -58,6 +58,9 @@ const DEFAULT_BUCKET_SEGMENT_BYTES: u64 = 256 * 1024;
 /// coordinate-bucket fanout, all of which plan against the same budget.
 const RESERVED_NON_BUCKET_DESCRIPTORS: usize = 384;
 
+static ATLAS_LOCK_PROFILE: crate::discontinuity::LockProfile =
+    crate::discontinuity::LockProfile::new();
+
 fn bucket_segment_bytes() -> u64 {
     static BYTES: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
     *BYTES.get_or_init(|| {
@@ -1735,9 +1738,11 @@ impl SharedBucketSink {
         if pending.graph_ids.len() * record_len != pending.bytes.len() {
             return Err(BucketError::MalformedRecord);
         }
+        let wait = crate::discontinuity::LockWait::start(&ATLAS_LOCK_PROFILE);
         let mut atlas = self.atlases[atlas_id]
             .lock()
             .map_err(|_| BucketError::WorkerPanic)?;
+        let _hold = wait.acquired();
         for (&graph_id, record) in pending
             .graph_ids
             .iter()
@@ -1783,9 +1788,11 @@ impl SharedBucketSink {
         let started = Instant::now();
         let atlas_id = graph_id / ATLAS_GRAPH_COUNT;
         let local_graph_id = graph_id % ATLAS_GRAPH_COUNT;
+        let wait = crate::discontinuity::LockWait::start(&ATLAS_LOCK_PROFILE);
         let mut atlas = self.atlases[atlas_id]
             .lock()
             .map_err(|_| BucketError::WorkerPanic)?;
+        let _hold = wait.acquired();
         atlas.append_bucket(local_graph_id, pending)?;
         if self.colored {
             return Ok(());
@@ -1820,9 +1827,11 @@ impl SharedBucketSink {
             return Err(BucketError::MalformedRecord);
         }
         let started = Instant::now();
+        let wait = crate::discontinuity::LockWait::start(&ATLAS_LOCK_PROFILE);
         let mut atlas = self.atlases[atlas_id]
             .lock()
             .map_err(|_| BucketError::WorkerPanic)?;
+        let _hold = wait.acquired();
         for (&graph_id, record) in pending
             .graph_ids
             .iter()
@@ -2051,6 +2060,7 @@ impl SharedBucketSink {
             }
         }
         self.record_flush_stats(finish_flush_stats, finish_started.elapsed());
+        ATLAS_LOCK_PROFILE.report("bucket atlases");
         entries.sort_unstable_by_key(|entry| entry.graph_id);
 
         // Nothing to patch and nothing to reopen. The per-file layout finished

@@ -1852,3 +1852,38 @@ inside their noise bands. The win is smaller than a billion allocations might
 suggest because jemalloc already served same-sized round trips from
 thread-local caches; what remains is the copy saved and the malloc/free pair
 gone from the hottest loop.
+
+## The lock-scope findings measured, and left alone
+
+The review flagged two locks held across real work: LZ4 compression inside
+the per-atlas mutex, and the container `pwrite` inside the per-block edge
+buffer mutex. Both were gated on contention evidence before any change.
+`CF3_RS_LOCK_PROFILE` now provides it: wait (request to acquisition) and hold
+(guard lifetime) accounting on both lock families, printed at phase
+finalization, costing one cached-bool branch when off.
+
+Measured on 150k Salmonella at t64 and mbal at t256:
+
+| lock family | acquisitions | wait | hold | wait share of worker time |
+| --- | ---: | ---: | ---: | ---: |
+| edge block buffers, uncolored t64 | 136.4 M | 4.2 s | 100.8 s | 0.04% |
+| bucket atlases, uncolored t64 | 14.3 M | 213.5 s | 1,989.7 s | ~3% |
+| bucket atlases, colored t64 | 12.5 M | 242.5 s | 2,489.6 s | ~3% |
+| bucket atlases, mbal t256 | 1.4 M | 20.5 s | 324.3 s | 0.13% |
+
+The edge-buffer design is vindicated outright: 8,384 blocks across 64
+workers collide almost never. The atlas locks are busy -- 28-35% of partition
+worker time runs under one -- but not fought over: a wait/hold ratio of ~0.10
+at t64 and 0.06 at t256 means the expected wall win from moving compression
+outside the lock is bounded by 2-3 s, at the campaign resolution floor, for
+real surgery in a correctness-critical writer. Both findings close as
+measured-and-retained; the profiler stays for the day a workload or host
+changes the answer.
+
+Also recorded: the review's per-fragment `Instant::now` finding (B3) was
+withdrawn after quantification -- 18.1 ns per vDSO read times 23.9 M colored
+fragments is 13 ms of wall across 64 workers. The color-table spin-waits now
+escalate spin -> yield -> 50 us sleep (`crossbeam_utils::Backoff`, the
+libradicl policy); two colored pairs confirm neutrality. Comments now record
+why poison-swallowing locks are sound under `panic = "abort"` and why the
+color-repository worker cap of 256 is load-bearing.

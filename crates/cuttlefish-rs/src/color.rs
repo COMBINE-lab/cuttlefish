@@ -475,8 +475,16 @@ impl AtomicColorTable {
             }
             if observed == key {
                 let mut value = slot.value.load(Ordering::Acquire);
+                let backoff = crossbeam_utils::Backoff::new();
                 while value == Self::PENDING_VALUE {
-                    std::hint::spin_loop();
+                    // Spin, then yield, then sleep: the publishing thread may
+                    // be descheduled, and spinning through that burns the core
+                    // it needs. Same policy as libradicl's reader queues.
+                    if backoff.is_completed() {
+                        std::thread::sleep(std::time::Duration::from_micros(50));
+                    } else {
+                        backoff.snooze();
+                    }
                     value = slot.value.load(Ordering::Acquire);
                 }
                 self.active_insertions.fetch_sub(1, Ordering::Release);
@@ -504,8 +512,16 @@ impl AtomicColorTable {
             }
             if observed == key {
                 let mut value = slot.value.load(Ordering::Acquire);
+                let backoff = crossbeam_utils::Backoff::new();
                 while value == Self::PENDING_VALUE {
-                    std::hint::spin_loop();
+                    // Spin, then yield, then sleep: the publishing thread may
+                    // be descheduled, and spinning through that burns the core
+                    // it needs. Same policy as libradicl's reader queues.
+                    if backoff.is_completed() {
+                        std::thread::sleep(std::time::Duration::from_micros(50));
+                    } else {
+                        backoff.snooze();
+                    }
                     value = slot.value.load(Ordering::Acquire);
                 }
                 return Some(ColorCoordinate::from_u40(value));
@@ -544,8 +560,13 @@ impl AtomicColorTable {
         if self.quiesced.load(Ordering::Acquire) {
             return;
         }
+        let backoff = crossbeam_utils::Backoff::new();
         while self.active_insertions.load(Ordering::Acquire) != 0 {
-            std::hint::spin_loop();
+            if backoff.is_completed() {
+                std::thread::sleep(std::time::Duration::from_micros(50));
+            } else {
+                backoff.snooze();
+            }
         }
         self.quiesced.store(true, Ordering::Release);
     }

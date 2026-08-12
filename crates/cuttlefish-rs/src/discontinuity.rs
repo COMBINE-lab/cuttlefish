@@ -489,6 +489,92 @@ impl<const K: usize> Iterator for ExternalDiscontinuityIter<K> {
     }
 }
 
+/// Env-gated lock contention accounting (`CF3_RS_LOCK_PROFILE`).
+///
+/// Wait is the time from requesting a mutex to acquiring it; hold is the time
+/// the guard lives. Totals print at phase finalization when the switch is
+/// set, separating "the lock is fought over" from "the work under it is big"
+/// -- the distinction the B4 review finding is gated on.
+pub(crate) struct LockProfile {
+    pub wait_nanos: AtomicU64,
+    pub hold_nanos: AtomicU64,
+    pub acquisitions: AtomicU64,
+}
+
+impl LockProfile {
+    pub(crate) const fn new() -> Self {
+        Self {
+            wait_nanos: AtomicU64::new(0),
+            hold_nanos: AtomicU64::new(0),
+            acquisitions: AtomicU64::new(0),
+        }
+    }
+
+    pub(crate) fn report(&self, label: &str) {
+        let acquisitions = self.acquisitions.load(Ordering::Relaxed);
+        if acquisitions == 0 {
+            return;
+        }
+        eprintln!(
+            "cuttlefish: lock profile: {label}: {acquisitions} acquisition(s), wait {:.3}s, hold {:.3}s",
+            self.wait_nanos.load(Ordering::Relaxed) as f64 / 1e9,
+            self.hold_nanos.load(Ordering::Relaxed) as f64 / 1e9,
+        );
+    }
+}
+
+pub(crate) static EDGE_BUFFER_LOCK_PROFILE: LockProfile = LockProfile::new();
+
+pub(crate) fn lock_profile_diagnostic() -> bool {
+    static PROFILE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *PROFILE.get_or_init(|| std::env::var_os("CF3_RS_LOCK_PROFILE").is_some())
+}
+
+/// Measures one wait-then-hold pair when profiling is on; free otherwise.
+pub(crate) struct LockWait<'a> {
+    profile: &'a LockProfile,
+    started: Option<Instant>,
+}
+
+impl<'a> LockWait<'a> {
+    #[inline]
+    pub(crate) fn start(profile: &'a LockProfile) -> Self {
+        Self {
+            profile,
+            started: lock_profile_diagnostic().then(Instant::now),
+        }
+    }
+
+    /// Call immediately after the guard is acquired; drop the result when the
+    /// guard is released (declare it after the guard so it drops first).
+    #[inline]
+    pub(crate) fn acquired(self) -> Option<LockHold<'a>> {
+        self.started.map(|started| {
+            self.profile
+                .wait_nanos
+                .fetch_add(started.elapsed().as_nanos() as u64, Ordering::Relaxed);
+            self.profile.acquisitions.fetch_add(1, Ordering::Relaxed);
+            LockHold {
+                profile: self.profile,
+                acquired: Instant::now(),
+            }
+        })
+    }
+}
+
+pub(crate) struct LockHold<'a> {
+    profile: &'a LockProfile,
+    acquired: Instant,
+}
+
+impl Drop for LockHold<'_> {
+    fn drop(&mut self) {
+        self.profile
+            .hold_nanos
+            .fetch_add(self.acquired.elapsed().as_nanos() as u64, Ordering::Relaxed);
+    }
+}
+
 fn read_discontinuity_unitig_from_reader<const K: usize>(
     input: &mut BufReader<File>,
     path: &Path,
@@ -1173,6 +1259,13 @@ enum BlockedReadTask<'a> {
 struct ConcurrentBlockedAppend {
     /// Extents this block owns, ordered by flush. Only ever taken while the
     /// block's buffer lock is held, so a block's order is its write order.
+    ///
+    /// Every `.lock()` on these mutexes swallows poison with `into_inner()`.
+    /// That is sound only because the release profile sets `panic = "abort"`:
+    /// a worker cannot panic mid-append and leave a half-written buffer for
+    /// the next writer to extend, which would silently break the
+    /// extents-plus-buffer == edges * record_len invariant. A future move
+    /// away from abort-on-panic must revisit every such site.
     extents: Mutex<Vec<BlockExtent>>,
     record_len: usize,
     buffer: Mutex<Vec<u8>>,
@@ -1229,10 +1322,12 @@ impl ConcurrentBlockedEdgeWriters {
             return Ok(());
         }
         let block = &self.blocks[edges[0].block];
+        let wait = LockWait::start(&EDGE_BUFFER_LOCK_PROFILE);
         let mut buffer = block
             .buffer
             .lock()
             .unwrap_or_else(|poison| poison.into_inner());
+        let _hold = wait.acquired();
         for edge in edges {
             debug_assert_eq!(edge.block, edges[0].block);
             if buffer.len() + block.record_len > BLOCKED_EDGE_WRITE_BUFFER_BYTES {
@@ -1265,10 +1360,12 @@ impl ConcurrentBlockedEdgeWriters {
                 end += 1;
             }
             let block = &self.blocks[block_id];
+            let wait = LockWait::start(&EDGE_BUFFER_LOCK_PROFILE);
             let mut buffer = block
                 .buffer
                 .lock()
                 .unwrap_or_else(|poison| poison.into_inner());
+            let _hold = wait.acquired();
             for edge in &edges[start..end] {
                 let mut bytes = edge.bytes;
                 add_unitig_base_to_encoded_edge::<K>(&mut bytes, unitig_off, unitig_base);
@@ -12353,6 +12450,10 @@ fn contract_local_subgraphs_into_external_inputs<const K: usize>(
                 .unwrap_or_else(|| path.with_extension("color-repository"));
             ConcurrentColorRepository::create(
                 dir,
+                // The cap is load-bearing, not a tuning choice: a color
+                // coordinate packs its worker index into 8 bits
+                // (`ColorCoordinate`, state.rs), so more than 256 repository
+                // workers would alias coordinates.
                 threads.min(256),
                 expected_colors.max(entries.len() * 8),
                 num_colors,
@@ -12598,6 +12699,7 @@ fn contract_local_subgraphs_into_external_inputs<const K: usize>(
             "cuttlefish: local edge-writer finalization {:.3}s",
             edge_finish_elapsed.as_secs_f64()
         );
+        EDGE_BUFFER_LOCK_PROFILE.report("edge block buffers");
     }
 
     eprintln!(

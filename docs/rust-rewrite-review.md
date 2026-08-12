@@ -60,7 +60,9 @@ stops a future call site outside the pool. Low priority: convert to
 `thread_local`-style per-worker ownership or add a debug assertion on the
 index. Same class: `JoinNeighborWriter` (`:10322`), `PathInfoSlot` (`:15662`).
 
-**A3. Unbounded spin-waits in the color table** (`color.rs:479, 508, 547`).
+**A3. Unbounded spin-waits in the color table** (`color.rs:479, 508, 547`)
+— **fixed**: all three sites now use the escalation below; two colored
+interleaved pairs confirm neutrality.
 Readers finding a `PENDING_VALUE` slot spin with `std::hint::spin_loop()` and
 no escalation; `wait_until_quiescent` likewise. Under oversubscription (or if
 an inserting thread is descheduled) this burns cores the inserter needs.
@@ -133,12 +135,19 @@ Touches the `LocalUnitig` type used by tests. **Measure:** `local_s` on both
 use an interleaved pair and accept only a clear `local_s` win.
 
 **B3. Per-fragment `Instant::now()` on the direct and colored partition
-paths** (`partition.rs:524/527` and `:636/639`). Two `clock_gettime` per
-sequence fragment; the streamed path already times per batch. On 150k
-Salmonella (many small fragments, colored path) this is millions of syscalls
-inside the parse callback. **Candidate:** time per file (the loop already has
-per-file boundaries), matching the streamed path's granularity. Trivial,
-low-risk; measure with one colored pair (`partition_s`).
+paths** — **withdrawn after quantification.** `Instant::now` is a vDSO read
+measured at 18.1 ns/call on this host, not a syscall, and colored 150k
+Salmonella parses 23.9 M fragments: two reads each totals 0.86 s of CPU
+across 64 workers, ~13 ms of wall. Changing the timing granularity would risk
+the scan-vs-parse attribution the per-fragment split exists to provide, for
+an unmeasurable win. Left as is; recorded so it is not re-proposed.
+
+**B4 — closed: measured, no change warranted.** `CF3_RS_LOCK_PROFILE` now
+measures both lock families; see "The lock-scope findings measured, and left
+alone" in the performance record. Edge buffers: 0.04% wait. Atlas locks: ~3%
+wait at t64, 0.13% at t256, wait/hold ~0.1 — below the actionable threshold
+for surgery in a correctness-critical writer. Original finding retained below
+for context.
 
 **B4. Lock-scope items — evidence before action.** Two sites hold a lock
 across real work: LZ4 compression runs inside the per-atlas mutex (shared

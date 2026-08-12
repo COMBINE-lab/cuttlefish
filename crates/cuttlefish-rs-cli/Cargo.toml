@@ -29,5 +29,8 @@ mimalloc = ["dep:mimalloc"]
 
 [dependencies]
 cuttlefish-rs.workspace = true
+# Only for compressing `colors` output; the same zlib-rs backend the library
+# reads gzipped input with.
+flate2 = { version = "1.1.9", default-features = false, features = ["zlib-rs"] }
 mimalloc = { version = "0.1.48", optional = true }
 tikv-jemallocator = { version = "0.5.4", optional = true }

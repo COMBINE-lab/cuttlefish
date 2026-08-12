@@ -105,6 +105,7 @@ name = "cuttlefish-rs-cli"
 version = "0.0.1"
 dependencies = [
  "cuttlefish-rs",
+ "flate2",
  "mimalloc",
  "tikv-jemallocator",
 ]

@@ -273,6 +273,132 @@ fn colored_bucket_local_runs_at(threads: usize) {
     fs::remove_dir_all(root).unwrap();
 }
 
+/// Every vertex's colors, read back through the repository reader, must equal
+/// the set of sources that actually contain that k-mer.
+///
+/// This is the check `colors dump` rests on, at the level below the CLI: the
+/// reader has to agree with the encoder about coordinates, and the FASTA
+/// header's packed runs have to name the right vertex ranges. Ground truth
+/// here is the input itself, not another implementation.
+#[test]
+fn colored_runs_resolve_to_the_sources_that_contain_each_kmer() {
+    const K: usize = 7;
+    let root = scratch_prefix("colored-run-sources");
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).unwrap();
+    let sequences: [&[u8]; 3] = [
+        b"AACCGGTTAACCGGTTACGT",
+        b"AACCGGTTAACCTTAAGGCC",
+        b"TTAACCGGTTAACCGGTTAA",
+    ];
+    let mut seqs = Vec::new();
+    for (index, sequence) in sequences.iter().enumerate() {
+        let path = root.join(format!("source{index}.fa"));
+        let mut record = format!(">source{index}\n").into_bytes();
+        record.extend_from_slice(sequence);
+        record.push(b'\n');
+        fs::write(&path, record).unwrap();
+        seqs.push(path.display().to_string());
+    }
+
+    let mut params = BuildParams::new(
+        GraphInput::References,
+        root.join("colored").display().to_string(),
+    );
+    params.k = K as u16;
+    params.minimizer_len = 3;
+    params.color = true;
+    params.threads = 2;
+    params.work_dir = root.display().to_string();
+    params.seqs = seqs;
+    let emitted = emit_weak_superkmer_buckets::<K>(&params, DEFAULT_SUBGRAPH_COUNT).unwrap();
+    let mut inputs = emit_colored_external_discontinuity_inputs_with_threads_in_dir::<K>(
+        &emitted.buckets.bucket_dir,
+        1,
+        params.threads,
+        root.join("local.labels"),
+        root.join("local.colors"),
+        root.join("local.color-repository"),
+        3,
+    )
+    .unwrap();
+    let repository = inputs.color_repository().unwrap().clone();
+    let output_path = root.join("colored.fa");
+    SerialUncoloredCollator::collate_external_stitched_to_fasta_with_threads_in_dir(
+        &mut inputs,
+        params.threads,
+        &root.join("stitch-coords"),
+        &root.join("final-unitigs"),
+        &output_path,
+    )
+    .unwrap();
+    repository
+        .write_metadata(
+            K as u16,
+            &output_path,
+            &sequences
+                .iter()
+                .enumerate()
+                .map(|(index, _)| root.join(format!("source{index}.fa")))
+                .collect::<Vec<_>>(),
+        )
+        .unwrap();
+
+    // Which sources contain each canonical k-mer, straight from the inputs.
+    let mut truth = std::collections::HashMap::<Vec<u8>, std::collections::BTreeSet<u32>>::new();
+    for (index, sequence) in sequences.iter().enumerate() {
+        for window in sequence.windows(K) {
+            truth
+                .entry(canonical_label(window))
+                .or_default()
+                .insert(index as u32 + 1);
+        }
+    }
+
+    let mut reader =
+        cuttlefish_rs::color::ColorRepositoryReader::open(root.join("local.color-repository"))
+            .unwrap();
+    assert_eq!(reader.k(), K as u16);
+    assert_eq!(reader.sources().len(), sequences.len());
+
+    let fasta = fs::read_to_string(&output_path).unwrap();
+    let mut lines = fasta.lines();
+    let mut vertices_checked = 0usize;
+    while let (Some(header), Some(label)) = (lines.next(), lines.next()) {
+        let runs = header
+            .split_whitespace()
+            .skip(1)
+            .map(|field| {
+                let packed = field.parse::<u64>().unwrap();
+                ((packed & 0xFF_FFFF) as usize, packed >> 24)
+            })
+            .collect::<Vec<_>>();
+        assert!(!runs.is_empty());
+        let vertex_count = label.len() - K + 1;
+        for (index, &(start, coordinate)) in runs.iter().enumerate() {
+            let end = runs.get(index + 1).map_or(vertex_count, |next| next.0);
+            let sources = reader
+                .read_color(cuttlefish_rs::state::ColorCoordinate::from_u40(coordinate))
+                .unwrap();
+            for vertex in start..end {
+                let kmer = canonical_label(&label.as_bytes()[vertex..vertex + K]);
+                let expected = truth
+                    .get(&kmer)
+                    .unwrap_or_else(|| panic!("emitted a k-mer no source contains"));
+                assert_eq!(
+                    sources,
+                    expected.iter().copied().collect::<Vec<_>>(),
+                    "vertex {vertex} of {label}",
+                );
+                vertices_checked += 1;
+            }
+        }
+    }
+    assert_eq!(vertices_checked, truth.len());
+
+    fs::remove_dir_all(root).unwrap();
+}
+
 fn normalized_fasta_labels(path: &std::path::Path) -> Vec<Vec<u8>> {
     let mut labels = Vec::new();
     let mut current = Vec::new();

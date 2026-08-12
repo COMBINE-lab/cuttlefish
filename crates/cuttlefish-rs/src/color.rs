@@ -839,6 +839,290 @@ fn color_worker_path(dir: &Path, worker: usize) -> PathBuf {
     dir.join(format!("{worker:03}.colors"))
 }
 
+/// A finished color repository, opened for reading.
+///
+/// [`ColorRepositoryManifest::read_color`] exists for one-off lookups and
+/// rescans a worker file from its start every time, which is fine for a single
+/// coordinate and hopeless for a whole graph. This reader pays one sequential
+/// pass per worker to record where each record begins, after which a lookup is
+/// a seek and one decode. The index costs 8 bytes per *distinct* color set,
+/// not per unitig, which is what makes it affordable on real data: a corpus
+/// with hundreds of millions of unitigs still has orders of magnitude fewer
+/// distinct sets.
+pub struct ColorRepositoryReader {
+    manifest: ColorRepositoryManifest,
+    /// Per worker, the byte offset of every record, plus a trailing end offset.
+    offsets: Vec<Vec<u64>>,
+    sources: Vec<PathBuf>,
+    k: u16,
+    workers: Vec<Option<BufReader<File>>>,
+}
+
+impl ColorRepositoryReader {
+    /// Opens the repository written under `dir`, reading its manifest and
+    /// metadata and indexing every worker file.
+    pub fn open(dir: impl AsRef<Path>) -> Result<Self, ColorError> {
+        let dir = dir.as_ref().to_path_buf();
+        let (k, num_colors, sources) = Self::read_metadata(&dir)?;
+        let records = Self::read_manifest(&dir)?;
+        let manifest = ColorRepositoryManifest {
+            dir,
+            records,
+            num_colors,
+        };
+        let mut offsets = Vec::with_capacity(manifest.records.len());
+        for (worker, &count) in manifest.records.iter().enumerate() {
+            offsets.push(Self::index_worker(&manifest.dir, worker, count)?);
+        }
+        let workers = (0..manifest.records.len()).map(|_| None).collect();
+        Ok(Self {
+            manifest,
+            offsets,
+            sources,
+            k,
+            workers,
+        })
+    }
+
+    /// The k the graph was built at, as recorded in the repository metadata.
+    pub fn k(&self) -> u16 {
+        self.k
+    }
+
+    /// Source paths in color order; source ids are 1-based into this slice.
+    pub fn sources(&self) -> &[PathBuf] {
+        &self.sources
+    }
+
+    /// One past the largest source id, matching the encoder's `num_colors`.
+    pub fn num_colors(&self) -> u32 {
+        self.manifest.num_colors
+    }
+
+    /// Total distinct color sets across all workers.
+    pub fn record_count(&self) -> u64 {
+        self.manifest.records.iter().map(|&n| u64::from(n)).sum()
+    }
+
+    /// Records held by each worker, indexed by worker id.
+    pub fn records_per_worker(&self) -> &[u32] {
+        &self.manifest.records
+    }
+
+    /// Decodes the source set at `coordinate`.
+    pub fn read_color(&mut self, coordinate: ColorCoordinate) -> Result<Vec<u32>, ColorError> {
+        let mut sources = Vec::new();
+        self.read_color_into(coordinate, &mut sources)?;
+        Ok(sources)
+    }
+
+    /// As [`read_color`](Self::read_color), reusing the caller's buffer.
+    pub fn read_color_into(
+        &mut self,
+        coordinate: ColorCoordinate,
+        sources: &mut Vec<u32>,
+    ) -> Result<(), ColorError> {
+        let worker = coordinate.worker();
+        let index = coordinate.index() as usize;
+        let offset = self
+            .offsets
+            .get(worker)
+            .and_then(|offsets| offsets.get(index))
+            .copied()
+            .ok_or(ColorError::MalformedCoordinate(coordinate.as_u40()))?;
+        let path = color_worker_path(&self.manifest.dir, worker);
+        if self.workers[worker].is_none() {
+            let file = File::open(&path).map_err(|source| ColorError::Io {
+                path: path.clone(),
+                source,
+            })?;
+            self.workers[worker] = Some(BufReader::with_capacity(COLOR_BUFFER_BYTES, file));
+        }
+        let input = self.workers[worker]
+            .as_mut()
+            .expect("worker reader was just opened");
+        input
+            .seek(std::io::SeekFrom::Start(offset))
+            .map_err(|source| ColorError::Io {
+                path: path.clone(),
+                source,
+            })?;
+        let decoded = read_color_record(input, self.manifest.num_colors)
+            .map_err(|source| ColorError::Io { path, source })?;
+        sources.clear();
+        sources.extend_from_slice(&decoded);
+        Ok(())
+    }
+
+    /// Streams every record of one worker in storage order.
+    ///
+    /// Sequential decoding, so listing a repository never seeks; the caller
+    /// gets each set with the coordinate that names it.
+    pub fn for_each_record<F>(&self, worker: usize, mut f: F) -> Result<(), ColorError>
+    where
+        F: FnMut(ColorCoordinate, &[u32]) -> Result<(), ColorError>,
+    {
+        let count = *self
+            .manifest
+            .records
+            .get(worker)
+            .ok_or(ColorError::InvalidWorkerCount(worker))?;
+        if count == 0 {
+            return Ok(());
+        }
+        let path = color_worker_path(&self.manifest.dir, worker);
+        let mut input = BufReader::with_capacity(
+            COLOR_BUFFER_BYTES,
+            File::open(&path).map_err(|source| ColorError::Io {
+                path: path.clone(),
+                source,
+            })?,
+        );
+        for index in 0..count as usize {
+            let sources =
+                read_color_record(&mut input, self.manifest.num_colors).map_err(|source| {
+                    ColorError::Io {
+                        path: path.clone(),
+                        source,
+                    }
+                })?;
+            f(
+                ColorCoordinate::discovered(worker as u64, index as u64),
+                &sources,
+            )?;
+        }
+        Ok(())
+    }
+
+    fn index_worker(dir: &Path, worker: usize, count: u32) -> Result<Vec<u64>, ColorError> {
+        let mut offsets = Vec::with_capacity(count as usize + 1);
+        if count == 0 {
+            offsets.push(0);
+            return Ok(offsets);
+        }
+        let path = color_worker_path(dir, worker);
+        let mut input = BufReader::with_capacity(
+            COLOR_BUFFER_BYTES,
+            File::open(&path).map_err(|source| ColorError::Io {
+                path: path.clone(),
+                source,
+            })?,
+        );
+        let mut position = 0u64;
+        for _ in 0..count {
+            offsets.push(position);
+            // Records are length-prefixed precisely so the index pass can skip
+            // their payloads instead of decoding them.
+            let (len, varint_bytes) =
+                read_varint_len(&mut input).map_err(|source| ColorError::Io {
+                    path: path.clone(),
+                    source,
+                })?;
+            std::io::copy(
+                &mut input.by_ref().take(u64::from(len)),
+                &mut std::io::sink(),
+            )
+            .map_err(|source| ColorError::Io {
+                path: path.clone(),
+                source,
+            })?;
+            position += varint_bytes as u64 + u64::from(len);
+        }
+        offsets.push(position);
+        Ok(offsets)
+    }
+
+    fn read_manifest(dir: &Path) -> Result<Vec<u32>, ColorError> {
+        let path = dir.join("manifest.tsv");
+        let text = std::fs::read_to_string(&path).map_err(|source| ColorError::Io {
+            path: path.clone(),
+            source,
+        })?;
+        let mut records = Vec::new();
+        for line in text.lines().skip(1) {
+            let mut fields = line.split('\t');
+            let worker = fields.next().and_then(|f| f.parse::<usize>().ok());
+            let count = fields.next().and_then(|f| f.parse::<u32>().ok());
+            match (worker, count) {
+                (Some(worker), Some(count)) if worker == records.len() => records.push(count),
+                _ => return Err(ColorError::MalformedRepository(path)),
+            }
+        }
+        if records.is_empty() {
+            return Err(ColorError::MalformedRepository(path));
+        }
+        Ok(records)
+    }
+
+    fn read_metadata(dir: &Path) -> Result<(u16, u32, Vec<PathBuf>), ColorError> {
+        let path = dir.join("metadata.tsv");
+        let text = std::fs::read_to_string(&path).map_err(|source| ColorError::Io {
+            path: path.clone(),
+            source,
+        })?;
+        let mut k = None;
+        let mut source_count = None;
+        let mut sources = Vec::new();
+        for line in text.lines() {
+            let mut fields = line.split('\t');
+            match fields.next() {
+                Some("format") => {
+                    if fields.next() != Some("cf3rs-color-repository-v2") {
+                        return Err(ColorError::MalformedRepository(path));
+                    }
+                }
+                Some("k") => k = fields.next().and_then(|f| f.parse::<u16>().ok()),
+                Some("source_count") => {
+                    source_count = fields.next().and_then(|f| f.parse::<u32>().ok());
+                }
+                Some("source") => {
+                    let id = fields.next().and_then(|f| f.parse::<usize>().ok());
+                    let source_path = fields.next();
+                    match (id, source_path) {
+                        (Some(id), Some(source_path)) if id == sources.len() + 1 => {
+                            sources.push(PathBuf::from(source_path));
+                        }
+                        _ => return Err(ColorError::MalformedRepository(path)),
+                    }
+                }
+                _ => {}
+            }
+        }
+        let (Some(k), Some(source_count)) = (k, source_count) else {
+            return Err(ColorError::MalformedRepository(path));
+        };
+        if sources.len() as u32 != source_count {
+            return Err(ColorError::MalformedRepository(path));
+        }
+        // Source ids are 1-based, so the encoder's alphabet is one wider than
+        // the source count.
+        Ok((k, source_count + 1, sources))
+    }
+}
+
+/// Reads a record's length prefix, reporting how many bytes it occupied.
+fn read_varint_len(input: &mut impl Read) -> std::io::Result<(u32, usize)> {
+    let mut value = 0u32;
+    let mut shift = 0;
+    let mut bytes = 0;
+    loop {
+        let mut byte = [0u8; 1];
+        input.read_exact(&mut byte)?;
+        bytes += 1;
+        value |= u32::from(byte[0] & 0x7F) << shift;
+        if byte[0] & 0x80 == 0 {
+            return Ok((value, bytes));
+        }
+        shift += 7;
+        if shift > 28 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "color record length overflows u32",
+            ));
+        }
+    }
+}
+
 /// Writes one length-prefixed colour record.
 ///
 /// The bit stream is byte-padded and preceded by its length so a record can be
@@ -1198,6 +1482,7 @@ pub enum ColorError {
     TooManyColors,
     TooManyColorRuns,
     MalformedUnitigIndex(u64),
+    MalformedRepository(PathBuf),
     PoisonedWriter,
 }
 
@@ -1208,6 +1493,9 @@ impl std::fmt::Display for ColorError {
             Self::InvalidWorkerCount(count) => write!(f, "invalid color worker count: {count}"),
             Self::MalformedSourceSet => write!(f, "color source set is empty or not sorted"),
             Self::MalformedCoordinate(coord) => write!(f, "invalid color coordinate: {coord}"),
+            Self::MalformedRepository(path) => {
+                write!(f, "{}: not a cuttlefish color repository", path.display())
+            }
             Self::TooManyColors => write!(f, "worker color repository exceeds 2^32 entries"),
             Self::TooManyColorRuns => write!(f, "a local unitig exceeds 2^32 color runs"),
             Self::MalformedUnitigIndex(unitig) => {
@@ -1419,6 +1707,73 @@ mod tests {
         let manifest_text = fs::read_to_string(dir.join("manifest.tsv")).unwrap();
         assert!(manifest_text.contains("000.colors"));
         assert!(!manifest_text.contains(&dir.display().to_string()));
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// The reader must agree with the writer on every record, by seek and by
+    /// sequential scan, including the multi-byte length prefixes that the
+    /// index pass skips without decoding.
+    #[test]
+    fn repository_reader_indexes_every_record() {
+        let dir = std::env::temp_dir().join(format!(
+            "cf3-color-reader-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        let num_colors = 600u32;
+        let repository = ConcurrentColorRepository::create(&dir, 4, 64, num_colors + 1).unwrap();
+        let mut expected = Vec::new();
+        for key in 0..40u64 {
+            // Sets wide enough that some records need a two-byte length.
+            let sources = (1..=(key as u32 % 7 + 1) * 40)
+                .map(|index| (index * 7) % num_colors + 1)
+                .collect::<std::collections::BTreeSet<_>>()
+                .into_iter()
+                .collect::<Vec<_>>();
+            let coordinate = repository
+                .resolve_or_insert(key, &sources, key as usize % 4)
+                .unwrap();
+            expected.push((coordinate, sources));
+        }
+        let manifest = repository.finish().unwrap();
+        manifest
+            .write_metadata(
+                31,
+                Path::new("graph.fa"),
+                &(1..=num_colors)
+                    .map(|index| PathBuf::from(format!("source{index}.fa")))
+                    .collect::<Vec<_>>(),
+            )
+            .unwrap();
+
+        let mut reader = ColorRepositoryReader::open(&dir).unwrap();
+        assert_eq!(reader.k(), 31);
+        assert_eq!(reader.sources().len(), num_colors as usize);
+        assert_eq!(reader.num_colors(), num_colors + 1);
+        for (coordinate, sources) in &expected {
+            assert_eq!(&reader.read_color(*coordinate).unwrap(), sources);
+        }
+        // Reading out of storage order must not disturb the seek index.
+        for (coordinate, sources) in expected.iter().rev() {
+            assert_eq!(&reader.read_color(*coordinate).unwrap(), sources);
+        }
+
+        let mut scanned = Vec::new();
+        for worker in 0..reader.records_per_worker().len() {
+            reader
+                .for_each_record(worker, |coordinate, sources| {
+                    scanned.push((coordinate, sources.to_vec()));
+                    Ok(())
+                })
+                .unwrap();
+        }
+        assert_eq!(scanned.len() as u64, reader.record_count());
+        scanned.sort_by_key(|(coordinate, _)| coordinate.as_u40());
+        let mut expected_sorted = expected.clone();
+        expected_sorted.sort_by_key(|(coordinate, _)| coordinate.as_u40());
+        assert_eq!(scanned, expected_sorted);
+
         fs::remove_dir_all(dir).unwrap();
     }
 

@@ -244,3 +244,75 @@ fixed in commit `f9ed7e7` (`Flush external buckets before concurrent reads`).
 The nondeterministic record-count problem described here was observed after
 that fix.
 
+
+## Investigation update (2026-08-13): 64 threads is *not* safe
+
+The 2026-07-25 update above concluded that "64 threads is deterministic and
+correct" and that "low-thread C++ is therefore a valid correctness reference".
+**Both claims are false.** They rested on three clean runs; a larger series at
+64 threads fails.
+
+### Configuration
+
+Binary `build-cpp-compare/src/cuttlefish` as built 2026-07-26, i.e. *with* the
+`Concurrent_Hash_Table` correctness fix described above. Input is the same
+10,000-assembly Salmonella list used by the one-minute reproducer:
+
+```bash
+PARLAY_NUM_THREADS=64 build-cpp-compare/src/cuttlefish build --ref \
+  -l /scratch4/rob/cf3-bench/lists/salmonella-10000.list \
+  -k <31|55> --min-len 12 -w <fresh work dir> -o <fresh output prefix>
+```
+
+`--color` added for the colored rows. No `--cutoff` (reference default, 1). Runs
+were done both under a `systemd-run --scope -p MemoryMax=64G -p MemorySwapMax=0`
+cap and with no cap at all; **the cap makes no difference**, so page-cache
+pressure is not the trigger.
+
+### Observed at 64 threads
+
+Expected values are corroborated by two independent Rust binaries and by the
+majority of the C++ runs themselves.
+
+| k | mode | runs | deviating | counts observed |
+| ---: | --- | ---: | ---: | --- |
+| 55 | uncolored | 11 | 3 | 31,949,227 / 31,949,225 / 31,949,231 against 31,949,232 |
+| 55 | colored | 2 | 1 | 31,949,223 against 31,949,232 |
+| 31 | uncolored | 3 | 2 | 51,644,122 / 51,644,171 against 51,644,203 |
+
+Roughly a third of 64-thread runs are wrong, at both k values, in both modes.
+Every Rust run of the same inputs -- nine at k = 55, two at k = 31 -- produced
+the expected counts exactly.
+
+### Every missing record is exactly one k-mer long
+
+This is the sharp new signal, and it is unambiguous across all seven deviations
+gathered so far:
+
+| case | missing unitigs | missing bases | bases per missing unitig |
+| --- | ---: | ---: | ---: |
+| k = 31 uncolored | 81 | 2,511 | 31.0 |
+| k = 31 uncolored | 32 | 992 | 31.0 |
+| k = 55 uncolored | 5 | 275 | 55.0 |
+| k = 55 uncolored | 7 | 385 | 55.0 |
+| k = 55 uncolored | 1 | 55 | 55.0 |
+| k = 55 colored | 9 | 495 | 55.0 |
+
+`missing_bases = k * missing_unitigs` exactly, every time. The records being
+lost are single-vertex unitigs -- one k-mer, no discontinuity exits -- which is
+the class the pipeline calls *trivial maximal unitigs* and writes through a
+different path from stitched ones. At 64 threads the damage is pure deletion
+from that class, which is a narrower failure than the content corruption the
+256-thread investigation found (a 1,685-base unitig emerging as 1,695 bases).
+Whether these are two severities of one defect or two defects is open, but the
+64-thread signature points at trivial-unitig emission rather than at collation
+of stitched records.
+
+### Consequence for this project
+
+Any C++ output used as a correctness reference must be treated as suspect at
+*any* thread count until this is understood, not merely above 128. Where a
+C++-derived expectation is needed, either take the majority result across
+repeated runs, or -- better, and what the k > 31 work did -- validate against
+ground truth derived from the input itself, which is independent of both
+implementations.

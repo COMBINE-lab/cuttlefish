@@ -2593,3 +2593,55 @@ change plausibly accounts for most of what separates the two implementations in
 colored phase 1. That makes it worth doing, and it is contained: the on-disk
 format does not change, so bucket readers are untouched, and the work is the
 staging buffer, the append path, the sort and the block encoder.
+
+### What would still differ, and what the gap would be
+
+Reading further into `Graph_Partitioner::partition` changes the comparison, and
+it is worth stating plainly because the earlier P0 analysis in the review record
+described the *wrong* C++ code path.
+
+**The windowed collation path in C++ is commented out.** The `large_src` branch
+-- read a round of chunks, track the round's source range, then
+`collate_super_kmer_buffers(min_source, max_source)` -- is inside a `/* ... */`
+block. The shipped path is the `else`: sort the sources by size descending, then
+`parallel_for` over workers where each worker claims a whole source, reads it to
+completion, and calls `flush_worker_if_req(w)` afterwards. `Atlas<true>::add`
+never flushes ("No flush until collation / flush is invoked explicitly from
+outside"), and nothing in the live path calls `flush_collated`. So **the
+counting sort by source is dead code in the shipped binary**, which is also why
+both colored timers print `0s`: they are only accumulated in the disabled
+branch.
+
+That means C++ obtains its per-source grouping *structurally, without sorting*.
+A worker owns one source at a time and empties its local chunk only at source
+boundaries, so every append into an atlas carries whole sources, and a source's
+records land contiguously in a bucket by construction.
+
+So after splitting our staging layout we would match C++ on the attribute/label
+question and still differ in the larger one: **we counting-sort every window;
+the shipped C++ never sorts at all.** Measured at 150000 genomes, colored, t64:
+
+| | partition phase | gap to C++ |
+| --- | ---: | ---: |
+| C++ | 119.547 s | -- |
+| Rust, shipped | 125.905 s | +6.36 s (+5.3%) |
+| Rust, deinterleave removed (`CF3_RS_INTERLEAVE_COLORED`) | 121.401 s | **+1.85 s (+1.6%)** |
+
+Removing the deinterleave is worth 4.50 s at this scale, close to the 3.9%
+the 10000-genome ablation predicted, and it leaves **1.85 s**. Our source sort
+costs 195.9 worker-s, about 3.06 s of wall at 64 threads, so the residual is
+comfortably accounted for by work C++ does not do. Note the ablated run also
+writes ~9% more bucket bytes; a real split-staging implementation keeps the
+better ratio, so 121.4 s is an upper bound on where it would land.
+
+**The improvement to consider is therefore not the sort's constant factor but
+the sort itself.** If a colored worker drained its pending buffers only at
+source boundaries -- what C++ does -- each source's records would be contiguous
+in every bucket by construction, and the windowed counting sort could go away
+entirely, taking its 3 s and its stop-the-world barrier with it. The cost is
+memory: a worker must hold one whole source's records across all buckets before
+draining, which is fine for a 5 MB assembly and is not for a mammalian genome.
+That is presumably why C++ carries the windowed path at all, disabled, for the
+large-source case. The shape to aim for is the hybrid: drain at source
+boundaries while a source fits the per-worker budget, and fall back to the
+windowed sort when it does not.

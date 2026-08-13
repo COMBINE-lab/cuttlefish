@@ -2266,3 +2266,78 @@ second state type) would put 4 slots on a line instead of 2.67. On a
 bandwidth-bound phase that is the shape of change that can pay, where
 rearranging or prefetching cannot. Not attempted here; it threads through the
 contraction walks as well as the table, so it wants its own interleaved pairs.
+
+## Overlapping the colored window flush: evaluated, costed, not landed
+
+The exact-colors section records a "~31 s stop-the-world flush wall,
+reclaimable with double-buffered atlases and an overlapped flush crew". Here is
+what that would take, measured on 10000 Salmonella genomes at k = 31, colored.
+
+### What the barrier actually costs
+
+At window end every worker drains its pending buffers, then all of them block
+while the last arriver runs `flush_colored_window`, which sorts each bucket's
+payload by source and appends it to the bucket's segment chain.
+
+| | default window | 3 GiB window, t64 | 3 GiB window, t16 |
+| --- | ---: | ---: | ---: |
+| windows | 6 | 19 | 21 |
+| flush wall | 2.147 s | 2.225 s | 5.236 s |
+| source sort | 16.55 worker-s | 15.90 worker-s | 11.24 worker-s |
+| barrier wait | 153.3 worker-s | 194.3 worker-s | 86.4 worker-s |
+| partition phase | 9.549 s | 9.865 s | 24.924 s |
+
+Barrier wait is 194.3 worker-s at t64, i.e. **3.04 s of wall** on a 9.87 s
+partition phase: 31% of the phase is 64 workers waiting.
+
+### The flush is I/O-bound, which is what makes overlap worth doing
+
+The flush already spawns `min(threads, atlases)` = 64 threads. Yet sorting
+accounts for only 15.9 of the 142 worker-seconds those threads occupy --
+**11%**. The other 89% is inside `append_to_chain`'s `pwrite`s. Confirming that
+it is not simply thread-starved: quadrupling the flush threads from 16 to 64
+cuts per-window flush wall only from 0.249 s to 0.117 s, a 2.1x return on 4x
+the threads.
+
+So during every window boundary the machine has 64 parse workers blocked and 64
+flush threads mostly blocked on writes. That idle CPU is the prize, and it is
+why an overlapped crew pays here where prefetching did not pay in R1.
+
+### What implementing it requires
+
+The natural form is not a second buffer but *detaching* the first, which needs
+no extra allocation:
+
+1. Split `flush_colored_window` in two. `take_colored_window` locks each atlas,
+   `mem::take`s every non-empty subgraph buffer into a job, resets the buffer,
+   record count and `buffered_bytes`, and returns. This is pointer swaps, so
+   the barrier it holds is microseconds rather than the current 0.117 s.
+2. `flush_colored_job` sorts each detached payload by source outside any lock,
+   then re-locks its atlas only to run `append_to_chain` and update the file
+   meta.
+3. The gate releases workers immediately after the take, so parsing of window
+   N+1 overlaps the flush of window N. Before the *next* take it waits for the
+   outstanding job. One window in flight is what keeps a bucket's segment chain
+   in ascending source order, which is the invariant exactness rests on.
+4. Errors move from the caller's `?` to the join point, and the drop guard has
+   to fail the gate if the crew dies.
+
+**The thread budget is the design constraint, not the mechanism.** Total
+concurrency may not exceed `--threads`, so the crew has to be carved out of the
+parse workers. With a crew of 16 and 48 parse workers, scan+pack goes from
+310.7 worker-s / 64 = 4.85 s to 6.47 s (+1.62 s) while ~3.04 s of barrier wall
+disappears -- projecting the phase from 9.87 s to roughly 7 s, near 30%. The
+crew is cheap in CPU precisely because it is I/O-blocked 89% of the time, which
+is what makes the trade favourable; a CPU-bound crew of the same size would not
+pay.
+
+### Why it is not in RC1
+
+Every step above lands in the path that guarantees color exactness -- the
+window ordering, the atlas buffers, and the segment chain. Validating it means
+the full campaign that P0 needed: colored content against source-derived truth,
+150k topology, and interleaved pairs at two scales, which is longer than the
+implementation. Landing that days after declaring a production-ready candidate
+buys ~8% of colored wall at the cost of re-opening the one invariant that took
+the most work to establish. It is specified and costed here so it can be the
+first change after RC1 rather than the last one inside it.

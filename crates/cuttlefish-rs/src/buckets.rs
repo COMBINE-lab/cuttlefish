@@ -2193,8 +2193,8 @@ impl SharedBucketSink {
             label_words: self.label_words,
             compressed: self.compress_buckets,
             interleaved_compression: self.compress_buckets
-                && !self.colored
-                && !force_split_compression(),
+                && (interleave_colored_compression()
+                    || (!self.colored && !force_split_compression())),
             segment_bytes: self.containers.segment_bytes(),
             // The number of containers actually created, which is not the
             // atlas count when the descriptor budget narrowed it.
@@ -2402,7 +2402,8 @@ impl SharedBucketAtlas {
         let record_size = record_size(colored, label_words) as u64;
 
         let written = if compress_buckets {
-            let interleaved = !colored && !force_split_compression();
+            let interleaved =
+                interleave_colored_compression() || (!colored && !force_split_compression());
             let len = encode_compressed_block(
                 &file.buffer,
                 file.buffer_records,
@@ -3000,6 +3001,18 @@ impl CompressionScratch {
 fn force_split_compression() -> bool {
     static SPLIT: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *SPLIT.get_or_init(|| std::env::var_os("CF3_RS_SPLIT_COMPRESSION").is_some())
+}
+
+/// Diagnostic: compress colored blocks interleaved, skipping the deinterleave.
+///
+/// Colored records are staged interleaved but written split, so every flush
+/// copies each record into separate attribute and label buffers first. This
+/// switch removes that pass -- at a worse compression ratio -- which is how the
+/// pass is costed without first restructuring the staging layout. The block
+/// header records the choice, so buckets written this way still read back.
+fn interleave_colored_compression() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("CF3_RS_INTERLEAVE_COLORED").is_some())
 }
 
 impl BucketFile {

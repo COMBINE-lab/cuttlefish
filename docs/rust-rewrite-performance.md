@@ -2538,3 +2538,58 @@ partition phase at 10000 genomes, and these two passes are a fraction of it, so
 this is worth low single digits of the phase rather than the 25% the barrier
 looked like it was worth -- but unlike the barrier, it is real work that would
 actually disappear.
+
+### Verified: the gap is real, and it grows with scale
+
+The 121.7 s against 115.9 s above came from our phase timer and C++'s own log
+line, which is not by itself a like-for-like claim. Checking the boundaries:
+C++ times `t_0` -- taken after the graph and output sink are constructed --
+through `Graph_Partitioner::partition` *and* `Subgraphs_Manager::finalize`,
+printed as "Sequence splitting into subgraphs". We time `dispatch_partition`,
+which likewise includes the sink's `finish`. The two brackets correspond.
+
+Re-measured on the same host, same inputs, same thread count:
+
+| corpus | Rust | C++ | gap |
+| --- | ---: | ---: | ---: |
+| 10000 genomes, colored, k=31, t64 | 9.347 / 9.331 s | 9.100 / 9.338 s | +1.3% |
+| 150000 genomes, colored, k=31, t64 | 125.905 s | 119.547 s | **+5.3%** |
+
+So the gap is real, it is not a measurement artefact, and it is **not constant**:
+the two implementations are at parity at 10000 genomes and 6.36 s apart at
+150000. Whatever costs us is superlinear in corpus size, which is consistent
+with it living in the window flush -- flush wall is 23% of the phase at 10000
+genomes and 27.7% (34.9 s of 125.9 s) at 150000.
+
+### Ablated: what the deinterleave costs, and what to do about it
+
+`CF3_RS_INTERLEAVE_COLORED` compresses colored blocks interleaved, which skips
+the deinterleave pass entirely. The block header already records the layout, so
+buckets written this way read back correctly -- verified against source-derived
+colour truth at k = 31 and 55 before trusting the timings. On 10000 genomes,
+colored, t64, interleaved pairs:
+
+| | split (shipped) | interleaved | change |
+| --- | ---: | ---: | ---: |
+| flush wall | 2.157 s | 1.912 s | **-11.4%** |
+| partition phase | 9.509 s | 9.136 s | **-3.9%** |
+| bucket bytes | 22.93 GB | 25.10 GB | **+9.4%** |
+
+**So the deinterleave costs about 4% of the colored partition phase, and split
+compression buys 9.4% smaller intermediates.** Simply interleaving is therefore
+the wrong trade: those buckets are read back by local contraction, so 2.2 GB
+more per 10000 genomes is paid again downstream.
+
+**The decision: split the staging layout, not the compression.** Staging colored
+records as separate attribute and label regions -- what C++'s `Super_Kmer_Chunk`
+does -- keeps the 22.93 GB compression ratio *and* deletes the deinterleave,
+because the compressor is handed the two regions it already wants. The ablation
+above is the lower bound on that win, 3.9% of the phase, and the histogram pass
+should add to it: with attributes in their own region the counting sort reads 4
+bytes per record instead of striding a ~28-byte record to reach them.
+
+At 150000 genomes 3.9% is 4.9 s against a measured 6.36 s gap, so this one
+change plausibly accounts for most of what separates the two implementations in
+colored phase 1. That makes it worth doing, and it is contained: the on-disk
+format does not change, so bucket readers are untouched, and the work is the
+staging buffer, the append path, the sort and the block encoder.

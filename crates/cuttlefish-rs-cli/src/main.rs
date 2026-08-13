@@ -163,7 +163,7 @@ where
             Ok(0)
         }
         "version" | "--version" | "-V" => {
-            println!("cuttlefish {}", env!("CARGO_PKG_VERSION"));
+            println!("cuttlefish {} (Cuttlefish 3)", env!("CARGO_PKG_VERSION"));
             Ok(0)
         }
         _ => {
@@ -379,7 +379,7 @@ where
 }
 
 fn print_top_help() {
-    println!("cuttlefish {}", env!("CARGO_PKG_VERSION"));
+    println!("cuttlefish {} (Cuttlefish 3)", env!("CARGO_PKG_VERSION"));
     println!("Supported commands: `build`, `compare`, `colors`, `cleanup`, `help`, `version`.");
     println!("Usage:");
     println!("    cuttlefish build [options]");

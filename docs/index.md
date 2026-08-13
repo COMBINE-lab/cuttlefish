@@ -9,10 +9,11 @@ The production pipeline partitions input into weak super-k-mer buckets,
 contracts independent local subgraphs, resolves their discontinuities through
 a blocked external graph, and emits maximal unitigs directly to FASTA.
 
-> **Release candidate 1.** Cuttlefish 3 is feature-complete and validated
-> against the C++ implementation on reference and read inputs, uncolored and
-> colored, for k from 3 to 63. The command-line interface and the private
-> intermediate formats may still change before the stable release.
+> **Version 0.1.0.** Cuttlefish 3 is feature-complete and validated on
+> reference and read inputs, uncolored and colored, for k from 3 to 63. The
+> version is below 1.0 because the Rust API and the private intermediate
+> formats may still change; the output FASTA and the color repository format
+> are what a user depends on, and changes to those will be called out.
 
 ## Features
 

@@ -2298,12 +2298,36 @@ fn sort_colored_payload_by_source_with(
     }
     scratch.sorted.clear();
     scratch.sorted.resize(payload.len(), 0);
-    for record in payload.chunks_exact(record_len) {
-        let attr = u32::from_le_bytes(record[..4].try_into().expect("colored attribute"));
-        let source = ((attr >> 10) - source_min) as usize;
-        let output = offsets[source] * record_len;
-        scratch.sorted[output..output + record_len].copy_from_slice(record);
-        offsets[source] += 1;
+    // Place whole same-source stretches, not records. A worker owns a source
+    // for a whole window, so a bucket's payload is a handful of long runs
+    // rather than an interleaving, and moving each with one `copy_from_slice`
+    // turns the placement pass into a few large memcpys. This is what the C++
+    // collator does, and its inner loop is the reason it can afford the same
+    // counting sort.
+    let mut start = 0usize;
+    let records = payload.len() / record_len;
+    while start < records {
+        let source_of = |index: usize| {
+            let base = index * record_len;
+            let attr = u32::from_le_bytes(
+                payload[base..base + 4]
+                    .try_into()
+                    .expect("colored attribute"),
+            );
+            (attr >> 10) as usize
+        };
+        let source = source_of(start);
+        let mut end = start + 1;
+        while end < records && source_of(end) == source {
+            end += 1;
+        }
+        let slot = source - source_min as usize;
+        let output = offsets[slot] * record_len;
+        let stretch = (end - start) * record_len;
+        scratch.sorted[output..output + stretch]
+            .copy_from_slice(&payload[start * record_len..end * record_len]);
+        offsets[slot] += end - start;
+        start = end;
     }
     std::mem::swap(payload, &mut scratch.sorted);
     Ok(())

@@ -2490,3 +2490,51 @@ therefore not recoverable by scheduling; it is compression and sort work that
 has to happen somewhere. Making it *cheaper* -- a faster compressor for colored
 buckets, or compressing fewer bytes by run-length-encoding the source field --
 is a different lever, and unlike this one it has not been measured.
+
+## What C++ does differently in colored phase 1
+
+C++ partitions the colored 150k corpus in 115.9 s against our 121.7 s. Having
+established that the window barrier is not recoverable by scheduling, the
+question is what the C++ collator does that ours does not. Reading
+`Atlas<true>::flush_collated` and `Super_Kmer_Chunk` (branch `cuttlefish3-cpp`)
+against `flush_colored_window` and `sort_colored_payload_by_source_with`, the
+designs agree on far more than they differ: both stage colored super-k-mers in
+worker-local buffers with no flush until the window closes, both counting-sort
+by source over a source range, both LZ4-compress, and both write attributes and
+labels as separate compressed streams.
+
+They differ in one thing, and it is a layout decision with three consequences.
+**C++ stores a chunk as separate attribute and label arrays; we store one
+interleaved record array.** From that:
+
+1. *The histogram pass.* C++ builds its source histogram by reading
+   `att_at(i).source()` out of the attribute array -- a few bytes per record,
+   densely packed. Ours strides the full record (attributes *and* label words)
+   to read four bytes of each, so the pass pulls the entire payload through
+   cache to look at a small part of it.
+2. *The placement pass.* C++ copies stretches of equal source with one call per
+   stretch. Ours copied record by record. **Fixed here**: a worker owns a source
+   for a whole window, so a bucket's payload is a few long runs, and placing
+   runs instead of records took the source sort from 16.85 to 14.11 worker-s,
+   **-16%**. It does not move the phase -- the sort is under 3% of it -- but it
+   is strictly less work and it is what the reference does.
+3. *The deinterleave.* Because our records are interleaved and the on-disk
+   colored format is split, `encode_compressed_block` copies every record into
+   separate attribute and label buffers before compressing. **C++ never does
+   this pass at all**: its chunk is already in the layout the compressor wants.
+
+So the residual gap is most plausibly that we pay two passes C++ does not -- a
+histogram that touches labels it does not need, and a deinterleave before every
+compression -- both of which are consequences of staging colored records
+interleaved.
+
+**The improvement available, not attempted.** Stage colored buckets as separate
+attribute and label regions, matching C++. The on-disk format would not change,
+because colored blocks are already written split, so bucket readers are
+unaffected -- the blast radius is the staging buffer, the append path, the sort
+and the block encoder. That deletes the deinterleave outright and shrinks the
+histogram pass to the attribute region. The flush is 2.15 s of a 9.3 s colored
+partition phase at 10000 genomes, and these two passes are a fraction of it, so
+this is worth low single digits of the phase rather than the 25% the barrier
+looked like it was worth -- but unlike the barrier, it is real work that would
+actually disappear.

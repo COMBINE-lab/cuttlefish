@@ -2796,3 +2796,51 @@ worse still -- 38 s, because that call locks -- and could not be made honest
 without threading a flag through the call chain. Numbers from instrumented runs
 here are used only as ratios within a single run, never compared against clean
 runs, and the filter A/B above was measured with instrumentation on both sides.
+
+## Split staging: the deinterleave removed, for real this time
+
+The ablation priced the deinterleave at 2.47 s and called that a lower bound,
+because it bought its saving while writing 11.8% more bytes. Implemented
+properly, the saving is **3.17 s** and the bytes are unchanged.
+
+The implementation is not the obvious one. Splitting records at birth would only
+move the deinterleave into `add_impl`, the hottest path in partitioning, which
+runs per super-k-mer. Instead the split rides a copy that already exists:
+`group_by_graph` was already copying every record individually to group it by
+subgraph, so it now copies attributes and labels to two destinations instead of
+one. Same bytes moved, one whole pass eliminated, and `add_impl` untouched.
+
+From there the two streams stay apart -- `SharedBucketFileMeta` carries a
+`labels` buffer beside `buffer` -- until `encode_split_block` compresses them
+directly. That function emits byte-identical blocks to what the old
+deinterleaving path produced, which is the point: **the on-disk format does not
+change**, so bucket readers are untouched and existing buckets still read.
+
+150000 genomes, colored, k = 31, t64, interleaved pairs:
+
+| | partition phase | bucket bytes |
+| --- | ---: | ---: |
+| before | 115.676 / 115.859 s | 304.61 / 304.59 GB |
+| after | **112.094 / 113.099 s** | 304.46 / 304.60 GB |
+
+**-2.7%**, disk identical, and colored phase 1 now sits **5.8% ahead of C++'s
+119.547 s** where it began this sequence 5.3% behind.
+
+Two paths needed splitting, not one, and the second was found by a test rather
+than by reading: `flush_colored_emitters` appends worker tails record by record
+through `append_colored_atlas_record`, bypassing `group_by_graph` entirely. It
+wrote whole records into the attribute stream and left the label stream empty,
+which the reader rejected as a malformed block --
+`colored_worker_tails_preserve_cpp_worker_order` caught it immediately.
+
+The repair sort now permutes both streams under one permutation, and its
+detection pass got cheaper for free: it reads a dense 4-byte attribute stream
+instead of striding a ~28-byte record to reach the source field. The serial
+`BucketEmitter`, whose pending buckets are still whole records, keeps a plain
+interleaved counting sort of its own.
+
+Validated the way the sort removal was: 150 Salmonella assemblies at k = 31
+produce 2,797,788 colored unitigs matching source-derived truth both with the
+flush skipping its permutation and with a 64 KiB cap forcing every payload
+through the repair, plus exact counts for 10000 uncolored and 150000 colored
+and identical bucket bytes at both scales.

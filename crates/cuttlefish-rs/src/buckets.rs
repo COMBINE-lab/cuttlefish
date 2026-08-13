@@ -492,18 +492,31 @@ struct PendingColoredAtlas {
 struct AtlasSortScratch {
     counts: Vec<u32>,
     offsets: Vec<u32>,
+    /// Grouped records, or grouped attributes alone when the caller asked for
+    /// the two streams apart.
     sorted: Vec<u8>,
+    /// Grouped labels, non-empty only for colored atlases.
+    sorted_labels: Vec<u8>,
     /// `(local_graph_id, record_count)` in ascending local id order.
     runs: Vec<(u16, u32)>,
 }
 
 impl AtlasSortScratch {
     /// Groups `pending` by local graph id into `self.sorted` / `self.runs`.
+    /// Groups a worker's atlas chunk by subgraph.
+    ///
+    /// `attr_len` splits each record as it is copied: attributes to `sorted`,
+    /// labels to `sorted_labels`. Colored buckets are written to disk as two
+    /// separately compressed streams, so splitting here -- inside a copy this
+    /// pass already makes -- is what lets the flush hand the compressor the
+    /// arrays it wants instead of deinterleaving records first. `None` leaves
+    /// records whole, which is what the uncolored atlas path wants.
     fn group_by_graph(
         &mut self,
         atlas_id: usize,
         pending: &PendingColoredAtlas,
         record_len: usize,
+        attr_len: Option<usize>,
     ) -> Result<(), BucketError> {
         let first_graph_id = atlas_id * ATLAS_GRAPH_COUNT;
         self.counts.clear();
@@ -525,17 +538,44 @@ impl AtlasSortScratch {
             }
             prefix += count;
         }
-        self.sorted.clear();
-        self.sorted.resize(pending.bytes.len(), 0);
-        for (&graph_id, record) in pending
-            .graph_ids
-            .iter()
-            .zip(pending.bytes.chunks_exact(record_len))
-        {
-            let local = usize::from(graph_id) - first_graph_id;
-            let output = self.offsets[local] as usize * record_len;
-            self.sorted[output..output + record_len].copy_from_slice(record);
-            self.offsets[local] += 1;
+        let records = pending.graph_ids.len();
+        match attr_len {
+            None => {
+                self.sorted.clear();
+                self.sorted.resize(pending.bytes.len(), 0);
+                self.sorted_labels.clear();
+                for (&graph_id, record) in pending
+                    .graph_ids
+                    .iter()
+                    .zip(pending.bytes.chunks_exact(record_len))
+                {
+                    let local = usize::from(graph_id) - first_graph_id;
+                    let output = self.offsets[local] as usize * record_len;
+                    self.sorted[output..output + record_len].copy_from_slice(record);
+                    self.offsets[local] += 1;
+                }
+            }
+            Some(attr_len) => {
+                let label_len = record_len - attr_len;
+                self.sorted.clear();
+                self.sorted.resize(records * attr_len, 0);
+                self.sorted_labels.clear();
+                self.sorted_labels.resize(records * label_len, 0);
+                for (&graph_id, record) in pending
+                    .graph_ids
+                    .iter()
+                    .zip(pending.bytes.chunks_exact(record_len))
+                {
+                    let local = usize::from(graph_id) - first_graph_id;
+                    let slot = self.offsets[local] as usize;
+                    let attr_at = slot * attr_len;
+                    self.sorted[attr_at..attr_at + attr_len].copy_from_slice(&record[..attr_len]);
+                    let label_at = slot * label_len;
+                    self.sorted_labels[label_at..label_at + label_len]
+                        .copy_from_slice(&record[attr_len..]);
+                    self.offsets[local] += 1;
+                }
+            }
         }
         Ok(())
     }
@@ -543,7 +583,11 @@ impl AtlasSortScratch {
 
 #[derive(Default)]
 struct SharedBucketFileMeta {
+    /// Staged bytes: whole records when uncolored, attributes alone when
+    /// colored, in which case `labels` carries the rest.
     buffer: Vec<u8>,
+    /// Staged labels, colored buckets only.
+    labels: Vec<u8>,
     buffer_records: u64,
     total_records: u64,
     written_records: u64,
@@ -1647,7 +1691,7 @@ impl BucketEmitter {
                     // Sorted-by-source buckets keep the color-class hash
                     // exact; the parallel sink gets the same guarantee from
                     // per-window sorting.
-                    sort_colored_payload_by_source(
+                    sort_interleaved_colored_payload_by_source(
                         &mut self.pending[graph_id].bytes,
                         record_len,
                         self.source_min,
@@ -1869,7 +1913,7 @@ impl SharedBucketSink {
         if pending.graph_ids.len() * record_len != pending.bytes.len() {
             return Err(BucketError::MalformedRecord);
         }
-        scratch.group_by_graph(atlas_id, &pending, record_len)?;
+        scratch.group_by_graph(atlas_id, &pending, record_len, None)?;
         let wait = crate::discontinuity::LockWait::start(&ATLAS_LOCK_PROFILE);
         let mut atlas = self.atlases[atlas_id]
             .lock()
@@ -1954,17 +1998,23 @@ impl SharedBucketSink {
         if pending.graph_ids.len() * record_len != pending.bytes.len() {
             return Err(BucketError::MalformedRecord);
         }
-        // Group on the worker's own time; the lock sees runs, not records.
-        scratch.group_by_graph(atlas_id, &pending, record_len)?;
+        // Group on the worker's own time; the lock sees runs, not records. The
+        // grouping copy also splits attributes from labels, which is the layout
+        // the block compressor wants, so the flush never deinterleaves.
+        let attr_len = record_len - self.label_words * 8;
+        scratch.group_by_graph(atlas_id, &pending, record_len, Some(attr_len))?;
+        let label_len = record_len - attr_len;
         let started = Instant::now();
         let wait = crate::discontinuity::LockWait::start(&ATLAS_LOCK_PROFILE);
         let mut atlas = self.atlases[atlas_id]
             .lock()
             .map_err(|_| BucketError::WorkerPanic)?;
         let _hold = wait.acquired();
-        let mut consumed = 0usize;
+        let mut attrs_consumed = 0usize;
+        let mut labels_consumed = 0usize;
         for &(local_graph_id, records) in &scratch.runs {
-            let run_bytes = records as usize * record_len;
+            let attr_bytes = records as usize * attr_len;
+            let label_bytes = records as usize * label_len;
             let file = &mut atlas.files[usize::from(local_graph_id)];
             file.total_records = file
                 .total_records
@@ -1975,8 +2025,12 @@ impl SharedBucketSink {
                 .checked_add(u64::from(records))
                 .ok_or(BucketError::TooManyRecords)?;
             file.buffer
-                .extend_from_slice(&scratch.sorted[consumed..consumed + run_bytes]);
-            consumed += run_bytes;
+                .extend_from_slice(&scratch.sorted[attrs_consumed..attrs_consumed + attr_bytes]);
+            file.labels.extend_from_slice(
+                &scratch.sorted_labels[labels_consumed..labels_consumed + label_bytes],
+            );
+            attrs_consumed += attr_bytes;
+            labels_consumed += label_bytes;
         }
         atlas.buffered_bytes += pending.bytes.len();
         drop(atlas);
@@ -2040,9 +2094,13 @@ impl SharedBucketSink {
                                 continue;
                             }
                             let sort_started = Instant::now();
+                            let attr_len = record_len - self.label_words * 8;
+                            let file = &mut atlas.files[local_graph_id];
                             sort_colored_payload_by_source_with(
-                                &mut atlas.files[local_graph_id].buffer,
-                                record_len,
+                                &mut file.buffer,
+                                &mut file.labels,
+                                attr_len,
+                                record_len - attr_len,
                                 source_min,
                                 source_max,
                                 &mut scratch,
@@ -2129,7 +2187,12 @@ impl SharedBucketSink {
                                 .iter()
                                 .zip(pending.bytes.chunks_exact(record_len))
                             {
-                                append_colored_atlas_record(&mut atlas, graph_id, record)?;
+                                append_colored_atlas_record(
+                                    &mut atlas,
+                                    graph_id,
+                                    record,
+                                    record_len - self.label_words * 8,
+                                )?;
                             }
                         }
                         atlas.buffered_bytes += worker_buckets
@@ -2245,10 +2308,13 @@ impl SharedBucketSink {
     }
 }
 
+/// Appends one colored record to its bucket, splitting it into the two staged
+/// streams. `attr_len` is where the label words begin.
 fn append_colored_atlas_record(
     atlas: &mut SharedBucketAtlas,
     graph_id: u16,
     record: &[u8],
+    attr_len: usize,
 ) -> Result<(), BucketError> {
     let graph_id = usize::from(graph_id);
     let local_graph_id = graph_id
@@ -2266,7 +2332,8 @@ fn append_colored_atlas_record(
         .buffer_records
         .checked_add(1)
         .ok_or(BucketError::TooManyRecords)?;
-    file.buffer.extend_from_slice(record);
+    file.buffer.extend_from_slice(&record[..attr_len]);
+    file.labels.extend_from_slice(&record[attr_len..]);
     Ok(())
 }
 
@@ -2303,18 +2370,80 @@ fn append_colored_atlas_record(
 struct SourceSortScratch {
     offsets: Vec<usize>,
     sorted: Vec<u8>,
+    sorted_labels: Vec<u8>,
     /// One entry per run of equal source: its source and its first record.
     runs: Vec<(u32, usize)>,
 }
 
-fn sort_colored_payload_by_source(
+/// Source-groups an interleaved colored payload.
+///
+/// The shared sink stages attributes and labels apart and uses the split
+/// repair; this is for [`BucketEmitter`], the serial writer, whose pending
+/// buckets are whole records. It is a plain stable counting sort -- that path
+/// handles one bucket at a time off the hot path, so it is written for
+/// obviousness rather than for speed.
+fn sort_interleaved_colored_payload_by_source(
     payload: &mut Vec<u8>,
     record_len: usize,
     source_min: u32,
     source_max: u32,
 ) -> Result<(), BucketError> {
+    if payload.is_empty() {
+        return Ok(());
+    }
+    if !payload.len().is_multiple_of(record_len) {
+        return Err(BucketError::MalformedRecord);
+    }
+    let source_count =
+        usize::try_from(source_max - source_min + 1).map_err(|_| BucketError::MalformedRecord)?;
+    let mut offsets = vec![0usize; source_count];
+    let source_of = |record: &[u8]| -> Result<usize, BucketError> {
+        let attr = u32::from_le_bytes(record[..4].try_into().expect("colored attribute"));
+        let source = attr >> 10;
+        if source < source_min || source > source_max {
+            return Err(BucketError::MalformedRecord);
+        }
+        Ok((source - source_min) as usize)
+    };
+    for record in payload.chunks_exact(record_len) {
+        offsets[source_of(record)?] += 1;
+    }
+    let mut prefix = 0usize;
+    for offset in offsets.iter_mut() {
+        let count = *offset;
+        *offset = prefix;
+        prefix += count;
+    }
+    let mut sorted = vec![0u8; payload.len()];
+    for record in payload.chunks_exact(record_len) {
+        let slot = source_of(record)?;
+        let at = offsets[slot] * record_len;
+        sorted[at..at + record_len].copy_from_slice(record);
+        offsets[slot] += 1;
+    }
+    *payload = sorted;
+    Ok(())
+}
+
+#[cfg(test)]
+fn sort_colored_payload_by_source(
+    attrs: &mut Vec<u8>,
+    labels: &mut Vec<u8>,
+    attr_len: usize,
+    label_len: usize,
+    source_min: u32,
+    source_max: u32,
+) -> Result<(), BucketError> {
     let mut scratch = SourceSortScratch::default();
-    sort_colored_payload_by_source_with(payload, record_len, source_min, source_max, &mut scratch)
+    sort_colored_payload_by_source_with(
+        attrs,
+        labels,
+        attr_len,
+        label_len,
+        source_min,
+        source_max,
+        &mut scratch,
+    )
 }
 
 /// How many window payloads arrived already grouped by source, and how many
@@ -2332,27 +2461,31 @@ pub fn colored_payload_grouping() -> (u64, u64) {
 }
 
 fn sort_colored_payload_by_source_with(
-    payload: &mut Vec<u8>,
-    record_len: usize,
+    attrs: &mut Vec<u8>,
+    labels: &mut Vec<u8>,
+    attr_len: usize,
+    label_len: usize,
     source_min: u32,
     source_max: u32,
     scratch: &mut SourceSortScratch,
 ) -> Result<(), BucketError> {
-    if payload.is_empty() {
+    if attrs.is_empty() {
         return Ok(());
     }
-    if !payload.len().is_multiple_of(record_len) {
+    if !attrs.len().is_multiple_of(attr_len) || !labels.len().is_multiple_of(label_len.max(1)) {
         return Err(BucketError::MalformedRecord);
     }
-    // One pass over the payload, recording only where the source changes.
-    // Runs are few -- a worker hands over whole sources, so a payload is a
-    // handful of them -- which is what lets the grouped case avoid touching a
-    // per-source array at all. Zero-filling one per payload cost 19.7 GB of
-    // memset across a 150000-genome run for a histogram that was then thrown
-    // away.
+    let records = attrs.len() / attr_len;
+    if records * label_len != labels.len() {
+        return Err(BucketError::MalformedRecord);
+    }
+
+    // One pass over the attribute stream, recording only where the source
+    // changes. Attributes are stored apart from labels, so this walks 4 bytes
+    // per record instead of striding a whole one to reach them.
     scratch.runs.clear();
     let mut previous: Option<u32> = None;
-    for (index, record) in payload.chunks_exact(record_len).enumerate() {
+    for (index, record) in attrs.chunks_exact(attr_len).enumerate() {
         let attr = u32::from_le_bytes(record[..4].try_into().expect("colored attribute"));
         let source = attr >> 10;
         if source < source_min || source > source_max {
@@ -2379,7 +2512,7 @@ fn sort_colored_payload_by_source_with(
         // Nothing to repair. Colour exactness needs each source's records
         // *consecutive* within a bucket, not ascending, and the class hash is
         // an XOR over distinct sources, so it does not depend on their order
-        // either. Skipping avoids the permutation and its scratch buffer.
+        // either. Skipping avoids the permutation and its scratch buffers.
         GROUPED_PAYLOADS.fetch_add(1, Ordering::Relaxed);
         return Ok(());
     }
@@ -2387,61 +2520,49 @@ fn sort_colored_payload_by_source_with(
 
     // The repair path, which only a source too large to stage reaches. Run
     // lengths come from the boundaries already recorded, so the histogram
-    // costs no second pass over the payload.
+    // costs no second pass.
     let source_count =
         usize::try_from(source_max - source_min + 1).map_err(|_| BucketError::MalformedRecord)?;
-    let records = payload.len() / record_len;
     scratch.offsets.clear();
     scratch.offsets.resize(source_count, 0);
-    let offsets = &mut scratch.offsets;
     for (index, &(source, start)) in scratch.runs.iter().enumerate() {
         let end = scratch
             .runs
             .get(index + 1)
             .map_or(records, |&(_, next)| next);
-        offsets[(source - source_min) as usize] += end - start;
+        scratch.offsets[(source - source_min) as usize] += end - start;
     }
-
     let mut prefix = 0usize;
-    for offset in offsets.iter_mut() {
+    for offset in scratch.offsets.iter_mut() {
         let count = *offset;
         *offset = prefix;
         prefix += count;
     }
+
+    // Both streams take the same permutation, moving whole same-source
+    // stretches rather than records.
     scratch.sorted.clear();
-    scratch.sorted.resize(payload.len(), 0);
-    // Place whole same-source stretches, not records. A worker owns a source
-    // for a whole window, so a bucket's payload is a handful of long runs
-    // rather than an interleaving, and moving each with one `copy_from_slice`
-    // turns the placement pass into a few large memcpys. This is what the C++
-    // collator does, and its inner loop is the reason it can afford the same
-    // counting sort.
-    let mut start = 0usize;
-    let records = payload.len() / record_len;
-    while start < records {
-        let source_of = |index: usize| {
-            let base = index * record_len;
-            let attr = u32::from_le_bytes(
-                payload[base..base + 4]
-                    .try_into()
-                    .expect("colored attribute"),
-            );
-            (attr >> 10) as usize
-        };
-        let source = source_of(start);
-        let mut end = start + 1;
-        while end < records && source_of(end) == source {
-            end += 1;
+    scratch.sorted.resize(attrs.len(), 0);
+    scratch.sorted_labels.clear();
+    scratch.sorted_labels.resize(labels.len(), 0);
+    for (index, &(source, start)) in scratch.runs.iter().enumerate() {
+        let end = scratch
+            .runs
+            .get(index + 1)
+            .map_or(records, |&(_, next)| next);
+        let slot = (source - source_min) as usize;
+        let destination = scratch.offsets[slot];
+        let stretch = end - start;
+        scratch.sorted[destination * attr_len..(destination + stretch) * attr_len]
+            .copy_from_slice(&attrs[start * attr_len..end * attr_len]);
+        if label_len != 0 {
+            scratch.sorted_labels[destination * label_len..(destination + stretch) * label_len]
+                .copy_from_slice(&labels[start * label_len..end * label_len]);
         }
-        let slot = source - source_min as usize;
-        let output = offsets[slot] * record_len;
-        let stretch = (end - start) * record_len;
-        scratch.sorted[output..output + stretch]
-            .copy_from_slice(&payload[start * record_len..end * record_len]);
-        offsets[slot] += end - start;
-        start = end;
+        scratch.offsets[slot] += stretch;
     }
-    std::mem::swap(payload, &mut scratch.sorted);
+    std::mem::swap(attrs, &mut scratch.sorted);
+    std::mem::swap(labels, &mut scratch.sorted_labels);
     Ok(())
 }
 
@@ -2510,20 +2631,28 @@ impl SharedBucketAtlas {
         if file.buffer.is_empty() {
             return Ok(());
         }
-        let flushed_bytes = file.buffer.len();
+        let flushed_bytes = file.buffer.len() + file.labels.len();
         let record_size = record_size(colored, label_words) as u64;
+        // Colored staging already holds the two streams apart, so the block is
+        // encoded straight from them. Everything else -- uncolored, and the
+        // interleaved-colored diagnostic -- still hands the encoder records.
+        let split_colored = colored && !interleave_colored_compression();
 
         let written = if compress_buckets {
             let interleaved =
                 interleave_colored_compression() || (!colored && !force_split_compression());
-            let len = encode_compressed_block(
-                &file.buffer,
-                file.buffer_records,
-                record_size,
-                label_words,
-                interleaved,
-                scratch,
-            )?;
+            let len = if split_colored {
+                encode_split_block(&file.buffer, &file.labels, file.buffer_records, scratch)?
+            } else {
+                encode_compressed_block(
+                    &file.buffer,
+                    file.buffer_records,
+                    record_size,
+                    label_words,
+                    interleaved,
+                    scratch,
+                )?
+            };
             let block = std::mem::take(&mut scratch.block);
             let written = append_to_chain(containers, container, file, &block)?;
             scratch.block = block;
@@ -2531,14 +2660,20 @@ impl SharedBucketAtlas {
             written
         } else {
             let buffer = std::mem::take(&mut file.buffer);
-            let written = append_to_chain(containers, container, file, &buffer);
+            let mut written = append_to_chain(containers, container, file, &buffer)?;
             file.buffer = buffer;
-            written?
+            if !file.labels.is_empty() {
+                let labels = std::mem::take(&mut file.labels);
+                written += append_to_chain(containers, container, file, &labels)?;
+                file.labels = labels;
+            }
+            written
         };
 
         file.written_records += file.buffer_records;
         file.bytes_written += written;
         file.buffer.clear();
+        file.labels.clear();
         file.buffer_records = 0;
         self.buffered_bytes -= flushed_bytes;
         stats.calls += 1;
@@ -2853,6 +2988,43 @@ pub fn write_manifest(
 /// Assembling the whole block -- 12-byte header plus one or two LZ4 streams --
 /// before it is written keeps a flush to a single `write` on a file that has
 /// no buffering, and lets a container flush reuse the identical framing.
+/// Encodes a colored block whose streams are already apart.
+///
+/// Byte-identical to what [`encode_compressed_block`] produces for the same
+/// records with `interleaved = false`; it simply skips copying the attributes
+/// and labels out of interleaved records first, because colored staging keeps
+/// them separate from the moment they are grouped.
+fn encode_split_block(
+    attrs: &[u8],
+    labels: &[u8],
+    records: u64,
+    scratch: &mut CompressionScratch,
+) -> Result<usize, BucketError> {
+    let records_u32 = u32::try_from(records).map_err(|_| BucketError::TooManyRecords)?;
+    if records_u32 == 0 {
+        scratch.block.clear();
+        return Ok(0);
+    }
+    let attr_len = CompressionScratch::encode(attrs, &mut scratch.encoded)?;
+    let label_len = CompressionScratch::encode(labels, &mut scratch.encoded_labels)?;
+    let attr_len_u32 = u32::try_from(attr_len).map_err(|_| BucketError::TooManyRecords)?;
+    let label_len_u32 = u32::try_from(label_len).map_err(|_| BucketError::TooManyRecords)?;
+
+    scratch.block.clear();
+    scratch.block.extend_from_slice(&records_u32.to_le_bytes());
+    scratch.block.extend_from_slice(&attr_len_u32.to_le_bytes());
+    scratch
+        .block
+        .extend_from_slice(&label_len_u32.to_le_bytes());
+    scratch
+        .block
+        .extend_from_slice(&scratch.encoded[..attr_len]);
+    scratch
+        .block
+        .extend_from_slice(&scratch.encoded_labels[..label_len]);
+    Ok(scratch.block.len())
+}
+
 fn encode_compressed_block(
     bytes: &[u8],
     records: u64,
@@ -3546,6 +3718,28 @@ mod tests {
         payload
     }
 
+    fn split_streams(payload: &[u8], record_len: usize, attr_len: usize) -> (Vec<u8>, Vec<u8>) {
+        let mut attrs = Vec::new();
+        let mut labels = Vec::new();
+        for record in payload.chunks_exact(record_len) {
+            attrs.extend_from_slice(&record[..attr_len]);
+            labels.extend_from_slice(&record[attr_len..]);
+        }
+        (attrs, labels)
+    }
+
+    fn join_streams(attrs: &[u8], labels: &[u8], attr_len: usize, label_len: usize) -> Vec<u8> {
+        let mut payload = Vec::new();
+        for (attr, label) in attrs
+            .chunks_exact(attr_len)
+            .zip(labels.chunks_exact(label_len))
+        {
+            payload.extend_from_slice(attr);
+            payload.extend_from_slice(label);
+        }
+        payload
+    }
+
     fn source_runs(payload: &[u8], record_len: usize) -> Vec<u32> {
         let mut runs = Vec::new();
         for record in payload.chunks_exact(record_len) {
@@ -3570,14 +3764,20 @@ mod tests {
         // Source 7 appears three times, split by 3 and 9: exactly the shape a
         // mid-source hand-over produces.
         let plan = [(7u32, 2usize), (3, 1), (7, 3), (9, 2), (7, 1), (3, 2)];
-        let mut payload = interleaved_payload(record_len, &plan);
+        let payload = interleaved_payload(record_len, &plan);
         let before = payload.clone();
         assert!(
             source_runs(&payload, record_len).len() > 3,
             "fixture must actually interleave sources"
         );
+        // The shared sink stages the streams apart, so the repair takes them
+        // apart; split the fixture the same way and check both move together.
+        let (mut attrs, mut labels) = split_streams(&payload, record_len, 4);
+        let before_labels = labels.clone();
 
-        sort_colored_payload_by_source(&mut payload, record_len, 3, 9).unwrap();
+        sort_colored_payload_by_source(&mut attrs, &mut labels, 4, record_len - 4, 3, 9).unwrap();
+        let payload = join_streams(&attrs, &labels, 4, record_len - 4);
+        assert_eq!(labels.len(), before_labels.len());
 
         // Every source now forms exactly one run, which is what colour
         // exactness needs.
@@ -3603,12 +3803,17 @@ mod tests {
     #[test]
     fn grouped_payloads_are_left_alone() {
         let record_len = 12;
-        let mut payload = interleaved_payload(record_len, &[(9, 2), (3, 3), (7, 1)]);
-        let before = payload.clone();
+        let payload = interleaved_payload(record_len, &[(9, 2), (3, 3), (7, 1)]);
+        let (mut attrs, mut labels) = split_streams(&payload, record_len, 4);
+        let (before_attrs, before_labels) = (attrs.clone(), labels.clone());
 
-        sort_colored_payload_by_source(&mut payload, record_len, 3, 9).unwrap();
+        sort_colored_payload_by_source(&mut attrs, &mut labels, 4, record_len - 4, 3, 9).unwrap();
 
-        assert_eq!(payload, before, "a grouped payload must not be rewritten");
+        assert_eq!(
+            attrs, before_attrs,
+            "a grouped payload must not be rewritten"
+        );
+        assert_eq!(labels, before_labels);
     }
 
     /// Reclaim must actually return blocks, not merely be called.

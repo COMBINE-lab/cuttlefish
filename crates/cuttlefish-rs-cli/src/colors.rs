@@ -74,10 +74,38 @@ where
         Mode::Sets => sets(&reader, &params, &mut output),
         Mode::Grep => grep(&mut reader, &params, &mut output),
     };
+    // `colors sets | head` is how anyone looks at a repository for the first
+    // time, and a reader that stops early is not an error.
+    if is_broken_pipe(&result) {
+        return Ok(0);
+    }
     result?;
-    output.flush()?;
-    output.finish()?;
+    let flushed = output.flush().map_err(Box::from).and_then(|()| {
+        output.finish()?;
+        Ok(())
+    });
+    if is_broken_pipe(&flushed) {
+        return Ok(0);
+    }
+    flushed?;
     Ok(0)
+}
+
+fn is_broken_pipe(result: &Result<()>) -> bool {
+    let Err(error) = result else {
+        return false;
+    };
+    let mut source: Option<&(dyn Error + 'static)> = Some(error.as_ref());
+    while let Some(current) = source {
+        if current
+            .downcast_ref::<std::io::Error>()
+            .is_some_and(|io| io.kind() == std::io::ErrorKind::BrokenPipe)
+        {
+            return true;
+        }
+        source = current.source();
+    }
+    false
 }
 
 /// One line per color run: unitig, the vertex range it covers, and its sources.

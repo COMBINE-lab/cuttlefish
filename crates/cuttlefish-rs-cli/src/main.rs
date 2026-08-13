@@ -12,6 +12,7 @@ use cuttlefish_rs::{
 };
 use std::time::Instant;
 
+mod cleanup;
 mod colors;
 mod compare;
 
@@ -150,6 +151,7 @@ where
         }
         "compare" => compare::run(args).map_err(|err| CliError::Compare(err.to_string())),
         "colors" => colors::run(args).map_err(|err| CliError::Colors(err.to_string())),
+        "cleanup" => cleanup::run(args).map_err(|err| CliError::Cleanup(err.to_string())),
         "help" | "--help" | "-h" => {
             print_top_help();
             Ok(0)
@@ -372,11 +374,12 @@ where
 
 fn print_top_help() {
     println!("cuttlefish {}", env!("CARGO_PKG_VERSION"));
-    println!("Supported commands: `build`, `compare`, `colors`, `help`, `version`.");
+    println!("Supported commands: `build`, `compare`, `colors`, `cleanup`, `help`, `version`.");
     println!("Usage:");
     println!("    cuttlefish build [options]");
     println!("    cuttlefish compare [options]");
     println!("    cuttlefish colors dump|sets|grep [options]");
+    println!("    cuttlefish cleanup [options]");
 }
 
 fn print_build_help() {
@@ -418,6 +421,7 @@ enum CliError {
     Parallelism(String),
     Compare(String),
     Colors(String),
+    Cleanup(String),
     Param(ParamError),
     Input(InputError),
     Partition(PartitionRunError),
@@ -466,6 +470,7 @@ impl std::fmt::Display for CliError {
             Self::Parallelism(err) => write!(f, "failed to configure worker threads: {err}"),
             Self::Compare(err) => write!(f, "cuttlefish compare: {err}"),
             Self::Colors(err) => write!(f, "cuttlefish colors: {err}"),
+            Self::Cleanup(err) => write!(f, "cuttlefish cleanup: {err}"),
             Self::Param(err) => write!(f, "{err}"),
             Self::Input(err) => write!(f, "{err}"),
             Self::Partition(err) => write!(f, "{err}"),

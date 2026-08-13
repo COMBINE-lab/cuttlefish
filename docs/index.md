@@ -21,6 +21,7 @@ a blocked external graph, and emits maximal unitigs directly to FASTA.
 - User-controlled worker count and soft memory budget
 - Optional LZ4 compression for uncolored partition buckets
 - Odd `k` values from 3 through 63
+- Color queries over a finished graph, and cleanup after an interrupted run
 
 ## Build
 
@@ -124,9 +125,11 @@ Reference builds use a default `(k + 1)`-mer cutoff of 1; read builds use 2.
 Use `--cutoff` to override either default.
 
 Besides `build`, the binary carries `compare`, which decides whether two unitig
-FASTA files describe the same graph up to strand and rotation, and `colors`,
-which reads a colored build's repository back (see [Output](#output)). Both
-print their own `--help`.
+FASTA files describe the same graph up to strand and rotation; `colors`, which
+reads a colored build's repository back (see [Output](#output)); and `cleanup`,
+which removes the intermediates a bailed run left behind (see [Working
+Directory and Cleanup](#working-directory-and-cleanup)). Each prints its own
+`--help`.
 
 ## Resource Control
 
@@ -198,6 +201,49 @@ All three stream and accept `-o`/`-z`; `--names` prints source paths instead of
 one-based ids. Queries by *sequence* rather than by color would need a k-mer
 locator, which is sketched in [color query index](color-query-index.md) and not
 built.
+
+## Working Directory and Cleanup
+
+A build stages its external-memory intermediates under `--work-dir` and unlinks
+them as it consumes them, so a successful run leaves the working directory
+empty. A run that is killed, fills the disk, or fails partway leaves them
+behind, and they are large: the intermediates for a 1000-genome graph peak
+around 17 GiB, and a 150000-genome graph reaches hundreds.
+
+Everything a build creates there is named `<OUTPUT_NAME>.cf3rs.<SUFFIX>`:
+
+| name | what it holds | phase |
+|---|---|---|
+| `.cf3rs.wsk` | weak super-k-mer buckets | partition |
+| `.cf3rs.lmtig-labels` | concatenated local unitig labels | local contraction |
+| `.cf3rs.lmtig-unitigs` | local unitig records into the labels | local contraction |
+| `.cf3rs.lmtig-unitigs.edge-matrix` | blocked discontinuity edges | local contraction |
+| `.cf3rs.local-unitig-buckets` | local unitigs, bucketed for collation | local contraction |
+| `.cf3rs.colors`, `.cf3rs.color-runs` | positional color runs (colored builds) | local contraction |
+| `.cf3rs.stitch-coords`, `.cf3rs.stitch-coords.cpp-expansion` | discontinuity path coordinates | expansion |
+| `.cf3rs.final-unitigs` | final unitig buckets before the FASTA | collation |
+| `.cf3rs.trivial.fa` | unitigs with no discontinuity exits, when not written straight to the output | local contraction |
+
+`CF3_RS_KEEP_INTERMEDIATES` retains all of them, which is what to set when
+inspecting a run rather than cleaning up after one.
+
+`<OUTPUT_PREFIX>.cf3rs.color-repository` is different: it sits beside the
+*output*, not in the working directory, and a completed colored build needs it
+to interpret its FASTA. It is durable output, not an intermediate.
+
+To reclaim a bailed run's space:
+
+```bash
+cuttlefish cleanup -w /path/to/work-dir --dry-run   # report, remove nothing
+cuttlefish cleanup -w /path/to/work-dir             # remove them
+```
+
+Cleanup removes only names matching `<name>.cf3rs.<suffix>` exactly, since a
+working directory is usually shared scratch; anything else is reported and left
+alone. Use `-p/--prefix` to restrict it to one build when several share a
+directory. It never touches the output FASTA -- after a bailed run that file is
+partial, and whether to keep it is yours to decide -- and it never removes a
+color repository without `--include-repository`.
 
 ## Pipeline
 

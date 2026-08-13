@@ -2703,3 +2703,9 @@ that every source comes back as one run with records intact and unduplicated;
 forcing a 64 KiB cap on 1000 real genomes turns the counters right over -- 0
 grouped, 16,384 permuted -- and still produces the exact 18,910,541 unitigs and
 1,783,360,006 bases.
+
+Colours themselves were checked on real data for *both* paths rather than only
+the fast one: 150 Salmonella assemblies at k = 31, once with the flush skipping
+its permutation and once with a 64 KiB cap forcing every payload through the
+repair, each yielding 2,797,788 colored unitigs whose source sets match truth
+derived from the input sequences.

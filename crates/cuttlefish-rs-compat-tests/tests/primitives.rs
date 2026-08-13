@@ -628,7 +628,7 @@ fn canonical_minimizer_is_strand_invariant_for_fixture_sequence() {
 
 #[test]
 fn vertex_state_matches_cutoff_model() {
-    let mut state = VertexState::default();
+    let mut state = VertexState::<()>::default();
     state.update_edges(Base::E, Base::A);
     state.update_edges(Base::E, Base::A);
     state.update_edges(Base::E, Base::C);

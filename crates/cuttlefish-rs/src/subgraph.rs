@@ -13,7 +13,7 @@ use crate::color::{ColorError, ConcurrentColorRepository};
 use crate::dna::{Base, minimal_rotation};
 use crate::hash::{FastBuildHasher, fast_u64_hash, hash_two_u64};
 use crate::kmer::{Kmer, KmerError};
-use crate::state::{ColorCoordinate, UnitigColor, VertexState, source_hash};
+use crate::state::{ColorCoordinate, ColorSlot, UnitigColor, VertexState, source_hash};
 use hashbrown::HashMap;
 use hashbrown::HashTable;
 use std::collections::HashSet;
@@ -33,8 +33,8 @@ use std::collections::HashSet;
 /// bits. K = 32 would collide with the marker, but k must be odd, so the
 /// next reachable size after 31 is 33 -- served by the two-word map.
 #[derive(Debug, Clone)]
-pub struct FlatVertexMap {
-    slots: Vec<(u64, VertexState)>,
+pub struct FlatVertexMap<C: ColorSlot = ()> {
+    slots: Vec<(u64, VertexState<C>)>,
     /// Insertion order, for the dispatch iteration.
     keys: Vec<u64>,
     mask: usize,
@@ -42,7 +42,7 @@ pub struct FlatVertexMap {
 
 const FLAT_EMPTY_KEY: u64 = u64::MAX;
 
-impl FlatVertexMap {
+impl<C: ColorSlot> FlatVertexMap<C> {
     /// Slot count giving <= 4/5 load for `capacity` live keys.
     fn slot_count(capacity: usize) -> usize {
         (capacity.max(8) * 5 / 4 + 1).next_power_of_two()
@@ -101,19 +101,19 @@ impl FlatVertexMap {
     }
 
     #[inline(always)]
-    fn get(&self, key: u64) -> Option<&VertexState> {
+    fn get(&self, key: u64) -> Option<&VertexState<C>> {
         let (index, hit) = self.probe(key);
         hit.then(|| &self.slots[index].1)
     }
 
     #[inline(always)]
-    fn get_mut(&mut self, key: u64) -> Option<&mut VertexState> {
+    fn get_mut(&mut self, key: u64) -> Option<&mut VertexState<C>> {
         let (index, hit) = self.probe(key);
         hit.then(|| &mut self.slots[index].1)
     }
 
     #[inline(always)]
-    fn state_or_default(&mut self, key: u64) -> &mut VertexState {
+    fn state_or_default(&mut self, key: u64) -> &mut VertexState<C> {
         let (index, hit) = self.probe(key);
         if hit {
             return &mut self.slots[index].1;
@@ -148,14 +148,14 @@ impl FlatVertexMap {
     }
 }
 
-impl PartialEq for FlatVertexMap {
+impl<C: ColorSlot> PartialEq for FlatVertexMap<C> {
     fn eq(&self, other: &Self) -> bool {
         self.keys.len() == other.keys.len()
             && self.keys.iter().all(|&key| other.get(key) == self.get(key))
     }
 }
 
-impl Eq for FlatVertexMap {}
+impl<C: ColorSlot> Eq for FlatVertexMap<C> {}
 
 /// The K > 31 twin of [`FlatVertexMap`].
 ///
@@ -169,8 +169,8 @@ impl Eq for FlatVertexMap {}
 /// hash map cannot index its keys, so every subgraph materialised a key
 /// vector instead).
 #[derive(Debug, Clone)]
-pub struct WideFlatVertexMap {
-    slots: Vec<(u128, VertexState)>,
+pub struct WideFlatVertexMap<C: ColorSlot = ()> {
+    slots: Vec<(u128, VertexState<C>)>,
     /// Insertion order, for the dispatch iteration.
     keys: Vec<u128>,
     mask: usize,
@@ -178,7 +178,7 @@ pub struct WideFlatVertexMap {
 
 const WIDE_FLAT_EMPTY_KEY: u128 = u128::MAX;
 
-impl WideFlatVertexMap {
+impl<C: ColorSlot> WideFlatVertexMap<C> {
     fn slot_count(capacity: usize) -> usize {
         (capacity.max(8) * 5 / 4 + 1).next_power_of_two()
     }
@@ -242,19 +242,19 @@ impl WideFlatVertexMap {
     }
 
     #[inline(always)]
-    fn get(&self, key: u128) -> Option<&VertexState> {
+    fn get(&self, key: u128) -> Option<&VertexState<C>> {
         let (index, hit) = self.probe(key);
         hit.then(|| &self.slots[index].1)
     }
 
     #[inline(always)]
-    fn get_mut(&mut self, key: u128) -> Option<&mut VertexState> {
+    fn get_mut(&mut self, key: u128) -> Option<&mut VertexState<C>> {
         let (index, hit) = self.probe(key);
         hit.then(|| &mut self.slots[index].1)
     }
 
     #[inline(always)]
-    fn state_or_default(&mut self, key: u128) -> &mut VertexState {
+    fn state_or_default(&mut self, key: u128) -> &mut VertexState<C> {
         let (index, hit) = self.probe(key);
         if hit {
             return &mut self.slots[index].1;
@@ -289,14 +289,14 @@ impl WideFlatVertexMap {
     }
 }
 
-impl PartialEq for WideFlatVertexMap {
+impl<C: ColorSlot> PartialEq for WideFlatVertexMap<C> {
     fn eq(&self, other: &Self) -> bool {
         self.keys.len() == other.keys.len()
             && self.keys.iter().all(|&key| other.get(key) == self.get(key))
     }
 }
 
-impl Eq for WideFlatVertexMap {}
+impl<C: ColorSlot> Eq for WideFlatVertexMap<C> {}
 
 #[derive(Default)]
 struct DenseWantedColorMap {
@@ -375,14 +375,14 @@ impl<const K: usize> WantedColorMap<K> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum LocalVertexMap<const K: usize> {
-    Flat(FlatVertexMap),
-    WideFlat(WideFlatVertexMap),
+pub enum LocalVertexMap<const K: usize, C: ColorSlot = ()> {
+    Flat(FlatVertexMap<C>),
+    WideFlat(WideFlatVertexMap<C>),
     #[doc(hidden)]
     Unused(std::marker::PhantomData<[(); K]>),
 }
 
-impl<const K: usize> LocalVertexMap<K> {
+impl<const K: usize, C: ColorSlot> LocalVertexMap<K, C> {
     #[inline(always)]
     fn with_capacity(capacity: usize) -> Self {
         if K <= 31 {
@@ -455,7 +455,7 @@ impl<const K: usize> LocalVertexMap<K> {
     }
 
     #[inline(always)]
-    fn get(&self, kmer: &Kmer<K>) -> Option<&VertexState> {
+    fn get(&self, kmer: &Kmer<K>) -> Option<&VertexState<C>> {
         match self {
             Self::Flat(map) => map.get(kmer.as_u128() as u64),
             Self::WideFlat(map) => map.get(kmer.as_u128()),
@@ -464,7 +464,7 @@ impl<const K: usize> LocalVertexMap<K> {
     }
 
     #[inline(always)]
-    fn get_mut(&mut self, kmer: &Kmer<K>) -> Option<&mut VertexState> {
+    fn get_mut(&mut self, kmer: &Kmer<K>) -> Option<&mut VertexState<C>> {
         match self {
             Self::Flat(map) => map.get_mut(kmer.as_u128() as u64),
             Self::WideFlat(map) => map.get_mut(kmer.as_u128()),
@@ -488,7 +488,7 @@ impl<const K: usize> LocalVertexMap<K> {
         }
     }
 
-    fn dense_key_state(&self, index: usize) -> Option<(Kmer<K>, VertexState)> {
+    fn dense_key_state(&self, index: usize) -> Option<(Kmer<K>, VertexState<C>)> {
         match self {
             Self::Flat(map) => {
                 let &key = map.keys.get(index)?;
@@ -513,7 +513,7 @@ impl<const K: usize> LocalVertexMap<K> {
     }
 
     #[inline(always)]
-    fn state_or_default(&mut self, kmer: Kmer<K>) -> &mut VertexState {
+    fn state_or_default(&mut self, kmer: Kmer<K>) -> &mut VertexState<C> {
         match self {
             Self::Flat(map) => map.state_or_default(kmer.as_u128() as u64),
             Self::WideFlat(map) => map.state_or_default(kmer.as_u128()),
@@ -524,11 +524,11 @@ impl<const K: usize> LocalVertexMap<K> {
 type LocalEdgeSet<const K: usize> = HashSet<LocalEdge<K>, FastBuildHasher>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LocalSubgraph<const K: usize> {
+pub struct LocalSubgraph<const K: usize, C: ColorSlot = ()> {
     pub graph_id: usize,
     pub colored: bool,
     pub cutoff: u32,
-    pub vertices: LocalVertexMap<K>,
+    pub vertices: LocalVertexMap<K, C>,
     pub edges: LocalEdgeSet<K>,
     pub stats: LocalSubgraphStats,
 }
@@ -807,7 +807,7 @@ enum VertexOrder<const K: usize> {
 }
 
 impl<const K: usize> VertexOrder<K> {
-    fn plan(subgraph: &LocalSubgraph<K>) -> Self {
+    fn plan<C: ColorSlot>(subgraph: &LocalSubgraph<K, C>) -> Self {
         if let Some(count) = subgraph.vertices.dense_len()
             && !sort_local_vertices_diagnostic()
         {
@@ -828,7 +828,11 @@ impl<const K: usize> VertexOrder<K> {
         }
     }
 
-    fn get(&self, subgraph: &LocalSubgraph<K>, index: usize) -> Option<(Kmer<K>, VertexState)> {
+    fn get<C: ColorSlot>(
+        &self,
+        subgraph: &LocalSubgraph<K, C>,
+        index: usize,
+    ) -> Option<(Kmer<K>, VertexState<C>)> {
         match self {
             Self::Dense(_) => subgraph.vertices.dense_key_state(index),
             Self::Keys(keys) => {
@@ -852,7 +856,7 @@ fn decode_only_diagnostic() -> bool {
     *DECODE_ONLY.get_or_init(|| std::env::var_os("CF3_RS_DECODE_ONLY").is_some())
 }
 
-impl<const K: usize> LocalSubgraph<K> {
+impl<const K: usize, C: ColorSlot> LocalSubgraph<K, C> {
     pub fn from_manifest_entries(
         store: &BucketStore,
         entries: &[BucketManifestEntry],
@@ -865,7 +869,7 @@ impl<const K: usize> LocalSubgraph<K> {
         store: &BucketStore,
         entries: &[BucketManifestEntry],
         cutoff: u32,
-        vertices: Option<LocalVertexMap<K>>,
+        vertices: Option<LocalVertexMap<K, C>>,
     ) -> Result<Self, LocalSubgraphError> {
         Self::from_entries_with_capacity(store, entries, cutoff, 0, vertices)
     }
@@ -875,7 +879,7 @@ impl<const K: usize> LocalSubgraph<K> {
         entries: &[BucketManifestEntry],
         cutoff: u32,
         vertex_capacity: usize,
-        reusable_vertices: Option<LocalVertexMap<K>>,
+        reusable_vertices: Option<LocalVertexMap<K, C>>,
     ) -> Result<Self, LocalSubgraphError> {
         if cutoff == 0 {
             return Err(LocalSubgraphError::InvalidCutoff);
@@ -947,11 +951,11 @@ impl<const K: usize> LocalSubgraph<K> {
         Ok(subgraph)
     }
 
-    pub(crate) fn into_vertex_map(self) -> LocalVertexMap<K> {
+    pub(crate) fn into_vertex_map(self) -> LocalVertexMap<K, C> {
         self.vertices
     }
 
-    pub fn vertex_state(&self, kmer: Kmer<K>) -> Option<&VertexState> {
+    pub fn vertex_state(&self, kmer: Kmer<K>) -> Option<&VertexState<C>> {
         self.vertices.get(&kmer)
     }
 
@@ -1167,7 +1171,7 @@ impl<const K: usize> LocalSubgraph<K> {
     fn contract_colored_vertex<F, G>(
         &mut self,
         v_hat: Kmer<K>,
-        state: VertexState,
+        state: VertexState<C>,
         color_is_known: &F,
         emit: &mut G,
         unitig_hash_runs: &mut Vec<Vec<PendingColorRun>>,
@@ -1298,7 +1302,7 @@ impl<const K: usize> LocalSubgraph<K> {
     fn contract_vertex_compact<F>(
         &mut self,
         v_hat: Kmer<K>,
-        state: VertexState,
+        state: VertexState<C>,
         emit: &mut F,
         back_walk: &mut UnitigWalk<K>,
         front_walk: &mut UnitigWalk<K>,
@@ -1343,7 +1347,7 @@ impl<const K: usize> LocalSubgraph<K> {
     fn contract_vertex<F>(
         &mut self,
         v_hat: Kmer<K>,
-        state: VertexState,
+        state: VertexState<C>,
         collect_vertices: bool,
         emit: &mut F,
         back_walk: &mut UnitigWalk<K>,
@@ -1829,7 +1833,7 @@ impl<const K: usize> LocalSubgraph<K> {
     }
 
     #[inline]
-    fn vertex_state_or_default(&mut self, kmer: Kmer<K>) -> &mut VertexState {
+    fn vertex_state_or_default(&mut self, kmer: Kmer<K>) -> &mut VertexState<C> {
         self.vertices.state_or_default(kmer)
     }
 }
@@ -2016,7 +2020,7 @@ mod tests {
             right_discontinuous: true,
             label: b"ACGTT".to_vec(),
         };
-        let mut subgraph = LocalSubgraph::<3> {
+        let mut subgraph = LocalSubgraph::<3, u64> {
             graph_id: 3,
             colored: true,
             cutoff: 1,
@@ -2098,7 +2102,7 @@ mod tests {
             emitter.finish().unwrap();
             let (store, entries) = BucketStore::open_dir(&dir).unwrap();
             let mut subgraph =
-                LocalSubgraph::<3>::from_manifest_entries(&store, &entries, 1).unwrap();
+                LocalSubgraph::<3, u64>::from_manifest_entries(&store, &entries, 1).unwrap();
             let mut unitigs = subgraph.contract_colored(&store, &entries).unwrap();
             unitigs.sort_by(|a, b| a.unitig.label.cmp(&b.unitig.label));
             fs::remove_dir_all(dir).unwrap();
@@ -2167,7 +2171,8 @@ mod tests {
         }
         emitter.finish().unwrap();
         let (store, entries) = BucketStore::open_dir(&dir).unwrap();
-        let mut subgraph = LocalSubgraph::<3>::from_manifest_entries(&store, &entries, 1).unwrap();
+        let mut subgraph =
+            LocalSubgraph::<3, u64>::from_manifest_entries(&store, &entries, 1).unwrap();
         let unitigs = subgraph.contract_colored(&store, &entries).unwrap();
         assert_eq!(unitigs.len(), 1);
         assert_eq!(unitigs[0].colors.len(), 1);

@@ -2341,3 +2341,41 @@ implementation. Landing that days after declaring a production-ready candidate
 buys ~8% of colored wall at the cost of re-opening the one invariant that took
 the most work to establish. It is specified and costed here so it can be the
 first change after RC1 rather than the last one inside it.
+
+### Acting on it: the colour slot leaves uncolored vertices
+
+The profile above pointed at bytes per vertex, and the C++ implementation had
+already drawn the same conclusion: `State_Config<bool Colored_>` specializes,
+and its uncolored specialization has no colour field. Rust carried one in both
+modes -- `{ edges, flags, color_hash: u64 }`, 16 bytes -- so an uncolored build
+spent 8 bytes per vertex on a hash it never reads.
+
+`VertexState<C: ColorSlot>` now takes its colour half as a type parameter,
+zero-sized for uncolored builds and `u64` for colored, with the shared
+contraction code staying generic through two slot methods (`hash`, `combine`)
+that the uncolored slot implements as constants. Compile-time assertions pin
+both sizes. The flat map, wide flat map, local vertex map, subgraph, reusable
+map and contraction driver thread the parameter; the three drivers pick `()` or
+`u64`, which is the only place colouredness has to be decided.
+
+Uncolored slots go from 24 bytes to 16 -- four to a cache line instead of
+2.67 -- on 10000 genomes at k = 31, t64, interleaved order-alternated pairs:
+
+| | before | after | change |
+|---|---:|---:|---:|
+| unitig walk | 275.2 worker-s | 247.0 worker-s | **-10.2%** |
+| local contraction phase | 12.45 s | 11.80 s | **-5.2%** |
+| whole build | 29.02 s | 28.15 s | **-3.0%** |
+
+Colored is unchanged, as it must be: its slot is still 16 bytes, and its pairs
+are neutral inside a wide spread (35.9-43.3 s for the same binary). Counts are
+exact in every run, colour sets validate against source-derived truth at k = 31
+through 63, and the k > 31 sweep against C++ still matches on all 32
+graph/k combinations.
+
+An earlier throwaway prototype -- deleting the field outright, which is only
+valid for uncolored -- suggested a larger win (walk -23.8%, build -6.1%) on a
+single unpaired run. The paired figures above are the honest ones; the
+prototype's build time (27.9 s) and the shipped implementation's best run
+(27.7 s) agree, so the difference was run-to-run spread rather than anything
+the abstraction costs.

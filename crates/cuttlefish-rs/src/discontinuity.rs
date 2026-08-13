@@ -35,7 +35,7 @@ use crate::color::{
 use crate::dna::{Base, complement_ascii, minimal_rotation, reverse_complement_label};
 use crate::hash::{FastBuildHasher, hash_bytes, wyhash_u64};
 use crate::kmer::Kmer;
-use crate::state::{UnitigColor, VertexState};
+use crate::state::{ColorSlot, UnitigColor, VertexState};
 use crate::subgraph::{LocalSubgraph, LocalSubgraphError, LocalUnitigRef, LocalVertexMap};
 use rayon::prelude::*;
 use rayon::{ThreadPool, ThreadPoolBuilder};
@@ -12313,7 +12313,7 @@ pub fn emit_uncolored_external_discontinuity_inputs_with_threads_in_dir<const K:
         return Err(DiscontinuityInputError::InvalidThreadCount);
     }
     let (store, entries) = BucketStore::open_dir(bucket_dir.as_ref())?;
-    contract_local_subgraphs_into_external_inputs::<K>(
+    contract_local_subgraphs_into_external_inputs::<K, ()>(
         &store,
         &entries,
         cutoff,
@@ -12346,7 +12346,7 @@ pub fn emit_colored_external_discontinuity_inputs_with_threads_in_dir<const K: u
         return Err(DiscontinuityInputError::InvalidThreadCount);
     }
     let (store, entries) = BucketStore::open_dir(bucket_dir.as_ref())?;
-    contract_local_subgraphs_into_external_inputs::<K>(
+    contract_local_subgraphs_into_external_inputs::<K, u64>(
         &store,
         &entries,
         cutoff,
@@ -12375,7 +12375,7 @@ fn emit_uncolored_discontinuity_inputs_with_threads_impl<const K: usize>(
 
     let (store, entries) = BucketStore::open_dir(bucket_dir.as_ref())?;
     if let Some(label_path) = label_path {
-        let external = contract_local_subgraphs_into_external_inputs::<K>(
+        let external = contract_local_subgraphs_into_external_inputs::<K, ()>(
             &store, &entries, cutoff, threads, label_path, None, None, None, 0,
         )?;
         return external_inputs_to_memory_inputs(external);
@@ -12449,7 +12449,7 @@ fn external_inputs_to_memory_inputs<const K: usize>(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn contract_local_subgraphs_into_external_inputs<const K: usize>(
+fn contract_local_subgraphs_into_external_inputs<const K: usize, C: ColorSlot>(
     store: &BucketStore,
     entries: &[BucketManifestEntry],
     cutoff: u32,
@@ -12619,7 +12619,7 @@ fn contract_local_subgraphs_into_external_inputs<const K: usize>(
     if workers == 1 {
         let mut reusable_vertices = None;
         for (offset, group) in groups.iter().enumerate() {
-            let output = contract_local_subgraph::<K>(
+            let output = contract_local_subgraph::<K, C>(
                 store,
                 group,
                 cutoff,
@@ -12720,7 +12720,7 @@ fn contract_local_subgraphs_into_external_inputs<const K: usize>(
                         let Some(group) = groups.get(group_idx) else {
                             break;
                         };
-                        let output = contract_local_subgraph::<K>(
+                        let output = contract_local_subgraph::<K, C>(
                             store,
                             group,
                             cutoff,
@@ -13239,12 +13239,12 @@ const VERTEX_MAP_ALWAYS_REUSE_CAPACITY: usize = 4096;
 /// against what this worker actually uses calibrates to the corpus without a
 /// tuned constant per workload: uniform reference buckets keep their map, and
 /// the heavy skew of read data drops it after an outlier.
-struct ReusableVertexMap<const K: usize> {
-    map: LocalVertexMap<K>,
+struct ReusableVertexMap<const K: usize, C: ColorSlot> {
+    map: LocalVertexMap<K, C>,
     mean_vertices: usize,
 }
 
-impl<const K: usize> ReusableVertexMap<K> {
+impl<const K: usize, C: ColorSlot> ReusableVertexMap<K, C> {
     /// Whether this map is small enough, relative to recent subgraphs, to clear
     /// rather than discard.
     fn worth_carrying(&self) -> bool {
@@ -13296,7 +13296,7 @@ fn contract_local_subgraphs<const K: usize>(
         let mut outputs = Vec::with_capacity(groups.len());
         let mut reusable_vertices = None;
         for (offset, group) in groups.iter().enumerate() {
-            outputs.push(contract_local_subgraph::<K>(
+            outputs.push(contract_local_subgraph::<K, ()>(
                 store,
                 group,
                 cutoff,
@@ -13326,7 +13326,7 @@ fn contract_local_subgraphs<const K: usize>(
                     let Some(group) = groups.get(group_idx) else {
                         break;
                     };
-                    chunk_outputs.push(contract_local_subgraph::<K>(
+                    chunk_outputs.push(contract_local_subgraph::<K, ()>(
                         store,
                         group,
                         cutoff,
@@ -13428,12 +13428,12 @@ fn report_discontinuity_contraction_progress(done: usize, total: usize, started:
     }
 }
 
-fn contract_local_subgraph<const K: usize>(
+fn contract_local_subgraph<const K: usize, C: ColorSlot>(
     store: &BucketStore,
     group: &LocalBucketGroup,
     cutoff: u32,
     color_repository: Option<&ConcurrentColorRepository>,
-    reusable_vertices: &mut Option<ReusableVertexMap<K>>,
+    reusable_vertices: &mut Option<ReusableVertexMap<K, C>>,
     emit_trivial_fasta: bool,
 ) -> Result<LocalContractionOutput<K>, DiscontinuityInputError> {
     let build_start = Instant::now();
@@ -13441,7 +13441,7 @@ fn contract_local_subgraph<const K: usize>(
     // The mean outlives the map: dropping an oversized table must not also
     // discard what this worker has learned about its subgraph sizes.
     let mean_vertices = carried.as_ref().map_or(0, |held| held.mean_vertices);
-    let mut subgraph = LocalSubgraph::<K>::from_manifest_entries_reusing(
+    let mut subgraph = LocalSubgraph::<K, C>::from_manifest_entries_reusing(
         store,
         &group.entries,
         cutoff,
@@ -13529,7 +13529,7 @@ fn contract_local_subgraph<const K: usize>(
     };
     let map = subgraph.into_vertex_map();
     *reusable_vertices = Some(ReusableVertexMap {
-        mean_vertices: ReusableVertexMap::<K>::observe(mean_vertices, map.len()),
+        mean_vertices: ReusableVertexMap::<K, C>::observe(mean_vertices, map.len()),
         map,
     });
     if !keep_intermediates() {

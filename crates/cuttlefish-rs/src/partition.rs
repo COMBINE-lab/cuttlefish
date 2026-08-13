@@ -136,7 +136,7 @@ pub fn emit_weak_superkmer_buckets<const K: usize>(
         // Colored vertices retain their previous source in a packed 21-bit
         // field. Reject an oversized source set here, with the input count in
         // hand, rather than letting a contraction worker trip an assertion.
-        if paths.len() > crate::state::VertexState::MAX_SOURCE_ID as usize {
+        if paths.len() > crate::state::MAX_SOURCE_ID as usize {
             return Err(PartitionRunError::TooManySources);
         }
         return emit_colored_weak_superkmer_buckets::<K>(params, graph_count, &paths);

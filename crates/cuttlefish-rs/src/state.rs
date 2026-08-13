@@ -78,24 +78,67 @@ impl EdgeFrequency {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct VertexState {
-    edges: EdgeFrequency,
-    flags: u32,
-    color_hash: u64,
+/// What a vertex stores about colors, which is nothing unless the build is
+/// colored.
+///
+/// This is the Rust spelling of C++'s `State_Config<bool Colored_>`
+/// specialization: the uncolored state has no colour field at all, so its slot
+/// is 8 bytes rather than 16 and a flat-map cache line holds four of them
+/// instead of two. Local contraction is memory-bandwidth-bound at high thread
+/// counts, so that is worth 14% of the phase -- see the R1 profile in the
+/// performance record.
+pub trait ColorSlot: Copy + Default + std::fmt::Debug + PartialEq + Eq {
+    /// The colour-set hash, or zero when the build carries no colours.
+    fn hash(self) -> u64;
+
+    /// Folds another source's hash in. A no-op without a slot to fold into,
+    /// which is why the shared contraction code can stay generic.
+    fn combine(&mut self, source_hash: u64);
 }
 
-impl VertexState {
+/// The uncolored slot: zero-sized, so it costs a vertex nothing.
+impl ColorSlot for () {
+    #[inline(always)]
+    fn hash(self) -> u64 {
+        0
+    }
+
+    #[inline(always)]
+    fn combine(&mut self, _source_hash: u64) {}
+}
+
+/// The colored slot: the running hash of the vertex's colour set.
+impl ColorSlot for u64 {
+    #[inline(always)]
+    fn hash(self) -> u64 {
+        self
+    }
+
+    #[inline(always)]
+    fn combine(&mut self, source_hash: u64) {
+        *self = hash_combine(*self, source_hash);
+    }
+}
+
+/// Largest source ID representable in the packed last-source field.
+///
+/// Colored builds track the previously seen source per vertex in 21 bits of
+/// `flags`; partitioning rejects larger source sets before contraction so this
+/// bound is never reached at run time. It lives outside [`VertexState`] so a
+/// caller can check it without naming a colour slot.
+pub const MAX_SOURCE_ID: u32 = 0x1F_FFFF;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct VertexState<C: ColorSlot = ()> {
+    edges: EdgeFrequency,
+    flags: u32,
+    color_hash: C,
+}
+
+impl<C: ColorSlot> VertexState<C> {
     const VISITED: u32 = 1 << 0;
     const DISC_FRONT: u32 = 1 << 1;
     const DISC_BACK: u32 = 1 << 2;
-    /// Largest source ID representable in the packed last-source field.
-    ///
-    /// Colored builds track the previously seen source per vertex in 21 bits of
-    /// `flags`; partitioning rejects larger source sets before contraction so
-    /// this bound is never reached at run time.
-    pub const MAX_SOURCE_ID: u32 = 0x1F_FFFF;
-
     const SOURCE_SHIFT: u32 = 11;
     const SOURCE_MASK: u32 = 0x1F_FFFF << Self::SOURCE_SHIFT;
 
@@ -165,21 +208,27 @@ impl VertexState {
     #[inline(always)]
     pub fn add_source_hashed(&mut self, source: u32, source_hash: u64) {
         debug_assert!(
-            source <= Self::MAX_SOURCE_ID,
+            source <= MAX_SOURCE_ID,
             "source IDs are bounded during partitioning"
         );
         let last = (self.flags & Self::SOURCE_MASK) >> Self::SOURCE_SHIFT;
         if source != last {
-            self.color_hash = hash_combine(self.color_hash, source_hash);
+            self.color_hash.combine(source_hash);
             self.flags = (self.flags & !Self::SOURCE_MASK) | (source << Self::SOURCE_SHIFT);
         }
     }
 
     #[inline]
     pub fn color_hash(&self) -> u64 {
-        self.color_hash
+        self.color_hash.hash()
     }
 }
+
+/// The point of the colour-slot parameter: an uncolored vertex costs 8 bytes
+/// and a colored one 16, so a flat-map cache line holds four uncolored slots
+/// where it held two.
+const _: () = assert!(std::mem::size_of::<VertexState<()>>() == 8);
+const _: () = assert!(std::mem::size_of::<VertexState<u64>>() == 16);
 
 #[inline]
 pub fn source_hash(source: u32) -> u64 {

@@ -238,7 +238,10 @@ Rust API documentation can be generated with:
 cargo doc --workspace --no-deps --open
 ```
 
-Development and decomposition notes are in [`docs/`](docs/).
+User documentation is in [`docs/index.md`](docs/index.md). The development
+record -- measurements, attempts, and the reasoning behind each decision,
+including the reverted ones -- is catalogued in
+[`docs/engineering/`](docs/engineering/README.md).
 
 ## Testing
 

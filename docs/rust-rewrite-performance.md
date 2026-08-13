@@ -2729,6 +2729,16 @@ pairs:
 and about 1% of a colored build's 245 s wall. The other half of the original
 4.50 s was memory traffic the sort removal has already claimed.
 
+Read the bytes column carefully: **the ablation inflates disk usage and the
+change it stands in for would not.** `CF3_RS_INTERLEAVE_COLORED` skips the
+deinterleave by compressing records interleaved, and interleaved data compresses
+worse, hence 340.5 GB against 304.5 GB. Split staging keeps split compression --
+the encoder receives the same two arrays and emits byte-identical blocks, it
+just stops copying them out of interleaved records first -- so on-disk volume is
+unchanged. That makes 2.47 s a *lower* bound on the change: the ablation bought
+its CPU saving while paying for 36 GB of extra writes, and split staging would
+not pay that.
+
 And the gap it was meant to close is gone: colored phase 1 is now 117.17 s
 against C++'s 119.547 s, so we are 2.0% ahead rather than 5.3% behind. Splitting
 the staging would take that to roughly 4% ahead.

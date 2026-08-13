@@ -2752,3 +2752,47 @@ would have to permute two arrays in step -- immediately after that path was
 changed. The larger costs sit in local contraction, where `add_packed_parts` is
 19.8% of a colored build and `collect_wanted_color_relations` 8.7%, and neither
 has a known mechanism yet.
+
+## Profiling the colored second pass: measured, and left alone
+
+`collect_wanted_color_relations` is 8.7% of a colored build, and the earlier
+attempt to speed it up by flattening its lookup table measured 17.9% worse. This
+is what the pass actually does, and why nothing here is worth changing.
+
+**97% of its probes miss, and the table is L1-resident.** Instrumented on 1000
+genomes at k = 31, t64:
+
+| | |
+| --- | ---: |
+| probes | 4,628,652,845 |
+| hits | 139,142,506 (**3.006%**) |
+| wanted entries | 2,334,772 over 16,384 subgraphs |
+| mean entries per subgraph | **143** |
+
+That combination rules out both obvious mechanisms. A 143-entry table is a few
+kilobytes, so the misses are not cache misses -- which is why flattening it
+hurt, and also why the reverse move does not help.
+
+**A membership filter in front of the table measured neutral.** Eight bits per
+entry, indexed from the high half of the hash so it is independent of the
+table's own bits, conservative by construction: unitig walk 612.4 to 614.2
+worker-s over the pass, inside noise. The reason is the same one that sank the
+flattening: at 143 entries hashbrown's miss path is already a load of one
+16-byte control group and a SIMD test, entirely in L1. A filter replaces one
+cheap L1 operation with another cheap L1 operation. Reverted.
+
+So the cost is not the lookup at all. It is that the pass exists: 4.63 billion
+canonical k-mers rolled, hashed, and asked about, to learn 139 million answers.
+The only changes that can pay are ones that ask fewer questions -- which means
+not making the traversal, i.e. accumulating source sets during the first pass,
+before contraction has decided which vertices are representatives. That is an
+algorithmic change to how colour classes are discovered, not a mechanical one,
+and it is the only remaining candidate here.
+
+**A note on the instrumentation, because it distorted the thing it measured.**
+The probe counters cost enough that the same build reported 21.0 s with them and
+14.3 s without. An ablation that gated the probe on `env::var_os` per record was
+worse still -- 38 s, because that call locks -- and could not be made honest
+without threading a flag through the call chain. Numbers from instrumented runs
+here are used only as ratios within a single run, never compared against clean
+runs, and the filter A/B above was measured with instrumentation on both sides.

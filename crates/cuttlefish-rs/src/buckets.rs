@@ -34,6 +34,31 @@ const MAX_PENDING_BUCKET_BYTES: usize = 1024 * 1024;
 // repeatedly scanning every graph bucket merely to move tiny fragments into
 // the shared atlas.
 const MAX_TOTAL_PENDING_BYTES: usize = 128 * 1024 * 1024;
+
+/// How much of one source a colored worker may stage before it must hand
+/// records over mid-source.
+///
+/// Colored workers normally drain only at source boundaries, which is what
+/// makes each source's records land contiguously in a bucket and lets the
+/// window flush skip its counting sort. Holding a whole source is cheap for
+/// assemblies -- a Salmonella genome stages about 2.3 MB -- and impossible for
+/// a mammalian one, so a worker that exceeds this hands over early. That breaks
+/// the contiguity, which `sort_colored_payload_by_source_with` detects and
+/// repairs; correctness never depends on staying under the cap.
+const MAX_COLORED_SOURCE_PENDING_BYTES: usize = 512 * 1024 * 1024;
+
+/// The cap above, overridable so the mid-source path can be exercised on
+/// inputs that would never reach 512 MiB.
+fn colored_source_pending_cap() -> usize {
+    static CAP: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *CAP.get_or_init(|| {
+        std::env::var("CF3_RS_COLORED_SOURCE_PENDING_BYTES")
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+            .filter(|bytes| *bytes > 0)
+            .unwrap_or(MAX_COLORED_SOURCE_PENDING_BYTES)
+    })
+}
 const ATLAS_GRAPH_COUNT: usize = 128;
 const SUBGRAPH_CHUNK_BYTES: usize = 64 * 1024;
 
@@ -2245,6 +2270,32 @@ fn append_colored_atlas_record(
     Ok(())
 }
 
+/// Colour exactness, and what the window flush has to do about it.
+///
+/// A vertex's colour class is an XOR over the distinct sources that carry it,
+/// deduplicated against the last source seen for that vertex as a bucket is
+/// read. That is exact precisely when each source's records sit **consecutively**
+/// within a bucket -- not sorted, just uninterrupted -- because a source that
+/// appears, is interrupted, and appears again gets XORed in twice and lands in
+/// the wrong class.
+///
+/// Two things arrange for that, and only the second is a guarantee:
+///
+/// 1. Colored workers own one source at a time and hand records to the shared
+///    atlas at source boundaries, never inside a source, so each source arrives
+///    as one contiguous run. This is the normal case and is why
+///    `sort_colored_payload_by_source_with` almost always finds nothing to do:
+///    on 150000 genomes, 1,277,952 payloads arrived grouped and none needed
+///    repair.
+/// 2. When a source is too large to stage -- [`colored_source_pending_cap`] --
+///    a worker hands over mid-source and the runs interleave. The flush detects
+///    that from the payload itself and repairs it by counting sort.
+///
+/// Correctness rests on (2), never on (1). If a future change introduces a
+/// mid-source hand-over, the repair still runs; the cost is the sort, not the
+/// colours. `colored_payload_grouping` reports the split so a regression in (1)
+/// shows up as a number rather than only as lost time.
+///
 /// Reusable buffers for [`sort_colored_payload_by_source`]; one per sorting
 /// thread. Fresh allocations here measured at ~0.3 GB/s per worker from
 /// first-touch faults alone -- reuse is what makes per-window sorting cheap.
@@ -2252,6 +2303,8 @@ fn append_colored_atlas_record(
 struct SourceSortScratch {
     offsets: Vec<usize>,
     sorted: Vec<u8>,
+    /// One entry per run of equal source: its source and its first record.
+    runs: Vec<(u32, usize)>,
 }
 
 fn sort_colored_payload_by_source(
@@ -2262,6 +2315,20 @@ fn sort_colored_payload_by_source(
 ) -> Result<(), BucketError> {
     let mut scratch = SourceSortScratch::default();
     sort_colored_payload_by_source_with(payload, record_len, source_min, source_max, &mut scratch)
+}
+
+/// How many window payloads arrived already grouped by source, and how many
+/// had to be permuted. The drain discipline should keep the second at zero;
+/// it is reported so a regression is visible rather than merely slow.
+static GROUPED_PAYLOADS: AtomicU64 = AtomicU64::new(0);
+static UNGROUPED_PAYLOADS: AtomicU64 = AtomicU64::new(0);
+
+/// Payload-grouping counters, as (already grouped, permuted).
+pub fn colored_payload_grouping() -> (u64, u64) {
+    (
+        GROUPED_PAYLOADS.load(Ordering::Relaxed),
+        UNGROUPED_PAYLOADS.load(Ordering::Relaxed),
+    )
 }
 
 fn sort_colored_payload_by_source_with(
@@ -2277,19 +2344,64 @@ fn sort_colored_payload_by_source_with(
     if !payload.len().is_multiple_of(record_len) {
         return Err(BucketError::MalformedRecord);
     }
-    let source_count =
-        usize::try_from(source_max - source_min + 1).map_err(|_| BucketError::MalformedRecord)?;
-    scratch.offsets.clear();
-    scratch.offsets.resize(source_count, 0);
-    let offsets = &mut scratch.offsets;
-    for record in payload.chunks_exact(record_len) {
+    // One pass over the payload, recording only where the source changes.
+    // Runs are few -- a worker hands over whole sources, so a payload is a
+    // handful of them -- which is what lets the grouped case avoid touching a
+    // per-source array at all. Zero-filling one per payload cost 19.7 GB of
+    // memset across a 150000-genome run for a histogram that was then thrown
+    // away.
+    scratch.runs.clear();
+    let mut previous: Option<u32> = None;
+    for (index, record) in payload.chunks_exact(record_len).enumerate() {
         let attr = u32::from_le_bytes(record[..4].try_into().expect("colored attribute"));
         let source = attr >> 10;
         if source < source_min || source > source_max {
             return Err(BucketError::MalformedRecord);
         }
-        offsets[(source - source_min) as usize] += 1;
+        if previous != Some(source) {
+            scratch.runs.push((source, index));
+            previous = Some(source);
+        }
     }
+
+    // Grouped means no source opens a second run. The offsets buffer is
+    // borrowed for this -- it holds run sources here and record counts below,
+    // never both at once -- so detection allocates nothing.
+    let mut seen = std::mem::take(&mut scratch.offsets);
+    seen.clear();
+    seen.extend(scratch.runs.iter().map(|&(source, _)| source as usize));
+    seen.sort_unstable();
+    let runs = scratch.runs.len();
+    seen.dedup();
+    let grouped = seen.len() == runs;
+    scratch.offsets = seen;
+    if grouped {
+        // Nothing to repair. Colour exactness needs each source's records
+        // *consecutive* within a bucket, not ascending, and the class hash is
+        // an XOR over distinct sources, so it does not depend on their order
+        // either. Skipping avoids the permutation and its scratch buffer.
+        GROUPED_PAYLOADS.fetch_add(1, Ordering::Relaxed);
+        return Ok(());
+    }
+    UNGROUPED_PAYLOADS.fetch_add(1, Ordering::Relaxed);
+
+    // The repair path, which only a source too large to stage reaches. Run
+    // lengths come from the boundaries already recorded, so the histogram
+    // costs no second pass over the payload.
+    let source_count =
+        usize::try_from(source_max - source_min + 1).map_err(|_| BucketError::MalformedRecord)?;
+    let records = payload.len() / record_len;
+    scratch.offsets.clear();
+    scratch.offsets.resize(source_count, 0);
+    let offsets = &mut scratch.offsets;
+    for (index, &(source, start)) in scratch.runs.iter().enumerate() {
+        let end = scratch
+            .runs
+            .get(index + 1)
+            .map_or(records, |&(_, next)| next);
+        offsets[(source - source_min) as usize] += end - start;
+    }
+
     let mut prefix = 0usize;
     for offset in offsets.iter_mut() {
         let count = *offset;
@@ -2607,21 +2719,21 @@ impl SharedBucketEmitter {
         self.pending_bytes += record_len;
 
         // As in C++, colored worker-atlas chunks are checked and handed to the
-        // shared atlas at the source boundary, not in the middle of a source.
-        if self.deferred_uncolored {
+        // shared atlas at the source boundary, not in the middle of a source --
+        // unless a single source is too large to stage, in which case memory
+        // wins and the window flush repairs the grouping.
+        if self.sink.colored {
+            if self.pending_bytes >= colored_source_pending_cap() {
+                self.flush_largest_pending_bucket()?;
+            }
+        } else if self.deferred_uncolored {
             let atlas_id = graph_id / ATLAS_GRAPH_COUNT;
             if self.uncolored_pending[atlas_id].bytes.len() >= SUBGRAPH_CHUNK_BYTES {
                 self.flush_pending_uncolored_atlas(atlas_id)?;
             }
-        } else if !self.sink.colored
-            && !self.deferred_uncolored
-            && self.pending[graph_id].bytes.len() >= MAX_PENDING_BUCKET_BYTES
-        {
+        } else if self.pending[graph_id].bytes.len() >= MAX_PENDING_BUCKET_BYTES {
             self.flush_pending_bucket(graph_id)?;
-        } else if !self.sink.colored
-            && !self.deferred_uncolored
-            && self.pending_bytes >= MAX_TOTAL_PENDING_BYTES
-        {
+        } else if self.pending_bytes >= MAX_TOTAL_PENDING_BYTES {
             self.flush_largest_pending_bucket()?;
         }
         Ok(())
@@ -3415,6 +3527,90 @@ impl std::error::Error for BucketError {}
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    /// Builds a payload whose sources are deliberately interleaved.
+    fn interleaved_payload(record_len: usize, plan: &[(u32, usize)]) -> Vec<u8> {
+        let mut payload = Vec::new();
+        let mut tag = 0u8;
+        for &(source, count) in plan {
+            for _ in 0..count {
+                let attr = source << 10;
+                payload.extend_from_slice(&attr.to_le_bytes());
+                // Distinguishable filler so the check below can prove records
+                // moved as units rather than merely that counts survived.
+                payload.extend(std::iter::repeat_n(tag, record_len - 4));
+                tag = tag.wrapping_add(1);
+            }
+        }
+        payload
+    }
+
+    fn source_runs(payload: &[u8], record_len: usize) -> Vec<u32> {
+        let mut runs = Vec::new();
+        for record in payload.chunks_exact(record_len) {
+            let source = u32::from_le_bytes(record[..4].try_into().unwrap()) >> 10;
+            if runs.last() != Some(&source) {
+                runs.push(source);
+            }
+        }
+        runs
+    }
+
+    /// The window flush repairs a payload whose sources were interrupted.
+    ///
+    /// Colored workers hand records over at source boundaries, which is what
+    /// leaves each source contiguous in a bucket and lets the flush skip its
+    /// permutation. A source too large to stage breaks that, and correctness
+    /// then rests entirely on this repair -- so it is tested directly rather
+    /// than through a build that may or may not provoke the case.
+    #[test]
+    fn ungrouped_payloads_are_regrouped_by_source() {
+        let record_len = 12;
+        // Source 7 appears three times, split by 3 and 9: exactly the shape a
+        // mid-source hand-over produces.
+        let plan = [(7u32, 2usize), (3, 1), (7, 3), (9, 2), (7, 1), (3, 2)];
+        let mut payload = interleaved_payload(record_len, &plan);
+        let before = payload.clone();
+        assert!(
+            source_runs(&payload, record_len).len() > 3,
+            "fixture must actually interleave sources"
+        );
+
+        sort_colored_payload_by_source(&mut payload, record_len, 3, 9).unwrap();
+
+        // Every source now forms exactly one run, which is what colour
+        // exactness needs.
+        let runs = source_runs(&payload, record_len);
+        let mut distinct = runs.clone();
+        distinct.sort_unstable();
+        distinct.dedup();
+        assert_eq!(runs.len(), distinct.len(), "a source still appears twice");
+
+        // Records survived intact and unduplicated.
+        let mut sorted_before = before.chunks_exact(record_len).collect::<Vec<_>>();
+        let mut sorted_after = payload.chunks_exact(record_len).collect::<Vec<_>>();
+        sorted_before.sort_unstable();
+        sorted_after.sort_unstable();
+        assert_eq!(sorted_before, sorted_after);
+    }
+
+    /// A payload that is already grouped is left exactly as it is.
+    ///
+    /// This is the case the drain discipline produces, and the flush skips its
+    /// permutation for it, so the bytes must come back untouched -- including
+    /// their run order, which is not ascending and does not need to be.
+    #[test]
+    fn grouped_payloads_are_left_alone() {
+        let record_len = 12;
+        let mut payload = interleaved_payload(record_len, &[(9, 2), (3, 3), (7, 1)]);
+        let before = payload.clone();
+
+        sort_colored_payload_by_source(&mut payload, record_len, 3, 9).unwrap();
+
+        assert_eq!(payload, before, "a grouped payload must not be rewritten");
+    }
+
     /// Reclaim must actually return blocks, not merely be called.
     ///
     /// A failed punch is ignored by design -- the container is unlinked
@@ -3508,8 +3704,6 @@ mod tests {
             );
         }
     }
-
-    use super::*;
 
     #[test]
     fn deferred_uncolored_atlas_chunks_preserve_graph_buckets() {

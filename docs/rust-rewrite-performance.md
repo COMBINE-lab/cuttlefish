@@ -2645,3 +2645,61 @@ That is presumably why C++ carries the windowed path at all, disabled, for the
 large-source case. The shape to aim for is the hybrid: drain at source
 boundaries while a source fits the per-worker budget, and fall back to the
 windowed sort when it does not.
+
+## The colored window sort, removed: it was repairing something already correct
+
+The C++ reading above said the lever was not making the counting sort cheaper
+but removing it, by draining colored buffers at source boundaries the way C++
+does. Implementing that turned up something better: **we already drain at source
+boundaries.** `SharedBucketEmitter::add_impl` never hands colored records over
+mid-source -- its own comment says so, "as in C++" -- and the worker loop calls
+`flush_colored_worker_if_required` only after a source finishes parsing. Each
+source therefore already arrived as one contiguous run, and the per-window
+counting sort was permuting payloads that were correct on arrival.
+
+Measured rather than argued: the flush now detects, in the pass it already makes
+to build the histogram, whether every source occupies a single run, and skips
+the permutation when it does. On 150000 genomes, colored, t64: **1,277,952
+payloads arrived grouped and 0 needed repair.** On 10000 genomes, 98,304 and 0.
+
+Skipping is sound because grouping, not ordering, is what colour exactness
+requires: the class hash is an XOR over distinct sources, so it does not depend
+on the order they appear in, only on each source's records being uninterrupted.
+
+| 150000 genomes, colored, k=31, t64 | before | after |
+| --- | ---: | ---: |
+| partition phase (interleaved pairs) | 120.009 / 120.130 s | **117.339 / 117.760 s** |
+| source sort | 189.9 worker-s | 76.9 worker-s |
+
+**-2.1% on the phase**, and more than the sort's own cost, because the skipped
+path also stops allocating and zero-filling a payload-sized scratch buffer per
+bucket per window. Unitig and base counts are exact, and colour sets validate
+against source-derived truth.
+
+### The fallback, and why correctness does not depend on the fast path
+
+Draining only at source boundaries means a worker stages a whole source, which
+is 2.3 MB for a Salmonella assembly and would be gigabytes for a mammalian one.
+`MAX_COLORED_SOURCE_PENDING_BYTES` (512 MiB, overridable) caps that: a worker
+over the cap hands records over mid-source, which interleaves the runs.
+
+The point of detecting grouping from the payload rather than tracking it with a
+flag is that this case then repairs itself. The flush sees the interleaving and
+counting-sorts, exactly as before. Correctness rests on the repair, never on the
+drain discipline -- so a future change that introduces a mid-source hand-over
+costs the sort, not the colours.
+
+Detection itself avoids touching a per-source array. A payload's runs are few,
+so recording where the source changes and checking those sources for duplicates
+is enough; the histogram is built from the run boundaries only when a repair is
+actually needed. The array it replaces was 15 KB zeroed per payload, which is
+19.7 GB of memset across a 150000-genome run for counts that were then
+discarded.
+
+Both paths are tested rather than assumed. `ungrouped_payloads_are_regrouped_by_source`
+feeds the repair a payload whose sources are deliberately interrupted and checks
+that every source comes back as one run with records intact and unduplicated;
+`grouped_payloads_are_left_alone` checks the skip is byte-exact. End to end,
+forcing a 64 KiB cap on 1000 real genomes turns the counters right over -- 0
+grouped, 16,384 permuted -- and still produces the exact 18,910,541 unitigs and
+1,783,360,006 bases.

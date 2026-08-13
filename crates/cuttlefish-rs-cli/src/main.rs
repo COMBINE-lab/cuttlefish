@@ -103,6 +103,12 @@ where
                 emission.bucket_flush_elapsed.as_secs_f64(),
                 emission.bucket_finish_elapsed.as_secs_f64()
             );
+            let (grouped, permuted) = cuttlefish_rs::buckets::colored_payload_grouping();
+            if grouped + permuted > 0 {
+                eprintln!(
+                    "cuttlefish: colored payload grouping: {grouped} already grouped, {permuted} permuted"
+                );
+            }
             eprintln!(
                 "cuttlefish: partition and bucket emission completed in {:.3}s",
                 partition_elapsed.as_secs_f64()

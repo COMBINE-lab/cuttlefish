@@ -2199,3 +2199,70 @@ Also observed across these runs: **C++ is nondeterministic at k = 55 in
 uncolored mode too**, not only colored. Two of three C++ runs on identical
 input returned 31,949,227 and 31,949,225 unitigs where its own third run, and
 all six Rust runs, returned 31,949,232.
+
+## R1 profiled: the phase is memory-bandwidth-bound, not latency-bound
+
+R1 (local-contraction bucket read/build, ~10,000 worker-s and the largest
+single cost in the build) was recorded as needing "a cycles profile to split
+decode vs unpack vs hash-insert before choosing a mechanism". Done, on 10000
+Salmonella genomes at k = 31, t64.
+
+**It is not I/O and it is not decode.** `CF3_RS_DECODE_ONLY` reads and decodes
+every bucket record and skips only the vertex insertion:
+
+| | bucket read/build (worker-s) |
+| --- | ---: |
+| full | 405.6 |
+| decode only, no vertex insert | 48.7 |
+
+Segment reads, LZ4 decode and record unpacking together are **12%** of the
+phase; vertex-table construction is **88%**. A `perf record` of the whole build
+agrees: `LocalSubgraph::add_packed_parts` is 24.4% of all cycles -- the largest
+symbol in the program -- while `lz4_flex` decompression is 0.87% and zlib
+inflate 2.3%. Within `add_packed_parts` the hottest instruction is the probe's
+compare against a stored key at 7.2%, with a 2.4% stall pad immediately before
+it: the DRAM miss R1's second attempt predicted.
+
+**Prefetch scheduling is exhausted.** The existing code prefetches every vertex
+of a record in a pass before the state-update loop. Replacing that with a
+software-pipelined producer -- one rolling pass instead of two, canonical forms
+produced into a ring 8 (then 16) vertices ahead of consumption, each prefetched
+as produced -- measured **neutral**:
+
+| variant | bucket read/build | local phase |
+| --- | ---: | ---: |
+| bulk prefetch (shipped) | 405.6 s | 12.64 s |
+| pipelined, distance 8 | 406.4 s | 12.81 s |
+| pipelined, distance 16 | 411.9 s | 12.12 s |
+
+Reverted. Note what this rules out: the pipelined version does strictly less
+arithmetic (it deletes an entire redundant rolling pass over every record) and
+still changes nothing, which means the removed ALU work was already hidden
+under memory stalls.
+
+**Why: the phase saturates memory at 64 threads.** Running the identical binary
+and input at 16 threads instead of 64 costs materially less *worker* time for
+the same work:
+
+| | t16 | t64 | inflation at t64 |
+| --- | ---: | ---: | ---: |
+| bucket read/build | 334.9 worker-s | 411.9 worker-s | +23% |
+| unitig walk | 110.2 worker-s | 268.7 worker-s | **2.4x** |
+
+The same instructions take 2.4x longer per worker in the walk when 64 workers
+run concurrently. That is contention for the shared memory system, not
+per-thread latency, and it is why adding prefetches does nothing: the loop
+already has memory-level parallelism (each vertex's probe is independent of the
+last, so misses overlap), and the limit is how many can be in flight across the
+socket, not how early any one is issued.
+
+**The lever that follows is bytes touched per vertex, not latency hiding.** A
+flat-map slot is 24 bytes: an 8-byte key plus a 16-byte `VertexState` of
+`{ edges: EdgeFrequency, flags: u32, color_hash: u64 }`. `color_hash` is used
+only by colored builds, so an uncolored build carries 8 dead bytes in every
+slot -- a third of the slot, and a third of the cache lines a probe sweep
+touches. Making the state's colored half conditional (a const-generic or a
+second state type) would put 4 slots on a line instead of 2.67. On a
+bandwidth-bound phase that is the shape of change that can pay, where
+rearranging or prefetching cannot. Not attempted here; it threads through the
+contraction walks as well as the table, so it wants its own interleaved pairs.

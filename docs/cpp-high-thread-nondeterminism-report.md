@@ -286,7 +286,7 @@ the expected counts exactly.
 
 ### Every missing record is exactly one k-mer long
 
-This is the sharp new signal, and it is unambiguous across all seven deviations
+This is the sharp new signal, and it is unambiguous across all six deviations
 gathered so far:
 
 | case | missing unitigs | missing bases | bases per missing unitig |

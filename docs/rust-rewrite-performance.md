@@ -2379,3 +2379,57 @@ single unpaired run. The paired figures above are the honest ones; the
 prototype's build time (27.9 s) and the shipped implementation's best run
 (27.7 s) agree, so the difference was run-to-run spread rather than anything
 the abstraction costs.
+
+## R2 profiled: the colored walk is intrinsic, its second pass is already tight
+
+R2 recorded the colored unitig walk at 6.7x the uncolored one and asked for a
+profile splitting walk from `record_hash` from the coordinate cache. Done, on
+10000 Salmonella genomes at k = 31, t64, colored.
+
+**The 6.7x is stale.** The colored walk is now 656 worker-s against 275 for
+uncolored on the same input -- **2.4x**, not 6.7x. R1's flat vertex map and R3's
+run-sorted atlas appends closed most of that gap without targeting it.
+
+Where a colored build's cycles actually go:
+
+| symbol | share |
+| --- | ---: |
+| `add_packed_parts` | 19.8% |
+| `walk_unitig` | 11.4% |
+| **`collect_wanted_color_relations`** | **8.7%** |
+| `read_vertex_path_info_bucket_into` | 5.9% |
+| partition scan | 5.5% |
+| `expand_non_diagonal_raw` | 4.9% |
+| `contract_colored_resolved_with` | 1.8% |
+
+No `record_hash` and no coordinate-cache symbol appears at all -- both inline
+away. The colored-specific cost is not inside the walk; it is the *second
+traversal*, `collect_wanted_color_relations`, which re-reads every record of
+the bucket and re-rolls every k-mer to find which sources touch each
+representative vertex.
+
+**Its lookup structure is already the right one, which is the surprise.** The
+annotation puts the time in `vpcmpeqb`/`kortestw`/`tzcnt` -- hashbrown's SIMD
+control-byte scan -- so the probe is what costs, and R1's own remedy suggests
+flattening it. Replacing `DenseWantedColorMap`'s index-into-entries layout with
+one open-addressed array of inline `(key, value)` measured **worse**, over
+interleaved pairs:
+
+| | hashbrown (shipped) | flat inline | change |
+| --- | ---: | ---: | ---: |
+| unitig walk | 656.0 worker-s | 773.5 worker-s | +17.9% |
+| colored build | 37.39 s | 38.40 s | +2.7% |
+
+Reverted. This is R1's *first* attempt failing again for the same reason, and
+worth stating plainly because the instinct to flatten is strong: most lookups in
+this pass **miss**, and hashbrown's miss path touches one 16-byte control group
+covering 16 slots, where an inline `(u64, u32)` array touches 12-16 bytes per
+*slot*. Flattening helps a table whose probes hit and whose payload is wanted
+anyway; it hurts a table used as a negative filter.
+
+So the colored second pass costs 8.7% and its data structure is not the lever.
+Removing it would mean not needing the traversal at all -- accumulating source
+sets during the first pass, before contraction has decided which vertices are
+representatives -- which is an algorithmic change, not a mechanical one. Not
+attempted. The remaining colored lever with a known mechanism is the window
+flush overlap, evaluated above.

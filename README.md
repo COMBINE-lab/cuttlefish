@@ -10,8 +10,10 @@ local subgraphs in parallel, and stitches the resulting paths through a blocked
 external discontinuity graph. Both uncolored and colored builds use the same
 production pipeline.
 
-> Cuttlefish 3 is under active development. The command-line interface and
-> private intermediate formats may still change before a stable release.
+> **Release candidate 1.** Cuttlefish 3 is feature-complete and validated
+> against the C++ implementation on reference and read inputs, uncolored and
+> colored, for k from 3 to 63. The command-line interface and the private
+> intermediate formats may still change before the stable release.
 
 ## Highlights
 

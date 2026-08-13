@@ -9,8 +9,10 @@ The production pipeline partitions input into weak super-k-mer buckets,
 contracts independent local subgraphs, resolves their discontinuities through
 a blocked external graph, and emits maximal unitigs directly to FASTA.
 
-> Cuttlefish 3 is under active development. The command-line interface and
-> private intermediate formats may still change before a stable release.
+> **Release candidate 1.** Cuttlefish 3 is feature-complete and validated
+> against the C++ implementation on reference and read inputs, uncolored and
+> colored, for k from 3 to 63. The command-line interface and the private
+> intermediate formats may still change before the stable release.
 
 ## Features
 

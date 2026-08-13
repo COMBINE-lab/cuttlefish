@@ -2709,3 +2709,36 @@ the fast one: 150 Salmonella assemblies at k = 31, once with the flush skipping
 its permutation and once with a 64 KiB cap forcing every payload through the
 repair, each yielding 2,797,788 colored unitigs whose source sets match truth
 derived from the input sequences.
+
+### Re-costing the deinterleave, after the sort came out
+
+The ablation above put the deinterleave at 4.50 s and concluded it "plausibly
+accounts for most of what separates the two implementations in colored phase 1".
+Both halves of that are now stale, because the sort removal landed in between
+and the two overlap: they move the same payload bytes through cache.
+
+Re-measured on the current binary, 150000 genomes, colored, t64, interleaved
+pairs:
+
+| | partition phase | bucket bytes |
+| --- | ---: | ---: |
+| split staging (shipped) | 117.240 / 117.106 s | 304.5 GB |
+| deinterleave removed (`CF3_RS_INTERLEAVE_COLORED`) | 114.160 / 115.231 s | 340.5 GB |
+
+**2.47 s, or 2.1% of the phase** -- a little over half what it was worth before,
+and about 1% of a colored build's 245 s wall. The other half of the original
+4.50 s was memory traffic the sort removal has already claimed.
+
+And the gap it was meant to close is gone: colored phase 1 is now 117.17 s
+against C++'s 119.547 s, so we are 2.0% ahead rather than 5.3% behind. Splitting
+the staging would take that to roughly 4% ahead.
+
+**Recommendation: worth doing, not worth doing next.** It is real work that
+disappears and the on-disk format does not change, so bucket readers are
+untouched. But it is now the smallest measured item on the list, it buys ~1% of
+colored wall, and it reopens the staging layout -- the atlas buffers, the append
+path through `group_by_graph`, the block encoder, and the repair sort, which
+would have to permute two arrays in step -- immediately after that path was
+changed. The larger costs sit in local contraction, where `add_packed_parts` is
+19.8% of a colored build and `collect_wanted_color_relations` 8.7%, and neither
+has a known mechanism yet.

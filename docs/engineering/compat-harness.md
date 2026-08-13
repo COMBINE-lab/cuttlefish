@@ -116,3 +116,26 @@ Performance comparisons should run only after semantic parity:
 - use `--metrics-tsv` on `scripts/compare_uncolored_fasta.py` to append elapsed
   time, max RSS, output size, and command lines for both implementations;
 - run at least one small fixture, one medium reference, and one read dataset.
+
+## The C++ implementation is not a reliable oracle
+
+Expectations in the compat tests were generated from the C++ build, and that
+requires care: it drops unitigs nondeterministically, at every thread count
+tested, in both modes. Roughly a third of 64-thread runs on 10,000 genomes
+disagree with their own siblings, and the lost records are always exactly
+one k-mer long. Full evidence in [cpp-nondeterminism.md](cpp-nondeterminism.md).
+
+Consequences for anyone regenerating expectations:
+
+- **Pin threads low.** Every expectation currently checked in was produced at
+  two threads and confirmed identical over three repeats. Say so in the test's
+  doc comment, as the read-mode and k = 33/63 fixtures do.
+- **Repeat before trusting.** A single run is not evidence. If repeats disagree,
+  take the majority and record that they disagreed.
+- **Prefer input-derived truth where the property allows it.** The colored tests
+  check each vertex against the sources that actually contain that k-mer,
+  computed from the fixture itself, which needs no oracle at all. That is the
+  stronger pattern; use it when the expected value is derivable.
+- **CI does not build or run C++.** Expectations are baked in as literals, so a
+  regression shows up as a test failure rather than as a comparison against a
+  moving target.

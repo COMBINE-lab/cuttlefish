@@ -1299,6 +1299,17 @@ fn read_delta(input: &mut BitReader<'_>) -> std::io::Result<u64> {
 /// a flat list spends one code per member, while the complement spends one per
 /// absence.
 fn encode_source_set(out: &mut BitWriter, sources: &[u32], num_colors: u32) {
+    // Source IDs are one-based, so `num_colors` must exceed the largest of
+    // them. A caller that passes the source *count* instead silently encodes
+    // sets containing the highest id as empty -- the bitmap regime has no bit
+    // for it and the complement regime inverts against the wrong width -- and
+    // the only symptom is missing colours much later. Caught here rather than
+    // at the point the sets are read back.
+    debug_assert!(
+        sources.last().is_none_or(|&max| max < num_colors),
+        "colour alphabet {num_colors} cannot represent source {:?}",
+        sources.last()
+    );
     let len = sources.len() as u64;
     write_delta(out, len);
     if sources.is_empty() {
@@ -1703,7 +1714,9 @@ mod tests {
             std::process::id(),
             std::thread::current().id()
         ));
-        let repository = ConcurrentColorRepository::create(&dir, 2, 8, 64).unwrap();
+        // Wide enough for the largest source below; the encoder's regimes are
+        // chosen against this, so it must exceed every id it is given.
+        let repository = ConcurrentColorRepository::create(&dir, 2, 8, 1001).unwrap();
         let first = repository.resolve_or_insert(17, &[1, 2, 150], 0).unwrap();
         let duplicate = repository.resolve_or_insert(17, &[1, 2, 150], 1).unwrap();
         assert_eq!(first, duplicate);

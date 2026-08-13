@@ -157,6 +157,61 @@ fn normalized_uncolored_fixture_tuned(
 /// vertex map from the flat table to the two-word hash map and widens every
 /// k-mer container, so the large-K arms need their own end-to-end coverage.
 /// Expectations come from the C++ implementation run on the same fixture.
+/// As `normalized_uncolored_fixture_k`, but for a read graph.
+///
+/// Read mode is a distinct pipeline configuration -- `GraphInput::Reads`
+/// carries its own `(k + 1)`-mer cutoff, which discards edges seen fewer than
+/// `cutoff` times -- and until this existed nothing in CI exercised it at any
+/// k. Expectations come from the C++ implementation, run at two threads and
+/// confirmed identical over three repeats, since it is only trustworthy as an
+/// oracle at low thread counts.
+fn normalized_read_fixture_k<const K: usize>(
+    fixture_path: &str,
+    name: &str,
+    minimizer_len: u16,
+    expected_unitigs: &[&str],
+    expected_bases: u64,
+) {
+    let output_prefix = scratch_prefix(name);
+    let bucket_dir = output_prefix
+        .parent()
+        .unwrap()
+        .join(format!("{name}.cf3rs.wsk"));
+    let fasta_path = output_prefix.with_extension("fa");
+    let _ = fs::remove_dir_all(&bucket_dir);
+    let _ = fs::remove_file(&fasta_path);
+
+    let mut params = BuildParams::new(
+        GraphInput::Reads,
+        output_prefix.with_extension("").display().to_string(),
+    );
+    params.k = K as u16;
+    params.minimizer_len = minimizer_len;
+    params
+        .seqs
+        .push(fixture(fixture_path).display().to_string());
+    params.work_dir = output_prefix.parent().unwrap().display().to_string();
+    // The read default, stated rather than inherited: this fixture exists to
+    // check that a depth-one read is discarded, which only happens above 1.
+    assert_eq!(params.cutoff(), 2);
+
+    let emitted = emit_weak_superkmer_buckets::<K>(&params, DEFAULT_SUBGRAPH_COUNT).unwrap();
+    let built = build_uncolored_from_buckets::<K>(&params, &emitted.buckets.bucket_dir).unwrap();
+    let actual = normalized_fasta_labels(&built.output_path);
+    let mut expected = expected_unitigs
+        .iter()
+        .map(|label| canonical_label(label.as_bytes()))
+        .collect::<Vec<_>>();
+    expected.sort_unstable();
+
+    assert_eq!(actual, expected);
+    assert_eq!(built.unitigs, expected_unitigs.len() as u64);
+    assert_eq!(built.unitig_bases, expected_bases);
+
+    let _ = fs::remove_dir_all(emitted.buckets.bucket_dir);
+    let _ = fs::remove_file(built.output_path);
+}
+
 fn normalized_uncolored_fixture_k<const K: usize>(
     fixture_path: &str,
     name: &str,
@@ -282,15 +337,48 @@ fn colored_bucket_local_runs_at(threads: usize) {
 /// here is the input itself, not another implementation.
 #[test]
 fn colored_runs_resolve_to_the_sources_that_contain_each_kmer() {
-    const K: usize = 7;
-    let root = scratch_prefix("colored-run-sources");
+    colored_run_sources_at::<7>(
+        "colored-run-sources-k7",
+        3,
+        &[
+            b"AACCGGTTAACCGGTTACGT",
+            b"AACCGGTTAACCTTAAGGCC",
+            b"TTAACCGGTTAACCGGTTAA",
+        ],
+    );
+}
+
+/// The same guarantee above the one-word k-mer boundary.
+///
+/// Colored and K > 31 are separate configurations, and nothing in CI crossed
+/// them: the wide arms' three fatal defects survived exactly because every
+/// automated test was either colored at k = 7 or uncolored at k = 33/63. The
+/// sources share a long core so classes of more than one source actually
+/// arise at k = 63, which needs sequences far longer than the k = 7 fixture's.
+#[test]
+fn colored_runs_resolve_to_the_sources_at_k33() {
+    colored_run_sources_at::<33>("colored-run-sources-k33", 3, &COLORED_WIDE_SOURCES);
+}
+
+#[test]
+fn colored_runs_resolve_to_the_sources_at_k63() {
+    colored_run_sources_at::<63>("colored-run-sources-k63", 3, &COLORED_WIDE_SOURCES);
+}
+
+/// Three sources over a shared 150-base core with distinct flanks, so every
+/// class -- core (all three) and flank (one each) -- is exercised at k = 63.
+const COLORED_WIDE_SOURCES: [&[u8]; 3] = [
+    b"GCTTAAGGCACCTTGAACGTGCATCGGTAACCTTGGCAAGTCCATGAACGGTTACCAGGTCATGCTAAGGCCATTGAACCGGTTAAGCCTTGGAACCTTAGGCCAATTGGCCTTAAGGTTCCAAGGTTCCAAGGTTCCAATTGGCCAAGGTTAACCGGTTAACCGGAATTCCGGAATTCC",
+    b"TTGGCCAATTGGCCAATTGGCCAAGGTTCCAAGCTTAAGGCACCTTGAACGTGCATCGGTAACCTTGGCAAGTCCATGAACGGTTACCAGGTCATGCTAAGGCCATTGAACCGGTTAAGCCTTGGAACCTTAGGCCAATTGGCCTTAAGGTTCCAAGGTTCCAAGGTTCCAA",
+    b"AACCGGTTAACCGGTTAACCGGGCTTAAGGCACCTTGAACGTGCATCGGTAACCTTGGCAAGTCCATGAACGGTTACCAGGTCATGCTAAGGCCATTGAACCGGTTAAGCCTTGGAACCTTAGGCCAATTGGCCTTAAGGTTCCAAGGTTCCAAGGTTCCAATTAAGGCCTTAA",
+];
+
+/// Builds a colored graph from `sequences` and checks every vertex's colours
+/// against the sources that actually contain that k-mer.
+fn colored_run_sources_at<const K: usize>(name: &str, threads: usize, sequences: &[&[u8]]) {
+    let root = scratch_prefix(name);
     let _ = fs::remove_dir_all(&root);
     fs::create_dir_all(&root).unwrap();
-    let sequences: [&[u8]; 3] = [
-        b"AACCGGTTAACCGGTTACGT",
-        b"AACCGGTTAACCTTAAGGCC",
-        b"TTAACCGGTTAACCGGTTAA",
-    ];
     let mut seqs = Vec::new();
     for (index, sequence) in sequences.iter().enumerate() {
         let path = root.join(format!("source{index}.fa"));
@@ -306,9 +394,11 @@ fn colored_runs_resolve_to_the_sources_that_contain_each_kmer() {
         root.join("colored").display().to_string(),
     );
     params.k = K as u16;
+    // Small enough for the k = 7 case, and the wide cases keep their sources
+    // long so the minimizer still has room.
     params.minimizer_len = 3;
     params.color = true;
-    params.threads = 2;
+    params.threads = threads;
     params.work_dir = root.display().to_string();
     params.seqs = seqs;
     let emitted = emit_weak_superkmer_buckets::<K>(&params, DEFAULT_SUBGRAPH_COUNT).unwrap();
@@ -319,7 +409,10 @@ fn colored_runs_resolve_to_the_sources_that_contain_each_kmer() {
         root.join("local.labels"),
         root.join("local.colors"),
         root.join("local.color-repository"),
-        3,
+        // Source IDs are one-based, so the colour alphabet is one wider than
+        // the source count -- what `colored::build` passes. Getting this wrong
+        // silently mis-encodes sets containing the highest source id.
+        u32::try_from(sequences.len() + 1).unwrap(),
     )
     .unwrap();
     let repository = inputs.color_repository().unwrap().clone();
@@ -574,6 +667,67 @@ fn uncolored_generated_synthetic_matches_cpp_validated_unitigs() {
 /// `cuttlefish build --ref -s data/generated/k-large-synthetic.fa -k K
 /// --min-len 12`.
 const K_LARGE_FIXTURE: &str = "data/generated/k-large-synthetic.fa";
+
+/// Overlapping reads over a 200-base core, plus one depth-one read the read
+/// cutoff must discard. Expectations were generated by the C++ implementation:
+/// `cuttlefish build --read -s data/generated/reads-synthetic.fq -k K
+/// --min-len 5`, at two threads and identical over three repeats.
+const READ_FIXTURE: &str = "data/generated/reads-synthetic.fq";
+
+/// Reads at k = 7: the mode's own pipeline, and its cutoff.
+///
+/// The fixture tiles a 200-base core with overlapping reads so its k-mers are
+/// seen repeatedly, and appends one depth-one read. At the read default cutoff
+/// of 2 that read contributes nothing, which is what distinguishes this from
+/// the reference pipeline over the same bases.
+#[test]
+fn read_mode_matches_cpp_validated_unitigs() {
+    normalized_read_fixture_k::<7>(
+        READ_FIXTURE,
+        "read-mode-k7-expected",
+        5,
+        &[
+            "CTTATAA",
+            "CACCAGCAA",
+            "ACTTATA",
+            "CTGGTGGCAAGCTCGGAGCGAGATGATCTACCTGTCTGATTACGCGTCGCAATTAAGTCCAAGATAACACATAGCGCGTCATACGTCTGGTGATTGAAGCTTTAGGCCACTCTTTATGATTGTGAACTTTGCTTTTTTA",
+            "CTGGTGCAGGTTGATGCGTAGTCTCTGAATTGTTCTTCGGGCCTTATA",
+            "CAGCAAACCATTGCTG",
+        ],
+        226,
+    );
+}
+
+/// Reads above the one-word k-mer boundary.
+///
+/// Read mode and K > 31 are separate configurations that had never been
+/// exercised together; the wide arms carried three independently fatal defects
+/// precisely because no test crossed a pipeline mode with a width.
+#[test]
+fn read_mode_k33_matches_cpp_validated_unitigs() {
+    normalized_read_fixture_k::<33>(
+        READ_FIXTURE,
+        "read-mode-k33-expected",
+        5,
+        &[
+            "ACTTATAAGGCCCGAAGAACAATTCAGAGACTACGCATCAACCTGCACCAGCAATGGTTTGCTGGTGGCAAGCTCGGAGCGAGATGATCTACCTGTCTGATTACGCGTCGCAATTAAGTCCAAGATAACACATAGCGCGTCATACGTCTGGTGATTGAAGCTTTAGGCCACTCTTTATGATTGTGAACTTTGCTTTTTTA",
+        ],
+        200,
+    );
+}
+
+#[test]
+fn read_mode_k63_matches_cpp_validated_unitigs() {
+    normalized_read_fixture_k::<63>(
+        READ_FIXTURE,
+        "read-mode-k63-expected",
+        5,
+        &[
+            "ACTTATAAGGCCCGAAGAACAATTCAGAGACTACGCATCAACCTGCACCAGCAATGGTTTGCTGGTGGCAAGCTCGGAGCGAGATGATCTACCTGTCTGATTACGCGTCGCAATTAAGTCCAAGATAACACATAGCGCGTCATACGTCTGGTGATTGAAGCTTTAGGCCACTCTTTATGATTGTGAACTTTGCTTTTTTA",
+        ],
+        200,
+    );
+}
 
 #[test]
 fn uncolored_k33_matches_cpp_validated_unitigs() {

@@ -78,3 +78,10 @@
 
 1. California redwood:  <ftp://ftp.ncbi.nlm.nih.gov/genomes/genbank/plant/Sequoia_sempervirens/representative/GCA_007258455.1_SESE.1.0/GCA_007258455.1_SESE.1.0_genomic.fna.gz>
 2. Giant redwood:   <ftp://ftp.ncbi.nlm.nih.gov/genomes/genbank/plant/Sequoiadendron_giganteum/representative/GCA_007115665.2_SEGI.2.0/GCA_007115665.2_SEGI.2.0_genomic.fna.gz>
+
+## A note on the `.lst` fixtures
+
+`refs1.lst`, `refs2.lst` and `rob-palindrome.lst` hold raw sequences, not lists
+of input paths, despite the extension. They predate the Rust implementation and
+nothing in it reads them; `--list` expects one *path* per line. Build a list
+with e.g. `ls -d $PWD/*.fa > genomes.list`.

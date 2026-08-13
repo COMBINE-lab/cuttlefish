@@ -15,7 +15,7 @@
 //! - Coordinate fanout adapts to live file-descriptor availability.
 //!
 //! The file is organized in the same conceptual phases as Cuttlefish 3. See
-//! `docs/rust-rewrite-modules.md` for the extraction boundaries used to split
+//! `docs/engineering/module-boundaries.md` for the extraction boundaries used to split
 //! this implementation safely over time.
 
 mod resource;

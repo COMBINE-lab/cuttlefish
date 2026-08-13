@@ -1721,7 +1721,7 @@ scratch; C++ likewise writes its own colour files next to the FASTA as
 
 ## The dead-code removal campaign, and an order-bias lesson
 
-The code-review cleanup (see `rust-rewrite-review.md`, section C) removed about
+The code-review cleanup (see `review-findings.md`, section C) removed about
 5,300 lines: both stitch subsystems, every retired strategy implementation
 behind `#[allow(dead_code)]`, the never-read public surface, the legacy
 uncolored partition path, and duplicated helpers. `discontinuity.rs` shrank

@@ -13,7 +13,7 @@ This is the working backlog for bringing the Rust implementation to Cuttlefish 3
   with in-place worker-stream partitioning and bounded long-lived consumers.
 - Local contraction emits directly into a blocked discontinuity edge matrix;
   contraction, expansion, mapping, and reduction follow C++ phase ordering.
-- See `docs/rust-rewrite-performance.md` for architecture decisions, commands,
+- See `performance-record.md` for architecture decisions, commands,
   measurements, and the scale-validation protocol.
 
 - Uncolored Rust output matches C++ normalized FASTA on:

@@ -128,7 +128,8 @@ cuttlefish build [OPTIONS]
       --read                build from sequencing reads
       --ref                 build from references
       --color               emit positional colors
-      --compress-buckets    LZ4-compress uncolored partition buckets
+      --compress-buckets    LZ4-compress uncolored partition buckets (default)
+      --no-compress-buckets store uncolored partition buckets uncompressed
       --skip-unreadable     report and skip inputs that fail to parse
   -h, --help                print build help
 ```
@@ -158,8 +159,10 @@ redundancy and graph structure. Place it on fast local storage when possible.
 The implementation adapts bucket fanout to the process file-descriptor limit;
 raising `ulimit -n` can expose more I/O parallelism on large runs.
 
-`--compress-buckets` reduces uncolored partition-bucket disk usage using LZ4.
-Whether it improves wall time depends on storage bandwidth and CPU capacity.
+Uncolored partition buckets are LZ4-compressed by default, which reduces
+temporary-disk usage; whether it also improves wall time depends on storage
+bandwidth against CPU capacity, so `--no-compress-buckets` turns it off.
+Colored buckets are always compressed regardless of either flag.
 
 ## Output
 

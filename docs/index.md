@@ -102,7 +102,8 @@ cuttlefish build [OPTIONS]
       --read                build from sequencing reads
       --ref                 build from references
       --color               emit positional colors
-      --compress-buckets    LZ4-compress uncolored partition buckets
+      --compress-buckets    LZ4-compress uncolored partition buckets (default)
+      --no-compress-buckets store uncolored partition buckets uncompressed
       --skip-unreadable     skip inputs that fail to parse
   -h, --help                print build help
 ```
@@ -160,8 +161,10 @@ across all open inputs rather than allocated per file.
 External-memory intermediates are placed in `--work-dir`. Fast local storage is
 recommended. Cuttlefish adapts its bucket fanout to the process descriptor
 limit, and narrows the maximal-unitig fanout at high worker counts, so a large
-`ulimit -n` is not required. Use `--compress-buckets` to trade CPU for lower
-uncolored temporary-disk usage.
+`ulimit -n` is not required. Uncolored partition buckets are LZ4-compressed by
+default, trading CPU for temporary-disk usage; `--no-compress-buckets` turns
+that off. Colored buckets are always compressed, and are unaffected by either
+flag.
 
 ## Output
 
@@ -204,7 +207,7 @@ cuttlefish colors grep -r graph.cf3rs.color-repository -i graph.fa \
 
 All three stream and accept `-o`/`-z`; `--names` prints source paths instead of
 one-based ids. Queries by *sequence* rather than by color would need a k-mer
-locator, which is sketched in [color query index](color-query-index.md) and not
+locator, which is sketched in [color query index](engineering/color-query-index.md) and not
 built.
 
 ## Working Directory and Cleanup
@@ -269,10 +272,10 @@ Generate the crate documentation locally:
 cargo doc --workspace --no-deps --open
 ```
 
-Implementation notes include the [module decomposition plan](rust-rewrite-modules.md),
-[performance record](rust-rewrite-performance.md),
-[compatibility harness](rust-rewrite-harness.md), and the
-[color query index sketch](color-query-index.md).
+Development history -- measurements, attempts, and the reasoning behind each
+decision, including the ones that were reverted -- is catalogued under
+[`docs/engineering/`](engineering/README.md). None of it is shipped: `cargo
+package` includes only each crate's `README.md`.
 
 ## Testing
 
@@ -282,7 +285,14 @@ cargo build --release
 ```
 
 Topology tests canonicalize forward and reverse-complement orientations and
-normalize cyclic rotations.
+normalize cyclic rotations, so a run that differs only in thread count or
+bucket layout still compares equal.
+
+Coverage spans the configurations that behave differently rather than only the
+common one: reference and read graphs, uncolored and colored, and both k-mer
+widths (k <= 31 packs a vertex into one word, above that into two). Colored
+expectations are checked against the sources that actually contain each k-mer,
+derived from the input rather than from another implementation.
 
 ## Citation
 

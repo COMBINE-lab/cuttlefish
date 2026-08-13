@@ -9,7 +9,7 @@ implemented until chosen, except where a decision is already recorded.*
 
 **Outcome status.** Section C landed in full (seven commits, ~5,300 lines
 removed, no measured regression across uncolored/colored/mbal interleaved
-pairs — see "The dead-code removal campaign" in `rust-rewrite-performance.md`).
+pairs — see "The dead-code removal campaign" in `performance-record.md`).
 B1's rapidgzip half landed and measured a 52% partition / 45% wall win on
 `mbal` ("Parallel plain-gzip inflation", same document). The BGZF-reader
 replacement measured parity and landed: `bgzf.rs` is deleted and all gzip
@@ -32,7 +32,7 @@ segment-size sweep, and the R-series opportunity map at the end of this
 document.
 
 The review deliberately does not re-propose anything in the rejected-approaches
-record of `rust-rewrite-performance.md`: LTO, mimalloc, container axis changes,
+record of `performance-record.md`: LTO, mimalloc, container axis changes,
 stage-3 containers, fused path-info preads, Elias-append fusion, retained
 bucket descriptors, thread-count-derived coordinate fanout, and the rest listed
 there remain rejected.
@@ -273,7 +273,7 @@ colored partition worker time) and cut 25% by run-sorted atlas appends;
 partition -7.7% colored / -6.4% uncolored. R4: 128 KiB flush units measured
 3% worse; 64 KiB stands by measurement. R5: expansion prefetch null over
 three pairs; phase attributed and unchanged. Full records in
-`rust-rewrite-performance.md`.
+`performance-record.md`.
 
 *Appended 2026-08-11 after the B/C campaigns. Source: full fine-grained timer
 output of lock-profiled 150k Salmonella runs at t64, both modes (uncolored

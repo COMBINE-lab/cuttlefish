@@ -319,7 +319,7 @@ impl thread_broker::Producer for InflateProducer {
 /// deliberate oversubscription -- every sharding worker plus lazily-spawned
 /// decode workers, with blocking as the balancer -- beat every split the
 /// broker chose, and one run in three misconverged to a decode-starved 255/1.
-/// See rust-rewrite-performance.md, "A closed-loop split evaluated".
+/// See docs/engineering/performance-record.md, "A closed-loop split evaluated".
 fn dynamic_inflate_split_diagnostic() -> bool {
     static DYNAMIC_SPLIT: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *DYNAMIC_SPLIT.get_or_init(|| std::env::var_os("CF3_RS_DYNAMIC_INFLATE_SPLIT").is_some())

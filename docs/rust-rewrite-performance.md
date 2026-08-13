@@ -2433,3 +2433,60 @@ sets during the first pass, before contraction has decided which vertices are
 representatives -- which is an algorithmic change, not a mechanical one. Not
 attempted. The remaining colored lever with a known mechanism is the window
 flush overlap, evaluated above.
+
+## The overlapped flush crew: built, measured, and it does not pay
+
+The evaluation above projected the colored partition phase from 9.87 s to
+roughly 7 s by overlapping the window flush with the next window's parsing. It
+was implemented and measured, and **the projection was wrong**. Recording why,
+because the error is instructive and the evaluation above should not be acted
+on again.
+
+The implementation is the one specified: `take_colored_window` detaches every
+staged payload under its atlas lock (pointer swaps, microseconds),
+`flush_colored_job` sorts and compresses outside every lock and re-locks only
+for the segment-chain append, and a crew thread runs one window while the
+workers parse the next, joined before the next take so a bucket's chain still
+grows in ascending source order. It is correct: colour sets validate against
+source-derived truth at k = 31, 33 and 55 with a 4 KiB window, which forces a
+flush every few records and so exercises the overlap far harder than production.
+
+It is also slower, on 10000 genomes at k = 31, t64, colored:
+
+| flush crew threads | colored partition phase |
+| --- | ---: |
+| 2 | 46.27 s |
+| 4 | 25.37 s |
+| 8 | 15.70 s |
+| 16 | 11.84 s |
+| none -- barrier, 64 flush threads | **9.27 s** |
+
+The intended effect happened: barrier wait fell 61% (150.7 to 56.9 worker-s) and
+flush wall halved. The phase still got worse at every crew size.
+
+**The premise was false.** The evaluation reasoned that sorting was 11% of the
+flush threads' time, so the other 89% must be blocked in `pwrite` and a small
+crew would therefore be nearly free. But colored buckets *always* compress --
+`compress_buckets: params.color || params.compress_buckets` -- so most of that
+89% is LZ4 compression, which is CPU, not I/O. The table above is the proof: an
+I/O-bound flush would be nearly insensitive to crew size, and this one scales
+almost linearly with it.
+
+Once the flush is CPU-bound the whole idea collapses, because the barrier was
+never wasting CPU. During it, 64 flush threads use the machine; the parse
+workers are idle but the cores are not. Overlapping only re-partitions the same
+CPU between two jobs, and then loses on top of that: parsing gives up threads to
+the crew, and the crew's chain appends now contend with worker drains for atlas
+locks, which showed up as drain time rising from 49 to 88 worker-s.
+
+The lesson generalises past this change: "threads are blocked" and "the machine
+is idle" are different claims, and only the second makes overlap free. The
+distinguishing measurement is cheap -- vary the worker count of the phase you
+believe is I/O-bound and see whether its wall moves. That was not done before
+the estimate, and it should have been.
+
+Reverted. The ~25% of colored partitioning spent at the window barrier is
+therefore not recoverable by scheduling; it is compression and sort work that
+has to happen somewhere. Making it *cheaper* -- a faster compressor for colored
+buckets, or compressing fewer bytes by run-length-encoding the source field --
+is a different lever, and unlike this one it has not been measured.

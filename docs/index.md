@@ -25,7 +25,7 @@ a blocked external graph, and emits maximal unitigs directly to FASTA.
 
 ## Build
 
-Cuttlefish requires Rust 1.85 or newer and the standard linker and native build
+Cuttlefish requires Rust 1.91 or newer and the standard linker and native build
 tools for the selected Rust target.
 
 ```bash
@@ -147,12 +147,13 @@ handful of large FASTQ files — are streamed: one reader thread per file handle
 decompression and record assembly while every requested worker performs the
 minimizer scan and bucket packing.
 
-A plain gzip member cannot be split, so a single very large `.gz` is bounded by
-single-threaded decompression no matter how many workers are requested. BGZF
-input is detected automatically and its blocks are inflated in parallel, which
-removes that bound; compressing input with `bgzip` is worthwhile for files that
-will be read more than once. Splitting input into several files also exposes
-more reader parallelism.
+Gzipped input decompresses in parallel, and the whole gzip family is handled by
+one decoder: BGZF's independent members decode block-parallel, and a plain
+single-member `.gz` -- which cannot be split by inspection -- decodes through
+speculative mid-stream splits. A single large `.gz` is therefore no longer
+bounded by one decompressing thread. Decode workers are drawn from the same
+`--threads` budget as everything else, never in addition to it, and are shared
+across all open inputs rather than allocated per file.
 
 External-memory intermediates are placed in `--work-dir`. Fast local storage is
 recommended. Cuttlefish adapts its bucket fanout to the process descriptor
@@ -170,7 +171,9 @@ strand.
 
 Colored FASTA headers additionally contain packed positional color runs. Each
 run combines a unitig offset with a coordinate into
-`<WORK_DIR>/<OUTPUT_NAME>.cf3rs.color-repository/`. The repository contains:
+`<OUTPUT_PREFIX>.cf3rs.color-repository/`, which sits beside the output FASTA
+rather than in the working directory, because it is output: the FASTA cannot be
+interpreted without it. The repository contains:
 
 - `metadata.tsv` with graph parameters and one-based source assignments
 - `manifest.tsv` with shard sizes and paths

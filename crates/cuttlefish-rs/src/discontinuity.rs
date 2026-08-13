@@ -1283,7 +1283,9 @@ struct ConcurrentBlockedEdgeWriters {
 impl ConcurrentBlockedEdgeWriters {
     #[cfg(test)]
     /// Appends a single prepared edge. The production writers batch, so only tests reach this.
-    #[allow(dead_code)]
+    /// Single-edge append, kept for tests that build a matrix by hand; the
+    /// production path always batches through `add_prepared_edges`.
+    #[cfg(test)]
     fn add(&self, edge: &PreparedBlockedEdge) -> Result<(), SerialCollationError> {
         let block = &self.blocks[edge.block];
         let mut buffer = block
@@ -1502,7 +1504,9 @@ fn push_coalesced_extent(extents: &mut Vec<BlockExtent>, extent: BlockExtent) {
 impl<const K: usize> BlockedEdgeMatrix<K> {
     #[cfg(test)]
     /// Adds prepared edges whose unitig indices are already absolute. Used by the dual-writer test.
-    #[allow(dead_code)]
+    /// Appends edges whose unitig indices are already global, which only a
+    /// test constructs; the build always rebases per bucket.
+    #[cfg(test)]
     fn add_prepared_edges_absolute(
         &mut self,
         edges: &[PreparedBlockedEdge],
@@ -13629,9 +13633,8 @@ fn external_range_id_for_unitig(
     (unitig_index < range.start_unitig + range.unitigs).then_some(range_id)
 }
 
-#[cfg(test)]
 /// Decodes a single materialized coordinate record; the hot paths decode in bulk instead.
-#[allow(dead_code)]
+#[cfg(test)]
 fn decoded_materialized_stitched_coord_record(
     bytes: &[u8],
     path: &Path,

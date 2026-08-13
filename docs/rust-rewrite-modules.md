@@ -7,12 +7,18 @@ phase ordering, worker scheduling, and external-memory behavior.
 
 ## Current pressure points
 
-| file | approximate size | responsibilities |
+| file | size | responsibilities |
 | --- | ---: | --- |
-| `discontinuity.rs` | 18k lines | local streams, edge matrix, contraction, expansion, stitching, reduction |
-| `buckets.rs` | 2.7k lines | bucket format, readers, serial/shared emitters, atlas buffering |
-| `subgraph.rs` | 1.8k lines | dense local table, graph construction, unitig walks, colored contraction |
-| `color.rs` | 1.1k lines | color runs, sidecars, concurrent repository, metadata |
+| `discontinuity.rs` | 14.2k lines | local streams, edge matrix, contraction, expansion, stitching, reduction |
+| `buckets.rs` | 3.7k lines | bucket format, readers, serial/shared emitters, atlas buffering |
+| `subgraph.rs` | 2.2k lines | local vertex tables (both widths), graph construction, unitig walks, colored contraction |
+| `color.rs` | 1.9k lines | color runs, sidecars, concurrent repository, repository reader, metadata |
+| `partition.rs` | 1.8k lines | input scheduling, minimizer scan, bucket packing, colored source windows |
+
+`discontinuity.rs` came down from 18k with the removal of both stitch
+subsystems and, later, the K > 31 arms that duplicated the streaming expansion
+and blocked contraction. It is still four times the next-largest file and still
+the first thing to split.
 
 `discontinuity.rs` should be split first. The other files remain readable
 enough that splitting them before the discontinuity graph would add churn
@@ -64,6 +70,10 @@ Each extraction must satisfy all of the following before the next one starts:
 2. `cargo doc --workspace --no-deps` reports no broken links.
 3. Compile-time packed-size assertions remain unchanged.
 4. The 1,000-genome colored topology comparator matches all canonical unitigs.
+   Anything touching a width-dependent arm additionally needs the k = 33/63
+   compat tests and a real-data comparison at k > 31: those arms have no
+   coverage from the k = 31 workloads the other gates use, which is how three
+   independently fatal defects survived in them (see the review record).
 5. Release timings for the affected phase remain within ordinary run-to-run
    noise. Any repeatable regression requires reverting or profiling the split.
 6. Peak RSS, intermediate bytes, bucket flushes, and descriptor peaks do not

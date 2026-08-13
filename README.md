@@ -24,11 +24,12 @@ production pipeline.
 - User-controlled worker count and soft memory budget
 - Optional LZ4 compression for uncolored weak super-k-mer buckets
 - Odd `k` values from 3 through 63
+- Color queries over a finished graph, and cleanup after an interrupted run
 
 ## Requirements
 
 - A 64-bit Linux or macOS system
-- Rust 1.85 or newer
+- Rust 1.91 or newer
 - Standard linker and native build tools for the selected Rust target
 - Sufficient temporary disk space for external-memory intermediates
 
@@ -104,8 +105,10 @@ target/release/cuttlefish build \
 
 ## Command Line
 
-`cuttlefish` has two subcommands: `build` constructs a graph, and `compare`
-decides whether two unitig FASTA files describe the same one.
+`cuttlefish` has four subcommands: `build` constructs a graph, `compare`
+decides whether two unitig FASTA files describe the same one, `colors` reads a
+colored build's repository back, and `cleanup` removes the intermediates an
+interrupted build left behind.
 
 ```text
 cuttlefish build [OPTIONS]
@@ -124,6 +127,7 @@ cuttlefish build [OPTIONS]
       --ref                 build from references
       --color               emit positional colors
       --compress-buckets    LZ4-compress uncolored partition buckets
+      --skip-unreadable     report and skip inputs that fail to parse
   -h, --help                print build help
 ```
 
@@ -181,15 +185,37 @@ Colored builds write the same unitig FASTA plus positional color runs in each
 FASTA header. A run is stored as a packed decimal integer containing its unitig
 offset and a coordinate into the color repository.
 
-The repository is written as
-`<WORK_DIR>/<OUTPUT_NAME>.cf3rs.color-repository/` and contains:
+The repository is written as `<PREFIX>.cf3rs.color-repository/`, beside the
+output FASTA rather than in the working directory, because the FASTA cannot be
+interpreted without it. It contains:
 
 - `metadata.tsv`: graph parameters, source numbering, and source paths
 - `manifest.tsv`: repository shard metadata
 - `NNN.colors`: delta-coded source sets
 
 Source IDs are one-based and follow resolved input order. The repository format
-is currently versioned as `cf3rs-color-repository-v1`.
+is currently versioned as `cf3rs-color-repository-v2`.
+
+`cuttlefish colors` reads all of this back without unpacking headers by hand:
+
+```bash
+cuttlefish colors dump -r colored-graph.cf3rs.color-repository \
+    -i colored-graph.fa -o dump.tsv.gz          # every run of every unitig
+cuttlefish colors sets -r colored-graph.cf3rs.color-repository --names
+cuttlefish colors grep -r colored-graph.cf3rs.color-repository \
+    -i colored-graph.fa --all-of 3 --none-of 7  # unitigs by source predicate
+```
+
+A dump is larger than the graph it describes, so it streams and can gzip on the
+way out.
+
+### Interrupted runs
+
+A build unlinks its intermediates as it consumes them, so a successful run
+leaves `--work-dir` empty. One that is killed or fails partway does not, and
+the leftovers are large. `cuttlefish cleanup -w DIR` removes them, matching only
+names cuttlefish itself produces and reporting anything else it finds; add
+`--dry-run` to look first. The output FASTA is never touched.
 
 ## Architecture
 

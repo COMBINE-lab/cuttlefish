@@ -209,7 +209,7 @@ fn sequential_inflate_diagnostic() -> bool {
 /// This is the seam a closed-loop thread broker drives: it aggregates busy
 /// time and consumed bytes across decoders (including ones that have already
 /// closed), and fans an aggregate worker limit out as an even per-decoder
-/// share. Registration happens inside [`parse_fragments_borrowed_with_registry`]
+/// share. Registration happens inside `parse_fragments_borrowed_with_registry`
 /// when a rapidgzip reader is opened; a guard carried by the reader retires
 /// the handle and banks its final counters on drop.
 pub struct InflateRegistry {

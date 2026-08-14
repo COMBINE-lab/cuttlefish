@@ -12,7 +12,7 @@ resolver = "2"
 # entry in [workspace.dependencies] below). The major version tracks the
 # product generation -- 3.x is Cuttlefish 3 -- so a backward-incompatible
 # change bumps the minor version; see CHANGELOG.md.
-version = "0.1.0"
+version = "3.0.0"
 edition = "2024"
 license = "BSD-3-Clause"
 rust-version = "1.91"
@@ -26,7 +26,7 @@ categories = ["science"]
 # Path plus version: the path is what a local `cargo build` resolves, the
 # version is what the published crate requires. `bump_and_publish.sh` keeps the
 # version here in step with [workspace.package].
-cuttlefish-rs = { path = "crates/cuttlefish-rs", version = "0.1.0" }
+cuttlefish-rs = { path = "crates/cuttlefish-rs", version = "3.0.0" }
 
 [profile.release]
 codegen-units = 8

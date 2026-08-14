@@ -186,23 +186,30 @@ if [[ "$DRY_RUN" == true ]]; then
     # "^<new>"` cannot resolve until the library is actually published; the real
     # publish loop below handles that ordering via cargo's wait-for-publish.
     #
-    # Before the library's first release nothing is in the index at all, so the
-    # CLI cannot be validated here either. That is reported and tolerated rather
-    # than treated as a failure, because it is a fact about the index and not
-    # about this workspace.
+    # Until the library has been published at the version the CLI requires,
+    # the CLI's dependency cannot resolve against the index -- whether the
+    # index holds nothing at all or only older versions (e.g. the 0.0.x name
+    # placeholders). Both are facts about the index and not about this
+    # workspace, and the real publish loop below resolves them by publishing
+    # the library first; so a CLI resolution failure of that shape is reported
+    # and tolerated rather than treated as a validation failure.
     echo
     echo "Per-crate package validation (cargo publish --dry-run, in order)"
     validation_failed=false
     for crate in "${CRATES[@]}"; do
         echo "--- $crate"
-        if ! cargo publish -p "$crate" --dry-run --allow-dirty; then
-            if cargo search "cuttlefish-rs" --limit 1 2>/dev/null | grep -q '^cuttlefish-rs '; then
+        status=0
+        output=$(cargo publish -p "$crate" --dry-run --allow-dirty 2>&1) || status=$?
+        printf '%s\n' "$output"
+        if [[ $status -ne 0 ]]; then
+            if [[ "$crate" != "cuttlefish-rs" ]] && \
+               grep -q 'failed to select a version for the requirement `cuttlefish-rs' <<<"$output"; then
+                echo ":: $crate cannot be validated until cuttlefish-rs is published" >&2
+                echo "::    at the required version; the index cannot resolve its" >&2
+                echo "::    dependency yet. Not treated as a failure." >&2
+            else
                 validation_failed=true
                 echo "::  $crate failed packaging validation" >&2
-            else
-                echo ":: $crate cannot be validated until cuttlefish-rs has been" >&2
-                echo "::    published at least once; the index has no version to" >&2
-                echo "::    resolve its dependency against. Not treated as a failure." >&2
             fi
         fi
     done

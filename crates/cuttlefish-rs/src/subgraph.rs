@@ -9,7 +9,7 @@ use crate::Side;
 #[cfg(test)]
 use crate::buckets::BucketRecord;
 use crate::buckets::{BorrowedBucketPackedRecord, BucketError, BucketManifestEntry, BucketStore};
-use crate::color::{ColorError, ConcurrentColorRepository};
+use crate::color::{ColorError, ConcurrentColorRepository, UnitigColorRuns};
 use crate::dna::{Base, minimal_rotation};
 use crate::hash::{FastBuildHasher, fast_u64_hash, hash_two_u64};
 use crate::kmer::{Kmer, KmerError};
@@ -604,15 +604,41 @@ struct CompactUnitigEnds<const K: usize> {
 
 type PendingColorRun = (u32, u64, Option<ColorCoordinate>);
 
+/// Pending color runs for every unitig of a contraction, flat: unitig `i`'s
+/// runs are `runs[starts[i]..starts[i + 1]]`. One allocation pair per
+/// subgraph instead of one short-lived `Vec` per local unitig.
+struct PendingColorRuns {
+    runs: Vec<PendingColorRun>,
+    /// Slice boundaries: `starts[0] == 0`, then one trailing entry per unitig.
+    starts: Vec<usize>,
+}
+
+impl PendingColorRuns {
+    fn new() -> Self {
+        Self {
+            runs: Vec::new(),
+            starts: vec![0],
+        }
+    }
+
+    fn unitig_count(&self) -> usize {
+        self.starts.len() - 1
+    }
+
+    fn unitig(&self, index: usize) -> &[PendingColorRun] {
+        &self.runs[self.starts[index]..self.starts[index + 1]]
+    }
+}
+
 struct PendingColoredContraction<const K: usize> {
     unitigs: Vec<LocalUnitig<K>>,
-    runs: Vec<Vec<PendingColorRun>>,
+    runs: PendingColorRuns,
     representative_indices: HashMap<u64, usize, FastBuildHasher>,
     source_sets: Vec<Vec<u32>>,
 }
 
 struct PendingColoredData {
-    runs: Vec<Vec<PendingColorRun>>,
+    runs: PendingColorRuns,
     representative_indices: HashMap<u64, usize, FastBuildHasher>,
     source_sets: Vec<Vec<u32>>,
 }
@@ -1005,14 +1031,17 @@ impl<const K: usize, C: ColorSlot> LocalSubgraph<K, C> {
         F: Fn(u64) -> Option<ColorCoordinate>,
     {
         let pending = self.contract_colored_impl(store, entries, color_is_known)?;
+        debug_assert_eq!(pending.unitigs.len(), pending.runs.unitig_count());
         pending
             .unitigs
             .into_iter()
-            .zip(pending.runs)
-            .map(|(unitig, runs)| {
-                let colors = runs
-                    .into_iter()
-                    .map(|(offset, color_hash, coordinate)| {
+            .enumerate()
+            .map(|(index, unitig)| {
+                let colors = pending
+                    .runs
+                    .unitig(index)
+                    .iter()
+                    .map(|&(offset, color_hash, coordinate)| {
                         let sources = match coordinate {
                             Some(_) => Vec::new(),
                             None => {
@@ -1043,7 +1072,7 @@ impl<const K: usize, C: ColorSlot> LocalSubgraph<K, C> {
         repository: &ConcurrentColorRepository,
         worker: usize,
         emit: F,
-    ) -> Result<Vec<Vec<UnitigColor>>, LocalSubgraphError>
+    ) -> Result<UnitigColorRuns, LocalSubgraphError>
     where
         F: for<'u> FnMut(LocalUnitigRef<'u, K>),
     {
@@ -1053,27 +1082,25 @@ impl<const K: usize, C: ColorSlot> LocalSubgraph<K, C> {
             |color_hash| repository.get(color_hash),
             emit,
         )?;
-        let mut color_runs = Vec::with_capacity(pending.runs.len());
-        for runs in pending.runs {
-            let mut packed = Vec::with_capacity(runs.len());
-            for (offset, color_hash, coordinate) in runs {
-                let coordinate = match coordinate {
-                    Some(coordinate) => coordinate,
-                    None => {
-                        let &index = pending
-                            .representative_indices
-                            .get(&color_hash)
-                            .ok_or(LocalSubgraphError::MissingVertex)?;
-                        repository
-                            .resolve_or_insert(color_hash, &pending.source_sets[index], worker)
-                            .map_err(LocalSubgraphError::Color)?
-                    }
-                };
-                packed.push(UnitigColor::new(offset, coordinate));
-            }
-            color_runs.push(packed);
+        // Packing is one-to-one, so the pending slice boundaries carry over
+        // to the packed runs unchanged.
+        let mut packed = Vec::with_capacity(pending.runs.runs.len());
+        for &(offset, color_hash, coordinate) in &pending.runs.runs {
+            let coordinate = match coordinate {
+                Some(coordinate) => coordinate,
+                None => {
+                    let &index = pending
+                        .representative_indices
+                        .get(&color_hash)
+                        .ok_or(LocalSubgraphError::MissingVertex)?;
+                    repository
+                        .resolve_or_insert(color_hash, &pending.source_sets[index], worker)
+                        .map_err(LocalSubgraphError::Color)?
+                }
+            };
+            packed.push(UnitigColor::new(offset, coordinate));
         }
-        Ok(color_runs)
+        Ok(UnitigColorRuns::from_parts(packed, pending.runs.starts))
     }
 
     fn contract_colored_impl<F>(
@@ -1123,7 +1150,7 @@ impl<const K: usize, C: ColorSlot> LocalSubgraph<K, C> {
         let mut coordinate_cache =
             HashMap::<u64, Option<ColorCoordinate>, FastBuildHasher>::default();
         let mut representatives = Vec::<Kmer<K>>::new();
-        let mut unitig_hash_runs = Vec::new();
+        let mut unitig_hash_runs = PendingColorRuns::new();
         let mut back_walk = UnitigWalk::default();
         let mut front_walk = UnitigWalk::default();
         let mut label = Vec::new();
@@ -1174,7 +1201,7 @@ impl<const K: usize, C: ColorSlot> LocalSubgraph<K, C> {
         state: VertexState<C>,
         color_is_known: &F,
         emit: &mut G,
-        unitig_hash_runs: &mut Vec<Vec<PendingColorRun>>,
+        unitig_hash_runs: &mut PendingColorRuns,
         representative_indices: &mut HashMap<u64, usize, FastBuildHasher>,
         coordinate_cache: &mut HashMap<u64, Option<ColorCoordinate>, FastBuildHasher>,
         representatives: &mut Vec<Kmer<K>>,
@@ -1211,11 +1238,15 @@ impl<const K: usize, C: ColorSlot> LocalSubgraph<K, C> {
                 u64::from(ends.left_exit.is_some()) + u64::from(ends.right_exit.is_some());
         }
 
-        let mut runs = Vec::<(u32, u64, Option<ColorCoordinate>)>::new();
+        // This unitig's runs occupy the flat vector's tail from `run_start`;
+        // the boundary pushed after emission closes the slice.
+        let run_start = unitig_hash_runs.runs.len();
+        let runs = &mut unitig_hash_runs.runs;
         let mut record_hash = |offset: usize, vertex: Kmer<K>, color_hash: u64| {
-            if runs
-                .last()
-                .is_none_or(|&(_, previous, _)| previous != color_hash)
+            if runs.len() == run_start
+                || runs
+                    .last()
+                    .is_none_or(|&(_, previous, _)| previous != color_hash)
             {
                 let coordinate = *coordinate_cache
                     .entry(color_hash)
@@ -1271,7 +1302,7 @@ impl<const K: usize, C: ColorSlot> LocalSubgraph<K, C> {
             right_exit: ends.right_exit,
             is_cycle: ends.is_cycle,
         });
-        unitig_hash_runs.push(runs);
+        unitig_hash_runs.starts.push(unitig_hash_runs.runs.len());
         Ok(())
     }
 

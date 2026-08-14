@@ -19,6 +19,50 @@ use std::sync::{
 
 const COLOR_BUFFER_BYTES: usize = 128 * 1024;
 
+/// Per-unitig color runs in one flat vector: unitig `i`'s runs are
+/// `runs[starts[i]..starts[i + 1]]`.
+///
+/// The colored contraction path produces color runs for every local unitig
+/// -- over a billion on a collection-scale build -- and a `Vec` per unitig
+/// is two short-lived heap allocations each (one pending, one packed). This
+/// keeps the same per-unitig slice view over a single pair of vectors.
+#[derive(Default)]
+pub(crate) struct UnitigColorRuns {
+    runs: Vec<UnitigColor>,
+    /// Slice boundaries: `starts[0] == 0`, one trailing entry per unitig.
+    starts: Vec<usize>,
+}
+
+impl UnitigColorRuns {
+    pub(crate) fn from_parts(runs: Vec<UnitigColor>, starts: Vec<usize>) -> Self {
+        debug_assert_eq!(starts.first(), Some(&0));
+        debug_assert_eq!(starts.last(), Some(&runs.len()));
+        Self { runs, starts }
+    }
+
+    /// Number of unitigs represented.
+    pub(crate) fn unitig_count(&self) -> usize {
+        self.starts.len().saturating_sub(1)
+    }
+
+    /// Total run count across every unitig.
+    pub(crate) fn run_count(&self) -> usize {
+        self.runs.len()
+    }
+
+    /// The runs of unitig `index`.
+    pub(crate) fn unitig(&self, index: usize) -> &[UnitigColor] {
+        &self.runs[self.starts[index]..self.starts[index + 1]]
+    }
+
+    /// Iterates per-unitig run slices in unitig order.
+    pub(crate) fn iter(&self) -> impl Iterator<Item = &[UnitigColor]> {
+        self.starts
+            .windows(2)
+            .map(|pair| &self.runs[pair[0]..pair[1]])
+    }
+}
+
 pub fn reverse_color_runs(runs: &[UnitigColor], vertex_count: u32) -> Vec<UnitigColor> {
     let mut reversed = Vec::with_capacity(runs.len());
     for index in (0..runs.len()).rev() {
@@ -235,15 +279,15 @@ impl ConcurrentColorRunSidecarWriter {
         })
     }
 
-    pub fn write_unitigs(&self, unitigs: &[Vec<UnitigColor>]) -> Result<u64, ColorError> {
-        let run_count = unitigs.iter().map(Vec::len).sum::<usize>();
+    pub(crate) fn write_unitigs(&self, unitigs: &UnitigColorRuns) -> Result<u64, ColorError> {
+        let run_count = unitigs.run_count();
         let byte_len = unitigs
-            .len()
+            .unitig_count()
             .checked_mul(5)
             .and_then(|bytes| bytes.checked_add(run_count.checked_mul(8)?))
             .ok_or(ColorError::TooManyColorRuns)?;
         let mut encoded = Vec::with_capacity(byte_len);
-        for colors in unitigs {
+        for colors in unitigs.iter() {
             let count = u32::try_from(colors.len()).map_err(|_| ColorError::TooManyColorRuns)?;
             append_varint_u32(&mut encoded, count);
             for color in colors {
@@ -262,7 +306,7 @@ impl ConcurrentColorRunSidecarWriter {
         self.run_count
             .fetch_add(run_count as u64, Ordering::Relaxed);
         self.unitigs
-            .fetch_add(unitigs.len() as u64, Ordering::Relaxed);
+            .fetch_add(unitigs.unitig_count() as u64, Ordering::Relaxed);
         Ok(offset)
     }
 

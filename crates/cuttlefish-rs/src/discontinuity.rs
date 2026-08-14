@@ -28,7 +28,7 @@ use crate::Side;
 use crate::buckets::{BucketError, BucketLocation, BucketManifestEntry, BucketStore};
 use crate::color::{
     ColorError, ColorRepositoryManifest, ColorRunSidecar, ColorRunSidecarWriter,
-    ConcurrentColorRepository, ConcurrentColorRunSidecarWriter, append_color_runs,
+    ConcurrentColorRepository, ConcurrentColorRunSidecarWriter, UnitigColorRuns, append_color_runs,
     read_unitig_color_runs, reverse_color_runs, reverse_color_runs_in_place,
     write_unitig_color_runs,
 };
@@ -186,9 +186,9 @@ impl LocalUnitigBucketWriter {
         &mut self,
         labels: &[u8],
         unitigs: &[DiscontinuityUnitig<K>],
-        colors: Option<&[Vec<UnitigColor>]>,
+        colors: Option<&UnitigColorRuns>,
     ) -> Result<usize, DiscontinuityInputError> {
-        if colors.is_some_and(|runs| runs.len() != unitigs.len()) {
+        if colors.is_some_and(|runs| runs.unitig_count() != unitigs.len()) {
             return Err(DiscontinuityInputError::MissingColorRuns);
         }
         if self.colored != colors.is_some() {
@@ -204,12 +204,12 @@ impl LocalUnitigBucketWriter {
         for (index, unitig) in unitigs.iter().enumerate() {
             write_discontinuity_unitig_record(&mut self.unitigs, &self.unitig_path, unitig)?;
             if let Some(colors) = colors {
-                write_unitig_color_runs(&mut self.unitigs, &colors[index]).map_err(|source| {
-                    DiscontinuityInputError::Io {
+                write_unitig_color_runs(&mut self.unitigs, colors.unitig(index)).map_err(
+                    |source| DiscontinuityInputError::Io {
                         path: self.unitig_path.clone(),
                         source,
-                    }
-                })?;
+                    },
+                )?;
             }
         }
         self.unitig_count += unitigs.len();
@@ -8152,9 +8152,11 @@ where
             } else {
                 Vec::new()
             };
-            if reverse && !direct_colors.is_empty() {
-                direct_colors =
-                    reverse_color_runs(&direct_colors, (unitig.label_len as usize - K + 1) as u32);
+            if reverse {
+                reverse_color_runs_in_place(
+                    &mut direct_colors,
+                    (unitig.label_len as usize - K + 1) as u32,
+                );
             }
             emit_direct_local(FinalUnitigRecord {
                 label,
@@ -12974,8 +12976,24 @@ impl<const K: usize> SerialLocalOutput<'_, K> {
         self.edge_matrix
             .add_prepared_edges(&output.matrix_edges, start_unitig)
             .map_err(serial_collation_to_input_error)?;
-        let mut output_colors = output.color_runs.map(Vec::into_iter);
-        for mut unitig in output.unitigs {
+        let output_colors = output.color_runs;
+        // The color-run count must match the unitig count exactly: colored
+        // sinks require one run slice per unitig, and colors without a
+        // writer (or extras beyond the unitigs) are malformed input.
+        let expected_colors = if self.color_run_writer.is_some() {
+            output.unitigs.len()
+        } else {
+            0
+        };
+        if output_colors
+            .as_ref()
+            .map_or(expected_colors != 0, |colors| {
+                colors.unitig_count() != expected_colors
+            })
+        {
+            return Err(DiscontinuityInputError::MissingColorRuns);
+        }
+        for (index, mut unitig) in output.unitigs.into_iter().enumerate() {
             self.inputs.stats.local_unitigs += 1;
             self.inputs.stats.discontinuity_exits +=
                 u64::from(unitig.left_exit().is_some()) + u64::from(unitig.right_exit().is_some());
@@ -12984,17 +13002,11 @@ impl<const K: usize> SerialLocalOutput<'_, K> {
             write_discontinuity_unitig_record(self.unitigs, self.unitig_path, &unitig)?;
             if let Some(writer) = self.color_run_writer.as_deref_mut() {
                 let runs = output_colors
-                    .as_mut()
-                    .and_then(Iterator::next)
+                    .as_ref()
+                    .map(|colors| colors.unitig(index))
                     .ok_or(DiscontinuityInputError::MissingColorRuns)?;
-                writer.write_unitig(&runs)?;
+                writer.write_unitig(runs)?;
             }
-        }
-        if output_colors
-            .as_mut()
-            .is_some_and(|colors| colors.next().is_some())
-        {
-            return Err(DiscontinuityInputError::MissingColorRuns);
         }
         *self.label_offset += output.labels.len() as u64;
         *self.build_elapsed += output.build_elapsed;
@@ -13026,7 +13038,7 @@ struct LocalContractionOutput<const K: usize> {
     unitigs: Vec<DiscontinuityUnitig<K>>,
     labels: Vec<u8>,
     matrix_edges: Vec<PreparedBlockedEdge>,
-    color_runs: Option<Vec<Vec<UnitigColor>>>,
+    color_runs: Option<UnitigColorRuns>,
     trivial_fasta: Vec<u8>,
     trivial_unitigs: u64,
     trivial_bases: u64,
@@ -13137,7 +13149,7 @@ impl<'a, const K: usize> ConcurrentLocalOutputSink<'a, K> {
                 .color_runs
                 .take()
                 .ok_or(DiscontinuityInputError::MissingColorRuns)?;
-            if runs.len() != output_unitigs {
+            if runs.unitig_count() != output_unitigs {
                 return Err(DiscontinuityInputError::MissingColorRuns);
             }
             Some(runs)
@@ -13147,7 +13159,7 @@ impl<'a, const K: usize> ConcurrentLocalOutputSink<'a, K> {
         let color_start = if let Some(writer) = self.color_runs {
             writer.write_unitigs(
                 resolved_colors
-                    .as_deref()
+                    .as_ref()
                     .ok_or(DiscontinuityInputError::MissingColorRuns)?,
             )?
         } else {
@@ -13163,7 +13175,7 @@ impl<'a, const K: usize> ConcurrentLocalOutputSink<'a, K> {
             writer
                 .lock()
                 .map_err(|_| DiscontinuityInputError::WorkerPanic)?
-                .write::<K>(&output.labels, &output.unitigs, resolved_colors.as_deref())?
+                .write::<K>(&output.labels, &output.unitigs, resolved_colors.as_ref())?
         } else {
             unitig_base
         };

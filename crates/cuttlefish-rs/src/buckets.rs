@@ -538,11 +538,21 @@ impl AtlasSortScratch {
             }
             prefix += count;
         }
+        // The placement loops below fill the scratch buffers through spare
+        // capacity instead of `resize(_, 0)`: the zero-fill would rewrite the
+        // entire staged volume of the build only to be overwritten
+        // byte-for-byte by the copies. Initialization is exact, not just
+        // claimed: every graph id was validated by the counting pass above,
+        // `offsets` are the prefix sums of those counts, so the writes land in
+        // disjoint slots that cover `0..records` exactly, and the caller has
+        // already checked `bytes.len() == records * record_len`.
         let records = pending.graph_ids.len();
+        debug_assert_eq!(pending.bytes.len(), records * record_len);
         match attr_len {
             None => {
                 self.sorted.clear();
-                self.sorted.resize(pending.bytes.len(), 0);
+                self.sorted.reserve(pending.bytes.len());
+                let sorted = self.sorted.spare_capacity_mut().as_mut_ptr() as *mut u8;
                 self.sorted_labels.clear();
                 for (&graph_id, record) in pending
                     .graph_ids
@@ -551,16 +561,30 @@ impl AtlasSortScratch {
                 {
                     let local = usize::from(graph_id) - first_graph_id;
                     let output = self.offsets[local] as usize * record_len;
-                    self.sorted[output..output + record_len].copy_from_slice(record);
+                    // SAFETY: `output + record_len <= records * record_len`
+                    // (disjoint-slot coverage above), which is within the
+                    // reserved capacity; source and destination are distinct
+                    // vectors.
+                    unsafe {
+                        std::ptr::copy_nonoverlapping(
+                            record.as_ptr(),
+                            sorted.add(output),
+                            record_len,
+                        );
+                    }
                     self.offsets[local] += 1;
                 }
+                // SAFETY: the loop wrote every byte of `0..records * record_len`.
+                unsafe { self.sorted.set_len(records * record_len) };
             }
             Some(attr_len) => {
                 let label_len = record_len - attr_len;
                 self.sorted.clear();
-                self.sorted.resize(records * attr_len, 0);
+                self.sorted.reserve(records * attr_len);
+                let sorted = self.sorted.spare_capacity_mut().as_mut_ptr() as *mut u8;
                 self.sorted_labels.clear();
-                self.sorted_labels.resize(records * label_len, 0);
+                self.sorted_labels.reserve(records * label_len);
+                let labels = self.sorted_labels.spare_capacity_mut().as_mut_ptr() as *mut u8;
                 for (&graph_id, record) in pending
                     .graph_ids
                     .iter()
@@ -568,12 +592,27 @@ impl AtlasSortScratch {
                 {
                     let local = usize::from(graph_id) - first_graph_id;
                     let slot = self.offsets[local] as usize;
-                    let attr_at = slot * attr_len;
-                    self.sorted[attr_at..attr_at + attr_len].copy_from_slice(&record[..attr_len]);
-                    let label_at = slot * label_len;
-                    self.sorted_labels[label_at..label_at + label_len]
-                        .copy_from_slice(&record[attr_len..]);
+                    // SAFETY: as above -- disjoint slots covering
+                    // `0..records`, within the capacity just reserved, from a
+                    // distinct source vector.
+                    unsafe {
+                        std::ptr::copy_nonoverlapping(
+                            record.as_ptr(),
+                            sorted.add(slot * attr_len),
+                            attr_len,
+                        );
+                        std::ptr::copy_nonoverlapping(
+                            record.as_ptr().add(attr_len),
+                            labels.add(slot * label_len),
+                            label_len,
+                        );
+                    }
                     self.offsets[local] += 1;
+                }
+                // SAFETY: the loop wrote every byte of both ranges.
+                unsafe {
+                    self.sorted.set_len(records * attr_len);
+                    self.sorted_labels.set_len(records * label_len);
                 }
             }
         }
@@ -1853,7 +1892,7 @@ impl SharedBucketSink {
                         }
                         let mut stats = SharedBucketFlushStats::default();
                         let mut scratch = AtlasSortScratch::default();
-                        for chunk in pending {
+                        for chunk in &pending {
                             self.append_uncolored_atlas_inner(
                                 atlas_id,
                                 chunk,
@@ -1886,10 +1925,13 @@ impl SharedBucketSink {
         Ok(())
     }
 
+    /// Appends by reference: the caller's staging buffers are only read, so
+    /// the emitter clears and reuses them instead of rebuilding capacity
+    /// from zero after every drain.
     fn append_uncolored_atlas(
         &self,
         atlas_id: usize,
-        pending: PendingColoredAtlas,
+        pending: &PendingColoredAtlas,
         scratch: &mut AtlasSortScratch,
     ) -> Result<(), BucketError> {
         let started = Instant::now();
@@ -1902,7 +1944,7 @@ impl SharedBucketSink {
     fn append_uncolored_atlas_inner(
         &self,
         atlas_id: usize,
-        pending: PendingColoredAtlas,
+        pending: &PendingColoredAtlas,
         stats: &mut SharedBucketFlushStats,
         scratch: &mut AtlasSortScratch,
     ) -> Result<(), BucketError> {
@@ -1913,7 +1955,7 @@ impl SharedBucketSink {
         if pending.graph_ids.len() * record_len != pending.bytes.len() {
             return Err(BucketError::MalformedRecord);
         }
-        scratch.group_by_graph(atlas_id, &pending, record_len, None)?;
+        scratch.group_by_graph(atlas_id, pending, record_len, None)?;
         let wait = crate::discontinuity::LockWait::start(&ATLAS_LOCK_PROFILE);
         let mut atlas = self.atlases[atlas_id]
             .lock()
@@ -1985,10 +2027,11 @@ impl SharedBucketSink {
         Ok(())
     }
 
+    /// Appends by reference; see [`Self::append_uncolored_atlas`].
     fn append_colored_atlas(
         &self,
         atlas_id: usize,
-        pending: PendingColoredAtlas,
+        pending: &PendingColoredAtlas,
         scratch: &mut AtlasSortScratch,
     ) -> Result<(), BucketError> {
         if pending.bytes.is_empty() {
@@ -2002,7 +2045,7 @@ impl SharedBucketSink {
         // grouping copy also splits attributes from labels, which is the layout
         // the block compressor wants, so the flush never deinterleaves.
         let attr_len = record_len - self.label_words * 8;
-        scratch.group_by_graph(atlas_id, &pending, record_len, Some(attr_len))?;
+        scratch.group_by_graph(atlas_id, pending, record_len, Some(attr_len))?;
         let label_len = record_len - attr_len;
         let started = Instant::now();
         let wait = crate::discontinuity::LockWait::start(&ATLAS_LOCK_PROFILE);
@@ -2910,20 +2953,35 @@ impl SharedBucketEmitter {
         if self.colored_pending[atlas_id].bytes.is_empty() {
             return Ok(());
         }
-        let pending = std::mem::take(&mut self.colored_pending[atlas_id]);
-        self.pending_bytes -= pending.bytes.len();
-        self.sink
-            .append_colored_atlas(atlas_id, pending, &mut self.sort_scratch)
+        // Lend the staging buffers rather than moving them: the sink only
+        // reads, and clearing afterwards keeps their capacity for the next
+        // 64 KiB of records instead of regrowing from zero every drain.
+        self.pending_bytes -= self.colored_pending[atlas_id].bytes.len();
+        self.sink.append_colored_atlas(
+            atlas_id,
+            &self.colored_pending[atlas_id],
+            &mut self.sort_scratch,
+        )?;
+        let pending = &mut self.colored_pending[atlas_id];
+        pending.graph_ids.clear();
+        pending.bytes.clear();
+        Ok(())
     }
 
     fn flush_pending_uncolored_atlas(&mut self, atlas_id: usize) -> Result<(), BucketError> {
         if self.uncolored_pending[atlas_id].bytes.is_empty() {
             return Ok(());
         }
-        let pending = std::mem::take(&mut self.uncolored_pending[atlas_id]);
-        self.pending_bytes -= pending.bytes.len();
-        self.sink
-            .append_uncolored_atlas(atlas_id, pending, &mut self.sort_scratch)
+        self.pending_bytes -= self.uncolored_pending[atlas_id].bytes.len();
+        self.sink.append_uncolored_atlas(
+            atlas_id,
+            &self.uncolored_pending[atlas_id],
+            &mut self.sort_scratch,
+        )?;
+        let pending = &mut self.uncolored_pending[atlas_id];
+        pending.graph_ids.clear();
+        pending.bytes.clear();
+        Ok(())
     }
 
     pub fn finish(mut self) -> Result<(), BucketError> {

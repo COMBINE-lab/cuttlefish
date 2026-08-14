@@ -6,7 +6,7 @@ name: rust
 
 on:
   push:
-    branches: [rust-rewrite, develop, master]
+    branches: [main, develop]
   pull_request:
   workflow_dispatch:
 

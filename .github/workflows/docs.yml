@@ -10,7 +10,7 @@ name: Deploy website
 
 on:
   push:
-    branches: [rust-rewrite, main, master]
+    branches: [main]
     paths:
       - 'website/**'
       - '.github/workflows/docs.yml'

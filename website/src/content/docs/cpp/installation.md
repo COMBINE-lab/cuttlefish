@@ -43,10 +43,16 @@ Conda package's 127. To raise it, see [Larger *k*-mer sizes](../large-k/).
 
 ## Which branch
 
-Cuttlefish 1 and 2 live on the repository's default branches. The C++
-Cuttlefish 3 is developed on the `cuttlefish3-cpp` branch, in parallel with the
-Rust implementation — see [The C++ Cuttlefish 3](../cuttlefish3/).
+Cuttlefish 1 and 2 live on the `cuttlefish-1-2` branch (their integration
+history is on `develop-legacy`):
 
-The `rust-rewrite` branch contains only the Rust Cuttlefish 3; the C++ sources
-were removed from it, so a checkout of either branch gives you one
-implementation and one build system.
+```bash
+git clone --branch cuttlefish-1-2 https://github.com/COMBINE-lab/cuttlefish.git
+```
+
+The initial C++ implementation of Cuttlefish 3 is preserved on the
+`cuttlefish3-cpp` branch — see [The C++ Cuttlefish 3](../cuttlefish3/).
+
+The repository's default branch, `main`, contains only the Rust Cuttlefish 3;
+the C++ sources were removed from it, so a checkout of any of these branches
+gives you one implementation and one build system.

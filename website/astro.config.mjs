@@ -32,7 +32,7 @@ export default defineConfig({
         },
       ],
       editLink: {
-        baseUrl: 'https://github.com/COMBINE-lab/cuttlefish/edit/rust-rewrite/website/',
+        baseUrl: 'https://github.com/COMBINE-lab/cuttlefish/edit/main/website/',
       },
       // Two doorways, mirroring the split on the landing page: the Rust
       // Cuttlefish 3, which is where Cuttlefish 3 is heading, and the C++ line
@@ -47,7 +47,9 @@ export default defineConfig({
             { label: 'Quick start', slug: 'rust/quick-start' },
             { label: 'Command line', slug: 'rust/command-line' },
             { label: 'Output formats', slug: 'rust/output' },
+            { label: 'Querying colors', slug: 'rust/colors' },
             { label: 'Comparing graphs', slug: 'rust/comparing-graphs' },
+            { label: 'Cleaning up', slug: 'rust/cleanup' },
             { label: 'Resource control', slug: 'rust/resources' },
             { label: 'Architecture', slug: 'rust/architecture' },
           ],

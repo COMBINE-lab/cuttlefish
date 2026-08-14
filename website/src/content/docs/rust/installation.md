@@ -1,24 +1,52 @@
 ---
 title: Installation
-description: Building and installing the Rust Cuttlefish 3 from source.
+description: Installing Cuttlefish 3 from a prebuilt binary, bioconda, crates.io, or source.
 ---
 
-## Requirements
+## Prebuilt binaries
+
+Every release attaches prebuilt binaries for Linux and macOS, on x86-64 and
+arm64, to the [GitHub releases
+page](https://github.com/COMBINE-lab/cuttlefish/releases), along with a shell
+installer script that picks the right one:
+
+```bash
+curl --proto '=https' --tlsv1.2 -LsSf \
+    https://github.com/COMBINE-lab/cuttlefish/releases/latest/download/cuttlefish-rs-cli-installer.sh | sh
+```
+
+Cuttlefish is also on
+[bioconda](https://bioconda.github.io/recipes/cuttlefish/README.html):
+
+```bash
+conda install -c bioconda cuttlefish
+```
+
+## From crates.io
+
+With a Rust toolchain installed:
+
+```bash
+cargo install cuttlefish-rs-cli
+```
+
+This installs the single binary `cuttlefish`.
+
+## From source
+
+Requirements:
 
 - A 64-bit Linux or macOS system
-- Rust 1.85 or newer
+- Rust 1.91 or newer
 - A standard linker and the native build tools for your Rust target
 - Enough temporary disk space for the external-memory intermediates
 
 No C++ compiler, CMake, or system bioinformatics libraries are needed. The Rust
 implementation has no C++ dependency.
 
-## From source
-
 ```bash
 git clone https://github.com/COMBINE-lab/cuttlefish.git
 cd cuttlefish
-git checkout rust-rewrite
 cargo build --release
 ```
 
@@ -50,7 +78,7 @@ Rust directly rather than through the CLI:
 
 ```toml
 [dependencies]
-cuttlefish-rs = "0.0.1"
+cuttlefish-rs = "=3.0.0"
 ```
 
 API documentation can be generated locally:
@@ -59,10 +87,11 @@ API documentation can be generated locally:
 cargo doc --workspace --no-deps --open
 ```
 
-:::note
-`cuttlefish-rs 0.0.1` on crates.io is a placeholder that holds the name and
-validates the publish path. Depend on the git repository until the first real
-release.
+:::note[Pin an exact version]
+The library API is not covered by semver: Cuttlefish's major version tracks the
+product generation, and a breaking change bumps the minor version — which
+cargo's default caret ranges would accept silently. Pin exactly (`=3.0.0`) and
+review the changelog before moving the pin.
 :::
 
 ## Verifying the build

@@ -37,8 +37,16 @@ cuttlefish build \
 ```
 
 Each path in `genomes.list` becomes one source color. The build writes
-`colored-graph.fa` plus a color repository under the working directory. See
-[Output formats](../output/) for how the colors are encoded.
+`colored-graph.fa` plus the color repository
+`colored-graph.cf3rs.color-repository/` beside it. See [Output
+formats](../output/) for how the colors are encoded, and read them back with
+[`cuttlefish colors`](../colors/):
+
+```bash
+# unitigs carrying source 3 but not source 7
+cuttlefish colors grep -r colored-graph.cf3rs.color-repository \
+    -i colored-graph.fa --all-of 3 --none-of 7
+```
 
 ## A graph from sequencing reads
 

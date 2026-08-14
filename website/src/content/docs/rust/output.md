@@ -27,13 +27,14 @@ notion of color, where the color set is a property of the whole unitig; see
 
 ### The color repository
 
-The repository is written to:
+The repository is written **beside the output FASTA**, not in the working
+directory, because it is output: the FASTA cannot be interpreted without it.
 
 ```text
-<WORK_DIR>/<OUTPUT_NAME>.cf3rs.color-repository/
+<OUTPUT_PREFIX>.cf3rs.color-repository/
 ```
 
-and contains:
+It contains:
 
 | File | Contents |
 | --- | --- |
@@ -45,17 +46,34 @@ Source IDs are **one-based** and follow resolved input order — the order in
 which `--seq`, `--list`, and `--dir` resolved to concrete files, which
 `metadata.tsv` records explicitly so you never have to reconstruct it.
 
-The repository format is versioned as `cf3rs-color-repository-v1`.
+The repository format is versioned as `cf3rs-color-repository-v2`: source sets
+are stored in a hybrid Elias-delta encoding that picks per record between
+sparse gap codes, a plain bitmap, and gap codes over the complement. A
+backward-incompatible change to this format bumps Cuttlefish's minor version
+and is called out in the changelog. Read the repository through
+[`cuttlefish colors`](../colors/) — or through `metadata.tsv` and
+`manifest.tsv` rather than by assuming shard names.
 
-:::caution
-The repository layout is a private intermediate format and may change before
-the first stable release. Read it through `metadata.tsv` and `manifest.tsv`
-rather than by assuming shard names.
-:::
+## Working directory
 
-## The working directory
+The working directory holds the build's external-memory intermediates —
+partition buckets, blocked edge matrices, path information, and collation
+buckets. They are removed as the build consumes them, so a successful run
+leaves the directory empty, and nothing there is meant to outlive the run.
 
-Beyond the color repository, the working directory holds partition buckets,
-blocked edge matrices, path information, and collation buckets. These are
-intermediates: they are removed as the build consumes them, and nothing outside
-the color repository is meant to outlive the run.
+Everything a build creates there is named `<OUTPUT_NAME>.cf3rs.<SUFFIX>`:
+
+| Name | What it holds | Phase |
+|---|---|---|
+| `.cf3rs.wsk` | weak super-*k*-mer buckets | partition |
+| `.cf3rs.lmtig-labels` | concatenated local unitig labels | local contraction |
+| `.cf3rs.lmtig-unitigs` | local unitig records into the labels | local contraction |
+| `.cf3rs.lmtig-unitigs.edge-matrix` | blocked discontinuity edges | local contraction |
+| `.cf3rs.local-unitig-buckets` | local unitigs, bucketed for collation | local contraction |
+| `.cf3rs.colors`, `.cf3rs.color-runs` | positional color runs (colored builds) | local contraction |
+| `.cf3rs.stitch-coords`, `.cf3rs.stitch-coords.cpp-expansion` | discontinuity path coordinates | expansion |
+| `.cf3rs.final-unitigs` | final unitig buckets before the FASTA | collation |
+| `.cf3rs.trivial.fa` | unitigs with no discontinuity exits, when not written straight to the output | local contraction |
+
+A run that fails partway leaves these behind;
+[`cuttlefish cleanup`](../cleanup/) removes them safely.

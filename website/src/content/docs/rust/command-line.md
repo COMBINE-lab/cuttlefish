@@ -1,16 +1,22 @@
 ---
 title: Command line
-description: The cuttlefish build and cuttlefish compare subcommands, and how input is resolved.
+description: The cuttlefish commands — build, compare, colors, cleanup — and how input is resolved.
 ---
 
-`cuttlefish` has two subcommands: `build` constructs a graph, and `compare`
-decides whether two unitig FASTA files describe the same one.
+The `cuttlefish` binary carries six commands:
 
 ```bash
-cuttlefish build [OPTION...]
-cuttlefish compare [OPTION...]
-cuttlefish version
+cuttlefish build [OPTION...]      # construct a (colored) compacted graph
+cuttlefish compare [OPTION...]    # decide whether two unitig FASTAs match
+cuttlefish colors dump|sets|grep [OPTION...]   # query a colored build
+cuttlefish cleanup [OPTION...]    # remove an interrupted build's intermediates
+cuttlefish help                   # print the command summary
+cuttlefish version                # print the release version
 ```
+
+`build` and `compare` are detailed below. `colors` has [its own
+page](../colors/), as does [`cleanup`](../cleanup/). Every command prints its
+own `--help`.
 
 ## `cuttlefish build`
 
@@ -35,7 +41,8 @@ cuttlefish version
   -h, --help            print usage
 ```
 
-Exactly one of `--read` and `--ref` is required.
+Exactly one of `--read` and `--ref` is required. `--threads` defaults to one
+quarter of the machine's available hardware threads.
 
 ### Input
 
@@ -56,7 +63,8 @@ Files ending in `.gz` are decompressed automatically. Characters outside `A`,
 
 `--skip-unreadable` turns a file that fails to parse into a warning instead of
 an aborted run, which is what you want when sweeping a large heterogeneous
-collection.
+collection. A skipped source keeps its position in the input list, so colored
+source numbering is unaffected.
 
 ### *k* and the minimizer length
 
@@ -73,12 +81,21 @@ super-*k*-mers. The default is 12.
 defaults to **1 for references** and **2 for reads** — the read default exists
 to discard singleton *k*-mers produced by sequencing error.
 
+### Coloring
+
+`--color` records, for each stretch of each unitig, which input sources cover
+it. Each input file is one source, numbered from 1 in resolved input order.
+The colored build writes the unitig FASTA plus a color repository directory
+beside it; see [Output formats](../output/) for the layout and
+[Querying colors](../colors/) for reading it back.
+
 ### Bucket compression
 
 `--compress-buckets` is the default and LZ4-compresses uncolored partition
 buckets, reducing working-directory size. `--no-compress-buckets` turns it off.
 Whether compression improves wall time depends on your storage bandwidth
-relative to spare CPU.
+relative to spare CPU. Colored buckets are always compressed, regardless of
+either flag.
 
 ## `cuttlefish compare`
 
@@ -102,3 +119,12 @@ relative to spare CPU.
 
 See [Comparing graphs](../comparing-graphs/) for what it does and why a plain
 `diff` will not do.
+
+## Diagnostics
+
+A handful of `CF3_RS_*` environment variables exist for profiling and ablation
+during development (for example, stopping after the partition phase). They are
+unsupported and may change without notice; the one worth knowing is
+`CF3_RS_KEEP_INTERMEDIATES`, which retains the working-directory intermediates
+a build would otherwise delete — see
+[Cleaning up](../cleanup/#inspecting-a-run-instead).

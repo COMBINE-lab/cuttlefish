@@ -34,7 +34,8 @@ Which one runs is decided by the arguments you pass.
 
 ## And Cuttlefish 3?
 
-The Rust [Cuttlefish 3](../../rust/introduction/) is a separate implementation
-again, with colored graph construction and a positional notion of color that
-neither C++ version has. It does not currently emit GFA. See [which version
-should I use?](../../about/which-version/).
+The Rust [Cuttlefish 3](../../rust/introduction/) — the current generation and
+the canonical implementation — is a separate implementation again, with colored
+graph construction and a positional notion of color that neither C++ version
+has. It does not currently emit GFA. See [which version should I
+use?](../../about/which-version/).

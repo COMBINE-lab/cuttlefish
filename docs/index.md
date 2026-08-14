@@ -9,11 +9,21 @@ The production pipeline partitions input into weak super-k-mer buckets,
 contracts independent local subgraphs, resolves their discontinuities through
 a blocked external graph, and emits maximal unitigs directly to FASTA.
 
-> **Version 0.1.0.** Cuttlefish 3 is feature-complete and validated on
-> reference and read inputs, uncolored and colored, for k from 3 to 63. The
-> version is below 1.0 because the Rust API and the private intermediate
-> formats may still change; the output FASTA and the color repository format
-> are what a user depends on, and changes to those will be called out.
+> **Version 3.0.0.** Cuttlefish 3 is feature-complete and validated on
+> reference and read inputs, uncolored and colored, for odd k from 3 to 63.
+> The major version tracks the product generation, so a backward-incompatible
+> change to what a user depends on — the output FASTA, the color repository
+> format, or the command line — bumps the *minor* version and is called out in
+> the changelog. The Rust library API makes no separate stability promise;
+> library dependents should pin an exact version.
+
+This Rust implementation is the canonical, forward-looking implementation of
+Cuttlefish 3. The algorithm was first carefully implemented in C++ (preserved
+on the [`cuttlefish3-cpp`](https://github.com/COMBINE-lab/cuttlefish/tree/cuttlefish3-cpp)
+branch); this rewrite succeeds it and is where development continues. The
+earlier product generations, C++ Cuttlefish 1 and 2, live on the
+[`cuttlefish-1-2`](https://github.com/COMBINE-lab/cuttlefish/tree/cuttlefish-1-2)
+branch.
 
 ## Features
 
@@ -42,6 +52,14 @@ under the Cargo binary prefix:
 
 ```bash
 cargo install --path crates/cuttlefish-rs-cli
+```
+
+The default build uses jemalloc. The system allocator and mimalloc are also
+available (but generally will not perform as well):
+
+```bash
+cargo build --release -p cuttlefish-rs-cli --no-default-features
+cargo build --release -p cuttlefish-rs-cli --no-default-features --features mimalloc
 ```
 
 ## Quick Start
@@ -133,7 +151,18 @@ FASTA files describe the same graph up to strand and rotation; `colors`, which
 reads a colored build's repository back (see [Output](#output)); and `cleanup`,
 which removes the intermediates a bailed run left behind (see [Working
 Directory and Cleanup](#working-directory-and-cleanup)). Each prints its own
-`--help`.
+`--help`. `cuttlefish version` prints the release version, and `cuttlefish
+help` reprints the command summary.
+
+```bash
+cuttlefish compare -a graph-a.fa -b graph-b.fa --kmer-len 31 --work-dir cmp
+```
+
+`compare` canonicalizes strand (and rotation, for cyclic unitigs) on each side,
+sorts both to disk, and merges, so two runs that differ only in thread count or
+bucket layout still compare equal, and memory is bounded by `--chunk-records`
+rather than by the graph. `--full-diff` reports every difference instead of
+stopping at the first.
 
 ## Resource Control
 
@@ -234,7 +263,9 @@ Everything a build creates there is named `<OUTPUT_NAME>.cf3rs.<SUFFIX>`:
 | `.cf3rs.trivial.fa` | unitigs with no discontinuity exits, when not written straight to the output | local contraction |
 
 `CF3_RS_KEEP_INTERMEDIATES` retains all of them, which is what to set when
-inspecting a run rather than cleaning up after one.
+inspecting a run rather than cleaning up after one. (Other `CF3_RS_*`
+environment variables exist for profiling and ablation during development;
+they are unsupported and may change without notice.)
 
 `<OUTPUT_PREFIX>.cf3rs.color-repository` is different: it sits beside the
 *output*, not in the working directory, and a completed colored build needs it

@@ -6,13 +6,17 @@ description: What Cuttlefish 3 is, what it builds, and how it differs from the C
 Cuttlefish 3 constructs uncolored and colored compacted de Bruijn graphs from
 sequencing reads or reference sequences. It is a parallel, external-memory
 implementation written in Rust, designed for collections that are too large to
-keep entirely in RAM.
+keep entirely in RAM. This Rust implementation is the canonical,
+forward-looking implementation of Cuttlefish 3, and lives on the repository's
+default branch.
 
-:::caution[Under active development]
-Cuttlefish 3 has not had a stable release yet. The command-line interface and
-the private intermediate formats may still change. The published `cuttlefish-rs`
-and `cuttlefish-rs-cli` crates are at `0.0.x`, which reserve the names and prove
-the release path — they are not a release.
+:::note[Release status]
+Cuttlefish 3 is released as version **3.0.0**, feature-complete and validated
+on reference and read inputs, uncolored and colored, for odd *k* from 3 to 63.
+The major version tracks the product generation, so a backward-incompatible
+change to what a user depends on — the output FASTA, the color repository
+format, or the command line — bumps the *minor* version and is called out in
+the changelog.
 :::
 
 ## What it builds
@@ -54,10 +58,13 @@ Both uncolored and colored builds use this same pipeline. See
 
 ## How it relates to the C++ Cuttlefish
 
-Cuttlefish 3 is a from-scratch Rust implementation. It is not a port of the C++
-code, and it does not read or write the C++ intermediate formats.
+The Cuttlefish 3 algorithm was first carefully implemented in C++, preserved on
+the [`cuttlefish3-cpp` branch](../../cpp/cuttlefish3/). This Rust
+implementation succeeds it: it is a from-scratch rewrite — not a port, and it
+does not read or write the C++ intermediate formats — and it is where all
+Cuttlefish 3 development continues.
 
-If you are running Cuttlefish 1 or 2 today — from Bioconda, or built with
-CMake — that is the [C++ documentation](../../cpp/overview/), and it remains the
-right choice for published, reproducible work. See [which version should I
-use?](../../about/which-version/) if you are deciding.
+The earlier product generations, Cuttlefish 1 and 2, are separate C++ tools
+with their own output formats; they live on the `cuttlefish-1-2` branch and are
+covered by the [C++ documentation](../../cpp/overview/). See [which version
+should I use?](../../about/which-version/) if you are deciding.

@@ -30,3 +30,8 @@ cuttlefish-rs = { path = "crates/cuttlefish-rs", version = "0.1.0" }
 [profile.release]
 codegen-units = 8
 panic = "abort"
+
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+lto = "thin"

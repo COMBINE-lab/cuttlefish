@@ -232,4 +232,6 @@ fi
 
 echo
 echo "Release bump complete for v${VERSION}"
-echo "Remaining by hand: draft the GitHub release for $TAG."
+echo "The pushed tag triggers .github/workflows/release.yml (dist), which"
+echo "builds the platform binaries and creates the GitHub release itself,"
+echo "with the CHANGELOG.md section for ${VERSION} as its body."

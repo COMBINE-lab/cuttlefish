@@ -1,10 +1,23 @@
 # Changelog
 
-## 0.1.0
+## 3.0.0
 
-First release of the Rust implementation of Cuttlefish 3. It constructs
-uncolored and colored compacted de Bruijn graphs from reference sequences or
-sequencing reads, in external memory, for odd `k` from 3 through 63.
+First release of the Rust implementation of Cuttlefish 3, and the release in
+which it becomes the canonical Cuttlefish: `main` is now the Rust
+implementation, and this version succeeds the C++ Cuttlefish 2 (2.2.0) as the
+`cuttlefish` everyone installs. It constructs uncolored and colored compacted
+de Bruijn graphs from reference sequences or sequencing reads, in external
+memory, for odd `k` from 3 through 63.
+
+The Cuttlefish 3 algorithm was first carefully implemented in C++; that
+initial implementation is preserved on the `cuttlefish3-cpp` branch. The C++
+Cuttlefish 1 & 2 line lives on the `cuttlefish-1-2` branch (integration
+history on `develop-legacy`), and its `v1.x`/`v2.x` tags are unaffected.
+
+Versioning, stated once: the major version tracks the product generation, so
+a backward-incompatible change to what a user depends on — the output FASTA,
+the color repository format, or the command line — bumps the *minor* version
+and is called out here. Rust library dependents should pin an exact version.
 
 ### Highlights
 

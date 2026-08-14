@@ -8,9 +8,10 @@ resolver = "2"
 
 [workspace.package]
 # One version for the whole workspace; every member inherits it, and
-# `scripts/bump_and_publish.sh` rewrites this single line. The 0.0.x versions
-# on crates.io are not releases -- they exist to hold the names, and to prove
-# the publish path works. The first real release is 0.1.0.
+# `scripts/bump_and_publish.sh` rewrites it (here and on the cuttlefish-rs
+# entry in [workspace.dependencies] below). The major version tracks the
+# product generation -- 3.x is Cuttlefish 3 -- so a backward-incompatible
+# change bumps the minor version; see CHANGELOG.md.
 version = "0.1.0"
 edition = "2024"
 license = "BSD-3-Clause"

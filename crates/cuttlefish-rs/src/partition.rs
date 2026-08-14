@@ -363,18 +363,26 @@ fn emit_uncolored_streamed_weak_superkmer_buckets<const K: usize>(
         .workers(inflate_workers)
         .build()
         .ok();
-    let registry = Arc::new(crate::input::InflateRegistry::new(inflate_workers));
+    // The registry is the broker's control seam, and its even per-decoder
+    // share is a hard cap: rapidgzip clamps both a decoder's local limit and
+    // the demand it publishes to the shared pool, so with N files open no
+    // decoder can exceed 1/N of the budget even while its peers idle, and the
+    // share only recomputes when a file closes. The pool's own demand-driven
+    // arbitration already moves capacity at task granularity, so the cap is
+    // attached only when the broker diagnostic that re-issues it is running;
+    // otherwise the DecoderPool is the sole aggregate ceiling, as on the
+    // colored path.
+    let registry = dynamic_inflate_split_diagnostic()
+        .then(|| Arc::new(crate::input::InflateRegistry::new(inflate_workers)));
     let gate = Arc::new(ShardingGate::new(workers));
-    let broker = if !dynamic_inflate_split_diagnostic() {
-        None
-    } else {
+    let broker = registry.as_ref().and_then(|registry| {
         thread_broker::ThreadBroker::builder(
             ShardingConsumer {
                 gate: Arc::clone(&gate),
                 ceiling: workers,
             },
             InflateProducer {
-                registry: Arc::clone(&registry),
+                registry: Arc::clone(registry),
             },
         )
         .budget(workers)
@@ -390,7 +398,7 @@ fn emit_uncolored_streamed_weak_superkmer_buckets<const K: usize>(
                 .map_err(|error| eprintln!("cuttlefish: thread broker failed to start: {error}"))
                 .ok()
         })
-    };
+    });
     let pool = BatchPool::new(buffers, readers);
     let next_source = AtomicUsize::new(0);
     let mut work_order = (0..paths.len()).collect::<Vec<_>>();
@@ -489,7 +497,7 @@ fn emit_uncolored_streamed_weak_superkmer_buckets<const K: usize>(
                             K + 1,
                             inflate_workers,
                             inflate_pool.as_ref(),
-                            Some(registry),
+                            registry.as_ref(),
                             |fragment| {
                                 batch.push(fragment);
                                 if batch.is_full() {
@@ -548,7 +556,7 @@ fn emit_uncolored_streamed_weak_superkmer_buckets<const K: usize>(
         }
         Ok::<(), PartitionRunError>(())
     })?;
-    if let Some(running) = broker {
+    if let (Some(running), Some(registry)) = (broker, registry.as_ref()) {
         let consumer_work = gate.meter.work();
         let (producer_nanos, producer_bytes) = registry.cumulative_work();
         match running.finish() {

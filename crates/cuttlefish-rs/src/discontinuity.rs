@@ -59,7 +59,10 @@ type FastHashMap<K, V> = HashMap<K, V, FastBuildHasher>;
 type FastHashSet<T> = HashSet<T, FastBuildHasher>;
 
 fn keep_intermediates() -> bool {
-    std::env::var_os("CF3_RS_KEEP_INTERMEDIATES").is_some()
+    // Cached: this is consulted once per intermediate-file deletion, and
+    // `env::var_os` takes the environment lock on every call.
+    static KEEP: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *KEEP.get_or_init(|| std::env::var_os("CF3_RS_KEEP_INTERMEDIATES").is_some())
 }
 
 fn remove_serial_file(path: &Path) -> Result<(), SerialCollationError> {
@@ -2263,8 +2266,10 @@ impl SerialDiscontinuityContractor {
             let weight =
                 end_x.map_or(0, |end| end.weight) + edge.weight + end_y.map_or(0, |end| end.weight);
 
-            assert_eq!(matrix.partition(MatrixEndpoint::Vertex(u)), partition);
-            assert_eq!(matrix.partition(MatrixEndpoint::Vertex(v)), partition);
+            // Each check recomputes a full k-mer hash, and this loop visits
+            // every diagonal edge; debug builds (which CI runs) keep it.
+            debug_assert_eq!(matrix.partition(MatrixEndpoint::Vertex(u)), partition);
+            debug_assert_eq!(matrix.partition(MatrixEndpoint::Vertex(v)), partition);
 
             if u.vertex == v.vertex {
                 ends.insert(

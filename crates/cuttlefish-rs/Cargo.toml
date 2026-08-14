@@ -47,6 +47,13 @@ libc = "0.2"
 rayon = "1.12.0"
 scc = "3.8.4"
 xxhash-rust = { version = "0.8.15", features = ["xxh3"] }
-rapidgzip-core = { version = "0.3.1", features = ["busy-time-accounting"] }
+rapidgzip-core = { version = "0.3.1" }
 thread-broker = "0.1.0"
 crossbeam-utils = "0.8.22"
+
+[features]
+# Exact decoder busy-time accounting for the opt-in thread broker
+# (CF3_RS_DYNAMIC_INFLATE_SPLIT). It costs several shared-cache-line atomics
+# plus a clock read per decode task, so it is not part of a normal build; the
+# broker runs without it, just with zeroed producer busy-time in its report.
+broker-diagnostics = ["rapidgzip-core/busy-time-accounting"]

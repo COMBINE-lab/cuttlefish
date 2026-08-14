@@ -26,6 +26,9 @@ path = "src/main.rs"
 default = ["jemalloc"]
 jemalloc = ["dep:tikv-jemallocator"]
 mimalloc = ["dep:mimalloc"]
+# Passthrough: exact decoder busy-time accounting for the opt-in thread
+# broker (CF3_RS_DYNAMIC_INFLATE_SPLIT).
+broker-diagnostics = ["cuttlefish-rs/broker-diagnostics"]
 
 [dependencies]
 cuttlefish-rs.workspace = true

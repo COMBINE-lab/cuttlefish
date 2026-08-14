@@ -77,11 +77,11 @@ branch.
 
 ## Citation
 
-If you use Cuttlefish 3, please cite:
+If you use Cuttlefish 3, please cite the RECOMB 2026 proceedings paper:
 
 > Jamshed Khan, Laxman Dhulipala, and Rob Patro. Fast and Scalable Parallel
 > External-Memory Construction of Colored Compacted de Bruijn Graphs with
-> Cuttlefish 3. bioRxiv (2025).
+> Cuttlefish 3. Proceedings of RECOMB 2026; preprint: bioRxiv (2025).
 > <https://doi.org/10.1101/2025.02.02.636161>
 
 ## License

@@ -48,7 +48,13 @@ where
 
     match command.to_ascii_lowercase().as_str() {
         "build" => {
-            let params = parse_build(args)?;
+            // `--help` is a satisfied request, not an error: exit 0 like the
+            // other subcommands do.
+            let params = match parse_build(args) {
+                Ok(params) => params,
+                Err(CliError::Help) => return Ok(0),
+                Err(err) => return Err(err),
+            };
             params.validate()?;
             // The compact k <= 31 path uses phase-local bounded pools. Avoid
             // keeping an otherwise idle global Rayon pool contending with
@@ -163,7 +169,7 @@ where
             Ok(0)
         }
         "version" | "--version" | "-V" => {
-            println!("cuttlefish {} (Cuttlefish 3)", env!("CARGO_PKG_VERSION"));
+            println!("cuttlefish {}", env!("CARGO_PKG_VERSION"));
             Ok(0)
         }
         _ => {
@@ -379,7 +385,7 @@ where
 }
 
 fn print_top_help() {
-    println!("cuttlefish {} (Cuttlefish 3)", env!("CARGO_PKG_VERSION"));
+    println!("cuttlefish {}", env!("CARGO_PKG_VERSION"));
     println!("Supported commands: `build`, `compare`, `colors`, `cleanup`, `help`, `version`.");
     println!("Usage:");
     println!("    cuttlefish build [options]");

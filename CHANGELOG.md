@@ -1,5 +1,24 @@
 # Changelog
 
+## 3.0.1
+
+Performance release; outputs and interfaces are unchanged.
+
+- The weak-super-k-mer label packer's `PEXT` fast path now dispatches on
+  runtime CPU-feature detection instead of a compile-time `bmi2` gate. Every
+  distributed 3.0.0 artifact (GitHub binaries, `cargo install`, bioconda) was
+  silently running the scalar fallback — forfeiting a measured ~6.5% of the
+  partition phase that only `target-cpu=native` builds kept. Any BMI2-capable
+  CPU (Haswell, 2013+) now gets the fast path regardless of build flags.
+- Builds now carry portable per-target CPU baselines, mirroring piscem:
+  x86-64-v3 with AVX2 on x86-64, Neoverse-N1 / Apple-A14 on arm64.
+  `.cargo/config.toml` is tracked with these baselines and the release
+  workflow applies them to the prebuilt binaries; local `target-cpu=native`
+  tuning moves to an explicit, gitignored `.cargo/config.local.toml`.
+  The prebuilt x86-64 binaries consequently assume x86-64-v3; on older
+  machines, `cargo install cuttlefish-rs-cli` still produces a baseline
+  binary whose runtime dispatch keeps the packer correct everywhere.
+
 ## 3.0.0
 
 First release of the Rust implementation of Cuttlefish 3, and the release in

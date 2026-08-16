@@ -1,0 +1,32 @@
+# inspired by https://curiouscoding.nl/posts/release-flow/#avx2
+#
+# Portable-by-default build settings, mirroring piscem's layout. Source-based
+# packagers (e.g. Bioconda, `cargo install` from a source tree) honor this
+# file, so it must NOT use `target-cpu=native`: that tunes the binary to the
+# build host and can fault with SIGILL on machines with fewer CPU features.
+# These per-target baselines match the binaries produced by our release
+# workflow (.github/build-setup.yml keeps the two in lockstep).
+#
+# The x86-64-v3 floor (Haswell, 2013+) includes BMI2, so the PEXT label
+# packer compiles in statically; hosts below the floor are covered anyway by
+# the runtime dispatch in buckets.rs.
+#
+# For a maximum-performance build tuned to your own CPU, create a local
+# `.cargo/config.local.toml` (gitignored) containing:
+#
+#     [build]
+#     rustflags = ["-C", "target-cpu=native"]
+#
+# and pass it explicitly, e.g. `cargo build --config .cargo/config.local.toml`.
+
+[target.x86_64-unknown-linux-gnu]
+rustflags = ["-C", "target-cpu=x86-64-v3", "-C", "target-feature=+avx2"]
+
+[target.aarch64-unknown-linux-gnu]
+rustflags = ["-C", "target-cpu=neoverse-n1"]
+
+[target.aarch64-apple-darwin]
+rustflags = ["-C", "target-cpu=apple-a14"]
+
+[target.x86_64-apple-darwin]
+rustflags = ["-C", "target-cpu=x86-64-v3", "-C", "target-feature=+avx2"]

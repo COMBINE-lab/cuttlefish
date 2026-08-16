@@ -3,6 +3,9 @@ members = ["cargo:."]
 
 # Config for 'dist'
 [dist]
+# Injected steps: portable per-target cargo config + x86-64-v3/AVX2 floor for
+# the released binaries (see .github/build-setup.yml, mirroring piscem).
+github-build-setup = "../build-setup.yml"
 # The preferred dist version to use in CI (Cargo.toml SemVer syntax)
 cargo-dist-version = "0.32.0"
 # CI backends to support

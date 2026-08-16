@@ -1,0 +1,6 @@
+# Copy to .cargo/config.local.toml (gitignored) and pass explicitly for a
+# build tuned to the local CPU:
+#
+#     cargo build --release --config .cargo/config.local.toml
+[build]
+rustflags = ["-C", "target-cpu=native"]

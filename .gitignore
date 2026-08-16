@@ -44,9 +44,9 @@ data/ecoli-refseq-150/genomes.list
 .vscode/
 external/
 .cache/
-# Local Cargo overrides, e.g. `target-cpu=native`, which is a property of the
-# developer's machine rather than of the project.
-.cargo/
+# The tracked .cargo/ configs carry portable per-target baselines; only the
+# per-machine local tuning file stays untracked.
+/.cargo/config.local.toml
 
 # Benchmark scratch and profiling output
 bench-tmp/

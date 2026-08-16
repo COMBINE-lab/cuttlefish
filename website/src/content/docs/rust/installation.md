@@ -30,7 +30,19 @@ With a Rust toolchain installed:
 cargo install cuttlefish-rs-cli
 ```
 
-This installs the single binary `cuttlefish`.
+This installs the single binary `cuttlefish`. The default build targets
+baseline x86-64 and stays portable — performance-critical paths detect CPU
+features (such as BMI2) at runtime. For a build tuned to the installing
+machine's CPU instead:
+
+```bash
+RUSTFLAGS="-C target-cpu=native" cargo install cuttlefish-rs-cli
+```
+
+(Only do this when the binary will run on the machine that built it — on
+shared clusters, a head-node-tuned binary can crash on older compute nodes.
+The [prebuilt release binaries](#prebuilt-binaries) assume x86-64-v3, i.e.
+Haswell 2013 or newer, on x86-64.)
 
 ## From source
 

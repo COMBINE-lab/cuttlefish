@@ -35,6 +35,8 @@ source:
 
 ```bash
 cargo install cuttlefish-rs-cli
+# tuned to the installing machine's CPU (fastest, not portable):
+RUSTFLAGS="-C target-cpu=native" cargo install cuttlefish-rs-cli
 ```
 
 ```bash

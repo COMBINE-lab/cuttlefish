@@ -37,6 +37,43 @@ fn main() {
     });
 }
 
+/// Reports, once at build startup, how the binary's fast paths line up with
+/// the CPU it landed on. Three tiers:
+///
+/// - Compiled with BMI2 statically (`target-cpu=native`, the x86-64-v3
+///   release binaries): silent — nothing to say.
+/// - Portable build on a BMI2-capable CPU (default `cargo install`): the
+///   runtime dispatch covers the measured hot path; one quiet line notes how
+///   to rebuild for maximum performance.
+/// - CPU without BMI2 (pre-2013 x86-64): the packer runs its scalar
+///   fallback. Results are identical, speed is not — say so loudly.
+fn report_cpu_capabilities() {
+    #[cfg(target_arch = "x86_64")]
+    {
+        if std::arch::is_x86_feature_detected!("bmi2") {
+            #[cfg(not(target_feature = "bmi2"))]
+            eprintln!(
+                "cuttlefish: portable build: BMI2 fast paths active via runtime dispatch; \
+                 rebuild with RUSTFLAGS=\"-C target-cpu=native\" for maximum performance"
+            );
+        } else {
+            eprintln!(
+                "cuttlefish: ================================ WARNING ================================"
+            );
+            eprintln!("cuttlefish: This CPU does not support BMI2 (x86-64 CPUs older than ~2013).");
+            eprintln!(
+                "cuttlefish: The super-k-mer packer is running its slower scalar fallback, so"
+            );
+            eprintln!(
+                "cuttlefish: partitioning will be measurably slower. Results are NOT affected."
+            );
+            eprintln!(
+                "cuttlefish: ========================================================================"
+            );
+        }
+    }
+}
+
 fn run<I>(mut args: I) -> Result<i32, CliError>
 where
     I: Iterator<Item = String>,
@@ -69,6 +106,7 @@ where
             if fd_after > fd_before {
                 eprintln!("cuttlefish: raised open-file limit from {fd_before} to {fd_after}");
             }
+            report_cpu_capabilities();
             eprintln!(
                 "cuttlefish: parsed build request for k={}, l={}, cutoff={}, color={}",
                 params.k,

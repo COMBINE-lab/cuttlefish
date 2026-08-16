@@ -18,6 +18,10 @@ Performance release; outputs and interfaces are unchanged.
   The prebuilt x86-64 binaries consequently assume x86-64-v3; on older
   machines, `cargo install cuttlefish-rs-cli` still produces a baseline
   binary whose runtime dispatch keeps the packer correct everywhere.
+- `cuttlefish build` now reports its CPU-capability tier at startup: silent
+  when the fast paths are compiled in statically, a one-line note on portable
+  builds (dispatch active, with the `RUSTFLAGS` recipe for a native rebuild),
+  and a loud warning on pre-BMI2 CPUs where the scalar fallback runs.
 
 ## 3.0.0
 

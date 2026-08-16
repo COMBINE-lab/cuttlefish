@@ -1,6 +1,6 @@
 ---
 title: Installation
-description: Installing Cuttlefish 3 from a prebuilt binary, bioconda, crates.io, or source.
+description: Installing Cuttlefish 3 from a prebuilt binary, bioconda, crates.io, Homebrew, or source.
 ---
 
 ## Prebuilt binaries
@@ -43,6 +43,14 @@ RUSTFLAGS="-C target-cpu=native" cargo install cuttlefish-rs-cli
 shared clusters, a head-node-tuned binary can crash on older compute nodes.
 The [prebuilt release binaries](#prebuilt-binaries) assume x86-64-v3, i.e.
 Haswell 2013 or newer, on x86-64.)
+
+## From Homebrew
+
+If you use [Homebrew](https://brew.sh), installing Cuttlefish is straightforward:
+
+```bash
+brew install cuttlefish
+```
 
 ## From source
 

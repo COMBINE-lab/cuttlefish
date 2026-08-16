@@ -3227,39 +3227,55 @@ fn append_uncolored_record_valid(
 /// codes gathered with a single `PEXT`.
 fn pack_valid_word_32(seq: &[u8]) -> u64 {
     debug_assert!(seq.len() >= 32);
-    #[cfg(all(target_arch = "x86_64", target_feature = "bmi2"))]
-    {
-        let mut word = 0u64;
-        for chunk in 0..4 {
-            let bytes = u64::from_le_bytes(
-                seq[chunk * 8..chunk * 8 + 8]
-                    .try_into()
-                    .expect("eight bases"),
-            );
-            // Per byte: ((b >> 2) ^ (b >> 1)) & 0b11, evaluated eight at a time.
-            let codes = ((bytes >> 2) ^ (bytes >> 1)) & 0x0303_0303_0303_0303;
-            // Gather the eight 2-bit codes, lowest byte first, into 16 bits.
-            let packed = unsafe { core::arch::x86_64::_pext_u64(codes, 0x0303_0303_0303_0303) };
-            // The scalar form shifts the first base furthest left, and PEXT emits
-            // the first (lowest-address) base in the least significant bits, so
-            // reverse the 2-bit groups within this 16-bit lane.
-            let reversed = reverse_2bit_groups_16(packed as u16);
-            word = (word << 16) | u64::from(reversed);
-        }
-        word
+    // Runtime dispatch rather than a compile-time `target_feature` gate: the
+    // distributed binaries (GitHub releases, `cargo install`, bioconda) build
+    // at the baseline x86-64 target, and a compile-time gate silently dropped
+    // them to the scalar path -- forfeiting a measured ~6.5% of the partition
+    // phase that only `target-cpu=native` builds kept. `is_x86_feature_detected!`
+    // caches in an atomic, so the untriggered cost is one predicted branch per
+    // word; builds that do enable bmi2 statically resolve it to `true` at
+    // compile time and lose nothing.
+    #[cfg(target_arch = "x86_64")]
+    if std::arch::is_x86_feature_detected!("bmi2") {
+        // SAFETY: the bmi2 feature was just detected on this CPU.
+        return unsafe { pack_valid_word_32_bmi2(seq) };
     }
-    #[cfg(not(all(target_arch = "x86_64", target_feature = "bmi2")))]
-    {
-        let mut word = 0u64;
-        for &base in &seq[..32] {
-            word = (word << 2) | u64::from(valid_ascii_base_bits(base));
-        }
-        word
+    pack_valid_word_32_scalar(seq)
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "bmi2")]
+unsafe fn pack_valid_word_32_bmi2(seq: &[u8]) -> u64 {
+    let mut word = 0u64;
+    for chunk in 0..4 {
+        let bytes = u64::from_le_bytes(
+            seq[chunk * 8..chunk * 8 + 8]
+                .try_into()
+                .expect("eight bases"),
+        );
+        // Per byte: ((b >> 2) ^ (b >> 1)) & 0b11, evaluated eight at a time.
+        let codes = ((bytes >> 2) ^ (bytes >> 1)) & 0x0303_0303_0303_0303;
+        // Gather the eight 2-bit codes, lowest byte first, into 16 bits.
+        let packed = core::arch::x86_64::_pext_u64(codes, 0x0303_0303_0303_0303);
+        // The scalar form shifts the first base furthest left, and PEXT emits
+        // the first (lowest-address) base in the least significant bits, so
+        // reverse the 2-bit groups within this 16-bit lane.
+        let reversed = reverse_2bit_groups_16(packed as u16);
+        word = (word << 16) | u64::from(reversed);
     }
+    word
+}
+
+fn pack_valid_word_32_scalar(seq: &[u8]) -> u64 {
+    let mut word = 0u64;
+    for &base in &seq[..32] {
+        word = (word << 2) | u64::from(valid_ascii_base_bits(base));
+    }
+    word
 }
 
 /// Reverses the order of the eight 2-bit groups in a 16-bit value.
-#[cfg(all(target_arch = "x86_64", target_feature = "bmi2"))]
+#[cfg(target_arch = "x86_64")]
 #[inline]
 fn reverse_2bit_groups_16(value: u16) -> u16 {
     let v = value as u32;
@@ -3965,6 +3981,14 @@ mod tests {
                 "mismatch for {:?}",
                 std::str::from_utf8(&seq).unwrap()
             );
+            // Pin both dispatch arms explicitly, not just whichever one the
+            // host selects.
+            assert_eq!(pack_valid_word_32_scalar(&seq), scalar(&seq));
+            #[cfg(target_arch = "x86_64")]
+            if std::arch::is_x86_feature_detected!("bmi2") {
+                // SAFETY: bmi2 just detected.
+                assert_eq!(unsafe { pack_valid_word_32_bmi2(&seq) }, scalar(&seq));
+            }
         }
     }
 

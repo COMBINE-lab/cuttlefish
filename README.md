@@ -23,8 +23,17 @@ and forward-looking implementation of Cuttlefish 3.
 ## Installation
 
 Prebuilt binaries for Linux and macOS (x86-64 and arm64) are attached to each
-[GitHub release](https://github.com/COMBINE-lab/cuttlefish/releases), or via
-[bioconda](https://bioconda.github.io/recipes/cuttlefish/README.html):
+[GitHub release](https://github.com/COMBINE-lab/cuttlefish/releases), [Homebrew](https://formulae.brew.sh/formula/cuttlefish), or via
+[Bioconda](https://bioconda.github.io/recipes/cuttlefish/README.html):
+
+
+Homebrew:
+
+```bash
+brew install cuttlefish
+```
+
+Bioconda
 
 ```bash
 conda install -c bioconda cuttlefish

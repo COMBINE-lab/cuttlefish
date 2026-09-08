@@ -5925,7 +5925,7 @@ struct MaterializedStitchedCoordRecord {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct LoadedMaterializedStitchedCoordRecord {
     path_id: u64,
-    label_offset: u32,
+    label_offset_low: u32,
     color_start: u32,
     rank: u16,
     label_len: u16,
@@ -5938,6 +5938,39 @@ const _: () = assert!(std::mem::size_of::<LoadedMaterializedStitchedCoordRecord>
 impl LoadedMaterializedStitchedCoordRecord {
     const REVERSE_FLAG: u16 = 1;
     const CYCLE_FLAG: u16 = 1 << 1;
+    // The upper 14 flag bits extend the label offset without growing this
+    // 24-byte native disk/sort record. Offsets address a bucket, not a path.
+    const LABEL_OFFSET_BITS: u32 = 46;
+    const MAX_LABEL_OFFSET: u64 = (1 << Self::LABEL_OFFSET_BITS) - 1;
+
+    #[inline(always)]
+    fn label_offset(self) -> u64 {
+        u64::from(self.label_offset_low) | (u64::from(self.flags >> 2) << 32)
+    }
+
+    #[inline]
+    fn set_label_offset(&mut self, offset: u64, path: &Path) -> Result<(), SerialCollationError> {
+        if offset > Self::MAX_LABEL_OFFSET {
+            return Err(materialized_label_offset_error(path, offset));
+        }
+        self.label_offset_low = offset as u32;
+        self.flags = (self.flags & 3) | (((offset >> 32) as u16) << 2);
+        Ok(())
+    }
+
+    #[inline]
+    fn rebase_label_offset(&mut self, base: u64, path: &Path) -> Result<(), SerialCollationError> {
+        // The first (usually only) disk shard already addresses this buffer.
+        // Avoid rewriting every record's offset and flags in that common case.
+        if base == 0 {
+            return Ok(());
+        }
+        let offset = self
+            .label_offset()
+            .checked_add(base)
+            .ok_or_else(|| materialized_label_offset_error(path, u64::MAX))?;
+        self.set_label_offset(offset, path)
+    }
 
     #[inline(always)]
     fn reverse(self) -> bool {
@@ -5967,7 +6000,7 @@ impl LoadedMaterializedStitchedCoordRecord {
     ) -> Self {
         Self {
             path_id,
-            label_offset,
+            label_offset_low: label_offset,
             color_start,
             rank: u16::try_from(rank).expect("materialized rank fits C++ weight_t"),
             label_len: u16::try_from(label_len)
@@ -5978,6 +6011,37 @@ impl LoadedMaterializedStitchedCoordRecord {
                 | (u16::from(is_cycle) * Self::CYCLE_FLAG),
         }
     }
+}
+
+#[cold]
+fn materialized_label_offset_error(path: &Path, offset: u64) -> SerialCollationError {
+    SerialCollationError::Io {
+        path: path.to_path_buf(),
+        source: std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!(
+                "materialized label offset {offset} exceeds the {}-bit maximum {}",
+                LoadedMaterializedStitchedCoordRecord::LABEL_OFFSET_BITS,
+                LoadedMaterializedStitchedCoordRecord::MAX_LABEL_OFFSET,
+            ),
+        ),
+    }
+}
+
+// Validate the whole destination before appending or reserving its storage.
+// The last byte can have MAX_LABEL_OFFSET, so the length may be one larger.
+fn checked_materialized_label_bytes(
+    base: u64,
+    added: u64,
+    path: &Path,
+) -> Result<u64, SerialCollationError> {
+    let total = base
+        .checked_add(added)
+        .ok_or_else(|| materialized_label_offset_error(path, u64::MAX))?;
+    if total > LoadedMaterializedStitchedCoordRecord::MAX_LABEL_OFFSET + 1 {
+        return Err(materialized_label_offset_error(path, total - 1));
+    }
+    Ok(total)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -5992,7 +6056,9 @@ struct MaterializedStitchedCoordBucketEntry {
 }
 
 const STITCH_COORD_MAGIC: &[u8; 8] = b"CF3SCB2\0";
-const MATERIALIZED_STITCH_COORD_MAGIC: &[u8; 8] = b"CF3MCB2\0";
+// V3 stores the high label-offset bits in flags. Reject V2: release writers
+// could already have truncated offsets, even when record lengths look valid.
+const MATERIALIZED_STITCH_COORD_MAGIC: &[u8; 8] = b"CF3MCB3\0";
 const STITCH_COORD_HEADER_LEN: u64 = 32;
 const STITCH_PATH_INFO_RECORD_LEN: u64 = 24;
 const STITCH_COORD_RECORD_LEN: u64 = 24;
@@ -8851,6 +8917,11 @@ impl MaterializedStitchedCoordShardWriter {
     ) -> Result<(), SerialCollationError> {
         let label_len = u32::try_from(label.len())
             .map_err(|_| SerialCollationError::MalformedCoordBucket(self.coord_path.clone()))?;
+        let label_bytes = checked_materialized_label_bytes(
+            self.label_bytes,
+            u64::from(label_len),
+            &self.label_path,
+        )?;
         self.record_buffer
             .extend_from_slice(&encoded_materialized_stitched_coord_record(
                 MaterializedStitchedCoordRecord {
@@ -8863,7 +8934,8 @@ impl MaterializedStitchedCoordShardWriter {
                     color_index,
                     color_count,
                 },
-            ));
+                &self.label_path,
+            )?);
         if self.record_buffer.len() >= STITCH_COORD_RECORD_WRITE_BUFFER {
             self.flush_record_buffer()?;
         }
@@ -8876,7 +8948,7 @@ impl MaterializedStitchedCoordShardWriter {
                 source,
             })?;
         self.records += 1;
-        self.label_bytes += u64::from(label_len);
+        self.label_bytes = label_bytes;
         Ok(())
     }
 
@@ -8924,9 +8996,14 @@ impl MaterializedStitchedCoordShardWriter {
         &mut self,
         batch: &mut PendingMaterializedBucket,
     ) -> Result<(), SerialCollationError> {
+        let label_bytes = checked_materialized_label_bytes(
+            self.label_bytes,
+            batch.labels.len() as u64,
+            &self.label_path,
+        )?;
         let color_base = u32::try_from(self.color_runs)
             .map_err(|_| SerialCollationError::MalformedCoordBucket(self.color_path.clone()))?;
-        for pending in &batch.records {
+        for pending in &mut batch.records {
             let color_index = if pending.color_start == u32::MAX {
                 u32::MAX
             } else {
@@ -8939,20 +9016,20 @@ impl MaterializedStitchedCoordShardWriter {
                     self.color_path.clone(),
                 ));
             }
-            self.record_buffer
-                .extend_from_slice(&encoded_materialized_stitched_coord_record(
-                    MaterializedStitchedCoordRecord {
-                        path_id: pending.path_id,
-                        rank: u64::from(pending.rank),
-                        label_offset: self.label_bytes + u64::from(pending.label_offset),
-                        label_len: u32::from(pending.label_len),
-                        reverse: pending.reverse(),
-                        is_cycle: pending.is_cycle(),
-                        color_index,
-                        color_count: pending.color_count(),
-                    },
-                ));
+            pending.rebase_label_offset(self.label_bytes, &self.label_path)?;
+            pending.color_start = color_index;
         }
+        // Pending records already have the native private-format layout and
+        // validated narrow rank/length/count fields. Rebase them in place and
+        // copy once per batch instead of expanding and re-encoding each record.
+        // SAFETY: repr(C), no padding (24 bytes), and all fields initialized.
+        let coord_bytes = unsafe {
+            std::slice::from_raw_parts(
+                batch.records.as_ptr().cast::<u8>(),
+                std::mem::size_of_val(batch.records.as_slice()),
+            )
+        };
+        self.record_buffer.extend_from_slice(coord_bytes);
 
         self.label_out
             .as_mut()
@@ -8986,7 +9063,7 @@ impl MaterializedStitchedCoordShardWriter {
                 })?;
         }
         self.records += batch.records.len() as u64;
-        self.label_bytes += batch.labels.len() as u64;
+        self.label_bytes = label_bytes;
         self.color_runs += batch.colors.len() as u64;
         batch.records.clear();
         batch.labels.clear();
@@ -9464,12 +9541,16 @@ fn encoded_stitched_coord_record(
     bytes
 }
 
+#[inline]
 fn encoded_materialized_stitched_coord_record(
     record: MaterializedStitchedCoordRecord,
-) -> [u8; STITCH_COORD_RECORD_LEN as usize] {
+    path: &Path,
+) -> Result<[u8; STITCH_COORD_RECORD_LEN as usize], SerialCollationError> {
     let mut bytes = [0u8; STITCH_COORD_RECORD_LEN as usize];
     bytes[..8].copy_from_slice(&record.path_id.to_le_bytes());
-    debug_assert!(u32::try_from(record.label_offset).is_ok());
+    if record.label_offset > LoadedMaterializedStitchedCoordRecord::MAX_LABEL_OFFSET {
+        return Err(materialized_label_offset_error(path, record.label_offset));
+    }
     bytes[8..12].copy_from_slice(&(record.label_offset as u32).to_le_bytes());
     bytes[12..16].copy_from_slice(&record.color_index.to_le_bytes());
     bytes[16..18].copy_from_slice(
@@ -9487,7 +9568,7 @@ fn encoded_materialized_stitched_coord_record(
             .expect("materialized color count fits C++ uni_len_t")
             .to_le_bytes(),
     );
-    let mut flags = 0u16;
+    let mut flags = ((record.label_offset >> 32) as u16) << 2;
     if record.reverse {
         flags |= LoadedMaterializedStitchedCoordRecord::REVERSE_FLAG;
     }
@@ -9495,7 +9576,7 @@ fn encoded_materialized_stitched_coord_record(
         flags |= LoadedMaterializedStitchedCoordRecord::CYCLE_FLAG;
     }
     bytes[22..24].copy_from_slice(&flags.to_le_bytes());
-    bytes
+    Ok(bytes)
 }
 
 fn reduce_materialized_stitched_coord_bucket_files_to_final<const K: usize>(
@@ -9922,18 +10003,8 @@ fn load_materialized_stitched_coord_bucket_file_group_with_tails(
     group: &[MaterializedStitchedCoordBucketEntry],
     tails: &[PendingMaterializedBucket],
 ) -> Result<MaterializedStitchedCoordBucket, SerialCollationError> {
-    let mut shard = if group.is_empty() {
-        MaterializedStitchedCoordBucket {
-            records: Vec::new(),
-            labels: Vec::new(),
-            colors: Vec::new(),
-        }
-    } else {
-        load_materialized_stitched_coord_bucket_file_group(group)?
-    };
-    for tail in tails {
-        append_pending_materialized_bucket(&mut shard, tail)?;
-    }
+    let mut shard = MaterializedStitchedCoordBucket::default();
+    load_materialized_stitched_coord_bucket_file_group_with_tails_into(group, tails, &mut shard)?;
     Ok(shard)
 }
 
@@ -9950,11 +10021,18 @@ fn load_materialized_stitched_coord_bucket_file_group_with_tails_into(
             .iter()
             .map(|tail| tail.records.len() as u64)
             .sum::<u64>();
-    let total_label_bytes = group.iter().map(|entry| entry.label_bytes).sum::<u64>()
-        + tails
-            .iter()
-            .map(|tail| tail.labels.len() as u64)
-            .sum::<u64>();
+    let path = group
+        .first()
+        .map_or(Path::new("retained-materialized-bucket"), |entry| {
+            entry.label_path.as_path()
+        });
+    let total_label_bytes = group
+        .iter()
+        .map(|entry| entry.label_bytes)
+        .chain(tails.iter().map(|tail| tail.labels.len() as u64))
+        .try_fold(0, |base, added| {
+            checked_materialized_label_bytes(base, added, path)
+        })?;
     let total_colors = group.iter().map(|entry| entry.color_runs).sum::<u64>()
         + tails
             .iter()
@@ -9965,14 +10043,18 @@ fn load_materialized_stitched_coord_bucket_file_group_with_tails_into(
     shard.colors.reserve(total_colors as usize);
     for entry in group {
         append_materialized_stitched_coord_bucket_file(entry, shard)?;
+    }
+    for tail in tails {
+        append_pending_materialized_bucket(shard, tail, path)?;
+    }
+    // Keep every input until all shards and retained tails have been loaded
+    // and their offsets validated. This is not a durable resume checkpoint.
+    for entry in group {
         remove_serial_file(&entry.coord_path)?;
         remove_serial_file(&entry.label_path)?;
         if let Some(path) = entry.color_path.as_ref() {
             remove_serial_file(path)?;
         }
-    }
-    for tail in tails {
-        append_pending_materialized_bucket(shard, tail)?;
     }
     Ok(())
 }
@@ -9980,104 +10062,32 @@ fn load_materialized_stitched_coord_bucket_file_group_with_tails_into(
 fn append_pending_materialized_bucket(
     shard: &mut MaterializedStitchedCoordBucket,
     tail: &PendingMaterializedBucket,
+    path: &Path,
 ) -> Result<(), SerialCollationError> {
-    let label_base = u32::try_from(shard.labels.len()).map_err(|_| {
-        SerialCollationError::MalformedCoordBucket(PathBuf::from("retained-materialized-bucket"))
-    })?;
-    let color_base = u32::try_from(shard.colors.len()).map_err(|_| {
-        SerialCollationError::MalformedCoordBucket(PathBuf::from("retained-materialized-bucket"))
-    })?;
+    let label_base = shard.labels.len() as u64;
+    checked_materialized_label_bytes(label_base, tail.labels.len() as u64, path)?;
+    let color_base = u32::try_from(shard.colors.len())
+        .map_err(|_| SerialCollationError::MalformedCoordBucket(path.to_path_buf()))?;
     shard.records.reserve(tail.records.len());
-    shard.labels.extend_from_slice(&tail.labels);
     for pending in &tail.records {
-        let color_start = if pending.color_start == u32::MAX {
-            u32::MAX
-        } else {
-            color_base.checked_add(pending.color_start).ok_or_else(|| {
-                SerialCollationError::MalformedCoordBucket(PathBuf::from(
-                    "retained-materialized-bucket",
-                ))
-            })?
-        };
-        let label_offset = label_base
-            .checked_add(pending.label_offset)
-            .ok_or_else(|| {
-                SerialCollationError::MalformedCoordBucket(PathBuf::from(
-                    "retained-materialized-bucket",
-                ))
-            })?;
-        shard
-            .records
-            .push(LoadedMaterializedStitchedCoordRecord::new(
-                pending.path_id,
-                u64::from(pending.rank),
-                label_offset,
-                u32::from(pending.label_len),
-                pending.reverse(),
-                pending.is_cycle(),
-                color_start,
-                pending.color_count(),
+        if pending.label_offset() + u64::from(pending.label_len) > tail.labels.len() as u64 {
+            return Err(SerialCollationError::MalformedCoordBucket(
+                path.to_path_buf(),
             ));
+        }
+        let mut record = *pending;
+        record.rebase_label_offset(label_base, path)?;
+        if record.color_start != u32::MAX {
+            record.color_start = color_base
+                .checked_add(record.color_start)
+                .filter(|&start| start != u32::MAX)
+                .ok_or_else(|| SerialCollationError::MalformedCoordBucket(path.to_path_buf()))?;
+        }
+        shard.records.push(record);
     }
+    shard.labels.extend_from_slice(&tail.labels);
     shard.colors.extend_from_slice(&tail.colors);
     Ok(())
-}
-
-fn load_materialized_stitched_coord_bucket_file_group(
-    group: &[MaterializedStitchedCoordBucketEntry],
-) -> Result<MaterializedStitchedCoordBucket, SerialCollationError> {
-    if let [entry] = group {
-        let shard = read_materialized_stitched_coord_bucket_file(entry)?;
-        remove_serial_file(&entry.coord_path)?;
-        remove_serial_file(&entry.label_path)?;
-        if let Some(path) = entry.color_path.as_ref() {
-            remove_serial_file(path)?;
-        }
-        return Ok(shard);
-    }
-    let total_records = group.iter().map(|entry| entry.records).sum::<u64>();
-    let total_label_bytes = group.iter().map(|entry| entry.label_bytes).sum::<u64>();
-    let mut records = Vec::with_capacity(total_records as usize);
-    let mut labels = Vec::with_capacity(total_label_bytes as usize);
-    let mut colors = Vec::new();
-    for entry in group {
-        let label_offset = u32::try_from(labels.len())
-            .map_err(|_| SerialCollationError::MalformedCoordBucket(entry.label_path.clone()))?;
-        let mut shard = read_materialized_stitched_coord_bucket_file(entry)?;
-        remove_serial_file(&entry.coord_path)?;
-        remove_serial_file(&entry.label_path)?;
-        if let Some(path) = entry.color_path.as_ref() {
-            remove_serial_file(path)?;
-        }
-        let color_offset = u32::try_from(colors.len())
-            .map_err(|_| SerialCollationError::MalformedCoordBucket(entry.coord_path.clone()))?;
-        for record in &mut shard.records {
-            record.label_offset =
-                record
-                    .label_offset
-                    .checked_add(label_offset)
-                    .ok_or_else(|| {
-                        SerialCollationError::MalformedCoordBucket(entry.label_path.clone())
-                    })?;
-            if record.color_start != u32::MAX {
-                record.color_start =
-                    record
-                        .color_start
-                        .checked_add(color_offset)
-                        .ok_or_else(|| {
-                            SerialCollationError::MalformedCoordBucket(entry.coord_path.clone())
-                        })?;
-            }
-        }
-        records.extend(shard.records);
-        labels.extend(shard.labels);
-        colors.extend(shard.colors);
-    }
-    Ok(MaterializedStitchedCoordBucket {
-        records,
-        labels,
-        colors,
-    })
 }
 
 #[derive(Default)]
@@ -10092,6 +10102,7 @@ struct FinalUnitigRecord {
     colors: Vec<UnitigColor>,
 }
 
+#[cfg(test)]
 fn read_materialized_stitched_coord_bucket_file(
     entry: &MaterializedStitchedCoordBucketEntry,
 ) -> Result<MaterializedStitchedCoordBucket, SerialCollationError> {
@@ -10150,8 +10161,8 @@ fn append_materialized_stitched_coord_bucket_file(
         ));
     }
     let record_base = bucket.records.len();
-    let label_base = u32::try_from(bucket.labels.len())
-        .map_err(|_| SerialCollationError::MalformedCoordBucket(entry.label_path.clone()))?;
+    let label_base = bucket.labels.len() as u64;
+    checked_materialized_label_bytes(label_base, entry.label_bytes, &entry.label_path)?;
     bucket.records.reserve(records as usize);
     // The private bucket format is the native little-endian in-memory layout.
     let coord_bytes = unsafe {
@@ -10255,10 +10266,12 @@ fn append_materialized_stitched_coord_bucket_file(
     }
 
     for record in &mut bucket.records[record_base..] {
-        record.label_offset = record
-            .label_offset
-            .checked_add(label_base)
-            .ok_or_else(|| SerialCollationError::MalformedCoordBucket(entry.label_path.clone()))?;
+        if record.label_offset() + u64::from(record.label_len) > entry.label_bytes {
+            return Err(SerialCollationError::MalformedCoordBucket(
+                entry.label_path.clone(),
+            ));
+        }
+        record.rebase_label_offset(label_base, &entry.label_path)?;
         if record.color_start != u32::MAX {
             let color_end = u64::from(record.color_start) + u64::from(record.color_count());
             if color_end > entry.color_runs {
@@ -10266,9 +10279,12 @@ fn append_materialized_stitched_coord_bucket_file(
                     entry.coord_path.clone(),
                 ));
             }
-            record.color_start = color_base.checked_add(record.color_start).ok_or_else(|| {
-                SerialCollationError::MalformedCoordBucket(entry.coord_path.clone())
-            })?;
+            record.color_start = color_base
+                .checked_add(record.color_start)
+                .filter(|&start| start != u32::MAX)
+                .ok_or_else(|| {
+                    SerialCollationError::MalformedCoordBucket(entry.coord_path.clone())
+                })?;
         }
     }
 
@@ -10342,7 +10358,7 @@ fn reduce_sorted_materialized_stitched_coord_bucket_with<const K: usize, F>(
         if end - start == 2 && !is_cycle && records[start].rank == 0 && records[start + 1].rank == 0
         {
             for (idx, record) in records[start..end].iter().enumerate() {
-                let label_start = record.label_offset as usize;
+                let label_start = record.label_offset() as usize;
                 let label_end = label_start + record.label_len as usize;
                 let unitig_label = &labels[label_start..label_end];
                 let reverse = if idx == 0 {
@@ -10361,7 +10377,7 @@ fn reduce_sorted_materialized_stitched_coord_bucket_with<const K: usize, F>(
             }
         } else {
             for record in &records[start..end] {
-                let label_start = record.label_offset as usize;
+                let label_start = record.label_offset() as usize;
                 let label_end = label_start + record.label_len as usize;
                 let unitig_label = &labels[label_start..label_end];
                 append_materialized_colors::<K>(
@@ -10595,7 +10611,10 @@ fn read_stitched_coord_bucket_file(
             source,
         })?;
     let mut out = Vec::with_capacity(records as usize);
-    for chunk in coord_bytes.chunks_exact(STITCH_PATH_INFO_RECORD_LEN as usize) {
+    for chunk in coord_bytes
+        .as_chunks::<{ STITCH_PATH_INFO_RECORD_LEN as usize }>()
+        .0
+    {
         out.push(decoded_stitched_coord_record(chunk, &entry.path)?);
     }
     Ok(out)
@@ -10663,7 +10682,10 @@ fn read_stitched_coord_bucket_group_dense(
 
         let mut bytes = vec![0u8; (records * STITCH_PATH_INFO_RECORD_LEN) as usize];
         read_exact_coord(&mut input, &entry.path, &mut bytes)?;
-        for record in bytes.chunks_exact(STITCH_PATH_INFO_RECORD_LEN as usize) {
+        for record in bytes
+            .as_chunks::<{ STITCH_PATH_INFO_RECORD_LEN as usize }>()
+            .0
+        {
             let path_id = u64::from_le_bytes(record[..8].try_into().expect("path ID"));
             let rank = u64::from_le_bytes(record[8..16].try_into().expect("path rank"));
             let unitig_index =
@@ -13671,7 +13693,7 @@ fn decoded_materialized_stitched_coord_record(
     Ok(MaterializedStitchedCoordRecord {
         path_id,
         rank: u64::from(rank),
-        label_offset: u64::from(label_offset),
+        label_offset: u64::from(label_offset) | (u64::from(flags >> 2) << 32),
         label_len: u32::from(label_len),
         reverse: flags & LoadedMaterializedStitchedCoordRecord::REVERSE_FLAG != 0,
         is_cycle: flags & LoadedMaterializedStitchedCoordRecord::CYCLE_FLAG != 0,
@@ -14078,7 +14100,11 @@ mod materialized_record_tests {
                 color_index,
                 color_count: 61,
             };
-            let encoded = encoded_materialized_stitched_coord_record(record);
+            let encoded = encoded_materialized_stitched_coord_record(
+                record,
+                Path::new("materialized-record-test"),
+            )
+            .unwrap();
             assert_eq!(encoded.len(), 24);
             let decoded = decoded_materialized_stitched_coord_record(
                 &encoded,
@@ -14140,8 +14166,8 @@ mod materialized_record_tests {
 
         assert_eq!(bucket.records.len(), 2);
         assert_eq!(bucket.labels, b"ACGTTTAA");
-        assert_eq!(bucket.records[0].label_offset, 0);
-        assert_eq!(bucket.records[1].label_offset, 4);
+        assert_eq!(bucket.records[0].label_offset(), 0);
+        assert_eq!(bucket.records[1].label_offset(), 4);
         assert_eq!(bucket.records[0].color_start, 0);
         assert_eq!(bucket.records[1].color_start, 1);
         assert_eq!(bucket.records[0].color_count(), 1);
@@ -14185,3 +14211,7 @@ mod materialized_record_tests {
         assert_eq!(index.find(&ranges, start), None);
     }
 }
+
+#[cfg(test)]
+#[path = "discontinuity/materialized_offset_tests.rs"]
+mod materialized_offset_tests;

@@ -33,14 +33,13 @@ fn read_u64_le(bytes: &[u8]) -> u64 {
 
 pub fn hash_bytes(bytes: &[u8], seed: u64) -> u64 {
     let mut h = seed ^ WY_SALT[2] ^ bytes.len() as u64;
-    let mut chunks = bytes.chunks_exact(16);
-    for chunk in &mut chunks {
+    let (chunks, rem) = bytes.as_chunks::<16>();
+    for chunk in chunks {
         let a = u64::from_le_bytes(chunk[..8].try_into().unwrap());
         let b = u64::from_le_bytes(chunk[8..16].try_into().unwrap());
         h = mix(h ^ a, b);
     }
 
-    let rem = chunks.remainder();
     if rem.len() > 8 {
         h = mix(h ^ read_u64_le(&rem[..8]), read_u64_le(&rem[8..]));
     } else if !rem.is_empty() {
@@ -68,11 +67,10 @@ impl Hasher for FastHasher {
 
     #[inline]
     fn write(&mut self, bytes: &[u8]) {
-        let mut chunks = bytes.chunks_exact(8);
-        for chunk in &mut chunks {
-            self.write_u64(u64::from_le_bytes(chunk.try_into().unwrap()));
+        let (chunks, rem) = bytes.as_chunks::<8>();
+        for chunk in chunks {
+            self.write_u64(u64::from_le_bytes(*chunk));
         }
-        let rem = chunks.remainder();
         if !rem.is_empty() {
             self.write_u64(read_u64_le(rem));
         }

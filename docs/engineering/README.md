@@ -22,6 +22,7 @@ should read its entry first.
 | [module-boundaries.md](module-boundaries.md) | Safe decomposition boundaries for the large modules |
 | [compat-harness.md](compat-harness.md) | How compatibility fixtures and expectations are produced |
 | [edge-matrix-containers.md](edge-matrix-containers.md) | The blocked edge matrix's container layout |
+| [issue-63-validation.md](issue-63-validation.md) | Compact wide label offsets: correctness, benchmarks, and 3.0.2 release preparation |
 | [roadmap.md](roadmap.md) | Original rewrite plan |
 
 ## Measured and reverted — do not re-attempt without new evidence

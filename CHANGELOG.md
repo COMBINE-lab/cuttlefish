@@ -1,5 +1,23 @@
 # Changelog
 
+## 3.0.2
+
+- Fix [#63](https://github.com/COMBINE-lab/cuttlefish/issues/63): materialized
+  coordinate buckets can address label buffers larger than 4 GiB. Label
+  offsets now use 46 bits by storing their high bits in the record's unused
+  flag bits, preserving the 24-byte record size and addressing up to 64 TiB
+  per bucket. Path IDs and color fields retain their existing widths.
+- Check label-offset limits in release builds, including disk serialization,
+  shard concatenation, and retained-tail rebasing. Oversized offsets now report
+  the affected bucket and supported range instead of wrapping silently.
+- Rebase and copy packed records in batches, and avoid rewriting offsets when
+  loading the first shard. These keep the ordinary small-bucket path efficient.
+- Validate the complete materialized bucket and its retained tails before
+  removing its coordinate files. This does not add checkpoint/resume support.
+  The private coordinate format advances to `CF3MCB3`; failed 3.0.1 runs cannot
+  be resumed using their old coordinate files. Final output formats and CLI
+  interfaces are unchanged.
+
 ## 3.0.1
 
 Performance release; outputs and interfaces are unchanged.

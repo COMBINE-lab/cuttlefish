@@ -1163,9 +1163,9 @@ impl BucketReader {
             let mut words = [0u64; 4];
             for (word, bytes) in words[..self.header.label_words]
                 .iter_mut()
-                .zip(words_bytes.chunks_exact(8))
+                .zip(words_bytes.as_chunks::<8>().0)
             {
-                *word = u64::from_le_bytes(bytes.try_into().unwrap());
+                *word = u64::from_le_bytes(*bytes);
             }
             self.records_read += 1;
             self.block_record += 1;
@@ -1443,9 +1443,7 @@ pub fn read_container_manifest(
         segment_bytes: cursor.u64()?,
         container_count: cursor.u64()? as usize,
     };
-    if header.segment_bytes == 0
-        || header.label_words as usize != label_word_count(k, minimizer_len)
-    {
+    if header.segment_bytes == 0 || header.label_words != label_word_count(k, minimizer_len) {
         return Err(BucketError::MalformedManifest(path.clone()));
     }
     let bucket_count = cursor.u64()? as usize;

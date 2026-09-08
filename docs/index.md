@@ -9,7 +9,7 @@ The production pipeline partitions input into weak super-k-mer buckets,
 contracts independent local subgraphs, resolves their discontinuities through
 a blocked external graph, and emits maximal unitigs directly to FASTA.
 
-> **Version 3.0.0.** Cuttlefish 3 is feature-complete and validated on
+> **Version 3.0.2.** Cuttlefish 3 is feature-complete and validated on
 > reference and read inputs, uncolored and colored, for odd k from 3 to 63.
 > The major version tracks the product generation, so a backward-incompatible
 > change to what a user depends on — the output FASTA, the color repository

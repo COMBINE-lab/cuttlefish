@@ -1,11 +1,11 @@
 # Changelog
 
-## Unreleased
+## 3.0.3
 
 - Colored builds use far less memory at low and moderate thread counts. On
   149,998 Salmonella assemblies at 16 threads, peak RSS falls from 22.4 GB to
   8.9 GB (C++ Cuttlefish 3: 11.5 GB), with wall time unchanged; at 64 threads
-  it falls from 25.3 GB to 17.5 GB. Colored partition buckets are now written
+  it falls from 25.5 GB to 18.0 GB. Colored partition buckets are now written
   as they fill instead of being staged for a 12 GiB source window. The window
   is kept only as the fallback for a source too large to stage whole, which it
   still regroups exactly. Output is unchanged.
@@ -14,9 +14,11 @@
   their streams fills. This removes about 3 GB from the colored map-phase peak
   and about 1.2 GB from uncolored builds.
 - Local contraction workers reuse their per-subgraph output buffers instead of
-  allocating and freeing them for every one of the 16,384 subgraphs. This
-  removes about a third of the phase's page faults and makes colored local
-  contraction as fast as 3.0.2's at 16 threads and 7% faster at 256.
+  allocating and freeing them for every one of the 16,384 subgraphs, which
+  removes about a third of the phase's page faults, and the unitig walk no
+  longer builds error values it then has to drop. Together these keep colored
+  local contraction at 3.0.2's speed; end to end, 150k-assembly colored builds
+  are as fast as 3.0.2 at 16 threads and 8.5% faster at 256.
 
 ## 3.0.2
 

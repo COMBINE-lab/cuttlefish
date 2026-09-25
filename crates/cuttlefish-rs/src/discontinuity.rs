@@ -6066,6 +6066,23 @@ const MATERIALIZED_STITCH_COORD_SHARD_WRITE_BUFFER: usize = 16 * 1024;
 const FINAL_UNITIG_BUCKET_WRITE_BUFFER: usize = 128 * 1024;
 const STITCH_COORD_SHARD_WRITE_BUFFER: usize = 1024 * 1024;
 const STITCH_COORD_RECORD_WRITE_BUFFER: usize = 1024 * 1024;
+/// Buffer per stream -- coordinates, labels, colors -- of one materialized
+/// max-unitig shard writer. There is a writer per coordinate bucket, 1024 of
+/// them, all live for the whole map phase, so this is multiplied by roughly
+/// 3000: at 1 MiB it held about 3 GB at the colored map peak regardless of
+/// thread count.
+const MATERIALIZED_SHARD_STREAM_BUFFER: usize = 128 * 1024;
+
+fn materialized_shard_stream_buffer() -> usize {
+    static BYTES: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *BYTES.get_or_init(|| {
+        std::env::var("CF3_RS_MCOORD_STREAM_BUFFER")
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+            .filter(|bytes| *bytes >= 4096)
+            .unwrap_or(MATERIALIZED_SHARD_STREAM_BUFFER)
+    })
+}
 const EDGE_PATH_INFO_WORKER_BUFFER: usize = 128 * 1024;
 const STITCH_COORD_REVERSE_FLAG: u8 = 1;
 const STITCH_COORD_CYCLE_FLAG: u8 = 2;
@@ -8632,10 +8649,16 @@ impl<'a, 'b> SharedMaterializedBatch<'a, 'b> {
             && bucket.labels.len() >= Self::FLUSH_BYTES
     }
 
+    /// A colored batch is written once any of its three streams fills.
+    /// Waiting for all three let labels and coordinates grow far past
+    /// `FLUSH_BYTES` while the sparse color stream caught up, across every
+    /// worker's 1024 batches; the unflushed tails are then carried into the
+    /// reduce as retained memory.
     #[inline]
     fn colored_bucket_ready(bucket: &PendingMaterializedBucket) -> bool {
-        Self::uncolored_bucket_ready(bucket)
-            && bucket.colors.len() * std::mem::size_of::<UnitigColor>() >= Self::FLUSH_BYTES
+        bucket.records.len() >= Self::FLUSH_BYTES / STITCH_COORD_RECORD_LEN as usize
+            || bucket.labels.len() >= Self::FLUSH_BYTES
+            || bucket.colors.len() * std::mem::size_of::<UnitigColor>() >= Self::FLUSH_BYTES
     }
 }
 
@@ -8850,9 +8873,12 @@ impl MaterializedStitchedCoordShardWriter {
             label_path,
             color_path,
             coord_out: Some(coord_out),
-            label_out: Some(BufWriter::with_capacity(1024 * 1024, label_file)),
+            label_out: Some(BufWriter::with_capacity(
+                materialized_shard_stream_buffer(),
+                label_file,
+            )),
             color_out: None,
-            record_buffer: Vec::with_capacity(STITCH_COORD_RECORD_WRITE_BUFFER),
+            record_buffer: Vec::with_capacity(materialized_shard_stream_buffer()),
             records: 0,
             label_bytes: 0,
             color_runs: 0,
@@ -8885,7 +8911,10 @@ impl MaterializedStitchedCoordShardWriter {
                     path: self.label_path.clone(),
                     source,
                 })?;
-            self.label_out = Some(BufWriter::with_capacity(1024 * 1024, label_file));
+            self.label_out = Some(BufWriter::with_capacity(
+                materialized_shard_stream_buffer(),
+                label_file,
+            ));
         }
         if self.color_runs != 0 && self.color_out.is_none() {
             let color_file = OpenOptions::new()
@@ -8895,7 +8924,10 @@ impl MaterializedStitchedCoordShardWriter {
                     path: self.color_path.clone(),
                     source,
                 })?;
-            self.color_out = Some(BufWriter::with_capacity(1024 * 1024, color_file));
+            self.color_out = Some(BufWriter::with_capacity(
+                materialized_shard_stream_buffer(),
+                color_file,
+            ));
         }
         Ok(())
     }
@@ -8936,7 +8968,7 @@ impl MaterializedStitchedCoordShardWriter {
                 },
                 &self.label_path,
             )?);
-        if self.record_buffer.len() >= STITCH_COORD_RECORD_WRITE_BUFFER {
+        if self.record_buffer.len() >= materialized_shard_stream_buffer() {
             self.flush_record_buffer()?;
         }
         self.label_out
@@ -8969,7 +9001,10 @@ impl MaterializedStitchedCoordShardWriter {
                     path: self.color_path.clone(),
                     source,
                 })?;
-            self.color_out = Some(BufWriter::with_capacity(1024 * 1024, file));
+            self.color_out = Some(BufWriter::with_capacity(
+                materialized_shard_stream_buffer(),
+                file,
+            ));
         }
         let color_out = self
             .color_out
@@ -9049,7 +9084,10 @@ impl MaterializedStitchedCoordShardWriter {
                         path: self.color_path.clone(),
                         source,
                     })?;
-                self.color_out = Some(BufWriter::with_capacity(1024 * 1024, file));
+                self.color_out = Some(BufWriter::with_capacity(
+                    materialized_shard_stream_buffer(),
+                    file,
+                ));
             }
             let color_out = self
                 .color_out
@@ -9068,7 +9106,7 @@ impl MaterializedStitchedCoordShardWriter {
         batch.records.clear();
         batch.labels.clear();
         batch.colors.clear();
-        if self.record_buffer.len() >= STITCH_COORD_RECORD_WRITE_BUFFER {
+        if self.record_buffer.len() >= materialized_shard_stream_buffer() {
             self.flush_record_buffer()?;
         }
         Ok(())
@@ -12655,6 +12693,7 @@ fn contract_local_subgraphs_into_external_inputs<const K: usize, C: ColorSlot>(
                 color_repository.as_ref(),
                 &mut reusable_vertices,
                 color_repository.is_none(),
+                &mut LocalBuffers::default(),
             )?;
             SerialLocalOutput {
                 trivial_output: &mut trivial_output,
@@ -12732,6 +12771,7 @@ fn contract_local_subgraphs_into_external_inputs<const K: usize, C: ColorSlot>(
                 let sink = &sink;
                 handles.push(scope.spawn(move || {
                     let mut reusable_vertices = None;
+                    let mut buffers = LocalBuffers::default();
                     // Each worker rotates through its own contiguous span of
                     // buckets, so no two workers ever share one.
                     let buckets_per_worker = (local_unitig_bucket_count / workers.max(1)).max(1);
@@ -12756,8 +12796,13 @@ fn contract_local_subgraphs_into_external_inputs<const K: usize, C: ColorSlot>(
                             sink.color_repository,
                             &mut reusable_vertices,
                             sink.color_repository.is_none(),
+                            &mut buffers,
                         )
-                        .and_then(|output| sink.write(output, bucket_id));
+                        .and_then(|mut output| {
+                            sink.write(&mut output, bucket_id)?;
+                            buffers.recycle(output);
+                            Ok(())
+                        });
                         let done = completed.fetch_add(1, Ordering::Relaxed) + 1;
                         report_local_contraction_progress(done, total_groups, started);
                         let should_stop = output.is_err();
@@ -13052,6 +13097,43 @@ fn write_discontinuity_unitig_record<const K: usize>(
         })
 }
 
+/// Output vectors a contraction worker recycles from one subgraph to the next.
+///
+/// Every subgraph used to start these empty and grow them by doubling, then
+/// drop them once written: 16,384 rounds of fresh allocation per build. Freed
+/// pages go back to the kernel under jemalloc's decay, so the next subgraph
+/// faults them in again. On 149,998 colored assemblies that churn cost about
+/// 7 million extra page faults and ~1.5% of the unitig walk, and only stayed
+/// hidden while a large partition phase had left freed memory to reuse.
+#[derive(Default)]
+struct LocalBuffers<const K: usize> {
+    unitigs: Vec<DiscontinuityUnitig<K>>,
+    labels: Vec<u8>,
+    matrix_edges: Vec<PreparedBlockedEdge>,
+    trivial_fasta: Vec<u8>,
+}
+
+impl<const K: usize> LocalBuffers<K> {
+    /// Takes back a written output's vectors, emptied, for the next subgraph.
+    fn recycle(&mut self, output: LocalContractionOutput<K>) {
+        let LocalContractionOutput {
+            mut unitigs,
+            mut labels,
+            mut matrix_edges,
+            mut trivial_fasta,
+            ..
+        } = output;
+        unitigs.clear();
+        labels.clear();
+        matrix_edges.clear();
+        trivial_fasta.clear();
+        self.unitigs = unitigs;
+        self.labels = labels;
+        self.matrix_edges = matrix_edges;
+        self.trivial_fasta = trivial_fasta;
+    }
+}
+
 struct LocalContractionOutput<const K: usize> {
     index: usize,
     weak_superkmers: u64,
@@ -13097,7 +13179,7 @@ struct ConcurrentLocalOutputSink<'a, const K: usize> {
 impl<'a, const K: usize> ConcurrentLocalOutputSink<'a, K> {
     fn write(
         &self,
-        mut output: LocalContractionOutput<K>,
+        output: &mut LocalContractionOutput<K>,
         unitig_bucket: u16,
     ) -> Result<(), DiscontinuityInputError> {
         let io_started = Instant::now();
@@ -13342,6 +13424,7 @@ fn contract_local_subgraphs<const K: usize>(
                 None,
                 &mut reusable_vertices,
                 false,
+                &mut LocalBuffers::default(),
             )?);
             report_local_contraction_progress(offset + 1, groups.len(), started);
         }
@@ -13372,6 +13455,7 @@ fn contract_local_subgraphs<const K: usize>(
                         None,
                         &mut reusable_vertices,
                         false,
+                        &mut LocalBuffers::default(),
                     )?);
                     let done = completed.fetch_add(1, Ordering::Relaxed) + 1;
                     report_local_contraction_progress(done, total_groups, started);
@@ -13474,6 +13558,7 @@ fn contract_local_subgraph<const K: usize, C: ColorSlot>(
     color_repository: Option<&ConcurrentColorRepository>,
     reusable_vertices: &mut Option<ReusableVertexMap<K, C>>,
     emit_trivial_fasta: bool,
+    buffers: &mut LocalBuffers<K>,
 ) -> Result<LocalContractionOutput<K>, DiscontinuityInputError> {
     let build_start = Instant::now();
     let carried = reusable_vertices.take();
@@ -13493,13 +13578,15 @@ fn contract_local_subgraph<const K: usize, C: ColorSlot>(
     let graph_id = subgraph.graph_id;
     debug_assert_eq!(graph_id, group.graph_id);
     let mut inputs = DiscontinuityInputs::empty(DiscontinuityInputStats::default());
+    inputs.unitigs = std::mem::take(&mut buffers.unitigs);
+    inputs.labels = std::mem::take(&mut buffers.labels);
 
     let contract_start = Instant::now();
     let mut color_runs = None;
-    let mut trivial_fasta = Vec::new();
+    let mut trivial_fasta = std::mem::take(&mut buffers.trivial_fasta);
     let mut trivial_unitigs = 0u64;
     let mut trivial_bases = 0u64;
-    let mut matrix_edges = Vec::new();
+    let mut matrix_edges = std::mem::take(&mut buffers.matrix_edges);
     let mut emit_unitig = |unitig: LocalUnitigRef<'_, K>| {
         let left_exit = unitig
             .left_exit
@@ -13887,25 +13974,38 @@ mod materialized_record_tests {
     }
 
     #[test]
-    fn shared_materialized_batch_matches_cpp_buffer_thresholds() {
-        let mut bucket = PendingMaterializedBucket::default();
-        bucket.records.resize_with(
-            SharedMaterializedBatch::FLUSH_BYTES / STITCH_COORD_RECORD_LEN as usize,
-            || LoadedMaterializedStitchedCoordRecord::new(0, 0, 0, 31, false, false, u32::MAX, 0),
-        );
-        assert!(!SharedMaterializedBatch::uncolored_bucket_ready(&bucket));
+    fn shared_materialized_batch_flush_thresholds() {
+        let full_records = SharedMaterializedBatch::FLUSH_BYTES / STITCH_COORD_RECORD_LEN as usize;
+        let record =
+            || LoadedMaterializedStitchedCoordRecord::new(0, 0, 0, 31, false, false, u32::MAX, 0);
+        let color = UnitigColor::new(0, crate::state::ColorCoordinate::from_u40(0));
+        let full_colors = SharedMaterializedBatch::FLUSH_BYTES / std::mem::size_of::<UnitigColor>();
 
+        // Uncolored waits for both coordinates and labels, as C++ does.
+        let mut bucket = PendingMaterializedBucket::default();
+        bucket.records.resize_with(full_records, record);
+        assert!(!SharedMaterializedBatch::uncolored_bucket_ready(&bucket));
         bucket
             .labels
             .resize(SharedMaterializedBatch::FLUSH_BYTES, 0);
         assert!(SharedMaterializedBatch::uncolored_bucket_ready(&bucket));
-        assert!(!SharedMaterializedBatch::colored_bucket_ready(&bucket));
 
-        bucket.colors.resize(
-            SharedMaterializedBatch::FLUSH_BYTES / std::mem::size_of::<UnitigColor>(),
-            UnitigColor::new(0, crate::state::ColorCoordinate::from_u40(0)),
-        );
-        assert!(SharedMaterializedBatch::colored_bucket_ready(&bucket));
+        // Colored is ready as soon as any one stream is full.
+        let empty = PendingMaterializedBucket::default();
+        assert!(!SharedMaterializedBatch::colored_bucket_ready(&empty));
+        let mut records = PendingMaterializedBucket::default();
+        records.records.resize_with(full_records, record);
+        assert!(SharedMaterializedBatch::colored_bucket_ready(&records));
+        let mut labels = PendingMaterializedBucket::default();
+        labels
+            .labels
+            .resize(SharedMaterializedBatch::FLUSH_BYTES, 0);
+        assert!(SharedMaterializedBatch::colored_bucket_ready(&labels));
+        let mut colors = PendingMaterializedBucket::default();
+        colors.colors.resize(full_colors, color);
+        assert!(SharedMaterializedBatch::colored_bucket_ready(&colors));
+        colors.colors.pop();
+        assert!(!SharedMaterializedBatch::colored_bucket_ready(&colors));
     }
 
     #[test]

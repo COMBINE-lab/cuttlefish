@@ -16,7 +16,7 @@ use std::os::unix::fs::FileExt;
 use std::path::{Path, PathBuf};
 use std::sync::{
     Arc, Mutex,
-    atomic::{AtomicU64, AtomicUsize, Ordering},
+    atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
 };
 use std::time::{Duration, Instant};
 
@@ -40,11 +40,12 @@ const MAX_TOTAL_PENDING_BYTES: usize = 128 * 1024 * 1024;
 ///
 /// Colored workers normally drain only at source boundaries, which is what
 /// makes each source's records land contiguously in a bucket and lets the
-/// window flush skip its counting sort. Holding a whole source is cheap for
+/// sink write buckets as they fill. Holding a whole source is cheap for
 /// assemblies -- a Salmonella genome stages about 2.3 MB -- and impossible for
-/// a mammalian one, so a worker that exceeds this hands over early. That breaks
-/// the contiguity, which `sort_colored_payload_by_source_with` detects and
-/// repairs; correctness never depends on staying under the cap.
+/// a mammalian one, so a worker that exceeds this hands over early. The
+/// emitter marks any such hand-over, the sink then retains buckets until the
+/// window flush, and `sort_colored_payload_by_source_with` regroups them;
+/// correctness never depends on staying under the cap.
 const MAX_COLORED_SOURCE_PENDING_BYTES: usize = 512 * 1024 * 1024;
 
 /// The cap above, overridable so the mid-source path can be exercised on
@@ -57,6 +58,29 @@ fn colored_source_pending_cap() -> usize {
             .and_then(|value| value.parse::<usize>().ok())
             .filter(|bytes| *bytes > 0)
             .unwrap_or(MAX_COLORED_SOURCE_PENDING_BYTES)
+    })
+}
+
+/// Staged bytes -- attributes plus labels -- at which a colored atlas bucket
+/// is written to its container, the colored counterpart of
+/// `SUBGRAPH_CHUNK_BYTES`. Both streams count: split staging leaves only the
+/// attributes in `buffer`, which is a fifth of a k = 31 record.
+///
+/// Staging is bounded by 16,384 buckets times this, independent of threads.
+/// On 149,998 colored assemblies, 256 KiB matched 64 KiB on wall time and
+/// peak RSS while writing 19 GB less and peaking 19 GB lower on disk, since
+/// larger blocks compress better; 1 MiB raised peak RSS by 9 GB at t64.
+const COLORED_FLUSH_BYTES: usize = 256 * 1024;
+
+/// The threshold above, overridable for measurement.
+fn colored_flush_bytes() -> usize {
+    static BYTES: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *BYTES.get_or_init(|| {
+        std::env::var("CF3_RS_COLORED_FLUSH_BYTES")
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+            .filter(|bytes| *bytes > 0)
+            .unwrap_or(COLORED_FLUSH_BYTES)
     })
 }
 const ATLAS_GRAPH_COUNT: usize = 128;
@@ -441,10 +465,19 @@ pub struct SharedBucketSink {
     atlases: Vec<Mutex<SharedBucketAtlas>>,
     flush_calls: AtomicU64,
     flush_nanos: AtomicU64,
-    /// Colored record bytes staged in atlas buffers since the last window
+    /// Colored record bytes retained in atlas buffers since the last window
     /// flush; the partitioner closes a source window when this crosses its
-    /// budget. See [`Self::flush_colored_window`].
+    /// budget. Only retained bytes count, so while no source has been handed
+    /// over mid-way this stays at zero and no window closes before the end.
+    /// See [`Self::flush_colored_window`].
     colored_staged_bytes: AtomicU64,
+    /// Set once an emitter hands records over before its source is finished.
+    /// From then until the next window flush, colored buckets are retained
+    /// rather than written, so the flush can regroup the interrupted source.
+    /// Everything written before the flag was set holds whole-source runs.
+    retain_colored: AtomicBool,
+    /// Staged bytes at which a colored bucket is written while not retaining.
+    colored_flush_bytes: usize,
     /// Cumulative wall time inside the per-window source sorts (diagnostics).
     window_sort_nanos: AtomicU64,
 }
@@ -457,6 +490,9 @@ pub struct SharedBucketEmitter {
     pending_bytes: usize,
     deferred_uncolored: bool,
     sort_scratch: AtlasSortScratch,
+    /// A colored source has records staged here and has not been closed by a
+    /// source-boundary drain. Any hand-over while this is set is mid-source.
+    source_open: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1760,6 +1796,14 @@ impl BucketEmitter {
 
 impl SharedBucketSink {
     pub fn create(params: &BuildParams, graph_count: usize) -> Result<Arc<Self>, BucketError> {
+        Self::create_with_colored_flush_bytes(params, graph_count, colored_flush_bytes())
+    }
+
+    fn create_with_colored_flush_bytes(
+        params: &BuildParams,
+        graph_count: usize,
+        colored_flush_bytes: usize,
+    ) -> Result<Arc<Self>, BucketError> {
         let bucket_dir = bucket_dir(params);
         if bucket_dir.exists() {
             fs::remove_dir_all(&bucket_dir).map_err(|source| BucketError::Io {
@@ -1812,6 +1856,8 @@ impl SharedBucketSink {
             flush_calls: AtomicU64::new(0),
             flush_nanos: AtomicU64::new(0),
             colored_staged_bytes: AtomicU64::new(0),
+            retain_colored: AtomicBool::new(false),
+            colored_flush_bytes: colored_flush_bytes.max(1),
             window_sort_nanos: AtomicU64::new(0),
         }))
     }
@@ -1849,6 +1895,7 @@ impl SharedBucketSink {
             pending_bytes: 0,
             deferred_uncolored,
             sort_scratch: AtlasSortScratch::default(),
+            source_open: false,
         }
     }
 
@@ -2074,16 +2121,38 @@ impl SharedBucketSink {
             labels_consumed += label_bytes;
         }
         atlas.buffered_bytes += pending.bytes.len();
+        // Color-class hashes are exact when each source's records sit
+        // together in a bucket; their order does not matter. Emitters hand
+        // over only whole sources, and a whole source's records for this atlas
+        // arrive in this one call, so a bucket can be written as soon as it
+        // fills -- exactly as uncolored does -- without splitting any source.
+        // Once a source has been handed over mid-way, buckets are retained
+        // instead, so the window flush can regroup it. The flag is read under
+        // the atlas lock, and the emitter sets it before taking the lock for
+        // its first partial piece, so no partial piece is ever written here.
+        let mut stats = SharedBucketFlushStats::default();
+        if self.retain_colored.load(Ordering::Acquire) {
+            self.colored_staged_bytes
+                .fetch_add(pending.bytes.len() as u64, Ordering::Relaxed);
+        } else {
+            for &(local_graph_id, _) in &scratch.runs {
+                let local_graph_id = usize::from(local_graph_id);
+                let file = &atlas.files[local_graph_id];
+                if file.buffer.len() + file.labels.len() >= self.colored_flush_bytes {
+                    atlas.flush_subgraph(
+                        local_graph_id,
+                        &self.containers,
+                        true,
+                        self.label_words,
+                        self.compress_buckets,
+                        &mut stats,
+                    )?;
+                }
+            }
+        }
         drop(atlas);
         drop(_hold);
-        // Colored buckets are written only at source-window boundaries, where
-        // `flush_colored_window` sorts each bucket's staged records by source
-        // -- the ordering that keeps color-class hashes exact. Nothing leaves
-        // the atlas buffers mid-window; the window byte budget bounds the RAM
-        // this stages.
-        self.colored_staged_bytes
-            .fetch_add(pending.bytes.len() as u64, Ordering::Relaxed);
-        self.record_flush_stats(SharedBucketFlushStats::default(), started.elapsed());
+        self.record_flush_stats(stats, started.elapsed());
         Ok(())
     }
 
@@ -2155,6 +2224,16 @@ impl SharedBucketSink {
                                 self.compress_buckets,
                                 &mut stats,
                             )?;
+                            // A retained window grows buckets far past the
+                            // direct-flush size; do not pin that high-water
+                            // capacity for the rest of the partition.
+                            let file = &mut atlas.files[local_graph_id];
+                            if file.buffer.capacity() + file.labels.capacity()
+                                > 4 * self.colored_flush_bytes
+                            {
+                                file.buffer = Vec::new();
+                                file.labels = Vec::new();
+                            }
                         }
                     }
                     self.window_sort_nanos
@@ -2169,6 +2248,9 @@ impl SharedBucketSink {
             Ok::<_, BucketError>(calls)
         })?;
         self.colored_staged_bytes.store(0, Ordering::Relaxed);
+        // Every worker is parked at the window rendezvous, so no emitter is
+        // mid-source: direct writing can resume.
+        self.retain_colored.store(false, Ordering::Release);
         self.record_flush_stats(
             SharedBucketFlushStats { calls: flush_calls },
             started.elapsed(),
@@ -2254,6 +2336,7 @@ impl SharedBucketSink {
                             // avoids retaining every uncompressed subgraph bucket while
                             // the remaining worker atlas chunks are still resident.
                             atlas.files[local_graph_id].buffer = Vec::new();
+                            atlas.files[local_graph_id].labels = Vec::new();
                         }
                     }
                     Ok::<_, BucketError>(stats.calls)
@@ -2760,6 +2843,8 @@ impl SharedBucketEmitter {
         if !self.sink.colored {
             return Err(BucketError::MalformedRecord);
         }
+        // Called at a source boundary: everything staged is whole sources.
+        self.source_open = false;
         for atlas_id in 0..self.colored_pending.len() {
             if self.colored_pending[atlas_id].bytes.len() >= SUBGRAPH_CHUNK_BYTES {
                 self.flush_pending_colored_atlas(atlas_id)?;
@@ -2774,6 +2859,7 @@ impl SharedBucketEmitter {
         if !self.sink.colored {
             return Err(BucketError::MalformedRecord);
         }
+        self.source_open = false;
         for atlas_id in 0..self.colored_pending.len() {
             self.flush_pending_colored_atlas(atlas_id)?;
         }
@@ -2823,6 +2909,7 @@ impl SharedBucketEmitter {
         let graph_id = superkmer.graph_id;
         let record_len = record_size(self.sink.colored, self.sink.label_words);
         if self.sink.colored {
+            self.source_open = true;
             let atlas_id = graph_id / ATLAS_GRAPH_COUNT;
             let pending = &mut self.colored_pending[atlas_id];
             pending.graph_ids.push(graph_id as u16);
@@ -2897,7 +2984,8 @@ impl SharedBucketEmitter {
         // As in C++, colored worker-atlas chunks are checked and handed to the
         // shared atlas at the source boundary, not in the middle of a source --
         // unless a single source is too large to stage, in which case memory
-        // wins and the window flush repairs the grouping.
+        // wins: the sink retains buckets from then on and the window flush
+        // repairs the grouping.
         if self.sink.colored {
             if self.pending_bytes >= colored_source_pending_cap() {
                 self.flush_largest_pending_bucket()?;
@@ -2955,6 +3043,11 @@ impl SharedBucketEmitter {
         // reads, and clearing afterwards keeps their capacity for the next
         // 64 KiB of records instead of regrowing from zero every drain.
         self.pending_bytes -= self.colored_pending[atlas_id].bytes.len();
+        if self.source_open {
+            // A mid-source hand-over. Marking here rather than in the callers
+            // catches every such path, present or future.
+            self.sink.retain_colored.store(true, Ordering::Release);
+        }
         self.sink.append_colored_atlas(
             atlas_id,
             &self.colored_pending[atlas_id],
@@ -4187,6 +4280,212 @@ mod tests {
             sources.push(record.source_id.unwrap());
         }
         assert_eq!(sources, [3, 1, 4, 2]);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    fn colored_test_sink(
+        tag: &str,
+        graph_count: usize,
+        flush_bytes: usize,
+    ) -> (PathBuf, Arc<SharedBucketSink>) {
+        let dir = std::env::temp_dir().join(format!(
+            "cf3-colored-{tag}-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        let mut params = BuildParams::new(crate::GraphInput::References, "test".to_string());
+        params.color = true;
+        params.k = 31;
+        params.minimizer_len = 15;
+        params.threads = 4;
+        params.work_dir = dir.to_string_lossy().into_owned();
+        let sink =
+            SharedBucketSink::create_with_colored_flush_bytes(&params, graph_count, flush_bytes)
+                .unwrap();
+        (dir, sink)
+    }
+
+    fn add_colored(emitter: &mut SharedBucketEmitter, graph_id: usize, source_id: u32) {
+        emitter
+            .add_valid(
+                &WeakSuperKmer {
+                    graph_id,
+                    offset: 0,
+                    len: 31,
+                    source_id: Some(source_id),
+                    left_discontinuous: false,
+                    right_discontinuous: false,
+                },
+                &[b'A'; 31],
+            )
+            .unwrap();
+    }
+
+    /// Source ids of every bucket, in on-disk order.
+    fn colored_bucket_sources(stats: &BucketEmitStats) -> Vec<(usize, Vec<u32>)> {
+        let (store, entries) = BucketStore::open_dir(&stats.bucket_dir).unwrap();
+        let mut buckets = Vec::new();
+        for entry in &entries {
+            let mut reader = store.reader(entry).unwrap();
+            let mut sources = Vec::new();
+            let mut record = BucketPackedRecord::default();
+            while reader.next_packed_record_into(&mut record).unwrap() {
+                sources.push(record.source_id.unwrap());
+            }
+            buckets.push((entry.graph_id, sources));
+        }
+        buckets.sort();
+        buckets
+    }
+
+    /// Whole sources handed over at their boundaries are written as buckets
+    /// fill, with nothing staged for a window flush.
+    #[test]
+    fn colored_buckets_flush_directly_at_source_boundaries() {
+        let (dir, sink) = colored_test_sink("direct", 1, 1);
+        let mut emitters = [sink.emitter(), sink.emitter()];
+        for source_id in 1..=4u32 {
+            let emitter = &mut emitters[(source_id as usize - 1) % 2];
+            for _ in 0..3 {
+                add_colored(emitter, 0, source_id);
+            }
+            emitter.flush_colored_worker_all().unwrap();
+            assert_eq!(sink.colored_staged_bytes(), 0);
+            assert!(!sink.retain_colored.load(Ordering::Acquire));
+        }
+        assert_eq!(
+            sink.flush_stats().0,
+            4,
+            "every hand-over should write its bucket"
+        );
+        sink.flush_colored_emitters(emitters.into()).unwrap();
+        let stats = sink.finish().unwrap();
+        assert_eq!(
+            colored_bucket_sources(&stats),
+            [(0, vec![1, 1, 1, 2, 2, 2, 3, 3, 3, 4, 4, 4])]
+        );
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// A mid-source hand-over switches the sink to retaining, the window flush
+    /// regroups what was retained without touching what was already written,
+    /// and direct writing resumes afterwards.
+    #[test]
+    fn mid_source_hand_over_is_retained_and_regrouped() {
+        let (dir, sink) = colored_test_sink("handover", 1, 1);
+        let mut a = sink.emitter();
+        let mut b = sink.emitter();
+
+        add_colored(&mut a, 0, 1);
+        a.flush_colored_worker_all().unwrap();
+        let written = sink.flush_stats().0;
+        assert_eq!(written, 1);
+
+        // Source 5 is interrupted by source 4 in the same bucket.
+        add_colored(&mut a, 0, 5);
+        a.flush_largest_pending_bucket().unwrap();
+        assert!(sink.retain_colored.load(Ordering::Acquire));
+        add_colored(&mut b, 0, 4);
+        b.flush_colored_worker_all().unwrap();
+        add_colored(&mut a, 0, 5);
+        a.flush_colored_worker_all().unwrap();
+        assert_eq!(
+            sink.flush_stats().0,
+            written,
+            "retained buckets must not be written"
+        );
+        assert!(sink.colored_staged_bytes() > 0);
+
+        sink.flush_colored_window(1, 5).unwrap();
+        assert!(!sink.retain_colored.load(Ordering::Acquire));
+        assert_eq!(sink.colored_staged_bytes(), 0);
+
+        add_colored(&mut b, 0, 6);
+        b.flush_colored_worker_all().unwrap();
+        assert_eq!(
+            sink.colored_staged_bytes(),
+            0,
+            "direct writing should resume"
+        );
+
+        sink.flush_colored_emitters(vec![a, b]).unwrap();
+        let stats = sink.finish().unwrap();
+        assert_eq!(colored_bucket_sources(&stats), [(0, vec![1, 4, 5, 5, 6])]);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// Concurrent workers with random source sizes and random mid-source
+    /// hand-overs: every source must still be one run in every bucket.
+    #[test]
+    fn concurrent_colored_emitters_keep_sources_grouped() {
+        const SOURCES: u32 = 400;
+        let graph_count = 3 * ATLAS_GRAPH_COUNT;
+        let (dir, sink) = colored_test_sink("stress", graph_count, 256);
+        let next_source = AtomicUsize::new(1);
+        let emitters = std::thread::scope(|scope| {
+            let handles = (0..4u64)
+                .map(|worker| {
+                    let sink = &sink;
+                    let next_source = &next_source;
+                    scope.spawn(move || {
+                        let mut state = 0x9e37_79b9_7f4a_7c15u64 ^ worker;
+                        let mut random = move |bound: u64| {
+                            state = state
+                                .wrapping_mul(6_364_136_223_846_793_005)
+                                .wrapping_add(1_442_695_040_888_963_407);
+                            (state >> 33) % bound
+                        };
+                        let mut emitter = sink.emitter();
+                        loop {
+                            let source_id = next_source.fetch_add(1, Ordering::Relaxed) as u32;
+                            if source_id > SOURCES {
+                                break;
+                            }
+                            let records = 1 + random(60);
+                            for _ in 0..records {
+                                let graph_id =
+                                    random(graph_count as u64) as usize % 8 * (graph_count / 8);
+                                add_colored(&mut emitter, graph_id, source_id);
+                                // Rarely hand over mid-source, as the size
+                                // cap would.
+                                if random(500) == 0 {
+                                    emitter.flush_largest_pending_bucket().unwrap();
+                                }
+                            }
+                            emitter.flush_colored_worker_if_required().unwrap();
+                            if random(4) == 0 {
+                                emitter.flush_colored_worker_all().unwrap();
+                            }
+                        }
+                        emitter.flush_colored_worker_all().unwrap();
+                        emitter
+                    })
+                })
+                .collect::<Vec<_>>();
+            handles
+                .into_iter()
+                .map(|handle| handle.join().unwrap())
+                .collect::<Vec<_>>()
+        });
+        sink.flush_colored_window(1, SOURCES).unwrap();
+        sink.flush_colored_emitters(emitters).unwrap();
+        let stats = sink.finish().unwrap();
+        let buckets = colored_bucket_sources(&stats);
+        assert!(!buckets.is_empty());
+        for (graph_id, sources) in buckets {
+            let mut seen = std::collections::HashSet::new();
+            let mut last = None;
+            for source in sources {
+                if last != Some(source) {
+                    assert!(
+                        seen.insert(source),
+                        "source {source} split in bucket {graph_id}"
+                    );
+                    last = Some(source);
+                }
+            }
+        }
         fs::remove_dir_all(dir).unwrap();
     }
 }

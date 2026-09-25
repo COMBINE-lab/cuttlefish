@@ -5,6 +5,13 @@
 //! allocation. Emitted unitigs retain only discontinuity endpoints, labels,
 //! and optional positional colors needed by the global external pipeline.
 
+// Errors on the hot paths here are built with `ok_or_else`, not `ok_or`.
+// `LocalSubgraphError` can own heap data, so an eagerly built error must be
+// dropped on the success path; when the optimizer fails to prove that drop
+// trivial, the call lands inside the unitig walk and costs it spills. See
+// "k = 55: an eager error value" in docs/engineering/performance-record.md.
+#![allow(clippy::unnecessary_lazy_evaluations)]
+
 use crate::Side;
 #[cfg(test)]
 use crate::buckets::BucketRecord;
@@ -1048,7 +1055,7 @@ impl<const K: usize, C: ColorSlot> LocalSubgraph<K, C> {
                                 let &index = pending
                                     .representative_indices
                                     .get(&color_hash)
-                                    .ok_or(LocalSubgraphError::MissingVertex)?;
+                                    .ok_or_else(|| LocalSubgraphError::MissingVertex)?;
                                 pending.source_sets[index].clone()
                             }
                         };
@@ -1092,7 +1099,7 @@ impl<const K: usize, C: ColorSlot> LocalSubgraph<K, C> {
                     let &index = pending
                         .representative_indices
                         .get(&color_hash)
-                        .ok_or(LocalSubgraphError::MissingVertex)?;
+                        .ok_or_else(|| LocalSubgraphError::MissingVertex)?;
                     repository
                         .resolve_or_insert(color_hash, &pending.source_sets[index], worker)
                         .map_err(LocalSubgraphError::Color)?
@@ -1268,7 +1275,7 @@ impl<const K: usize, C: ColorSlot> LocalSubgraph<K, C> {
                 let color_hash = self
                     .vertices
                     .get(&canonical)
-                    .ok_or(LocalSubgraphError::MissingVertex)?
+                    .ok_or_else(|| LocalSubgraphError::MissingVertex)?
                     .color_hash();
                 record_hash(offset, canonical, color_hash);
                 if offset < label.len() - K {
@@ -1563,7 +1570,7 @@ impl<const K: usize, C: ColorSlot> LocalSubgraph<K, C> {
             let state = self
                 .vertices
                 .get_mut(&v.canonical())
-                .ok_or(LocalSubgraphError::MissingVertex)?;
+                .ok_or_else(|| LocalSubgraphError::MissingVertex)?;
             let copied = *state;
             state.mark_visited();
             copied
@@ -1590,7 +1597,7 @@ impl<const K: usize, C: ColorSlot> LocalSubgraph<K, C> {
             let next_state = self
                 .vertices
                 .get_mut(&v.canonical())
-                .ok_or(LocalSubgraphError::MissingVertex)?;
+                .ok_or_else(|| LocalSubgraphError::MissingVertex)?;
             let next_state_copy = *next_state;
             side = v.entrance_side();
             if next_state_copy.is_branching_side(side, self.cutoff) {
@@ -1909,7 +1916,7 @@ fn collect_wanted_color_relations<const K: usize>(
 ) -> Result<(), LocalSubgraphError> {
     let source = record
         .source_id
-        .ok_or(LocalSubgraphError::MalformedRecord)?;
+        .ok_or_else(|| LocalSubgraphError::MalformedRecord)?;
     if record.len < K || record.len > record.words.len() * 32 {
         return Err(LocalSubgraphError::MalformedRecord);
     }

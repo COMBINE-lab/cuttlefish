@@ -13,6 +13,10 @@
   (128 KiB instead of 1 MiB), and colored worker batches flush when any of
   their streams fills. This removes about 3 GB from the colored map-phase peak
   and about 1.2 GB from uncolored builds.
+- Local contraction workers reuse their per-subgraph output buffers instead of
+  allocating and freeing them for every one of the 16,384 subgraphs. This
+  removes about a third of the phase's page faults and makes colored local
+  contraction as fast as 3.0.2's at 16 threads and 7% faster at 256.
 
 ## 3.0.2
 

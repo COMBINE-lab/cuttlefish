@@ -12693,6 +12693,7 @@ fn contract_local_subgraphs_into_external_inputs<const K: usize, C: ColorSlot>(
                 color_repository.as_ref(),
                 &mut reusable_vertices,
                 color_repository.is_none(),
+                &mut LocalBuffers::default(),
             )?;
             SerialLocalOutput {
                 trivial_output: &mut trivial_output,
@@ -12770,6 +12771,7 @@ fn contract_local_subgraphs_into_external_inputs<const K: usize, C: ColorSlot>(
                 let sink = &sink;
                 handles.push(scope.spawn(move || {
                     let mut reusable_vertices = None;
+                    let mut buffers = LocalBuffers::default();
                     // Each worker rotates through its own contiguous span of
                     // buckets, so no two workers ever share one.
                     let buckets_per_worker = (local_unitig_bucket_count / workers.max(1)).max(1);
@@ -12794,8 +12796,13 @@ fn contract_local_subgraphs_into_external_inputs<const K: usize, C: ColorSlot>(
                             sink.color_repository,
                             &mut reusable_vertices,
                             sink.color_repository.is_none(),
+                            &mut buffers,
                         )
-                        .and_then(|output| sink.write(output, bucket_id));
+                        .and_then(|mut output| {
+                            sink.write(&mut output, bucket_id)?;
+                            buffers.recycle(output);
+                            Ok(())
+                        });
                         let done = completed.fetch_add(1, Ordering::Relaxed) + 1;
                         report_local_contraction_progress(done, total_groups, started);
                         let should_stop = output.is_err();
@@ -13090,6 +13097,43 @@ fn write_discontinuity_unitig_record<const K: usize>(
         })
 }
 
+/// Output vectors a contraction worker recycles from one subgraph to the next.
+///
+/// Every subgraph used to start these empty and grow them by doubling, then
+/// drop them once written: 16,384 rounds of fresh allocation per build. Freed
+/// pages go back to the kernel under jemalloc's decay, so the next subgraph
+/// faults them in again. On 149,998 colored assemblies that churn cost about
+/// 7 million extra page faults and ~1.5% of the unitig walk, and only stayed
+/// hidden while a large partition phase had left freed memory to reuse.
+#[derive(Default)]
+struct LocalBuffers<const K: usize> {
+    unitigs: Vec<DiscontinuityUnitig<K>>,
+    labels: Vec<u8>,
+    matrix_edges: Vec<PreparedBlockedEdge>,
+    trivial_fasta: Vec<u8>,
+}
+
+impl<const K: usize> LocalBuffers<K> {
+    /// Takes back a written output's vectors, emptied, for the next subgraph.
+    fn recycle(&mut self, output: LocalContractionOutput<K>) {
+        let LocalContractionOutput {
+            mut unitigs,
+            mut labels,
+            mut matrix_edges,
+            mut trivial_fasta,
+            ..
+        } = output;
+        unitigs.clear();
+        labels.clear();
+        matrix_edges.clear();
+        trivial_fasta.clear();
+        self.unitigs = unitigs;
+        self.labels = labels;
+        self.matrix_edges = matrix_edges;
+        self.trivial_fasta = trivial_fasta;
+    }
+}
+
 struct LocalContractionOutput<const K: usize> {
     index: usize,
     weak_superkmers: u64,
@@ -13135,7 +13179,7 @@ struct ConcurrentLocalOutputSink<'a, const K: usize> {
 impl<'a, const K: usize> ConcurrentLocalOutputSink<'a, K> {
     fn write(
         &self,
-        mut output: LocalContractionOutput<K>,
+        output: &mut LocalContractionOutput<K>,
         unitig_bucket: u16,
     ) -> Result<(), DiscontinuityInputError> {
         let io_started = Instant::now();
@@ -13380,6 +13424,7 @@ fn contract_local_subgraphs<const K: usize>(
                 None,
                 &mut reusable_vertices,
                 false,
+                &mut LocalBuffers::default(),
             )?);
             report_local_contraction_progress(offset + 1, groups.len(), started);
         }
@@ -13410,6 +13455,7 @@ fn contract_local_subgraphs<const K: usize>(
                         None,
                         &mut reusable_vertices,
                         false,
+                        &mut LocalBuffers::default(),
                     )?);
                     let done = completed.fetch_add(1, Ordering::Relaxed) + 1;
                     report_local_contraction_progress(done, total_groups, started);
@@ -13512,6 +13558,7 @@ fn contract_local_subgraph<const K: usize, C: ColorSlot>(
     color_repository: Option<&ConcurrentColorRepository>,
     reusable_vertices: &mut Option<ReusableVertexMap<K, C>>,
     emit_trivial_fasta: bool,
+    buffers: &mut LocalBuffers<K>,
 ) -> Result<LocalContractionOutput<K>, DiscontinuityInputError> {
     let build_start = Instant::now();
     let carried = reusable_vertices.take();
@@ -13531,13 +13578,15 @@ fn contract_local_subgraph<const K: usize, C: ColorSlot>(
     let graph_id = subgraph.graph_id;
     debug_assert_eq!(graph_id, group.graph_id);
     let mut inputs = DiscontinuityInputs::empty(DiscontinuityInputStats::default());
+    inputs.unitigs = std::mem::take(&mut buffers.unitigs);
+    inputs.labels = std::mem::take(&mut buffers.labels);
 
     let contract_start = Instant::now();
     let mut color_runs = None;
-    let mut trivial_fasta = Vec::new();
+    let mut trivial_fasta = std::mem::take(&mut buffers.trivial_fasta);
     let mut trivial_unitigs = 0u64;
     let mut trivial_bases = 0u64;
-    let mut matrix_edges = Vec::new();
+    let mut matrix_edges = std::mem::take(&mut buffers.matrix_edges);
     let mut emit_unitig = |unitig: LocalUnitigRef<'_, K>| {
         let left_exit = unitig
             .left_exit

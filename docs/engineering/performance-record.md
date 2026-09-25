@@ -2949,9 +2949,9 @@ that overlapped another tenant's ~120-core job were discarded and rerun.
 At t16 Rust now uses 23% less memory than C++ and 61% less than 3.0.2, and is
 28% faster than C++. Wall time against 3.0.2 is flat at t16 and t64 and 6%
 faster at t256, where removing the 80 stop-the-world window flushes cut
-partitioning from 69.9 to 53.8 s. Local contraction is consistently a few
-seconds slower (about 1%) at t16 and t64. The flush size is not the cause (64
-and 256 KiB measure the same there); it is recorded rather than explained.
+partitioning from 69.9 to 53.8 s. Local contraction was consistently a few
+seconds slower (about 1%) at t16 and t64; the next section finds and fixes
+the cause.
 Uncolored at t16 is unchanged in time (12:16.21 against 12:10.94, a single
 pair) and 1.2 GB lighter (7.73 against 8.95 GB), from the shard-writer buffers.
 
@@ -2969,3 +2969,124 @@ Colors were validated three ways:
   four-thread stress test of the grouping invariant under random mid-source
   hand-overs. Disabling the flag makes the latter two fail.
 
+## The local-contraction slowdown was page churn, exposed by the smaller partition
+
+With the colored window gone, colored local contraction at 150k and t16 ran
+about 7 s (1%) slower than 3.0.2, every run. All of it sat in the unitig walk
+(+80 to +90 worker-seconds); bucket read/build and the sink's I/O, color and
+edge timers were unchanged, and 10,000 genomes showed no gap at all. Colored
+flush size (64 KiB against 256 KiB) made no difference.
+
+Hypotheses ruled out, each by measurement:
+
+- **Transparent huge pages.** THP is `always` with `madvise` defrag. Sampled
+  `AnonHugePages` was 0.3 GB of 8 GB during the phase for *both* builds, and
+  `_RJEM_MALLOC_CONF=thp:always` changed neither the count nor the time.
+- **Vertex-table sizing or schedule order.** A diagnostic summing live vertices
+  over table capacity gave an identical 0.334 for both builds, and scheduling
+  by record count instead of compressed bytes changed nothing.
+- **Color-table saturation.** Both reported 67,108,864 slots and 36.8 M overflow
+  entries.
+
+Sampling `/proc/<pid>/stat` across the phase found it:
+
+| t16, 150k colored | minor faults | stime | walk | local |
+| --- | ---: | ---: | ---: | ---: |
+| 3.0.2 | 71.8 M | 191 s | 5457 s | 650.4 s |
+| window removed | 79.0 M | 209 s | 5545 s | 657.1 s |
+| window removed, jemalloc never purges | 26.3 M | 153 s | 5479 s | 652.9 s |
+
+Stopping jemalloc from ever returning pages
+(`dirty_decay_ms:-1,muzzy_decay_ms:-1`) recovered three quarters of the walk
+gap, at 28.6 GB peak RSS, so this was allocator page churn. A cumulative
+allocation profile (`prof_accum`) named the churners: every subgraph started
+its output vectors -- blocked matrix edges, unitig records and labels, trivial
+FASTA -- empty, grew them by doubling, and dropped them after the sink wrote
+them, 16,384 times. Purged pages were then faulted in again. 3.0.2 paid the
+same churn but hid it: its partition had just freed ~20 GB of window staging,
+which jemalloc was still recycling. Removing the window removed that cushion.
+
+The fix is `LocalBuffers`: each contraction worker keeps those vectors and the
+sink now borrows the output, so the next subgraph starts from warmed capacity.
+
+| t16, 150k colored, pinned | minor faults | stime | build | walk | local | wall |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 3.0.2 | 68.3 / 65.6 M | 194 / 182 s | 4826 / 4802 s | 5455 / 5352 s | 650.7 / 642.3 s | 17:25.22 / 17:22.59 |
+| recycled buffers | 41.9 / 42.1 M | 147 / 151 s | 4826 / 4838 s | 5359 / 5381 s | 643.9 / 646.1 s | 17:10.36 / 17:13.00 |
+
+Local contraction is back to parity (645.0 against 646.5 s on the means) with
+38% fewer faults than 3.0.2. The 12 s wall-time lead in that window did not
+reproduce later (see host drift, below); the shipped build, remeasured after
+the k = 55 fix that follows, is:
+
+| t16, 150k colored, pinned | minor faults | local | wall | peak RSS |
+| --- | ---: | ---: | ---: | ---: |
+| 3.0.2 | 72.8 / 73.4 M | 653.4 / 653.1 s | 17:29.53 / 17:30.02 | 22.5 GB |
+| shipped | 50.3 / 50.4 M | 651.6 / 651.0 s | 17:29.38 / 17:27.53 | 9.0 GB | At t256,
+local contraction took 96.9 s against 103.7 s and the build 3:25.44 against
+3:48.19 (one pair). Read mode (`SRR105788`, t4) is unchanged: 28.1 / 27.6 s
+against 28.9 / 27.7 s. The buffers cost about 0.3 GB of peak RSS at t16 (9.2
+against 8.9 GB), still well below C++'s 11.5 GB. `cuttlefish compare` matched
+all 252,487,658 unitigs against C++.
+
+### Rejected: vertex tables sized to the subgraph
+
+The occupancy diagnostic also showed carried vertex tables at 33% occupancy,
+because a worker's table never shrinks below the largest bucket it has seen.
+Hashing into a power-of-two *prefix* of the carried allocation, sized from the
+previous subgraph, keeps the allocation (no faults) but lets a clear touch only
+the prefix and keeps probes in a table sized to the data. On colored t16 it
+helped: at prefix headroom 5, 6 and 8 local contraction took 646.3, 641.6 and
+648.8 s against 651.9 s. Elsewhere it hurt:
+
+| workload | full carried table | prefix, headroom 6 |
+| --- | ---: | ---: |
+| read `SRR105788`, t4, local | 28.8 s | 32.4 s (+13%) |
+| read `SRR105788`, t16, local | 7.8 s | 8.6 s (+10%) |
+| 150k colored, t256, build worker-seconds | 12066 s | 13003 s (+8%) |
+
+Read data prefers a sparse table in both build and walk (occupancy 0.20
+against 0.62; only 78 in-place grows, so growth was not the cost), and at 256
+threads the denser table's longer probe chains cost more memory bandwidth than
+the smaller footprint saved. The best load factor is workload-dependent, so the
+change was reverted rather than tuned per workload.
+
+### k = 55: an eager error value the optimizer stopped removing
+
+On 10,000 colored genomes at k = 55, t16, the recycling build's colored local
+contraction ran 2-4% behind 3.0.2, all of it in the unitig walk. Disabling
+recycling at run time did not recover it, nor did jemalloc purging or colored
+block size, and the same source moved further with `codegen-units = 1`, so the
+cause was code generation rather than anything the change did at run time.
+
+Instruction counts could not see it: `callgrind` on 150 genomes put the two
+binaries within 0.3% overall and within a few percent per function. The
+disassembly could. In the recycling build the colored `walk_unitig` for
+`LocalSubgraph<55, u64>` contained two out-of-line calls to
+`drop_glue::<LocalSubgraphError>` and 88 stack references against 69; inside
+its hot loops, 41 against 30, mostly extra spill stores. The calls come from
+`.ok_or(LocalSubgraphError::MissingVertex)?` on the per-vertex lookups:
+`ok_or` builds the error eagerly, so the success path must drop an unused
+value whose type can own heap data (`Bucket` wraps I/O errors and paths).
+The optimizer normally proves the value is the payload-free variant and deletes
+the drop; a small change elsewhere in the crate changed its inlining budget,
+the drop survived, and the call's clobbers forced the loop's 128-bit k-mers
+onto the stack. k = 31 was hit the same way (78 stack references against 70),
+with less effect because one-word k-mers leave more registers free.
+
+All six such sites in `subgraph.rs` now use `ok_or_else`, which builds the
+error only on failure. Both walks then compile to exactly 3.0.2's shape --
+1,943 bytes and 70 stack references at k = 31, 2,021 bytes and 69 at k = 55,
+no drop calls -- and they keep it under `codegen-units = 1`, so the shape no
+longer depends on how the crate is partitioned. Interleaved with 3.0.2 at
+k = 55: local contraction 68.3 / 69.5 s against 68.7 / 68.3 s, the
+`codegen-units = 1` build 68.7 s, and exact counts throughout.
+
+### Host drift, and what the comparisons can claim
+
+The same binaries ran about 1.5% slower in the afternoon than in the morning
+with other tenants using a single core, so only order-alternated runs within
+one window are compared above. Interleaved on 150k colored t16, the shipped
+source and the recycling build with two extra diagnostic counters were
+indistinguishable (local 656.0 / 656.0 s against 657.8 / 658.9 s), so the
+recycling result against 3.0.2 carries over to the shipped binary.

@@ -6066,6 +6066,23 @@ const MATERIALIZED_STITCH_COORD_SHARD_WRITE_BUFFER: usize = 16 * 1024;
 const FINAL_UNITIG_BUCKET_WRITE_BUFFER: usize = 128 * 1024;
 const STITCH_COORD_SHARD_WRITE_BUFFER: usize = 1024 * 1024;
 const STITCH_COORD_RECORD_WRITE_BUFFER: usize = 1024 * 1024;
+/// Buffer per stream -- coordinates, labels, colors -- of one materialized
+/// max-unitig shard writer. There is a writer per coordinate bucket, 1024 of
+/// them, all live for the whole map phase, so this is multiplied by roughly
+/// 3000: at 1 MiB it held about 3 GB at the colored map peak regardless of
+/// thread count.
+const MATERIALIZED_SHARD_STREAM_BUFFER: usize = 128 * 1024;
+
+fn materialized_shard_stream_buffer() -> usize {
+    static BYTES: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *BYTES.get_or_init(|| {
+        std::env::var("CF3_RS_MCOORD_STREAM_BUFFER")
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+            .filter(|bytes| *bytes >= 4096)
+            .unwrap_or(MATERIALIZED_SHARD_STREAM_BUFFER)
+    })
+}
 const EDGE_PATH_INFO_WORKER_BUFFER: usize = 128 * 1024;
 const STITCH_COORD_REVERSE_FLAG: u8 = 1;
 const STITCH_COORD_CYCLE_FLAG: u8 = 2;
@@ -8632,10 +8649,16 @@ impl<'a, 'b> SharedMaterializedBatch<'a, 'b> {
             && bucket.labels.len() >= Self::FLUSH_BYTES
     }
 
+    /// A colored batch is written once any of its three streams fills.
+    /// Waiting for all three let labels and coordinates grow far past
+    /// `FLUSH_BYTES` while the sparse color stream caught up, across every
+    /// worker's 1024 batches; the unflushed tails are then carried into the
+    /// reduce as retained memory.
     #[inline]
     fn colored_bucket_ready(bucket: &PendingMaterializedBucket) -> bool {
-        Self::uncolored_bucket_ready(bucket)
-            && bucket.colors.len() * std::mem::size_of::<UnitigColor>() >= Self::FLUSH_BYTES
+        bucket.records.len() >= Self::FLUSH_BYTES / STITCH_COORD_RECORD_LEN as usize
+            || bucket.labels.len() >= Self::FLUSH_BYTES
+            || bucket.colors.len() * std::mem::size_of::<UnitigColor>() >= Self::FLUSH_BYTES
     }
 }
 
@@ -8850,9 +8873,12 @@ impl MaterializedStitchedCoordShardWriter {
             label_path,
             color_path,
             coord_out: Some(coord_out),
-            label_out: Some(BufWriter::with_capacity(1024 * 1024, label_file)),
+            label_out: Some(BufWriter::with_capacity(
+                materialized_shard_stream_buffer(),
+                label_file,
+            )),
             color_out: None,
-            record_buffer: Vec::with_capacity(STITCH_COORD_RECORD_WRITE_BUFFER),
+            record_buffer: Vec::with_capacity(materialized_shard_stream_buffer()),
             records: 0,
             label_bytes: 0,
             color_runs: 0,
@@ -8885,7 +8911,10 @@ impl MaterializedStitchedCoordShardWriter {
                     path: self.label_path.clone(),
                     source,
                 })?;
-            self.label_out = Some(BufWriter::with_capacity(1024 * 1024, label_file));
+            self.label_out = Some(BufWriter::with_capacity(
+                materialized_shard_stream_buffer(),
+                label_file,
+            ));
         }
         if self.color_runs != 0 && self.color_out.is_none() {
             let color_file = OpenOptions::new()
@@ -8895,7 +8924,10 @@ impl MaterializedStitchedCoordShardWriter {
                     path: self.color_path.clone(),
                     source,
                 })?;
-            self.color_out = Some(BufWriter::with_capacity(1024 * 1024, color_file));
+            self.color_out = Some(BufWriter::with_capacity(
+                materialized_shard_stream_buffer(),
+                color_file,
+            ));
         }
         Ok(())
     }
@@ -8936,7 +8968,7 @@ impl MaterializedStitchedCoordShardWriter {
                 },
                 &self.label_path,
             )?);
-        if self.record_buffer.len() >= STITCH_COORD_RECORD_WRITE_BUFFER {
+        if self.record_buffer.len() >= materialized_shard_stream_buffer() {
             self.flush_record_buffer()?;
         }
         self.label_out
@@ -8969,7 +9001,10 @@ impl MaterializedStitchedCoordShardWriter {
                     path: self.color_path.clone(),
                     source,
                 })?;
-            self.color_out = Some(BufWriter::with_capacity(1024 * 1024, file));
+            self.color_out = Some(BufWriter::with_capacity(
+                materialized_shard_stream_buffer(),
+                file,
+            ));
         }
         let color_out = self
             .color_out
@@ -9049,7 +9084,10 @@ impl MaterializedStitchedCoordShardWriter {
                         path: self.color_path.clone(),
                         source,
                     })?;
-                self.color_out = Some(BufWriter::with_capacity(1024 * 1024, file));
+                self.color_out = Some(BufWriter::with_capacity(
+                    materialized_shard_stream_buffer(),
+                    file,
+                ));
             }
             let color_out = self
                 .color_out
@@ -9068,7 +9106,7 @@ impl MaterializedStitchedCoordShardWriter {
         batch.records.clear();
         batch.labels.clear();
         batch.colors.clear();
-        if self.record_buffer.len() >= STITCH_COORD_RECORD_WRITE_BUFFER {
+        if self.record_buffer.len() >= materialized_shard_stream_buffer() {
             self.flush_record_buffer()?;
         }
         Ok(())
@@ -13887,25 +13925,38 @@ mod materialized_record_tests {
     }
 
     #[test]
-    fn shared_materialized_batch_matches_cpp_buffer_thresholds() {
-        let mut bucket = PendingMaterializedBucket::default();
-        bucket.records.resize_with(
-            SharedMaterializedBatch::FLUSH_BYTES / STITCH_COORD_RECORD_LEN as usize,
-            || LoadedMaterializedStitchedCoordRecord::new(0, 0, 0, 31, false, false, u32::MAX, 0),
-        );
-        assert!(!SharedMaterializedBatch::uncolored_bucket_ready(&bucket));
+    fn shared_materialized_batch_flush_thresholds() {
+        let full_records = SharedMaterializedBatch::FLUSH_BYTES / STITCH_COORD_RECORD_LEN as usize;
+        let record =
+            || LoadedMaterializedStitchedCoordRecord::new(0, 0, 0, 31, false, false, u32::MAX, 0);
+        let color = UnitigColor::new(0, crate::state::ColorCoordinate::from_u40(0));
+        let full_colors = SharedMaterializedBatch::FLUSH_BYTES / std::mem::size_of::<UnitigColor>();
 
+        // Uncolored waits for both coordinates and labels, as C++ does.
+        let mut bucket = PendingMaterializedBucket::default();
+        bucket.records.resize_with(full_records, record);
+        assert!(!SharedMaterializedBatch::uncolored_bucket_ready(&bucket));
         bucket
             .labels
             .resize(SharedMaterializedBatch::FLUSH_BYTES, 0);
         assert!(SharedMaterializedBatch::uncolored_bucket_ready(&bucket));
-        assert!(!SharedMaterializedBatch::colored_bucket_ready(&bucket));
 
-        bucket.colors.resize(
-            SharedMaterializedBatch::FLUSH_BYTES / std::mem::size_of::<UnitigColor>(),
-            UnitigColor::new(0, crate::state::ColorCoordinate::from_u40(0)),
-        );
-        assert!(SharedMaterializedBatch::colored_bucket_ready(&bucket));
+        // Colored is ready as soon as any one stream is full.
+        let empty = PendingMaterializedBucket::default();
+        assert!(!SharedMaterializedBatch::colored_bucket_ready(&empty));
+        let mut records = PendingMaterializedBucket::default();
+        records.records.resize_with(full_records, record);
+        assert!(SharedMaterializedBatch::colored_bucket_ready(&records));
+        let mut labels = PendingMaterializedBucket::default();
+        labels
+            .labels
+            .resize(SharedMaterializedBatch::FLUSH_BYTES, 0);
+        assert!(SharedMaterializedBatch::colored_bucket_ready(&labels));
+        let mut colors = PendingMaterializedBucket::default();
+        colors.colors.resize(full_colors, color);
+        assert!(SharedMaterializedBatch::colored_bucket_ready(&colors));
+        colors.colors.pop();
+        assert!(!SharedMaterializedBatch::colored_bucket_ready(&colors));
     }
 
     #[test]

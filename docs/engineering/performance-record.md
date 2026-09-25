@@ -2844,3 +2844,128 @@ produce 2,797,788 colored unitigs matching source-derived truth both with the
 flush skipping its permutation and with a 64 KiB cap forcing every payload
 through the repair, plus exact counts for 10000 uncolored and 150000 colored
 and identical bucket bytes at both scales.
+
+## The colored low-thread memory gap: the window, and the map-phase buffers
+
+A co-author measured 149,998 Salmonella assemblies, colored, k = 31, at about
+16 threads on another host: C++ in 42 minutes at 10 GB, Rust 3.0.2 in 30
+minutes at 18 GB. The shape reproduces here. The earlier acceptance run (above)
+had Rust at 10.2 GB at t16, so this was a regression introduced after it, not
+a long-standing gap.
+
+| t16, colored | wall | peak RSS |
+| --- | ---: | ---: |
+| C++ | 24:53.87 | 11.50 GB |
+| Rust 3.0.2 | 17:53 (three runs) | 22.4 GB |
+
+Three things held the difference, found in order by the phase trace and a
+jemalloc heap profile (`tikv-jemallocator/profiling`, `prof_gdump`, read with
+`jeprof` at the high-water dump).
+
+**1. The colored window staged 12 GiB whatever the thread count.** Colored
+atlas buckets were never written mid-window: every record waited in RAM until
+the 12 GiB window closed, so staging -- plus retained `Vec` capacity -- reached
+the same ~20 GB at 16 threads as at 64. C++ has no global window; each worker
+flushes at source boundaries. Capping the window with
+`CF3_RS_COLOR_WINDOW_BYTES=1073741824` alone took t16 from 22.8 to 11.2 GB at
+no measurable cost, confirming it.
+
+The window was not needed for correctness in the common case. Color-class
+hashes need each source's records to be contiguous within a bucket, not in any
+order: `add_source_hashed` dedups against the vertex's last source and XORs,
+and `normalize_source_sets` rebuilds exact sets through a bitset. Emitters
+already hand over only whole sources, and a whole source's records for an
+atlas arrive in one `append_colored_atlas` call, so a bucket can be written as
+soon as it fills, exactly as uncolored does.
+
+The fix is a hybrid. By default colored buckets flush once attributes plus
+labels reach `COLORED_FLUSH_BYTES`, and the window never closes before the end
+of the input. An emitter whose source is still open when it hands records over
+-- today only the 512 MiB per-source cap -- sets `retain_colored` on the sink
+*before* taking the atlas lock for its first partial piece. From then until
+the next window flush, buckets are retained rather than written, and the flush
+regroups them with the existing repair sort. Everything written before the flag
+consists of whole-source runs, and the interrupted source's pieces are all
+retained, so the repair only ever sees data it can fix. The flag is marked
+structurally (`source_open` on the emitter), so any future mid-source path is
+caught without further changes.
+
+**2. Materialized shard writers held 3 GB of buffers.** The path-info map keeps
+one shard writer per coordinate bucket -- 1024 of them, all live -- and each had
+a 1 MiB label `BufWriter`, a 1 MiB color `BufWriter`, and a record buffer that
+filled to 1 MiB (up to 2 MiB with growth). About 41% of the map-phase peak was
+there. `MATERIALIZED_SHARD_STREAM_BUFFER` is now 128 KiB
+(`CF3_RS_MCOORD_STREAM_BUFFER` to override); it also made the phase faster, 3.25
+to 2.76 s on 10,000 genomes. This applies to uncolored builds as well.
+
+**3. Colored worker batches waited for all three streams.** A worker's
+per-bucket batch flushed only when coordinates, labels *and* colors each
+reached 8 KiB. Colors, at 8 bytes per run, are the slowest stream, so labels and
+coordinates grew far past 8 KiB across every worker's 1024 batches, and the
+unflushed tails were then carried into the reduce as retained memory. A colored
+batch now flushes when any stream fills. That removed ~1 GB carried into the
+reduce on 10,000 genomes, at no time cost.
+
+After (1) the peak moved to the path-info map; after (2) and (3) it sits in
+colored local contraction, which is per-worker state and therefore scales with
+threads. That is the next lever, not pursued here.
+
+### Colored flush size
+
+The colored flush threshold bounds staging at 16,384 buckets times itself,
+independent of threads. At t64 (150k, colored):
+
+| flush | peak RSS | partition peak | peak disk | bytes written |
+| ---: | ---: | ---: | ---: | ---: |
+| 64 KiB | 17.5 GB | 4.5 GB | 332 GB | 635 GB |
+| 256 KiB | 17.4-17.6 GB | 9.0 GB | 313 GB | 616 GB |
+| 1 MiB | 26.3 GB | -- | 334 GB | 607 GB |
+| 3.0.2 (window) | 25.3 GB | -- | 322-336 GB | 605 GB |
+
+Pinned to one NUMA node, 256 KiB and 64 KiB ran 6:25.90 / 6:21.70 against
+6:22.02 / 6:22.12: identical in time and memory, with 19 GB less written and a
+19 GB lower disk peak, because larger blocks compress better. 1 MiB costs 9 GB
+of RAM. The default is 256 KiB (`CF3_RS_COLORED_FLUSH_BYTES` to override). At
+t16 its partition peak is 6.9 GB, still below local contraction's 8.9 GB.
+
+### Result
+
+149,998 assemblies, colored, k = 31, all counts exactly 252,487,658 unitigs /
+16,417,233,428 bases. Order-alternated runs on an otherwise idle host. Runs
+that overlapped another tenant's ~120-core job were discarded and rerun.
+
+| threads | build | wall | peak RSS |
+| ---: | --- | ---: | ---: |
+| 16 | C++ | 24:53.87 | 11.50 GB |
+| 16 | 3.0.2 | 17:53.09 / 17:53.27 / 17:53.53 | 22.40-22.46 GB |
+| 16 | this change (64 KiB) | 18:03.13 / 17:48.42 / 17:58.16 | 8.85-8.88 GB |
+| 16 | this change, pinned, 64 KiB | 17:35.78 | 8.92 GB |
+| 16 | this change, pinned, 256 KiB | 17:33.22 | 8.86 GB |
+| 64 | 3.0.2 | 5:57.55 / 5:53.80 | 25.3 GB |
+| 64 | this change (64 KiB) | 5:59.21 / 5:48.24 | 17.5-17.6 GB |
+| 256 | 3.0.2 | 4:00.50 | 55.7 GB |
+| 256 | this change (64 KiB) | 3:45.03 | 50.0 GB |
+
+At t16 Rust now uses 23% less memory than C++ and 61% less than 3.0.2, and is
+28% faster than C++. Wall time against 3.0.2 is flat at t16 and t64 and 6%
+faster at t256, where removing the 80 stop-the-world window flushes cut
+partitioning from 69.9 to 53.8 s. Local contraction is consistently a few
+seconds slower (about 1%) at t16 and t64. The flush size is not the cause (64
+and 256 KiB measure the same there); it is recorded rather than explained.
+Uncolored at t16 is unchanged in time (12:16.21 against 12:10.94, a single
+pair) and 1.2 GB lighter (7.73 against 8.95 GB), from the shard-writer buffers.
+
+`cuttlefish compare` matched all 252,487,658 strand-normalized unitigs of the
+256 KiB t16 output against the C++ t16 output.
+
+Colors were validated three ways:
+- 10,000 genomes at t16: an order-independent digest of every unitig's
+  canonical sequence and resolved color runs matched 3.0.2's exactly (51,644,203
+  unitigs, 51,886,797 runs). The FASTA bytes differ only by color-ID numbering.
+- 150 genomes: all 2,797,788 colored unitigs match source-derived truth, both by
+  default and with `CF3_RS_COLORED_SOURCE_PENDING_BYTES=65536` forcing the
+  retain-and-repair fallback.
+- New unit tests cover direct flushing, the fallback and its reset, and a
+  four-thread stress test of the grouping invariant under random mid-source
+  hand-overs. Disabling the flag makes the latter two fail.
+

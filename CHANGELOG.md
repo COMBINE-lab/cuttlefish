@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+- Colored builds use far less memory at low and moderate thread counts. On
+  149,998 Salmonella assemblies at 16 threads, peak RSS falls from 22.4 GB to
+  8.9 GB (C++ Cuttlefish 3: 11.5 GB), with wall time unchanged; at 64 threads
+  it falls from 25.3 GB to 17.5 GB. Colored partition buckets are now written
+  as they fill instead of being staged for a 12 GiB source window. The window
+  is kept only as the fallback for a source too large to stage whole, which it
+  still regroups exactly. Output is unchanged.
+- The maximal-unitig coordinate map holds smaller per-bucket writer buffers
+  (128 KiB instead of 1 MiB), and colored worker batches flush when any of
+  their streams fills. This removes about 3 GB from the colored map-phase peak
+  and about 1.2 GB from uncolored builds.
+
 ## 3.0.2
 
 - Fix [#63](https://github.com/COMBINE-lab/cuttlefish/issues/63): materialized

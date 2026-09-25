@@ -3090,3 +3090,25 @@ one window are compared above. Interleaved on 150k colored t16, the shipped
 source and the recycling build with two extra diagnostic counters were
 indistinguishable (local 656.0 / 656.0 s against 657.8 / 658.9 s), so the
 recycling result against 3.0.2 carries over to the shipped binary.
+
+### The shipped build at k = 31, all thread counts
+
+Remeasured with the final binary against 3.0.2, 150k Salmonella, k = 31,
+order-alternated where two runs are listed (the first 3.0.2 t64 run overlapped
+a build and is shown for completeness):
+
+| workload | 3.0.2 wall | shipped wall | 3.0.2 local | shipped local | peak RSS |
+| --- | ---: | ---: | ---: | ---: | --- |
+| colored t64 | 5:54.73* / 5:50.66 | 5:40.07 / 5:44.17 | 192.0* / 188.9 s | 188.6 / 188.0 s | 25.5 -> 18.0 GB |
+| colored t256 | 3:57.96 / 3:59.45 | 3:37.70 / 3:39.24 | 101.0 / 103.2 s | 104.2 / 105.1 s | 55.8 -> 52.3 GB |
+| uncolored t16 | 12:04.17 | 12:06.39 | 330.1 s | 326.5 s | 9.1 -> 7.5 GB |
+| read `SRR105788` t4 | 1:36.94 | 1:35.54 | 28.3 s | 28.3 s | 4.0 -> 3.7 GB |
+
+At 256 threads colored local contraction is 1-3 s (1-2.5%) slower while the
+build is 8.5% faster overall, the partition's 18 s saving outweighing it.
+Worker user time in the phase is equal (21,671 against 21,799 s) and faults are
+fewer (100.4 M against 107.6 M), but kernel time is higher (780 against 644 s):
+256 threads faulting in vertex maps from scratch contend in the kernel where
+3.0.2 reused memory its partition had already faulted in. jemalloc's
+`background_thread:true` did not change it (local 103.4 / 106.4 s, kernel
+750 / 839 s), so it is recorded rather than tuned.

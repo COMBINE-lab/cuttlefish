@@ -712,10 +712,10 @@ fn emit_uncolored_direct_weak_superkmer_buckets<const K: usize>(
     })
 }
 
-/// Default staged-record budget per colored source window. Larger windows
-/// mean fewer stop-the-world flushes at proportionally more staged RAM; the
-/// flush-wall total is roughly window-count-independent, so this mainly
-/// buys back per-window straggler spread.
+/// Default retained-record budget per colored source window. It binds only
+/// after a source has been handed over mid-way (a source too large to stage
+/// whole); otherwise colored buckets are written as they fill and nothing is
+/// retained, so no window closes before the end of the input.
 const DEFAULT_COLOR_WINDOW_BYTES: u64 = 12 * 1024 * 1024 * 1024;
 
 fn color_window_bytes(params: &BuildParams) -> u64 {
@@ -764,13 +764,14 @@ enum ColorWindowStep {
 
 /// Source-window scheduler for the colored partitioner.
 ///
-/// Sources are assigned in ascending id order; when the sink's staged bytes
+/// Sources are assigned in ascending id order; when the sink's retained bytes
 /// cross the window budget, assignment stops, every worker drains its local
-/// pendings and rendezvouses, and the last arriver sorts-and-flushes the
-/// window (`flush_colored_window`). Ascending windows plus per-window sorting
-/// give every bucket globally source-sorted records -- the structural
-/// guarantee that keeps color-class hashes exact, exactly as the C++
-/// partitioner's window collation does.
+/// pendings and rendezvouses, and the last arriver flushes the window
+/// (`flush_colored_window`), regrouping any source that was handed over
+/// mid-way. Color-class hashes need each source's records together in a
+/// bucket, not in any order. Workers hand over whole sources, so buckets are
+/// normally written as they fill and retain nothing; the window only closes
+/// early after a mid-source hand-over, which is when its regrouping matters.
 struct ColorWindowGate {
     state: std::sync::Mutex<ColorWindowState>,
     changed: std::sync::Condvar,
@@ -885,11 +886,10 @@ fn emit_colored_weak_superkmer_buckets<const K: usize>(
     let mut worker_elapsed = Duration::ZERO;
     let mut parse_elapsed = Duration::ZERO;
 
-    // Sources are processed in ascending id order through byte-budgeted
-    // windows, matching the C++ partitioner's scheme: each window's staged
-    // records are sorted by source and flushed at the window boundary, so
-    // every bucket ends up globally source-sorted and the color-class hash
-    // stays exact by construction.
+    // Sources are processed in ascending id order. Each worker owns a whole
+    // source and hands its records over at source boundaries, so every bucket
+    // holds each source as one run and the color-class hash is exact; see
+    // `ColorWindowGate` for the mid-source fallback.
     {
         let (source_start, window) = (0, paths);
         let parse_started = Instant::now();

@@ -1288,6 +1288,9 @@ where
     if parse_only_diagnostic() {
         return Ok(());
     }
+    if !scan_only {
+        buckets.pack_fragment(seq);
+    }
     for_each_valid_weak_superkmer::<K, E, _>(
         seq,
         params.minimizer_len as usize,
@@ -1295,7 +1298,7 @@ where
         params.color.then_some(source_id),
         |sk| {
             if !scan_only {
-                buckets.add_valid(&sk, sk.sequence(seq))?;
+                buckets.add_packed(&sk)?;
             }
             stats.weak_superkmers += 1;
             stats.weak_superkmer_bases += sk.len as u64;

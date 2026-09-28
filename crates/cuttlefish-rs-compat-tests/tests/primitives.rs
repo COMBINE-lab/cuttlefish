@@ -143,7 +143,10 @@ fn normalized_uncolored_fixture_tuned(
     assert_eq!(actual, expected);
     assert_eq!(built.unitigs, expected_unitigs.len() as u64);
     assert_eq!(built.unitig_bases, expected_bases);
-    assert_eq!(built.bucket_records, emitted.partition.weak_superkmers);
+    assert_eq!(
+        built.bucket_records + emitted.buckets.dropped_records,
+        emitted.partition.weak_superkmers
+    );
     assert_eq!(built.observed_edges > 0, expect_discontinuity_edges);
     assert_eq!(built.retained_edges > 0, expect_discontinuity_edges);
 
@@ -251,7 +254,10 @@ fn normalized_uncolored_fixture_k<const K: usize>(
     assert_eq!(actual, expected);
     assert_eq!(built.unitigs, expected_unitigs.len() as u64);
     assert_eq!(built.unitig_bases, expected_bases);
-    assert_eq!(built.bucket_records, emitted.partition.weak_superkmers);
+    assert_eq!(
+        built.bucket_records + emitted.buckets.dropped_records,
+        emitted.partition.weak_superkmers
+    );
 
     let _ = fs::remove_dir_all(emitted.buckets.bucket_dir);
     let _ = fs::remove_file(built.output_path);
@@ -1650,7 +1656,10 @@ fn serial_discontinuity_pipeline_builds_fasta_from_emitted_buckets() {
     .unwrap();
 
     assert_eq!(built.input_buckets, emitted.buckets.bucket_files);
-    assert_eq!(built.bucket_records, emitted.partition.weak_superkmers);
+    assert_eq!(
+        built.bucket_records + emitted.buckets.dropped_records,
+        emitted.partition.weak_superkmers
+    );
     assert_eq!(built.output_path, fasta_path);
 
     let fasta = fs::read_to_string(&built.output_path).unwrap();
@@ -1689,7 +1698,10 @@ fn builds_uncolored_fasta_from_emitted_buckets() {
     let built = build_uncolored_from_buckets::<7>(&params, &emitted.buckets.bucket_dir).unwrap();
 
     assert_eq!(built.input_buckets, emitted.buckets.bucket_files);
-    assert_eq!(built.bucket_records, emitted.partition.weak_superkmers);
+    assert_eq!(
+        built.bucket_records + emitted.buckets.dropped_records,
+        emitted.partition.weak_superkmers
+    );
     assert!(built.observed_edges > 0);
     assert!(built.retained_edges > 0);
     assert!(built.unitigs > 0);

@@ -36,6 +36,7 @@ pub(crate) const MAX_LMER_LEN: usize = 16;
 
 /// Fewest windows per lane worth vectorizing. Each lane first spends
 /// `window - 1` steps filling its window, so very short chunks mostly warm up.
+#[cfg(target_arch = "x86_64")]
 const MIN_WINDOWS_PER_LANE: usize = 32;
 
 /// Mixed into each l-mer before hashing. The finalizer maps 0 to 0, which
@@ -71,21 +72,47 @@ fn base_bits(byte: u8) -> u32 {
 pub(crate) fn fill_window_mins(seq: &[u8], l: usize, window: usize, first: usize, out: &mut [u32]) {
     assert!((1..=MAX_LMER_LEN).contains(&l) && l <= window && window - l < 64);
     assert!(first + out.len() + window - 1 <= seq.len());
-    let mut done = 0;
-    #[cfg(target_arch = "x86_64")]
-    if std::arch::is_x86_feature_detected!("avx2") && seq.len() < i32::MAX as usize {
-        // The last lane's final gather reads four bytes from up to
-        // `8 * lane_len + window + 1` past `first`; keep that inside `seq`.
-        let available = seq.len() - first - window + 1;
-        let lane_len = out.len().min(available.saturating_sub(3)) / 8;
-        if lane_len >= MIN_WINDOWS_PER_LANE {
-            // SAFETY: AVX2 was just detected, and the bound above keeps every
-            // gather inside `seq`.
-            unsafe { window_mins_avx2(seq, l, window, first, lane_len, &mut out[..8 * lane_len]) };
-            done = 8 * lane_len;
-        }
-    }
+    let done = fill_window_mins_simd(seq, l, window, first, out);
     window_mins_scalar(seq, l, window, first + done, &mut out[done..]);
+}
+
+/// Fills a prefix of `out` with the vectorized scan where the CPU allows it,
+/// returning how many windows it covered; the scalar scan does the rest.
+#[cfg(target_arch = "x86_64")]
+fn fill_window_mins_simd(
+    seq: &[u8],
+    l: usize,
+    window: usize,
+    first: usize,
+    out: &mut [u32],
+) -> usize {
+    if !std::arch::is_x86_feature_detected!("avx2") || seq.len() >= i32::MAX as usize {
+        return 0;
+    }
+    // The last lane's final gather reads four bytes from up to
+    // `8 * lane_len + window + 1` past `first`; keep that inside `seq`.
+    let available = seq.len() - first - window + 1;
+    let lane_len = out.len().min(available.saturating_sub(3)) / 8;
+    if lane_len < MIN_WINDOWS_PER_LANE {
+        return 0;
+    }
+    // SAFETY: AVX2 was just detected, and the bound above keeps every gather
+    // inside `seq`.
+    unsafe { window_mins_avx2(seq, l, window, first, lane_len, &mut out[..8 * lane_len]) };
+    8 * lane_len
+}
+
+/// Other architectures have no vectorized scan yet: the scalar scan covers
+/// every window.
+#[cfg(not(target_arch = "x86_64"))]
+fn fill_window_mins_simd(
+    _seq: &[u8],
+    _l: usize,
+    _window: usize,
+    _first: usize,
+    _out: &mut [u32],
+) -> usize {
+    0
 }
 
 fn window_mins_scalar(seq: &[u8], l: usize, window: usize, first: usize, out: &mut [u32]) {

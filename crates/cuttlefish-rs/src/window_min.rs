@@ -8,9 +8,10 @@
 //! -- in three respects:
 //!
 //! * The windows are split into eight contiguous chunks, one per 32-bit lane
-//!   of an AVX2 register, and the lanes scan their chunks in lock step. Each
-//!   lane reads its own bases with a gather, so the sequence is never
-//!   transposed.
+//!   (one AVX2 register, or two NEON registers), and the lanes scan their
+//!   chunks in lock step. Each lane reads its own bases -- with a gather on
+//!   AVX2, with plain loads on NEON, which has none -- so the sequence is
+//!   never transposed.
 //! * The sliding minimum is the two-stacks scheme: a running prefix minimum
 //!   of the current block of `w` hashes, plus suffix minima of the previous
 //!   block, recomputed once every `w` steps. That is about three minimum
@@ -28,15 +29,16 @@
 //! mean equal l-mers and the minimum value is strand-invariant by
 //! construction.
 //!
-//! The scalar scan computes exactly the same values; the AVX2 scan is chosen
-//! at run time, so output never depends on the CPU.
+//! The scalar scan computes exactly the same values. The AVX2 scan is chosen
+//! at run time and the NEON scan is always available on aarch64, so output
+//! never depends on the CPU.
 
 /// Longest l-mer this scan hashes: a canonical l-mer must fit 32 bits.
 pub(crate) const MAX_LMER_LEN: usize = 16;
 
 /// Fewest windows per lane worth vectorizing. Each lane first spends
 /// `window - 1` steps filling its window, so very short chunks mostly warm up.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 const MIN_WINDOWS_PER_LANE: usize = 32;
 
 /// Mixed into each l-mer before hashing. The finalizer maps 0 to 0, which
@@ -102,9 +104,30 @@ fn fill_window_mins_simd(
     8 * lane_len
 }
 
-/// Other architectures have no vectorized scan yet: the scalar scan covers
-/// every window.
-#[cfg(not(target_arch = "x86_64"))]
+/// The NEON form of the eight-lane scan; NEON is part of the aarch64 baseline.
+#[cfg(target_arch = "aarch64")]
+fn fill_window_mins_simd(
+    seq: &[u8],
+    l: usize,
+    window: usize,
+    first: usize,
+    out: &mut [u32],
+) -> usize {
+    // The same bound as AVX2: the last lane's final four-byte load stays
+    // inside `seq`.
+    let available = seq.len() - first - window + 1;
+    let lane_len = out.len().min(available.saturating_sub(3)) / 8;
+    if lane_len < MIN_WINDOWS_PER_LANE {
+        return 0;
+    }
+    // SAFETY: NEON is always present on aarch64.
+    unsafe { window_mins_neon(seq, l, window, first, lane_len, &mut out[..8 * lane_len]) };
+    8 * lane_len
+}
+
+/// Other architectures have no vectorized scan: the scalar scan covers every
+/// window.
+#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
 fn fill_window_mins_simd(
     _seq: &[u8],
     _l: usize,
@@ -240,6 +263,107 @@ unsafe fn window_mins_avx2(
                 let at = t - window;
                 for (i, &value) in lanes.iter().enumerate() {
                     out[i * lane_len + at] = value;
+                }
+            }
+        }
+    }
+}
+
+/// The AVX2 scan's eight lanes as two four-lane NEON registers, `[lanes
+/// 0-3, lanes 4-7]`, so lane `i` covers the same windows as it does there.
+#[cfg(target_arch = "aarch64")]
+#[target_feature(enable = "neon")]
+unsafe fn window_mins_neon(
+    seq: &[u8],
+    l: usize,
+    window: usize,
+    first: usize,
+    lane_len: usize,
+    out: &mut [u32],
+) {
+    use std::arch::aarch64::*;
+
+    let w = window - l + 1;
+    let mask = vdupq_n_u32(if l == 16 {
+        u32::MAX
+    } else {
+        (1u32 << (2 * l)) - 1
+    });
+    let rev_shift = vdupq_n_s32(2 * (l as i32 - 1));
+    let three = vdupq_n_u32(0b11);
+    let byte_mask = vdupq_n_u32(0xff);
+    let max = vdupq_n_u32(u32::MAX);
+    let seed = vdupq_n_u32(LMER_HASH_SEED);
+    let (mul1, mul2) = (vdupq_n_u32(0x85eb_ca6b), vdupq_n_u32(0xc2b2_ae35));
+    let mut ring = [[max; 2]; 64];
+    let mut prefix = [max; 2];
+    let mut slot = 0;
+    let (mut fwd, mut rev) = ([vdupq_n_u32(0); 2], [vdupq_n_u32(0); 2]);
+    let starts: [usize; 8] = std::array::from_fn(|lane| first + lane * lane_len);
+    let mut words = [0u32; 8];
+    let mut lanes = [0u32; 8];
+    let steps = lane_len + window - 1;
+    let mut t = 0;
+    while t < steps {
+        // Four bases per lane per load; the indexing is bounds-checked, and
+        // `fill_window_mins_simd` keeps every load inside `seq`.
+        for (word, &start) in words.iter_mut().zip(&starts) {
+            let at = start + t;
+            *word = u32::from_le_bytes([seq[at], seq[at + 1], seq[at + 2], seq[at + 3]]);
+        }
+        // SAFETY: `words` holds eight u32s.
+        let mut bytes = unsafe { [vld1q_u32(words.as_ptr()), vld1q_u32(words.as_ptr().add(4))] };
+        for _ in 0..4.min(steps - t) {
+            for half in 0..2 {
+                let byte = vandq_u32(bytes[half], byte_mask);
+                bytes[half] = vshrq_n_u32::<8>(bytes[half]);
+                let bits = vandq_u32(
+                    veorq_u32(vshrq_n_u32::<2>(byte), vshrq_n_u32::<1>(byte)),
+                    three,
+                );
+                fwd[half] = vandq_u32(vorrq_u32(vshlq_n_u32::<2>(fwd[half]), bits), mask);
+                rev[half] = vorrq_u32(
+                    vshrq_n_u32::<2>(rev[half]),
+                    vshlq_u32(veorq_u32(bits, three), rev_shift),
+                );
+            }
+            t += 1;
+            if t < l {
+                continue;
+            }
+            for half in 0..2 {
+                let mut h = veorq_u32(vminq_u32(fwd[half], rev[half]), seed);
+                h = veorq_u32(h, vshrq_n_u32::<16>(h));
+                h = vmulq_u32(h, mul1);
+                h = veorq_u32(h, vshrq_n_u32::<13>(h));
+                h = vmulq_u32(h, mul2);
+                h = veorq_u32(h, vshrq_n_u32::<16>(h));
+                ring[slot][half] = h;
+                prefix[half] = vminq_u32(prefix[half], h);
+            }
+            slot += 1;
+            if slot == w {
+                slot = 0;
+                for j in (0..w - 1).rev() {
+                    let next = ring[j + 1];
+                    for (current, next) in ring[j].iter_mut().zip(next) {
+                        *current = vminq_u32(*current, next);
+                    }
+                }
+                prefix = [max; 2];
+            }
+            if t >= window {
+                // SAFETY: `lanes` holds eight u32s.
+                unsafe {
+                    vst1q_u32(lanes.as_mut_ptr(), vminq_u32(prefix[0], ring[slot][0]));
+                    vst1q_u32(
+                        lanes.as_mut_ptr().add(4),
+                        vminq_u32(prefix[1], ring[slot][1]),
+                    );
+                }
+                let at = t - window;
+                for (lane, &value) in lanes.iter().enumerate() {
+                    out[lane * lane_len + at] = value;
                 }
             }
         }

@@ -215,6 +215,8 @@ where
 
 /// Whether every byte is an upper-case `A`, `C`, `G` or `T`: the common
 /// sequence line, which needs neither whitespace removal nor a fragment break.
+/// Checked 16 bytes at a time with SSE2 on x86-64 and NEON on aarch64, both
+/// part of their architecture's baseline.
 #[inline]
 fn is_upper_acgt(bytes: &[u8]) -> bool {
     #[cfg(target_arch = "x86_64")]
@@ -241,7 +243,32 @@ fn is_upper_acgt(bytes: &[u8]) -> bool {
         };
         chunks_ok && tail.iter().all(|&b| matches!(b, b'A' | b'C' | b'G' | b'T'))
     }
-    #[cfg(not(target_arch = "x86_64"))]
+    #[cfg(target_arch = "aarch64")]
+    {
+        use std::arch::aarch64::*;
+        let (chunks, tail) = bytes.as_chunks::<16>();
+        // SAFETY: NEON is part of the aarch64 baseline, and each load reads
+        // one whole 16-byte chunk of `bytes`.
+        let chunks_ok = unsafe {
+            let (a, c, g, t) = (
+                vdupq_n_u8(b'A'),
+                vdupq_n_u8(b'C'),
+                vdupq_n_u8(b'G'),
+                vdupq_n_u8(b'T'),
+            );
+            chunks.iter().all(|chunk| {
+                let v = vld1q_u8(chunk.as_ptr());
+                let valid = vorrq_u8(
+                    vorrq_u8(vceqq_u8(v, a), vceqq_u8(v, c)),
+                    vorrq_u8(vceqq_u8(v, g), vceqq_u8(v, t)),
+                );
+                // Every lane matched when the smallest is all ones.
+                vminvq_u8(valid) == 0xff
+            })
+        };
+        chunks_ok && tail.iter().all(|&b| matches!(b, b'A' | b'C' | b'G' | b'T'))
+    }
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     {
         bytes
             .iter()

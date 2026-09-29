@@ -303,7 +303,7 @@ fn benchmark_materialized_coordinate_round_trip() {
             0,
             crate::state::ColorCoordinate::from_u40(42),
         )];
-        let shared = SharedMaterializedWriters::new(&directory, 1, 1);
+        let shared = SharedMaterializedWriters::new(&directory, 1, 1, false);
         let mut batch = SharedMaterializedBatch::new(&shared, 1);
         let started = Instant::now();
         for index in 0..RECORDS {
@@ -360,4 +360,33 @@ fn benchmark_materialized_coordinate_round_trip() {
         );
     }
     fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn narrow_uncolored_shards_load_like_wide_shards() {
+    let directory = TestDirectory::new();
+    let write = |worker_id, narrow| {
+        let mut writer = MaterializedStitchedCoordShardWriter::create_with_layout(
+            &directory.0,
+            worker_id,
+            7,
+            narrow,
+        )
+        .unwrap();
+        writer.write_record(&coord(1), b"AACCGG").unwrap();
+        let mut pending = tail(2, b"GGTTAACCA", &[]);
+        writer.write_pending_batch(&mut pending).unwrap();
+        writer.write_record(&coord(3), b"T").unwrap();
+        writer.finish().unwrap()
+    };
+    let wide = write(0, false);
+    let narrow = write(1, true);
+    assert_eq!(
+        fs::metadata(&narrow.coord_path).unwrap().len(),
+        STITCH_COORD_HEADER_LEN + 3 * MATERIALIZED_STITCH_COORD_NARROW_RECORD_LEN as u64
+    );
+    let wide = read_materialized_stitched_coord_bucket_file(&wide).unwrap();
+    let narrow = read_materialized_stitched_coord_bucket_file(&narrow).unwrap();
+    assert_eq!(wide.records, narrow.records);
+    assert_eq!(wide.labels, narrow.labels);
 }

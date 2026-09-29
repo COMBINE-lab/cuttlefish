@@ -6074,6 +6074,10 @@ const STITCH_COORD_MAGIC: &[u8; 8] = b"CF3SCB3\0";
 // V3 stores the high label-offset bits in flags. Reject V2: release writers
 // could already have truncated offsets, even when record lengths look valid.
 const MATERIALIZED_STITCH_COORD_MAGIC: &[u8; 8] = b"CF3MCB4\0";
+/// Uncolored shards drop the colour index and count, which uncolored records
+/// never set, and store only the other 18 bytes of each record.
+const MATERIALIZED_STITCH_COORD_NARROW_MAGIC: &[u8; 8] = b"CF3MCU1\0";
+const MATERIALIZED_STITCH_COORD_NARROW_RECORD_LEN: usize = 18;
 const STITCH_COORD_HEADER_LEN: u64 = 32;
 /// Edge path-info record: path id (u64), local unitig index (u32), rank
 /// (u16), flags (u8), and one zero byte. The rank is C++'s `weight_t`; the
@@ -6949,8 +6953,12 @@ fn map_external_cpp_path_info_buckets_to_max_unitig_buckets<const K: usize>(
         inputs.stats.unitig_bases
     );
     let max_unitig_bucket_mask = max_unitig_bucket_count - 1;
-    let shared_writers =
-        SharedMaterializedWriters::new(coord_dir, max_unitig_bucket_count, open_writer_limit);
+    let shared_writers = SharedMaterializedWriters::new(
+        coord_dir,
+        max_unitig_bucket_count,
+        open_writer_limit,
+        !colored,
+    );
     let mut phantom_writers =
         SharedMaterializedBatch::new(&shared_writers, max_unitig_bucket_count);
     for (record, phantom) in expansion.phantom_records {
@@ -7134,8 +7142,12 @@ fn map_external_cpp_path_info_buckets_to_max_unitig_buckets<const K: usize>(
     let workers = threads.max(1).min(path_info_records.len().max(1));
 
     if workers == 1 || path_info_records.len() < 2 {
-        let mut writers =
-            MaterializedStitchedCoordShardWriters::new(coord_dir, 0, max_unitig_bucket_count);
+        let mut writers = MaterializedStitchedCoordShardWriters::new(
+            coord_dir,
+            0,
+            max_unitig_bucket_count,
+            !colored,
+        );
         for (bucket_id, records) in path_info_records.iter().enumerate() {
             let mut emit_direct = |unitig: FinalUnitigRecord| -> Result<(), SerialCollationError> {
                 if unitig.colors.is_empty() {
@@ -7173,6 +7185,7 @@ fn map_external_cpp_path_info_buckets_to_max_unitig_buckets<const K: usize>(
                         coord_dir,
                         worker_id,
                         max_unitig_bucket_count,
+                        !colored,
                     );
                     let mut direct_batch = Vec::with_capacity(256);
                     let mut emit_direct =
@@ -8354,6 +8367,7 @@ fn read_and_discard_exact(
 struct MaterializedStitchedCoordShardWriters<'a> {
     coord_dir: &'a Path,
     worker_id: usize,
+    narrow: bool,
     writers: Vec<Option<MaterializedStitchedCoordShardWriter>>,
     open_writers: usize,
 }
@@ -8404,6 +8418,8 @@ impl MaterializedRecordSink for MaterializedStitchedCoordShardWriters<'_> {
 
 struct SharedMaterializedWriters<'a> {
     coord_dir: &'a Path,
+    /// Write uncolored shards with the narrow record layout.
+    narrow: bool,
     writers: Vec<Mutex<Option<MaterializedStitchedCoordShardWriter>>>,
     retained: Vec<Mutex<Vec<PendingMaterializedBucket>>>,
     open_cache: Mutex<OpenMaterializedWriterCache>,
@@ -8538,9 +8554,10 @@ struct PendingMaterializedBucket {
 }
 
 impl<'a> SharedMaterializedWriters<'a> {
-    fn new(coord_dir: &'a Path, bucket_count: usize, open_limit: usize) -> Self {
+    fn new(coord_dir: &'a Path, bucket_count: usize, open_limit: usize, narrow: bool) -> Self {
         Self {
             coord_dir,
+            narrow,
             writers: (0..bucket_count).map(|_| Mutex::new(None)).collect(),
             retained: (0..bucket_count).map(|_| Mutex::new(Vec::new())).collect(),
             open_cache: Mutex::new(OpenMaterializedWriterCache {
@@ -8568,10 +8585,11 @@ impl<'a> SharedMaterializedWriters<'a> {
                 if let Some(writer) = writer.as_mut() {
                     writer.ensure_open()?;
                 } else {
-                    *writer = Some(MaterializedStitchedCoordShardWriter::create(
+                    *writer = Some(MaterializedStitchedCoordShardWriter::create_with_layout(
                         self.coord_dir,
                         0,
                         bucket_id,
+                        self.narrow,
                     )?);
                 }
                 cache.open += 1;
@@ -8787,12 +8805,13 @@ impl MaterializedRecordSink for SharedMaterializedBatch<'_, '_> {
 }
 
 impl<'a> MaterializedStitchedCoordShardWriters<'a> {
-    fn new(coord_dir: &'a Path, worker_id: usize, bucket_count: usize) -> Self {
+    fn new(coord_dir: &'a Path, worker_id: usize, bucket_count: usize, narrow: bool) -> Self {
         let mut writers = Vec::with_capacity(bucket_count);
         writers.resize_with(bucket_count, || None);
         Self {
             coord_dir,
             worker_id,
+            narrow,
             writers,
             open_writers: 0,
         }
@@ -8801,11 +8820,13 @@ impl<'a> MaterializedStitchedCoordShardWriters<'a> {
     fn ensure_writer(&mut self, bucket_id: usize) -> Result<(), SerialCollationError> {
         if self.writers[bucket_id].is_none() {
             self.evict_writer_if_needed(bucket_id)?;
-            self.writers[bucket_id] = Some(MaterializedStitchedCoordShardWriter::create(
-                self.coord_dir,
-                self.worker_id,
-                bucket_id,
-            )?);
+            self.writers[bucket_id] =
+                Some(MaterializedStitchedCoordShardWriter::create_with_layout(
+                    self.coord_dir,
+                    self.worker_id,
+                    bucket_id,
+                    self.narrow,
+                )?);
             self.open_writers += 1;
         } else if self
             .writers
@@ -8888,6 +8909,9 @@ struct MaterializedStitchedCoordShardWriter {
     label_bytes: u64,
     color_runs: u64,
     packed: Vec<u8>,
+    /// Drop the unused colour fields from each record on disk.
+    narrow: bool,
+    narrow_buffer: Vec<u8>,
 }
 
 #[inline]
@@ -8900,10 +8924,20 @@ fn unitig_colors_as_bytes(colors: &[UnitigColor]) -> &[u8] {
 }
 
 impl MaterializedStitchedCoordShardWriter {
+    #[cfg(test)]
     fn create(
         coord_dir: &Path,
         worker_id: usize,
         bucket_id: usize,
+    ) -> Result<Self, SerialCollationError> {
+        Self::create_with_layout(coord_dir, worker_id, bucket_id, false)
+    }
+
+    fn create_with_layout(
+        coord_dir: &Path,
+        worker_id: usize,
+        bucket_id: usize,
+        narrow: bool,
     ) -> Result<Self, SerialCollationError> {
         let coord_path = coord_dir.join(format!("{bucket_id:05}.{worker_id:03}.mcoord"));
         let label_path = coord_dir.join(format!("{bucket_id:05}.{worker_id:03}.mlabel"));
@@ -8919,7 +8953,11 @@ impl MaterializedStitchedCoordShardWriter {
         let mut coord_out =
             BufWriter::with_capacity(MATERIALIZED_STITCH_COORD_SHARD_WRITE_BUFFER, coord_file);
         coord_out
-            .write_all(MATERIALIZED_STITCH_COORD_MAGIC)
+            .write_all(if narrow {
+                MATERIALIZED_STITCH_COORD_NARROW_MAGIC
+            } else {
+                MATERIALIZED_STITCH_COORD_MAGIC
+            })
             .and_then(|_| coord_out.write_all(&(bucket_id as u64).to_le_bytes()))
             .and_then(|_| coord_out.write_all(&0u64.to_le_bytes()))
             .and_then(|_| coord_out.write_all(&0u64.to_le_bytes()))
@@ -8943,6 +8981,8 @@ impl MaterializedStitchedCoordShardWriter {
             records: 0,
             label_bytes: 0,
             color_runs: 0,
+            narrow,
+            narrow_buffer: Vec::new(),
         })
     }
 
@@ -9179,10 +9219,16 @@ impl MaterializedStitchedCoordShardWriter {
         if self.record_buffer.is_empty() {
             return Ok(());
         }
+        let bytes = if self.narrow {
+            narrow_materialized_coord_records(&self.record_buffer, &mut self.narrow_buffer);
+            &self.narrow_buffer
+        } else {
+            &self.record_buffer
+        };
         self.coord_out
             .as_mut()
             .expect("coord writer is open")
-            .write_all(&self.record_buffer)
+            .write_all(bytes)
             .map_err(|source| SerialCollationError::Io {
                 path: self.coord_path.clone(),
                 source,
@@ -10218,6 +10264,39 @@ fn read_materialized_stitched_coord_bucket_file(
     Ok(bucket)
 }
 
+/// Copies 24-byte native records into the narrow uncolored disk layout,
+/// dropping the colour index (bytes 12..16) and count (bytes 20..22).
+fn narrow_materialized_coord_records(wide: &[u8], out: &mut Vec<u8>) {
+    let (records, rest) = wide.as_chunks::<{ STITCH_COORD_RECORD_LEN as usize }>();
+    debug_assert!(rest.is_empty());
+    out.clear();
+    out.reserve(records.len() * MATERIALIZED_STITCH_COORD_NARROW_RECORD_LEN);
+    for record in records {
+        debug_assert!(record[12..16] == [0xff; 4] && record[20..22] == [0; 2]);
+        let mut narrow = [0u8; MATERIALIZED_STITCH_COORD_NARROW_RECORD_LEN];
+        narrow[..12].copy_from_slice(&record[..12]);
+        narrow[12..16].copy_from_slice(&record[16..20]);
+        narrow[16..18].copy_from_slice(&record[22..24]);
+        out.extend_from_slice(&narrow);
+    }
+}
+
+#[inline]
+fn widened_materialized_coord_record(
+    narrow: &[u8; MATERIALIZED_STITCH_COORD_NARROW_RECORD_LEN],
+) -> LoadedMaterializedStitchedCoordRecord {
+    let u16_at = |at: usize| u16::from_le_bytes([narrow[at], narrow[at + 1]]);
+    LoadedMaterializedStitchedCoordRecord {
+        path_id: u64::from_le_bytes(narrow[..8].try_into().expect("u64 path field")),
+        label_offset_low: u32::from_le_bytes(narrow[8..12].try_into().expect("u32 offset field")),
+        color_start: u32::MAX,
+        rank: u16_at(12),
+        label_len: u16_at(14),
+        color_count: 0,
+        flags: u16_at(16),
+    }
+}
+
 fn append_materialized_stitched_coord_bucket_file(
     entry: &MaterializedStitchedCoordBucketEntry,
     bucket: &mut MaterializedStitchedCoordBucket,
@@ -10239,11 +10318,20 @@ fn append_materialized_stitched_coord_bucket_file(
             path: entry.coord_path.clone(),
             source,
         })?;
-    if &header[..8] != MATERIALIZED_STITCH_COORD_MAGIC {
+    let narrow = if &header[..8] == MATERIALIZED_STITCH_COORD_NARROW_MAGIC {
+        true
+    } else if &header[..8] == MATERIALIZED_STITCH_COORD_MAGIC {
+        false
+    } else {
         return Err(SerialCollationError::MalformedCoordBucket(
             entry.coord_path.clone(),
         ));
-    }
+    };
+    let disk_record_len = if narrow {
+        MATERIALIZED_STITCH_COORD_NARROW_RECORD_LEN as u64
+    } else {
+        STITCH_COORD_RECORD_LEN
+    };
     let bucket_id = u64::from_le_bytes(header[8..16].try_into().expect("bucket ID")) as usize;
     let records = u64::from_le_bytes(header[16..24].try_into().expect("record count"));
     let label_bytes = u64::from_le_bytes(header[24..32].try_into().expect("label bytes"));
@@ -10253,15 +10341,12 @@ fn append_materialized_stitched_coord_bucket_file(
             entry.coord_path.clone(),
         ));
     }
-    let expected_len = STITCH_COORD_HEADER_LEN
-        .checked_add(
-            records
-                .checked_mul(STITCH_COORD_RECORD_LEN)
-                .ok_or_else(|| {
-                    SerialCollationError::MalformedCoordBucket(entry.coord_path.clone())
-                })?,
-        )
-        .ok_or_else(|| SerialCollationError::MalformedCoordBucket(entry.coord_path.clone()))?;
+    let expected_len =
+        STITCH_COORD_HEADER_LEN
+            .checked_add(records.checked_mul(disk_record_len).ok_or_else(|| {
+                SerialCollationError::MalformedCoordBucket(entry.coord_path.clone())
+            })?)
+            .ok_or_else(|| SerialCollationError::MalformedCoordBucket(entry.coord_path.clone()))?;
     if actual_len != expected_len {
         return Err(SerialCollationError::MalformedCoordBucket(
             entry.coord_path.clone(),
@@ -10271,24 +10356,43 @@ fn append_materialized_stitched_coord_bucket_file(
     let label_base = bucket.labels.len() as u64;
     checked_materialized_label_bytes(label_base, entry.label_bytes, &entry.label_path)?;
     bucket.records.reserve(records as usize);
-    // The private bucket format is the native little-endian in-memory layout.
-    let coord_bytes = unsafe {
-        std::slice::from_raw_parts_mut(
+    if narrow {
+        let mut chunk = vec![0u8; MATERIALIZED_STITCH_COORD_NARROW_RECORD_LEN * 64 * 1024];
+        let mut remaining = records as usize * MATERIALIZED_STITCH_COORD_NARROW_RECORD_LEN;
+        while remaining > 0 {
+            let len = remaining.min(chunk.len());
+            file.read_exact(&mut chunk[..len])
+                .map_err(|source| SerialCollationError::Io {
+                    path: entry.coord_path.clone(),
+                    source,
+                })?;
+            let (narrow_records, _) =
+                chunk[..len].as_chunks::<MATERIALIZED_STITCH_COORD_NARROW_RECORD_LEN>();
             bucket
                 .records
-                .spare_capacity_mut()
-                .as_mut_ptr()
-                .cast::<u8>(),
-            records as usize * std::mem::size_of::<LoadedMaterializedStitchedCoordRecord>(),
-        )
-    };
-    file.read_exact(coord_bytes)
-        .map_err(|source| SerialCollationError::Io {
-            path: entry.coord_path.clone(),
-            source,
-        })?;
-    // SAFETY: read_exact initialized every byte of each native POD record.
-    unsafe { bucket.records.set_len(record_base + records as usize) };
+                .extend(narrow_records.iter().map(widened_materialized_coord_record));
+            remaining -= len;
+        }
+    } else {
+        // The wide private format is the native little-endian in-memory layout.
+        let coord_bytes = unsafe {
+            std::slice::from_raw_parts_mut(
+                bucket
+                    .records
+                    .spare_capacity_mut()
+                    .as_mut_ptr()
+                    .cast::<u8>(),
+                records as usize * std::mem::size_of::<LoadedMaterializedStitchedCoordRecord>(),
+            )
+        };
+        file.read_exact(coord_bytes)
+            .map_err(|source| SerialCollationError::Io {
+                path: entry.coord_path.clone(),
+                source,
+            })?;
+        // SAFETY: read_exact initialized every byte of each native POD record.
+        unsafe { bucket.records.set_len(record_base + records as usize) };
+    }
 
     let mut label_file =
         File::open(&entry.label_path).map_err(|source| SerialCollationError::Io {

@@ -382,6 +382,28 @@ const COLORED_WIDE_SOURCES: [&[u8]; 3] = [
 /// Builds a colored graph from `sequences` and checks every vertex's colours
 /// against the sources that actually contain that k-mer.
 fn colored_run_sources_at<const K: usize>(name: &str, threads: usize, sequences: &[&[u8]]) {
+    colored_run_sources_in::<K>(name, threads, sequences, DEFAULT_SUBGRAPH_COUNT);
+}
+
+/// With every super-k-mer in one subgraph there are no discontinuity edges,
+/// and colored collation used to emit nothing at all: every local unitig is
+/// then a direct one, and none were written.
+#[test]
+fn colored_single_subgraph_emits_every_unitig() {
+    colored_run_sources_in::<33>(
+        "colored-run-sources-single-subgraph",
+        3,
+        &COLORED_WIDE_SOURCES,
+        1,
+    );
+}
+
+fn colored_run_sources_in<const K: usize>(
+    name: &str,
+    threads: usize,
+    sequences: &[&[u8]],
+    graph_count: usize,
+) {
     let root = scratch_prefix(name);
     let _ = fs::remove_dir_all(&root);
     fs::create_dir_all(&root).unwrap();
@@ -407,7 +429,7 @@ fn colored_run_sources_at<const K: usize>(name: &str, threads: usize, sequences:
     params.threads = threads;
     params.work_dir = root.display().to_string();
     params.seqs = seqs;
-    let emitted = emit_weak_superkmer_buckets::<K>(&params, DEFAULT_SUBGRAPH_COUNT).unwrap();
+    let emitted = emit_weak_superkmer_buckets::<K>(&params, graph_count).unwrap();
     let mut inputs = emit_colored_external_discontinuity_inputs_with_threads_in_dir::<K>(
         &emitted.buckets.bucket_dir,
         1,

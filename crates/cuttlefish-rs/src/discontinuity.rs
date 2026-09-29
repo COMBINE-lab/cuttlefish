@@ -7007,7 +7007,11 @@ fn map_external_cpp_path_info_buckets_to_max_unitig_buckets<const K: usize>(
             direct_local_unitigs_complete: true,
         });
     }
-    if !path_info_manifest.is_empty() {
+    // The external expansion hands its path-info over as files only. Map every
+    // range bucket from them even when there are none: a graph without
+    // discontinuity edges still has all of its local unitigs to emit, and
+    // this is where they are emitted.
+    if !path_info_manifest.is_empty() || expansion.records.is_empty() {
         let path_info_bucket_count = inputs.ranges.len().div_ceil(ranges_per_bucket).max(1);
         let mut groups = vec![Vec::<StitchedCoordBucketEntry>::new(); path_info_bucket_count];
         for entry in path_info_manifest {

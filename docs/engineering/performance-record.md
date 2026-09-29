@@ -3319,3 +3319,117 @@ binaries pinned there slowed from 8:03 to 9:29 within one sequence. The
 comparisons above were run in alternating order within one window, and the
 minimizer-scan measurements were run on node 1. Absolute times in the last
 table are therefore not comparable with the earlier node-0 numbers.
+
+## Partition's hidden quarter, and the vertex state at cutoff 1
+
+### The partition workers were never idle
+
+At 150k the partition's workers looked about 27% idle: 2,431 worker-seconds
+of scan+pack in a 207 s phase at t16. They were not idle. Each worker
+inflates and parses its own input files, and the scan+pack timer starts only
+once a fragment has been parsed. At 10k, 16 x 15.7 s - 187.6 worker-s = 64
+worker-s is unaccounted for, and the parse-only diagnostic costs 62
+(16 x 3.9 s). A parse-only profile split that time between zlib-rs inflate
+(54%) and FASTA parsing: line copies, whitespace checks and a per-byte
+fragment scan (about 45%).
+
+**Parsing.** Each sequence line is now checked for upper-case ACGT 16 bytes
+at a time (SSE2, part of the x86-64 baseline). A record made only of such
+lines is emitted as one fragment, which is what the scan would have found.
+Any other line takes the unchanged path. A randomized test checks the parser
+against the previous algorithm on messy FASTA.
+
+| 150k uncolored t16, order-alternated | partition | wall |
+| --- | ---: | ---: |
+| before | 209.9 / 206.4 s | 6:36.03 / 6:28.26 |
+| after | 195.7 / 193.9 s | 6:18.65 / 6:15.21 |
+
+At 10k the parse-only diagnostic went from 3.74 to 2.89 s.
+
+**Inflation, twice rejected.** Two whole-file decoders beat zlib-rs's
+streaming decode in isolation but not inside the pipeline:
+
+- **zune-inflate** (pure Rust): 785 against 602 MB/s per core, 16 cores
+  concurrently.
+  - Its first integration made parse-only *slower*, 3.7 against 2.9 s.
+  - Two causes were fixed: it regrew (and, under jemalloc, copied) its
+    output buffer at the end of nearly every file, and its CRC32 is a table
+    loop. Verifying through flate2's zlib-rs CRC instead, which uses
+    carry-less multiplication, left the decode itself still slower
+    in-pipeline, 3.7 against 3.0 s.
+  - Neither SMT placement nor jemalloc purging explained the rest.
+- **libdeflate**: 1,290 MB/s per core in isolation.
+  - Parse-only was 10% faster (2.84 to 2.55 s).
+  - Full partition was 3% slower, because scan+pack grew by about 12
+    worker-s. The likely cause, not measured: a whole decompressed file per
+    thread (about 4 MB) evicts what bucket staging keeps in cache, whereas
+    the streaming path cycles a 1 MiB buffer.
+  - The wall time was a wash, and it would have added a C toolchain.
+
+Both are kept only as local throwaway branches.
+
+### Colored local contraction: where the time is, and what it cannot buy
+
+A colored 10k profile at t16 puts local contraction at 52% of samples:
+
+| stage | share of samples |
+| --- | ---: |
+| vertex-table build | 24.7% |
+| - of which repeated-label references (`add_slotted_record`) | 12.3% |
+| unitig walk and colour runs | ~18% |
+| colour-pass replay | 6.9% |
+| repository inserts | 1.9% |
+
+Two ideas for the reference path were measured and dropped:
+
+- **Skipping a label repeated within one source's run.** It is exact: every
+  vertex already carries that source, so only the end flags change. But it
+  fires on 14.2 M of 3.05 billion references (0.47%). Labels recur across
+  genomes, not within them.
+- **Upper bound for any layout change to that path.** Deleting every
+  reference-path vertex update, which gives wrong output, took build time
+  from 245 to 182 worker-s but walk time from 262 to 313, for about 2% of the
+  phase. The walk pays the misses the build had been paying while bringing
+  the table into cache. A dense, insertion-ordered vertex table would help
+  that path at most this much, so it was not built.
+
+The phase is bound by total memory traffic over the vertex table. The lever
+that follows is bytes per vertex.
+
+### The vertex state at cutoff 1
+
+At cutoff 1, the reference default, an edge only needs to be present. Its
+eight presence bits fit in `VertexState`'s unused flag bits 3-10, freeing the
+4-byte counts. The state is packed to 4-byte alignment, and a flat-map slot
+stores its key as two `u32`s so it carries no padding.
+
+| slot | before | after |
+| --- | ---: | ---: |
+| colored | 24 B | 20 B |
+| uncolored | 16 B | 12 B |
+
+The colour-slot type now also chooses the edge storage. `()` and `u64` use
+presence bits; the new `Counted` and `ColoredCounted` keep 4-bit counts for
+any cutoff. The dispatch uses the presence slots only at cutoff 1, so read
+mode (cutoff 2) keeps its previous layout.
+
+| order-alternated | local before | local after | wall before | wall after |
+| --- | ---: | ---: | ---: | ---: |
+| 10k colored t16 | 34.8 / 35.2 s | 33.3 / 33.0 s | 1:12.6 | 1:10.3 |
+| 10k uncolored t16 | 14.2 / 14.3 s | 12.9 / 12.9 s | 50.9 s | 49.4 s |
+| 150k uncolored t16 | 108.3 / 108.7 s | 96.7 / 96.3 s | 6:21.4 / 6:17.4 | 6:07.7 / 6:05.2 |
+| 150k colored t16 (one pair) | 406.8 s | 403.4 s | 11:22.7 | 11:15.0 |
+| read SRR105788 t4 | -- | -- | 99.0 / 99.4 s | 97.5 / 97.8 s |
+
+Outputs are unchanged:
+- `cuttlefish compare` matches every uncolored and read-mode unitig, and the
+  colour digest is unchanged.
+- A randomized test checks that the presence slots answer every edge, flag
+  and colour question as the counting slots do at cutoff 1.
+- Read-mode output order varies from run to run (two baseline runs differ
+  byte-wise), so compare, not checksums, is the check there.
+
+The gain holds uncolored at 150k (-11% of the phase) but nearly vanishes for
+colored at 150k (-0.8%, one pair; build -1.6%, walk flat), although colored
+10k gained 5%. At that scale the vertex table is not where colored local
+contraction's time goes. Uncolored peak RSS rose about 0.2 GB (7.3 to 7.5 GB).

@@ -6070,12 +6070,16 @@ struct MaterializedStitchedCoordBucketEntry {
     color_runs: u64,
 }
 
-const STITCH_COORD_MAGIC: &[u8; 8] = b"CF3SCB2\0";
+const STITCH_COORD_MAGIC: &[u8; 8] = b"CF3SCB3\0";
 // V3 stores the high label-offset bits in flags. Reject V2: release writers
 // could already have truncated offsets, even when record lengths look valid.
 const MATERIALIZED_STITCH_COORD_MAGIC: &[u8; 8] = b"CF3MCB4\0";
 const STITCH_COORD_HEADER_LEN: u64 = 32;
-const STITCH_PATH_INFO_RECORD_LEN: u64 = 24;
+/// Edge path-info record: path id (u64), local unitig index (u32), rank
+/// (u16), flags (u8), and one zero byte. The rank is C++'s `weight_t`; the
+/// materialized record already narrows it to 16 bits, so a wider field only
+/// carried zeros.
+const STITCH_PATH_INFO_RECORD_LEN: u64 = 16;
 const STITCH_COORD_RECORD_LEN: u64 = 24;
 const MATERIALIZED_STITCH_COORD_SHARD_WRITE_BUFFER: usize = 16 * 1024;
 const FINAL_UNITIG_BUCKET_WRITE_BUFFER: usize = 128 * 1024;
@@ -9533,8 +9537,10 @@ impl StitchedCoordShardWriter {
     }
 
     fn write_record(&mut self, record: StitchedCoordRecord) -> Result<(), SerialCollationError> {
-        self.record_buffer
-            .extend_from_slice(&encoded_stitched_coord_record(record));
+        // A rank past 16 bits is a path longer than C++'s weight_t allows.
+        let encoded = encoded_stitched_coord_record(record)
+            .ok_or_else(|| SerialCollationError::MalformedCoordBucket(self.path.clone()))?;
+        self.record_buffer.extend_from_slice(&encoded);
         self.records += 1;
         if self.record_buffer.len() >= STITCH_COORD_RECORD_WRITE_BUFFER {
             self.flush_record_buffer()?;
@@ -9607,11 +9613,12 @@ fn stitched_coord_bucket(path_id: u64, bucket_mask: usize) -> usize {
 
 fn encoded_stitched_coord_record(
     record: StitchedCoordRecord,
-) -> [u8; STITCH_PATH_INFO_RECORD_LEN as usize] {
+) -> Option<[u8; STITCH_PATH_INFO_RECORD_LEN as usize]> {
+    let rank = u16::try_from(record.rank).ok()?;
     let mut bytes = [0u8; STITCH_PATH_INFO_RECORD_LEN as usize];
     bytes[..8].copy_from_slice(&record.path_id.to_le_bytes());
-    bytes[8..16].copy_from_slice(&record.rank.to_le_bytes());
-    bytes[16..20].copy_from_slice(&record.unitig_index.to_le_bytes());
+    bytes[8..12].copy_from_slice(&record.unitig_index.to_le_bytes());
+    bytes[12..14].copy_from_slice(&rank.to_le_bytes());
     let mut flags = 0u8;
     if record.reverse {
         flags |= STITCH_COORD_REVERSE_FLAG;
@@ -9619,8 +9626,8 @@ fn encoded_stitched_coord_record(
     if record.is_cycle {
         flags |= STITCH_COORD_CYCLE_FLAG;
     }
-    bytes[20] = flags;
-    bytes
+    bytes[14] = flags;
+    Some(bytes)
 }
 
 #[inline]
@@ -10790,16 +10797,18 @@ fn read_stitched_coord_bucket_group_dense(
             .0
         {
             let path_id = u64::from_le_bytes(record[..8].try_into().expect("path ID"));
-            let rank = u64::from_le_bytes(record[8..16].try_into().expect("path rank"));
             let unitig_index =
-                u32::from_le_bytes(record[16..20].try_into().expect("local unitig index")) as usize;
-            let flags = record[20];
+                u32::from_le_bytes(record[8..12].try_into().expect("local unitig index")) as usize;
+            let rank = u64::from(u16::from_le_bytes(
+                record[12..14].try_into().expect("path rank"),
+            ));
+            let flags = record[14];
             let Some(slot) = dense.get_mut(unitig_index) else {
                 return Err(SerialCollationError::MalformedCoordBucket(
                     unitig_path.to_path_buf(),
                 ));
             };
-            if slot.rank_and_flags != u64::MAX || record[21..].iter().any(|&byte| byte != 0) {
+            if slot.rank_and_flags != u64::MAX || record[15] != 0 {
                 return Err(SerialCollationError::MalformedCoordBucket(
                     entry.path.clone(),
                 ));
@@ -10825,10 +10834,12 @@ fn decoded_stitched_coord_record(
         ));
     }
     let path_id = u64::from_le_bytes(bytes[..8].try_into().expect("u64 path_id field"));
-    let rank = u64::from_le_bytes(bytes[8..16].try_into().expect("u64 rank field"));
-    let unitig_index = u32::from_le_bytes(bytes[16..20].try_into().expect("u32 unitig field"));
-    let flags = bytes[20];
-    if bytes[21..].iter().any(|&byte| byte != 0) {
+    let unitig_index = u32::from_le_bytes(bytes[8..12].try_into().expect("u32 unitig field"));
+    let rank = u64::from(u16::from_le_bytes(
+        bytes[12..14].try_into().expect("u16 rank field"),
+    ));
+    let flags = bytes[14];
+    if bytes[15] != 0 {
         return Err(SerialCollationError::MalformedCoordBucket(
             path.to_path_buf(),
         ));
@@ -14196,8 +14207,15 @@ mod materialized_record_tests {
             reverse: true,
             is_cycle: true,
         };
-        let encoded = encoded_stitched_coord_record(record);
-        assert_eq!(encoded.len(), 24);
+        let encoded = encoded_stitched_coord_record(record).unwrap();
+        assert_eq!(encoded.len(), 16);
+        assert!(
+            encoded_stitched_coord_record(StitchedCoordRecord {
+                rank: u64::from(u16::MAX) + 1,
+                ..record
+            })
+            .is_none()
+        );
         assert_eq!(
             decoded_stitched_coord_record(&encoded, Path::new("test.scb")).unwrap(),
             record

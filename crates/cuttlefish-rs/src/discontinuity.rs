@@ -25,6 +25,7 @@ pub use resource::{raise_open_file_limit, report_process_memory, trim_process_al
 
 use crate::DEFAULT_VERTEX_PARTITIONS;
 use crate::Side;
+use crate::block_io::{Lz4BlockReader, Lz4BlockWriter};
 use crate::buckets::{BucketError, BucketLocation, BucketManifestEntry, BucketStore};
 use crate::color::{
     ColorError, ColorRepositoryManifest, ColorRunSidecar, ColorRunSidecarWriter,
@@ -153,7 +154,9 @@ struct LocalUnitigBucketWriter {
     bucket_id: u16,
     unitig_path: PathBuf,
     label_path: PathBuf,
-    unitigs: BufWriter<File>,
+    /// Unitig records and colour runs, lz4-blocked: the fixed-width records
+    /// are mostly padding and small lengths, and compress about 3x.
+    unitigs: Lz4BlockWriter<File>,
     /// Labels packed 2 bits per base (see `pack_2bit_extend`), each starting
     /// on a byte boundary, in unitig order.
     labels: BufWriter<File>,
@@ -180,7 +183,7 @@ impl LocalUnitigBucketWriter {
             bucket_id,
             unitig_path,
             label_path,
-            unitigs: BufWriter::with_capacity(1024 * 1024, unitig_file),
+            unitigs: Lz4BlockWriter::new(unitig_file),
             labels: BufWriter::with_capacity(4 * 1024 * 1024, label_file),
             colored,
             unitig_count: 0,
@@ -596,7 +599,7 @@ impl Drop for LockHold<'_> {
 }
 
 fn read_discontinuity_unitig_from_reader<const K: usize>(
-    input: &mut BufReader<File>,
+    input: &mut impl Read,
     path: &Path,
 ) -> Result<DiscontinuityUnitig<K>, SerialCollationError> {
     let mut bytes = [0u8; 8];
@@ -7409,7 +7412,7 @@ where
         path: bucket.label_path.clone(),
         source,
     })?;
-    let mut unitig_input = BufReader::with_capacity(1024 * 1024, unitig_file);
+    let mut unitig_input = Lz4BlockReader::new(unitig_file);
     let mut label_input = BufReader::with_capacity(4 * 1024 * 1024, label_file);
     let mut label = Vec::new();
     let mut packed = Vec::new();
@@ -13258,7 +13261,7 @@ impl<const K: usize> SerialLocalOutput<'_, K> {
 }
 
 fn write_discontinuity_unitig_record<const K: usize>(
-    out: &mut BufWriter<File>,
+    out: &mut impl Write,
     path: &Path,
     unitig: &DiscontinuityUnitig<K>,
 ) -> Result<(), DiscontinuityInputError> {

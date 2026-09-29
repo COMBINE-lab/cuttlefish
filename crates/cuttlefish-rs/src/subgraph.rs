@@ -22,7 +22,7 @@ use crate::color::{ColorError, ConcurrentColorRepository, UnitigColorRuns};
 use crate::dna::{Base, minimal_rotation};
 use crate::hash::{FastBuildHasher, fast_u64_hash, hash_two_u64};
 use crate::kmer::{Kmer, KmerError};
-use crate::state::{ColorCoordinate, ColorSlot, UnitigColor, VertexState, source_hash};
+use crate::state::{ColorCoordinate, ColorSlot, Counted, UnitigColor, VertexState, source_hash};
 use hashbrown::HashMap;
 use hashbrown::HashTable;
 use std::collections::HashSet;
@@ -42,8 +42,8 @@ use std::collections::HashSet;
 /// bits. K = 32 would collide with the marker, but k must be odd, so the
 /// next reachable size after 31 is 33 -- served by the two-word map.
 #[derive(Debug, Clone)]
-pub struct FlatVertexMap<C: ColorSlot = ()> {
-    slots: Vec<(u64, VertexState<C>)>,
+pub struct FlatVertexMap<C: ColorSlot = Counted> {
+    slots: Vec<FlatSlot<C>>,
     /// Insertion order, for the dispatch iteration.
     keys: Vec<u64>,
     mask: usize,
@@ -54,6 +54,41 @@ pub struct FlatVertexMap<C: ColorSlot = ()> {
 
 const FLAT_EMPTY_KEY: u64 = u64::MAX;
 
+/// A key and its state. The key is two `u32`s, so the slot needs only
+/// 4-byte alignment and carries no padding: 20 bytes colored and 12
+/// uncolored at cutoff 1, where a `(u64, state)` tuple would pad both to 24
+/// and 16.
+#[derive(Debug, Clone, Copy)]
+#[repr(C)]
+struct FlatSlot<C: ColorSlot> {
+    key: [u32; 2],
+    state: VertexState<C>,
+}
+
+const _: () = assert!(std::mem::size_of::<FlatSlot<u64>>() == 20);
+const _: () = assert!(std::mem::size_of::<FlatSlot<()>>() == 12);
+const _: () = assert!(std::mem::size_of::<FlatSlot<Counted>>() == 16);
+
+impl<C: ColorSlot> FlatSlot<C> {
+    const EMPTY: Self = Self {
+        key: [u32::MAX, u32::MAX],
+        state: VertexState::<C>::EMPTY,
+    };
+
+    #[inline(always)]
+    fn new(key: u64, state: VertexState<C>) -> Self {
+        Self {
+            key: [key as u32, (key >> 32) as u32],
+            state,
+        }
+    }
+
+    #[inline(always)]
+    fn key(&self) -> u64 {
+        u64::from(self.key[0]) | (u64::from(self.key[1]) << 32)
+    }
+}
+
 impl<C: ColorSlot> FlatVertexMap<C> {
     /// Slot count giving <= 4/5 load for `capacity` live keys.
     fn slot_count(capacity: usize) -> usize {
@@ -63,7 +98,7 @@ impl<C: ColorSlot> FlatVertexMap<C> {
     fn with_capacity(capacity: usize) -> Self {
         let slots = Self::slot_count(capacity);
         Self {
-            slots: vec![(FLAT_EMPTY_KEY, VertexState::default()); slots],
+            slots: vec![FlatSlot::EMPTY; slots],
             keys: Vec::with_capacity(capacity),
             mask: slots - 1,
             generation: 0,
@@ -73,10 +108,10 @@ impl<C: ColorSlot> FlatVertexMap<C> {
     fn clear_and_reserve(&mut self, capacity: usize) {
         let needed = Self::slot_count(capacity.max(self.keys.len()));
         if self.slots.len() < needed {
-            self.slots = vec![(FLAT_EMPTY_KEY, VertexState::default()); needed];
+            self.slots = vec![FlatSlot::EMPTY; needed];
             self.mask = needed - 1;
         } else {
-            self.slots.fill((FLAT_EMPTY_KEY, VertexState::default()));
+            self.slots.fill(FlatSlot::EMPTY);
         }
         self.keys.clear();
         if self.keys.capacity() < capacity {
@@ -103,7 +138,7 @@ impl<C: ColorSlot> FlatVertexMap<C> {
     fn probe(&self, key: u64) -> (usize, bool) {
         let mut index = (local_u64_hash(key) as usize) & self.mask;
         loop {
-            let stored = self.slots[index].0;
+            let stored = self.slots[index].key();
             if stored == key {
                 return (index, true);
             }
@@ -117,31 +152,31 @@ impl<C: ColorSlot> FlatVertexMap<C> {
     #[inline(always)]
     fn get(&self, key: u64) -> Option<&VertexState<C>> {
         let (index, hit) = self.probe(key);
-        hit.then(|| &self.slots[index].1)
+        hit.then(|| &self.slots[index].state)
     }
 
     #[inline(always)]
     fn get_mut(&mut self, key: u64) -> Option<&mut VertexState<C>> {
         let (index, hit) = self.probe(key);
-        hit.then(|| &mut self.slots[index].1)
+        hit.then(|| &mut self.slots[index].state)
     }
 
     #[inline(always)]
     fn state_or_default(&mut self, key: u64) -> &mut VertexState<C> {
         let (index, hit) = self.probe(key);
         if hit {
-            return &mut self.slots[index].1;
+            return &mut self.slots[index].state;
         }
         if (self.keys.len() + 1) * 5 > self.slots.len() * 4 {
             self.grow();
             let (index, _) = self.probe(key);
             self.keys.push(key);
-            self.slots[index] = (key, VertexState::default());
-            return &mut self.slots[index].1;
+            self.slots[index] = FlatSlot::new(key, VertexState::default());
+            return &mut self.slots[index].state;
         }
         self.keys.push(key);
-        self.slots[index] = (key, VertexState::default());
-        &mut self.slots[index].1
+        self.slots[index] = FlatSlot::new(key, VertexState::default());
+        &mut self.slots[index].state
     }
 
     /// The slot index of `key`, inserting a default state when absent.
@@ -156,17 +191,17 @@ impl<C: ColorSlot> FlatVertexMap<C> {
             self.grow();
             let (index, _) = self.probe(key);
             self.keys.push(key);
-            self.slots[index] = (key, VertexState::default());
+            self.slots[index] = FlatSlot::new(key, VertexState::default());
             return index;
         }
         self.keys.push(key);
-        self.slots[index] = (key, VertexState::default());
+        self.slots[index] = FlatSlot::new(key, VertexState::default());
         index
     }
 
     #[inline(always)]
     fn state_at_mut(&mut self, index: usize) -> &mut VertexState<C> {
-        &mut self.slots[index].1
+        &mut self.slots[index].state
     }
 
     #[inline(always)]
@@ -186,16 +221,14 @@ impl<C: ColorSlot> FlatVertexMap<C> {
     fn grow(&mut self) {
         self.generation = self.generation.wrapping_add(1);
         let new_len = self.slots.len() * 2;
-        let old = std::mem::replace(
-            &mut self.slots,
-            vec![(FLAT_EMPTY_KEY, VertexState::default()); new_len],
-        );
+        let old = std::mem::replace(&mut self.slots, vec![FlatSlot::EMPTY; new_len]);
         self.mask = new_len - 1;
-        for (key, state) in old {
+        for slot in old {
+            let (key, state) = (slot.key(), slot.state);
             if key != FLAT_EMPTY_KEY {
                 let (index, hit) = self.probe(key);
                 debug_assert!(!hit);
-                self.slots[index] = (key, state);
+                self.slots[index] = FlatSlot::new(key, state);
             }
         }
     }
@@ -222,7 +255,7 @@ impl<C: ColorSlot> Eq for FlatVertexMap<C> {}
 /// hash map cannot index its keys, so every subgraph materialised a key
 /// vector instead).
 #[derive(Debug, Clone)]
-pub struct WideFlatVertexMap<C: ColorSlot = ()> {
+pub struct WideFlatVertexMap<C: ColorSlot = Counted> {
     slots: Vec<(u128, VertexState<C>)>,
     /// Insertion order, for the dispatch iteration.
     keys: Vec<u128>,
@@ -472,7 +505,7 @@ impl<const K: usize> WantedColorMap<K> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum LocalVertexMap<const K: usize, C: ColorSlot = ()> {
+pub enum LocalVertexMap<const K: usize, C: ColorSlot = Counted> {
     Flat(FlatVertexMap<C>),
     WideFlat(WideFlatVertexMap<C>),
     #[doc(hidden)]
@@ -658,7 +691,7 @@ impl<const K: usize, C: ColorSlot> LocalVertexMap<K, C> {
 type LocalEdgeSet<const K: usize> = HashSet<LocalEdge<K>, FastBuildHasher>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LocalSubgraph<const K: usize, C: ColorSlot = ()> {
+pub struct LocalSubgraph<const K: usize, C: ColorSlot = Counted> {
     pub graph_id: usize,
     pub colored: bool,
     pub cutoff: u32,

@@ -82,22 +82,53 @@ impl EdgeFrequency {
 /// colored.
 ///
 /// This is the Rust spelling of C++'s `State_Config<bool Colored_>`
-/// specialization: the uncolored state has no colour field at all, so its slot
-/// is 8 bytes rather than 16 and a flat-map cache line holds four of them
-/// instead of two. Local contraction is memory-bandwidth-bound at high thread
-/// counts, so that is worth 14% of the phase -- see the R1 profile in the
-/// performance record.
+/// specialization, extended to edges. Local contraction is
+/// memory-bandwidth-bound, so every byte of a vertex costs: dropping the
+/// colour field from uncolored states was worth 14% of the phase (the R1
+/// profile in the performance record), and keeping edges as presence bits in
+/// the flags at cutoff 1 took the colored slot from 24 to 20 bytes and the
+/// uncolored from 16 to 12.
+///
+/// | slot | colours | edges | state |
+/// | --- | --- | --- | ---: |
+/// | `()` | none | presence (cutoff 1) | 4 B |
+/// | `u64` | set hash | presence (cutoff 1) | 12 B |
+/// | [`Counted`] | none | 4-bit counts | 8 B |
+/// | [`ColoredCounted`] | set hash | 4-bit counts | 16 B |
 pub trait ColorSlot: Copy + Default + std::fmt::Debug + PartialEq + Eq {
+    /// The empty slot, usable in constants.
+    const ZERO: Self;
+
+    /// Whether the slot keeps saturating edge counts, which any cutoff can
+    /// read. Otherwise edges are presence bits in the state's flags, which
+    /// answer only for cutoff 1.
+    const COUNTS_EDGES: bool;
+
     /// The colour-set hash, or zero when the build carries no colours.
     fn hash(self) -> u64;
 
     /// Folds another source's hash in. A no-op without a slot to fold into,
     /// which is why the shared contraction code can stay generic.
     fn combine(&mut self, source_hash: u64);
+
+    /// The edge counts of a counting slot.
+    #[inline(always)]
+    fn edge_frequency(self) -> EdgeFrequency {
+        EdgeFrequency::default()
+    }
+
+    /// The slot with its edge counts replaced; unchanged for presence slots.
+    #[inline(always)]
+    fn with_edge_frequency(self, _edges: EdgeFrequency) -> Self {
+        self
+    }
 }
 
-/// The uncolored slot: zero-sized, so it costs a vertex nothing.
+/// The uncolored cutoff-1 slot: zero-sized, so it costs a vertex nothing.
 impl ColorSlot for () {
+    const ZERO: Self = ();
+    const COUNTS_EDGES: bool = false;
+
     #[inline(always)]
     fn hash(self) -> u64 {
         0
@@ -107,8 +138,11 @@ impl ColorSlot for () {
     fn combine(&mut self, _source_hash: u64) {}
 }
 
-/// The colored slot: the running hash of the vertex's colour set.
+/// The colored cutoff-1 slot: the running hash of the vertex's colour set.
 impl ColorSlot for u64 {
+    const ZERO: Self = 0;
+    const COUNTS_EDGES: bool = false;
+
     #[inline(always)]
     fn hash(self) -> u64 {
         self
@@ -120,6 +154,77 @@ impl ColorSlot for u64 {
     }
 }
 
+/// The uncolored slot for any cutoff: saturating edge counts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Counted {
+    edges: EdgeFrequency,
+}
+
+impl ColorSlot for Counted {
+    const ZERO: Self = Self {
+        edges: EdgeFrequency { packed: 0 },
+    };
+    const COUNTS_EDGES: bool = true;
+
+    #[inline(always)]
+    fn hash(self) -> u64 {
+        0
+    }
+
+    #[inline(always)]
+    fn combine(&mut self, _source_hash: u64) {}
+
+    #[inline(always)]
+    fn edge_frequency(self) -> EdgeFrequency {
+        self.edges
+    }
+
+    #[inline(always)]
+    fn with_edge_frequency(self, edges: EdgeFrequency) -> Self {
+        Self { edges }
+    }
+}
+
+/// The colored slot for any cutoff: edge counts and the colour-set hash,
+/// packed to 12 bytes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[repr(C, packed(4))]
+pub struct ColoredCounted {
+    edges: EdgeFrequency,
+    hash: u64,
+}
+
+impl ColorSlot for ColoredCounted {
+    const ZERO: Self = Self {
+        edges: EdgeFrequency { packed: 0 },
+        hash: 0,
+    };
+    const COUNTS_EDGES: bool = true;
+
+    #[inline(always)]
+    fn hash(self) -> u64 {
+        self.hash
+    }
+
+    #[inline(always)]
+    fn combine(&mut self, source_hash: u64) {
+        self.hash = hash_combine(self.hash, source_hash);
+    }
+
+    #[inline(always)]
+    fn edge_frequency(self) -> EdgeFrequency {
+        self.edges
+    }
+
+    #[inline(always)]
+    fn with_edge_frequency(self, edges: EdgeFrequency) -> Self {
+        Self {
+            edges,
+            hash: self.hash,
+        }
+    }
+}
+
 /// Largest source ID representable in the packed last-source field.
 ///
 /// Colored builds track the previously seen source per vertex in 21 bits of
@@ -128,43 +233,99 @@ impl ColorSlot for u64 {
 /// caller can check it without naming a colour slot.
 pub const MAX_SOURCE_ID: u32 = 0x1F_FFFF;
 
+/// A vertex's edges, flags and colours.
+///
+/// `flags` holds, from bit 0: visited, the two discontinuity marks, eight
+/// edge-presence bits (front A..T, back A..T; unused when the slot counts
+/// edges), and from bit 11 the last source seen. Packed to 4-byte alignment
+/// so a flat-map slot is the key and state with no padding.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct VertexState<C: ColorSlot = ()> {
-    edges: EdgeFrequency,
+#[repr(C, packed(4))]
+pub struct VertexState<C: ColorSlot = Counted> {
     flags: u32,
-    color_hash: C,
+    slot: C,
 }
 
 impl<C: ColorSlot> VertexState<C> {
+    pub const EMPTY: Self = Self {
+        flags: 0,
+        slot: C::ZERO,
+    };
+
     const VISITED: u32 = 1 << 0;
     const DISC_FRONT: u32 = 1 << 1;
     const DISC_BACK: u32 = 1 << 2;
     const SOURCE_SHIFT: u32 = 11;
     const SOURCE_MASK: u32 = 0x1F_FFFF << Self::SOURCE_SHIFT;
 
+    const EDGE_SHIFT: u32 = 3;
+
+    #[inline(always)]
+    fn edge_bits(&self, side: Side) -> u32 {
+        let off = Self::EDGE_SHIFT + if side == Side::Front { 0 } else { 4 };
+        (self.flags >> off) & 0xf
+    }
+
     #[inline(always)]
     pub fn update_edges(&mut self, front: Base, back: Base) {
+        if C::COUNTS_EDGES {
+            let slot = self.slot;
+            let mut edges = slot.edge_frequency();
+            if front != Base::E {
+                edges.add_edge(Side::Front, front);
+            }
+            if back != Base::E {
+                edges.add_edge(Side::Back, back);
+            }
+            self.slot = slot.with_edge_frequency(edges);
+            return;
+        }
         if front != Base::E {
-            self.edges.add_edge(Side::Front, front);
+            self.flags |= 1 << (Self::EDGE_SHIFT + front.bits() as u32);
         }
         if back != Base::E {
-            self.edges.add_edge(Side::Back, back);
+            self.flags |= 1 << (Self::EDGE_SHIFT + 4 + back.bits() as u32);
         }
     }
 
     #[inline]
     pub fn edge_at(&self, side: Side, cutoff: u32) -> Base {
-        self.edges.edge_at(side, cutoff)
+        if C::COUNTS_EDGES {
+            let slot = self.slot;
+            return slot.edge_frequency().edge_at(side, cutoff);
+        }
+        debug_assert!(cutoff <= 1, "presence bits answer only for cutoff 1");
+        let bits = self.edge_bits(side);
+        match bits.count_ones() {
+            0 => Base::E,
+            1 => match bits.trailing_zeros() {
+                0 => Base::A,
+                1 => Base::C,
+                2 => Base::G,
+                _ => Base::T,
+            },
+            _ => Base::N,
+        }
     }
 
     #[inline]
     pub fn is_branching_side(&self, side: Side, cutoff: u32) -> bool {
-        self.edges.edge_count(side, cutoff) > 1
+        if C::COUNTS_EDGES {
+            let slot = self.slot;
+            return slot.edge_frequency().edge_count(side, cutoff) > 1;
+        }
+        debug_assert!(cutoff <= 1, "presence bits answer only for cutoff 1");
+        self.edge_bits(side).count_ones() > 1
     }
 
     #[inline]
     pub fn is_empty_side(&self, side: Side, cutoff: u32) -> bool {
-        self.edges.edge_count(side, cutoff) == 0
+        if C::COUNTS_EDGES {
+            let slot = self.slot;
+            return slot.edge_frequency().edge_count(side, cutoff) == 0;
+        }
+        debug_assert!(cutoff <= 1, "presence bits answer only for cutoff 1");
+        self.edge_bits(side) == 0
     }
 
     #[inline]
@@ -213,22 +374,27 @@ impl<C: ColorSlot> VertexState<C> {
         );
         let last = (self.flags & Self::SOURCE_MASK) >> Self::SOURCE_SHIFT;
         if source != last {
-            self.color_hash.combine(source_hash);
+            let mut color = self.slot;
+            color.combine(source_hash);
+            self.slot = color;
             self.flags = (self.flags & !Self::SOURCE_MASK) | (source << Self::SOURCE_SHIFT);
         }
     }
 
     #[inline]
     pub fn color_hash(&self) -> u64 {
-        self.color_hash.hash()
+        let color = self.slot;
+        color.hash()
     }
 }
 
 /// The point of the colour-slot parameter: an uncolored vertex costs 8 bytes
 /// and a colored one 16, so a flat-map cache line holds four uncolored slots
 /// where it held two.
-const _: () = assert!(std::mem::size_of::<VertexState<()>>() == 8);
-const _: () = assert!(std::mem::size_of::<VertexState<u64>>() == 16);
+const _: () = assert!(std::mem::size_of::<VertexState<()>>() == 4);
+const _: () = assert!(std::mem::size_of::<VertexState<u64>>() == 12);
+const _: () = assert!(std::mem::size_of::<VertexState<Counted>>() == 8);
+const _: () = assert!(std::mem::size_of::<VertexState<ColoredCounted>>() == 16);
 
 #[inline]
 pub fn source_hash(source: u32) -> u64 {
@@ -325,6 +491,57 @@ impl UnitigColor {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// At cutoff 1 the presence slots must answer every edge question as the
+    /// counting slots do, and the colored ones must hash sources alike.
+    #[test]
+    fn presence_slots_match_counting_slots_at_cutoff_one() {
+        fn check<P: ColorSlot, Q: ColorSlot>(seed: u64) {
+            let mut state = seed | 1;
+            let mut next = |n: u64| {
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                state % n
+            };
+            let bases = [Base::A, Base::C, Base::G, Base::T, Base::E];
+            let (mut presence, mut counted) =
+                (VertexState::<P>::default(), VertexState::<Q>::default());
+            for _ in 0..next(40) {
+                let (front, back) = (bases[next(5) as usize], bases[next(5) as usize]);
+                presence.update_edges(front, back);
+                counted.update_edges(front, back);
+                let source = 1 + next(4) as u32;
+                presence.add_source(source);
+                counted.add_source(source);
+                if next(7) == 0 {
+                    presence.mark_discontinuous(Side::Back);
+                    counted.mark_discontinuous(Side::Back);
+                }
+                for side in [Side::Front, Side::Back] {
+                    assert_eq!(presence.edge_at(side, 1), counted.edge_at(side, 1));
+                    assert_eq!(
+                        presence.is_branching_side(side, 1),
+                        counted.is_branching_side(side, 1)
+                    );
+                    assert_eq!(
+                        presence.is_empty_side(side, 1),
+                        counted.is_empty_side(side, 1)
+                    );
+                    assert_eq!(
+                        presence.is_discontinuous(side),
+                        counted.is_discontinuous(side)
+                    );
+                }
+                assert_eq!(presence.is_isolated(1), counted.is_isolated(1));
+                assert_eq!(presence.color_hash(), counted.color_hash());
+            }
+        }
+        for seed in 0..2000 {
+            check::<(), Counted>(seed);
+            check::<u64, ColoredCounted>(seed);
+        }
+    }
 
     #[test]
     fn edge_frequency_saturates_and_respects_cutoff() {

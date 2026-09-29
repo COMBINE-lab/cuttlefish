@@ -35,7 +35,7 @@ use crate::color::{
 use crate::dna::{Base, complement_ascii, minimal_rotation, reverse_complement_label};
 use crate::hash::{FastBuildHasher, hash_bytes, wyhash_u64};
 use crate::kmer::Kmer;
-use crate::state::{ColorSlot, UnitigColor, VertexState};
+use crate::state::{ColorSlot, ColoredCounted, Counted, UnitigColor, VertexState};
 use crate::subgraph::{LocalSubgraph, LocalSubgraphError, LocalUnitigRef, LocalVertexMap};
 use rayon::prelude::*;
 use rayon::{ThreadPool, ThreadPoolBuilder};
@@ -12593,17 +12593,33 @@ pub fn emit_uncolored_external_discontinuity_inputs_with_threads_in_dir<const K:
         return Err(DiscontinuityInputError::InvalidThreadCount);
     }
     let (store, entries) = BucketStore::open_dir(bucket_dir.as_ref())?;
-    contract_local_subgraphs_into_external_inputs::<K, ()>(
-        &store,
-        &entries,
-        cutoff,
-        threads,
-        label_path.as_ref(),
-        None,
-        direct_output_path,
-        None,
-        0,
-    )
+    // At cutoff 1 an edge only needs to be present, which frees the edge
+    // counts from the vertex state.
+    if cutoff == 1 {
+        contract_local_subgraphs_into_external_inputs::<K, ()>(
+            &store,
+            &entries,
+            cutoff,
+            threads,
+            label_path.as_ref(),
+            None,
+            direct_output_path,
+            None,
+            0,
+        )
+    } else {
+        contract_local_subgraphs_into_external_inputs::<K, Counted>(
+            &store,
+            &entries,
+            cutoff,
+            threads,
+            label_path.as_ref(),
+            None,
+            direct_output_path,
+            None,
+            0,
+        )
+    }
 }
 
 /// Contracts colored local bucket graphs directly into external streams.
@@ -12626,18 +12642,33 @@ pub fn emit_colored_external_discontinuity_inputs_with_threads_in_dir<const K: u
         return Err(DiscontinuityInputError::InvalidThreadCount);
     }
     let (store, entries) = BucketStore::open_dir(bucket_dir.as_ref())?;
-    contract_local_subgraphs_into_external_inputs::<K, u64>(
-        &store,
-        &entries,
-        cutoff,
-        threads,
-        label_path.as_ref(),
-        Some(color_path.as_ref()),
-        // Colored builds emit no trivial FASTA; every unitig carries colors.
-        None,
-        Some(color_repository_dir.as_ref()),
-        num_colors,
-    )
+    // Colored builds emit no trivial FASTA; every unitig carries colors. At
+    // cutoff 1 edges are presence bits, freeing the counts from the state.
+    if cutoff == 1 {
+        contract_local_subgraphs_into_external_inputs::<K, u64>(
+            &store,
+            &entries,
+            cutoff,
+            threads,
+            label_path.as_ref(),
+            Some(color_path.as_ref()),
+            None,
+            Some(color_repository_dir.as_ref()),
+            num_colors,
+        )
+    } else {
+        contract_local_subgraphs_into_external_inputs::<K, ColoredCounted>(
+            &store,
+            &entries,
+            cutoff,
+            threads,
+            label_path.as_ref(),
+            Some(color_path.as_ref()),
+            None,
+            Some(color_repository_dir.as_ref()),
+            num_colors,
+        )
+    }
 }
 
 fn emit_uncolored_discontinuity_inputs_with_threads_impl<const K: usize>(
@@ -12655,9 +12686,15 @@ fn emit_uncolored_discontinuity_inputs_with_threads_impl<const K: usize>(
 
     let (store, entries) = BucketStore::open_dir(bucket_dir.as_ref())?;
     if let Some(label_path) = label_path {
-        let external = contract_local_subgraphs_into_external_inputs::<K, ()>(
-            &store, &entries, cutoff, threads, label_path, None, None, None, 0,
-        )?;
+        let external = if cutoff == 1 {
+            contract_local_subgraphs_into_external_inputs::<K, ()>(
+                &store, &entries, cutoff, threads, label_path, None, None, None, 0,
+            )?
+        } else {
+            contract_local_subgraphs_into_external_inputs::<K, Counted>(
+                &store, &entries, cutoff, threads, label_path, None, None, None, 0,
+            )?
+        };
         return external_inputs_to_memory_inputs(external);
     }
 
@@ -13639,7 +13676,7 @@ fn contract_local_subgraphs<const K: usize>(
         let mut outputs = Vec::with_capacity(groups.len());
         let mut reusable_vertices = None;
         for (offset, group) in groups.iter().enumerate() {
-            outputs.push(contract_local_subgraph::<K, ()>(
+            outputs.push(contract_local_subgraph::<K, Counted>(
                 store,
                 group,
                 cutoff,
@@ -13670,7 +13707,7 @@ fn contract_local_subgraphs<const K: usize>(
                     let Some(group) = groups.get(group_idx) else {
                         break;
                     };
-                    chunk_outputs.push(contract_local_subgraph::<K, ()>(
+                    chunk_outputs.push(contract_local_subgraph::<K, Counted>(
                         store,
                         group,
                         cutoff,

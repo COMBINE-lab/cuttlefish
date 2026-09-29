@@ -3112,3 +3112,143 @@ fewer (100.4 M against 107.6 M), but kernel time is higher (780 against 644 s):
 3.0.2 reused memory its partition had already faulted in. jemalloc's
 `background_thread:true` did not change it (local 103.4 / 106.4 s, kernel
 750 / 839 s), so it is recorded rather than tuned.
+
+## Intermediate I/O: smaller representations, and a vectorized minimizer scan
+
+After 3.0.3 a `perf` profile of 150k Salmonella and a per-stream size census
+named the targets. Nothing below was I/O-bound on this host (NVMe, ~1.5 TB of
+RAM). The work is aimed at hosts where intermediate traffic is not free, so
+bytes written and read are reported alongside wall time. Unless stated
+otherwise, measurements are 150k Salmonella at k = 31, t16, order-alternated.
+Output was checked with `cuttlefish compare` and, when colored, with the
+colour digest of 10,000 genomes.
+
+### What was changed
+
+| change | stream | effect |
+| --- | --- | --- |
+| pack each fragment once, extract every label from the packed words | partition staging | label packing no longer repeats per weak super-k-mer |
+| 4096-slot per-bucket label cache: colored records reference a cached label; uncolored exact duplicates are dropped at cutoff 1 | `.wskc` | 10k colored buckets 19.74 -> 11.39 GB (with the compact block encoding) |
+| local contraction reuses cached-label slots in the build pass and replays the colour pass from a 64 MiB per-thread occurrence log instead of reading the bucket again | bucket reads | 150k colored reads 879 -> 631 GB, local 512.7 -> 486.0 s |
+| intermediate unitig labels stored 2 bits per base | `.labels`, `.mlabel`, retained tails | |
+| compact colored block encoding: source runs plus a u16 code per record (cache reference or literal) | `.wskc` | 150k colored 15:13 -> 13:54, writes 489 -> 361 GB, reads 631 -> 503 GB |
+| edge path-info records 24 -> 16 bytes | P_e `.scb` | 10k 7.04 -> 4.69 GB |
+| vertex path-info records 24 -> 20 bytes at k <= 31 | `.pv` | 10k 9.87 -> 8.25 GB |
+| uncolored coordinate shards drop the unused colour fields, 24 -> 18 bytes | `.mcoord` | with the two rows above: 150k uncolored writes 224 -> 204 GB, reads 414 -> 394 GB |
+| discontinuity edges 25 -> 24 bytes at k <= 31 (flags folded into spare bits) | edge matrix | 10k 12.75 -> 12.24 GB |
+
+Against 3.0.3, the first six rows took 150k colored from 19:00 to 15:10 and
+uncolored from 12:26 to 8:00. Writes fell from 614 to 489 GB colored and from
+470 to 224 GB uncolored. Colored peak RSS rose from 8.9 to 9.3 GB, and the
+occurrence log added 0.3 GB more. Two bugs were caught before commit, each
+now covered by a test: a second `.pv` writer still emitting 24-byte records,
+and a stale padding-byte offset after the P_e change.
+
+### The minimizer scan, after simd-minimizers
+
+With the I/O cut, partition was about 60% of uncolored wall time. The
+existing `CF3_RS_SCAN_ONLY` and `CF3_RS_PARSE_ONLY` diagnostics split it at
+10k: parsing 3.7 s, parsing plus the minimizer scan 13.2 s (150.8
+worker-seconds, about 4.3 ns per base per thread), full partition 19.6 s.
+The scalar scan hashes both strands of every l-mer with 64-bit wyhash, whose
+128-bit products do not vectorize.
+
+A standalone benchmark on 0.85 Gbp of real fragments, one core, compared the
+scan with simd-minimizers 3.0 (Groot Koerkamp and Martayan, SEA 2025,
+doi:10.4230/LIPIcs.SEA.2025.20):
+
+| ns per base | native | x86-64-v3 | baseline x86-64 |
+| --- | ---: | ---: | ---: |
+| current scan | 3.79 | 3.75 | 3.91 |
+| simd-minimizers, positions only | 0.94 | 0.97 | 4.29 (`scalar` feature) |
+| simd-minimizers + super-k-mer boundaries | 1.72 | 1.54 | 11.2 |
+
+The crate could not be used as it is. It compares only the upper 16 bits of
+each hash and breaks ties by position, and positions tie-break differently on
+the two strands:
+
+| graph id taken from | windows whose reverse complement disagrees | max / mean bucket | CV |
+| --- | ---: | ---: | ---: |
+| the compared 16 bits | 0 of 188 M | 4.67 | 0.84 |
+| those 16 bits, mixed | 0 of 188 M | 10.7 | 1.28 |
+| the full 32-bit hash | 28,395 of 188 M | 2.55 | 0.17 |
+| current scan | -- | 2.62 | 0.17 |
+
+A strand disagreement sends a k-mer and its reverse complement to different
+subgraphs, which breaks the graph. Using only the compared bits keeps the
+strands consistent, but the minimum of a window concentrates in few values,
+so buckets become badly unbalanced. Baseline x86-64 builds also refuse to
+compile without the crate's slower `scalar` feature.
+
+`window_min` takes the crate's ideas and not its tie rule:
+
+- eight contiguous chunks scanned in AVX2 lanes, reading bases with gathers
+- the two-stacks sliding minimum
+- a 32-bit hash that vectorizes: the murmur3 finalizer of the seeded canonical
+  l-mer
+
+Whole hashes are compared. The hash is a bijection on l-mers of at most 16
+bases, so equal hashes mean equal l-mers, and the window minimum, from which
+the subgraph is taken, is strand-invariant by construction. The AVX2 path is
+chosen at run time and is tested equal to the scalar path, so output does not
+depend on the CPU. Longer minimizers keep the wyhash scan.
+
+The first version left out the seed, and the finalizer maps 0 to 0. The
+poly-A l-mer then became the minimum of every window holding it, and the
+largest 10k bucket grew from 77K to 174K records. Seeding brought it to 125K.
+
+| 150k, node 1 | partition | local | wall | peak RSS | largest bucket |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| uncolored t16, before | 283.5 / 284.1 s | 108.3 / 109.8 s | 7:46.05 / 7:47.39 | 7.3 GB | 786 K |
+| uncolored t16, after | 207.4 / 207.4 s | 109.4 / 109.3 s | 6:30.56 / 6:30.29 | 7.3 GB | 2.35 M |
+| colored t16, before | 286.5 s | 409.8 s | 12:54.52 | 9.4 GB | 6.67 M |
+| colored t16, after | 207.4 s | 404.7 s | 11:29.88 | 9.4 GB | 9.81 M |
+| uncolored t64, before | 102.4 / 103.0 s | 42.9* / 36.3 s | 3:14.14* / 3:06.27 | 11.2 GB | 787 K |
+| uncolored t64, after | 78.8 / 79.1 s | 36.7 / 36.6 s | 2:43.21 / 2:43.45 | 11.2 GB | 2.35 M |
+| colored t64, before | 101.6 s | 138.0 s | 4:47.05 | 19.6 GB | 6.67 M |
+| colored t64, after | 77.0 s | 136.9 s | 4:21.47 | 19.5 GB | 9.81 M |
+
+All runs produced 252,487,658 unitigs and 16,417,233,428 bases, and
+`cuttlefish compare` matched the uncolored outputs unitig for unitig. The
+largest bucket grows 1.5-3x, but local contraction time and peak RSS did not
+move at t16. That also held at t64. Each worker's vertex map is sized to the largest
+bucket it has seen, so this is where a larger bucket would have cost memory
+or load balance, and neither local contraction time nor peak RSS moved. (The
+starred t64 run was the first of its sequence and ran cold; its partner, run
+last, shows the true local time.)
+
+### A colored bug the new partition exposed
+
+With the seeded hash, the k = 33 and k = 63 colored compat fixtures (three
+short sources, minimizer length 3) fell into a single subgraph. The colored
+build then wrote an empty FASTA. Without discontinuity edges the external
+expansion writes no path-info files. Collation mapped range buckets only
+from those files, fell through to a branch for in-memory records that the
+external path never produces, and declared the direct local unitigs complete
+without emitting one. The old code fails the same way when forced to one
+subgraph. Uncolored builds escape it because their edge-free unitigs leave
+through the trivial FASTA. Collation now maps every range bucket from the
+(possibly empty) manifest, and `colored_single_subgraph_emits_every_unitig`
+covers it.
+
+### Measured and rejected
+
+- **Direct stores for partition staging.** 93% of `append_labelled_record`'s
+  samples sat on one load. The record was built in a stack array with
+  unaligned 8-byte stores and copied out with 16-byte loads, which cannot be
+  store-forwarded. Writing straight into the bucket buffer cut the function
+  to 0.8% of samples, but its caller rose from 9.3% to 16.0%, and scan+pack
+  went from 272.5 to 279.0 worker-seconds. The real cost is write-allocate
+  misses on the 128 worker-atlas buffers, which the stall only exposed.
+  Reverted.
+- **Smaller worker-atlas chunks.** 32 KiB matched 64 KiB, and 16 and 8 KiB
+  were slower.
+
+### Host conditions
+
+During this work another tenant's process grew to about 1 TB, most of it on
+NUMA node 0, leaving that node 1 GB free and 20 GB of page cache. Identical
+binaries pinned there slowed from 8:03 to 9:29 within one sequence. The
+comparisons above were run in alternating order within one window, and the
+minimizer-scan measurements were run on node 1. Absolute times in the last
+table are therefore not comparable with the earlier node-0 numbers.

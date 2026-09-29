@@ -12932,6 +12932,15 @@ fn contract_local_subgraphs_into_external_inputs<const K: usize, C: ColorSlot>(
         build_elapsed.as_secs_f64(),
         contract_elapsed.as_secs_f64()
     );
+    let (replayed, reread) = (
+        crate::subgraph::COLOR_PASS_REPLAYED.load(Ordering::Relaxed),
+        crate::subgraph::COLOR_PASS_REREAD.load(Ordering::Relaxed),
+    );
+    if replayed + reread != 0 {
+        eprintln!(
+            "cuttlefish: color pass: {replayed} subgraph(s) replayed from the build pass, {reread} read their bucket again"
+        );
+    }
     if workers > 1 {
         eprintln!(
             "cuttlefish: local sink worker time: label/unitig I/O {:.3}s, color resolve/write {:.3}s, edge/range emission {:.3}s",

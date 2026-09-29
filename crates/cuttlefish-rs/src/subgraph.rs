@@ -1150,12 +1150,17 @@ impl<const K: usize, C: ColorSlot> LocalSubgraph<K, C> {
         // Diagnostic: `CF3_RS_DECODE_ONLY` reads and decodes bucket records
         // without inserting vertices, separating decode cost from table cost.
         let decode_only = decode_only_diagnostic();
-        reader.try_for_each_borrowed_packed_record(|record| {
-            if decode_only {
-                std::hint::black_box(record.words.first());
-                return Ok(());
-            }
-            subgraph.add_borrowed_packed_record(record)
+        OCCURRENCE_LOG.with_borrow_mut(|log| {
+            log.start(graph_id, colored);
+            log.start_entry();
+            reader.try_for_each_borrowed_packed_record(|record| {
+                if decode_only {
+                    std::hint::black_box(record.words.first());
+                    return Ok(());
+                }
+                log.push(&record);
+                subgraph.add_borrowed_packed_record(record)
+            })
         })?;
         for entry in &entries[1..] {
             BUILD_SLOTS.with_borrow_mut(BuildSlotCache::next_epoch);
@@ -1175,12 +1180,16 @@ impl<const K: usize, C: ColorSlot> LocalSubgraph<K, C> {
             if reader.header().colored != subgraph.colored {
                 return Err(LocalSubgraphError::MalformedRecord);
             }
-            reader.try_for_each_borrowed_packed_record(|record| {
-                if decode_only {
-                    std::hint::black_box(record.words.first());
-                    return Ok(());
-                }
-                subgraph.add_borrowed_packed_record(record)
+            OCCURRENCE_LOG.with_borrow_mut(|log| {
+                log.start_entry();
+                reader.try_for_each_borrowed_packed_record(|record| {
+                    if decode_only {
+                        std::hint::black_box(record.words.first());
+                        return Ok(());
+                    }
+                    log.push(&record);
+                    subgraph.add_borrowed_packed_record(record)
+                })
             })?;
         }
 
@@ -1399,22 +1408,39 @@ impl<const K: usize, C: ColorSlot> LocalSubgraph<K, C> {
         } else {
             entries
         };
-        WANTED_SLOTS.with_borrow_mut(|slots| {
-            for entry in entries {
-                // Each bucket file replays its own label cache from empty.
-                slots.next_epoch();
-                let mut reader = store.reader(entry)?;
-                reader.try_for_each_borrowed_packed_record(|record| {
-                    collect_wanted_color_relations_cached::<K>(
-                        record,
+        let replayed = entries.is_empty()
+            || OCCURRENCE_LOG.with_borrow(|log| {
+                WANTED_SLOTS.with_borrow_mut(|slots| {
+                    log.replay::<K>(
+                        self.graph_id,
+                        entries.len(),
                         &wanted,
                         &mut source_sets,
                         slots,
                     )
-                })?;
-            }
-            Ok::<_, LocalSubgraphError>(())
-        })?;
+                })
+            })?;
+        if replayed {
+            COLOR_PASS_REPLAYED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        } else {
+            COLOR_PASS_REREAD.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            WANTED_SLOTS.with_borrow_mut(|slots| {
+                for entry in entries {
+                    // Each bucket file replays its own label cache from empty.
+                    slots.next_epoch();
+                    let mut reader = store.reader(entry)?;
+                    reader.try_for_each_borrowed_packed_record(|record| {
+                        collect_wanted_color_relations_cached::<K>(
+                            record,
+                            &wanted,
+                            &mut source_sets,
+                            slots,
+                        )
+                    })?;
+                }
+                Ok::<_, LocalSubgraphError>(())
+            })?;
+        }
         normalize_source_sets(&mut source_sets);
 
         Ok(PendingColoredData {
@@ -2264,6 +2290,180 @@ fn normalize_source_sets(source_sets: &mut [Vec<u32>]) {
             }
             words[word_index] = 0;
         }
+    }
+}
+
+/// What the color pass needs of each record, kept from the build pass so the
+/// pass need not read and decode the bucket a second time.
+///
+/// Records carry label-cache slots (see `LabelSlot`), so a reference is just
+/// its slot: the color pass replays the wanted classes recorded for that slot.
+/// Only literals keep their label words. Sources arrive grouped, so they are
+/// kept as runs. On 150k Salmonella assemblies about 93% of records are
+/// references, making the log roughly 3 bytes per record. A bucket whose log
+/// would exceed `OCCURRENCE_LOG_BYTES`, or any record without a slot, turns
+/// the log off for that subgraph and the color pass reads the bucket instead.
+#[derive(Default)]
+struct OccurrenceLog {
+    graph_id: usize,
+    valid: bool,
+    label_words: usize,
+    /// Index into `slots` where each bucket file of the subgraph starts; each
+    /// file's label cache starts empty.
+    entry_starts: Vec<usize>,
+    /// `(source, records)` runs, in record order.
+    runs: Vec<(u32, u32)>,
+    /// Per record: its cache slot, with `LOG_LITERAL` set for literals.
+    slots: Vec<u16>,
+    /// Label words of literals, `label_words` per literal.
+    words: Vec<u64>,
+    /// Label lengths of literals.
+    lens: Vec<u8>,
+}
+
+const LOG_LITERAL: u16 = 1 << 15;
+
+/// Subgraphs whose color pass ran from the occurrence log, and those that
+/// read their bucket again; reported with the local contraction summary.
+pub(crate) static COLOR_PASS_REPLAYED: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+pub(crate) static COLOR_PASS_REREAD: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+
+/// Log size past which the color pass reads the bucket again instead. Kept
+/// per worker thread, so this bounds the added memory per thread.
+const OCCURRENCE_LOG_BYTES: usize = 64 * 1024 * 1024;
+
+thread_local! {
+    static OCCURRENCE_LOG: std::cell::RefCell<OccurrenceLog> =
+        std::cell::RefCell::new(OccurrenceLog::default());
+}
+
+impl OccurrenceLog {
+    fn start(&mut self, graph_id: usize, colored: bool) {
+        self.graph_id = graph_id;
+        self.valid = colored;
+        self.label_words = 0;
+        self.clear();
+    }
+
+    fn clear(&mut self) {
+        self.entry_starts.clear();
+        self.runs.clear();
+        self.slots.clear();
+        self.words.clear();
+        self.lens.clear();
+    }
+
+    fn start_entry(&mut self) {
+        if self.valid {
+            self.entry_starts.push(self.slots.len());
+        }
+    }
+
+    fn bytes(&self) -> usize {
+        self.runs.len() * 8 + self.slots.len() * 2 + self.words.len() * 8 + self.lens.len()
+    }
+
+    fn abandon(&mut self) {
+        self.valid = false;
+        self.clear();
+        // Do not keep a huge bucket's capacity for the rest of the run.
+        if self.slots.capacity() * 2 + self.words.capacity() * 8 > OCCURRENCE_LOG_BYTES {
+            *self = Self::default();
+        }
+    }
+
+    #[inline]
+    fn push(&mut self, record: &BorrowedBucketPackedRecord<'_>) {
+        if !self.valid {
+            return;
+        }
+        let (Some(label_slot), Some(source)) = (record.label_slot, record.source_id) else {
+            self.abandon();
+            return;
+        };
+        if label_slot.slot >= LOG_LITERAL
+            || (self.label_words != 0 && self.label_words != record.words.len())
+            || record.len > usize::from(u8::MAX)
+        {
+            self.abandon();
+            return;
+        }
+        self.label_words = record.words.len();
+        match self.runs.last_mut() {
+            Some((last, count)) if *last == source && *count < u32::MAX => *count += 1,
+            _ => self.runs.push((source, 1)),
+        }
+        if label_slot.reference {
+            self.slots.push(label_slot.slot);
+        } else {
+            self.slots.push(label_slot.slot | LOG_LITERAL);
+            self.words.extend_from_slice(record.words);
+            self.lens.push(record.len as u8);
+        }
+        if (self.slots.len() & 0xffff) == 0 && self.bytes() > OCCURRENCE_LOG_BYTES {
+            self.abandon();
+        }
+    }
+
+    /// Runs the color pass from the log. Returns `false`, having done
+    /// nothing, when the log does not cover this subgraph.
+    fn replay<const K: usize>(
+        &self,
+        graph_id: usize,
+        entries: usize,
+        wanted: &WantedColorMap<K>,
+        source_sets: &mut [Vec<u32>],
+        slots: &mut WantedSlotCache,
+    ) -> Result<bool, LocalSubgraphError> {
+        if !self.valid || self.graph_id != graph_id || self.entry_starts.len() != entries {
+            return Ok(false);
+        }
+        let label_words = self.label_words;
+        let mut runs = self.runs.iter().copied();
+        let (mut source, mut remaining) = runs.next().unwrap_or((0, 0));
+        let mut literal = 0usize;
+        let mut next_entry = 0usize;
+        for (index, &packed) in self.slots.iter().enumerate() {
+            while next_entry < self.entry_starts.len() && self.entry_starts[next_entry] == index {
+                slots.next_epoch();
+                next_entry += 1;
+            }
+            if remaining == 0 {
+                (source, remaining) = runs
+                    .next()
+                    .ok_or_else(|| LocalSubgraphError::MalformedRecord)?;
+            }
+            remaining -= 1;
+            let reference = packed & LOG_LITERAL == 0;
+            let (words, len): (&[u64], usize) = if reference {
+                (&[], 0)
+            } else {
+                let at = literal * label_words;
+                let len = usize::from(self.lens[literal]);
+                literal += 1;
+                (&self.words[at..at + label_words], len)
+            };
+            collect_wanted_color_relations_cached::<K>(
+                BorrowedBucketPackedRecord {
+                    graph_id,
+                    len,
+                    source_id: Some(source),
+                    left_discontinuous: false,
+                    right_discontinuous: false,
+                    words,
+                    label_slot: Some(LabelSlot {
+                        slot: packed & !LOG_LITERAL,
+                        reference,
+                    }),
+                },
+                wanted,
+                source_sets,
+                slots,
+            )?;
+        }
+        Ok(true)
     }
 }
 

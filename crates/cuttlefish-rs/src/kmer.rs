@@ -30,7 +30,7 @@ const fn ascii_quad_table() -> [u32; 256] {
     table
 }
 
-const ASCII_QUADS: [u32; 256] = ascii_quad_table();
+pub(crate) const ASCII_QUADS: [u32; 256] = ascii_quad_table();
 
 /// A two-bit packed DNA k-mer of compile-time length `K`.
 ///

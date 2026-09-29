@@ -139,7 +139,11 @@ fn tail(rank: u64, label: &[u8], colors: &[UnitigColor]) -> PendingMaterializedB
             if colors.is_empty() { u32::MAX } else { 0 },
             colors.len() as u32,
         )],
-        labels: label.to_vec(),
+        labels: {
+            let mut packed = Vec::new();
+            crate::dna::pack_2bit_extend(&mut packed, label);
+            packed
+        },
         colors: colors.to_vec(),
     }
 }
@@ -191,7 +195,8 @@ fn materialized_failed_tail_keeps_input_files() {
 fn materialized_writer_checks_limit_before_appending_labels() {
     let directory = TestDirectory::new();
     let mut writer = MaterializedStitchedCoordShardWriter::create(&directory.0, 0, 7).unwrap();
-    writer.label_bytes = (1 << 46) - 2;
+    // A 6-base label packs to 2 bytes, one more than fits.
+    writer.label_bytes = (1 << 46) - 1;
     assert!(writer.write_record(&coord(1), b"AACCGG").is_err());
     assert!(
         writer
@@ -251,14 +256,15 @@ fn materialized_large_bucket_round_trip() {
             &[tail(4, b"ACCGAT", &colors(45))],
         )
         .unwrap();
-        assert_eq!(loaded.labels.len() as u64, base + 24);
+        // Four 6-base labels, 2 packed bytes each.
+        assert_eq!(loaded.labels.len() as u64, base + 8);
         assert_eq!(
             loaded
                 .records
                 .iter()
                 .map(|r| r.label_offset())
                 .collect::<Vec<_>>(),
-            vec![base, base + 6, base + 12, base + 18]
+            vec![base, base + 2, base + 4, base + 6]
         );
         let unitigs = reduce_materialized_stitched_coord_bucket::<3>(
             &mut loaded.records,

@@ -152,9 +152,12 @@ struct LocalUnitigBucketWriter {
     unitig_path: PathBuf,
     label_path: PathBuf,
     unitigs: BufWriter<File>,
+    /// Labels packed 2 bits per base (see `pack_2bit_extend`), each starting
+    /// on a byte boundary, in unitig order.
     labels: BufWriter<File>,
     colored: bool,
     unitig_count: usize,
+    packed: Vec<u8>,
 }
 
 impl LocalUnitigBucketWriter {
@@ -179,6 +182,7 @@ impl LocalUnitigBucketWriter {
             labels: BufWriter::with_capacity(4 * 1024 * 1024, label_file),
             colored,
             unitig_count: 0,
+            packed: Vec::new(),
         })
     }
 
@@ -195,8 +199,19 @@ impl LocalUnitigBucketWriter {
             return Err(DiscontinuityInputError::MissingColorRuns);
         }
         let base = self.unitig_count;
+        // Labels are read back once, sequentially, by the map phase; packing
+        // them quarters this stream. Each unitig's label is packed on its own
+        // so the reader can take `packed_2bit_len(label_len)` bytes per unitig.
+        self.packed.clear();
+        for unitig in unitigs {
+            let start = unitig.label_start as usize;
+            crate::dna::pack_2bit_extend(
+                &mut self.packed,
+                &labels[start..start + unitig.label_len as usize],
+            );
+        }
         self.labels
-            .write_all(labels)
+            .write_all(&self.packed)
             .map_err(|source| DiscontinuityInputError::Io {
                 path: self.label_path.clone(),
                 source,
@@ -6058,7 +6073,7 @@ struct MaterializedStitchedCoordBucketEntry {
 const STITCH_COORD_MAGIC: &[u8; 8] = b"CF3SCB2\0";
 // V3 stores the high label-offset bits in flags. Reject V2: release writers
 // could already have truncated offsets, even when record lengths look valid.
-const MATERIALIZED_STITCH_COORD_MAGIC: &[u8; 8] = b"CF3MCB3\0";
+const MATERIALIZED_STITCH_COORD_MAGIC: &[u8; 8] = b"CF3MCB4\0";
 const STITCH_COORD_HEADER_LEN: u64 = 32;
 const STITCH_PATH_INFO_RECORD_LEN: u64 = 24;
 const STITCH_COORD_RECORD_LEN: u64 = 24;
@@ -7367,6 +7382,7 @@ where
     let mut unitig_input = BufReader::with_capacity(1024 * 1024, unitig_file);
     let mut label_input = BufReader::with_capacity(4 * 1024 * 1024, label_file);
     let mut label = Vec::new();
+    let mut packed = Vec::new();
     let mut colors = Vec::new();
     let mut discard = vec![0u8; 64 * 1024];
 
@@ -7383,13 +7399,13 @@ where
             })?;
         }
         if let Some(record) = dense_record.to_record(unitig_index) {
-            label.resize(unitig.label_len as usize, 0);
-            label_input
-                .read_exact(&mut label)
-                .map_err(|source| SerialCollationError::Io {
-                    path: bucket.label_path.clone(),
-                    source,
-                })?;
+            read_packed_label(
+                &mut label_input,
+                &bucket.label_path,
+                &mut packed,
+                &mut label,
+                unitig.label_len as usize,
+            )?;
             let max_bucket = stitched_coord_bucket(record.path_id, max_unitig_bucket_mask);
             write_external_materialized_record(
                 writers,
@@ -7399,13 +7415,13 @@ where
                 has_colors.then_some(colors.as_slice()),
             )?;
         } else if unitig.left_exit().is_none() && unitig.right_exit().is_none() {
-            label.resize(unitig.label_len as usize, 0);
-            label_input
-                .read_exact(&mut label)
-                .map_err(|source| SerialCollationError::Io {
-                    path: bucket.label_path.clone(),
-                    source,
-                })?;
+            read_packed_label(
+                &mut label_input,
+                &bucket.label_path,
+                &mut packed,
+                &mut label,
+                unitig.label_len as usize,
+            )?;
             let reverse = reverse_complement_is_less(&label);
             if reverse {
                 let reversed_label = reverse_complement_label(&label);
@@ -7424,11 +7440,31 @@ where
                 &mut label_input,
                 &bucket.label_path,
                 &mut discard,
-                unitig.label_len as u64,
+                crate::dna::packed_2bit_len(unitig.label_len as usize) as u64,
             )?;
         }
     }
     let _ = inputs;
+    Ok(())
+}
+
+/// Reads one packed local-unitig label and unpacks it into `label`.
+fn read_packed_label(
+    input: &mut impl Read,
+    path: &Path,
+    packed: &mut Vec<u8>,
+    label: &mut Vec<u8>,
+    len: usize,
+) -> Result<(), SerialCollationError> {
+    packed.resize(crate::dna::packed_2bit_len(len), 0);
+    input
+        .read_exact(packed)
+        .map_err(|source| SerialCollationError::Io {
+            path: path.to_path_buf(),
+            source,
+        })?;
+    label.clear();
+    crate::dna::unpack_2bit_extend(label, packed, len);
     Ok(())
 }
 
@@ -8645,8 +8681,10 @@ impl<'a, 'b> SharedMaterializedBatch<'a, 'b> {
 
     #[inline]
     fn uncolored_bucket_ready(bucket: &PendingMaterializedBucket) -> bool {
+        // Labels are packed 4 bases per byte; the threshold keeps counting
+        // bases so a flush carries as many records as it did in ASCII.
         bucket.records.len() >= Self::FLUSH_BYTES / STITCH_COORD_RECORD_LEN as usize
-            && bucket.labels.len() >= Self::FLUSH_BYTES
+            && bucket.labels.len() * 4 >= Self::FLUSH_BYTES
     }
 
     /// A colored batch is written once any of its three streams fills.
@@ -8657,7 +8695,7 @@ impl<'a, 'b> SharedMaterializedBatch<'a, 'b> {
     #[inline]
     fn colored_bucket_ready(bucket: &PendingMaterializedBucket) -> bool {
         bucket.records.len() >= Self::FLUSH_BYTES / STITCH_COORD_RECORD_LEN as usize
-            || bucket.labels.len() >= Self::FLUSH_BYTES
+            || bucket.labels.len() * 4 >= Self::FLUSH_BYTES
             || bucket.colors.len() * std::mem::size_of::<UnitigColor>() >= Self::FLUSH_BYTES
     }
 }
@@ -8673,7 +8711,7 @@ impl MaterializedRecordSink for SharedMaterializedBatch<'_, '_> {
         let label_offset = u32::try_from(bucket.labels.len()).map_err(|_| {
             SerialCollationError::MalformedCoordBucket(self.shared.coord_dir.to_path_buf())
         })?;
-        bucket.labels.extend_from_slice(label);
+        crate::dna::pack_2bit_extend(&mut bucket.labels, label);
         bucket
             .records
             .push(LoadedMaterializedStitchedCoordRecord::new(
@@ -8708,7 +8746,7 @@ impl MaterializedRecordSink for SharedMaterializedBatch<'_, '_> {
             SerialCollationError::MalformedCoordBucket(self.shared.coord_dir.to_path_buf())
         })?;
         let color_start = bucket.colors.len() as u32;
-        bucket.labels.extend_from_slice(label);
+        crate::dna::pack_2bit_extend(&mut bucket.labels, label);
         bucket.colors.extend_from_slice(colors);
         bucket
             .records
@@ -8826,8 +8864,11 @@ struct MaterializedStitchedCoordShardWriter {
     color_out: Option<BufWriter<File>>,
     record_buffer: Vec<u8>,
     records: u64,
+    /// Bytes of packed labels written so far (`pack_2bit_extend`); record
+    /// offsets are byte offsets into the `.mlabel` stream.
     label_bytes: u64,
     color_runs: u64,
+    packed: Vec<u8>,
 }
 
 #[inline]
@@ -8879,6 +8920,7 @@ impl MaterializedStitchedCoordShardWriter {
             )),
             color_out: None,
             record_buffer: Vec::with_capacity(materialized_shard_stream_buffer()),
+            packed: Vec::new(),
             records: 0,
             label_bytes: 0,
             color_runs: 0,
@@ -8949,9 +8991,11 @@ impl MaterializedStitchedCoordShardWriter {
     ) -> Result<(), SerialCollationError> {
         let label_len = u32::try_from(label.len())
             .map_err(|_| SerialCollationError::MalformedCoordBucket(self.coord_path.clone()))?;
+        self.packed.clear();
+        crate::dna::pack_2bit_extend(&mut self.packed, label);
         let label_bytes = checked_materialized_label_bytes(
             self.label_bytes,
-            u64::from(label_len),
+            self.packed.len() as u64,
             &self.label_path,
         )?;
         self.record_buffer
@@ -8974,7 +9018,7 @@ impl MaterializedStitchedCoordShardWriter {
         self.label_out
             .as_mut()
             .expect("label writer is open")
-            .write_all(label)
+            .write_all(&self.packed)
             .map_err(|source| SerialCollationError::Io {
                 path: self.label_path.clone(),
                 source,
@@ -10108,7 +10152,10 @@ fn append_pending_materialized_bucket(
         .map_err(|_| SerialCollationError::MalformedCoordBucket(path.to_path_buf()))?;
     shard.records.reserve(tail.records.len());
     for pending in &tail.records {
-        if pending.label_offset() + u64::from(pending.label_len) > tail.labels.len() as u64 {
+        if pending.label_offset()
+            + crate::dna::packed_2bit_len(usize::from(pending.label_len)) as u64
+            > tail.labels.len() as u64
+        {
             return Err(SerialCollationError::MalformedCoordBucket(
                 path.to_path_buf(),
             ));
@@ -10304,7 +10351,9 @@ fn append_materialized_stitched_coord_bucket_file(
     }
 
     for record in &mut bucket.records[record_base..] {
-        if record.label_offset() + u64::from(record.label_len) > entry.label_bytes {
+        if record.label_offset() + crate::dna::packed_2bit_len(usize::from(record.label_len)) as u64
+            > entry.label_bytes
+        {
             return Err(SerialCollationError::MalformedCoordBucket(
                 entry.label_path.clone(),
             ));
@@ -10381,6 +10430,8 @@ fn reduce_sorted_materialized_stitched_coord_bucket_with<const K: usize, F>(
         return;
     }
     let mut label = Vec::new();
+    // One unpacked path member at a time; members are stored packed.
+    let mut member = Vec::new();
     let mut colors = Vec::new();
     let mut start = 0;
     while start < records.len() {
@@ -10397,8 +10448,15 @@ fn reduce_sorted_materialized_stitched_coord_bucket_with<const K: usize, F>(
         {
             for (idx, record) in records[start..end].iter().enumerate() {
                 let label_start = record.label_offset() as usize;
-                let label_end = label_start + record.label_len as usize;
-                let unitig_label = &labels[label_start..label_end];
+                let label_end =
+                    label_start + crate::dna::packed_2bit_len(record.label_len as usize);
+                member.clear();
+                crate::dna::unpack_2bit_extend(
+                    &mut member,
+                    &labels[label_start..label_end],
+                    record.label_len as usize,
+                );
+                let unitig_label = member.as_slice();
                 let reverse = if idx == 0 {
                     record.reverse()
                 } else {
@@ -10416,8 +10474,15 @@ fn reduce_sorted_materialized_stitched_coord_bucket_with<const K: usize, F>(
         } else {
             for record in &records[start..end] {
                 let label_start = record.label_offset() as usize;
-                let label_end = label_start + record.label_len as usize;
-                let unitig_label = &labels[label_start..label_end];
+                let label_end =
+                    label_start + crate::dna::packed_2bit_len(record.label_len as usize);
+                member.clear();
+                crate::dna::unpack_2bit_extend(
+                    &mut member,
+                    &labels[label_start..label_end],
+                    record.label_len as usize,
+                );
+                let unitig_label = member.as_slice();
                 append_materialized_colors::<K>(
                     &mut colors,
                     label.len(),
@@ -14265,9 +14330,13 @@ mod materialized_record_tests {
         append_materialized_stitched_coord_bucket_file(&second, &mut bucket).unwrap();
 
         assert_eq!(bucket.records.len(), 2);
-        assert_eq!(bucket.labels, b"ACGTTTAA");
+        // Labels are stored packed, 4 bases per byte.
+        let mut expected_labels = Vec::new();
+        crate::dna::pack_2bit_extend(&mut expected_labels, b"ACGT");
+        crate::dna::pack_2bit_extend(&mut expected_labels, b"TTAA");
+        assert_eq!(bucket.labels, expected_labels);
         assert_eq!(bucket.records[0].label_offset(), 0);
-        assert_eq!(bucket.records[1].label_offset(), 4);
+        assert_eq!(bucket.records[1].label_offset(), 1);
         assert_eq!(bucket.records[0].color_start, 0);
         assert_eq!(bucket.records[1].color_start, 1);
         assert_eq!(bucket.records[0].color_count(), 1);

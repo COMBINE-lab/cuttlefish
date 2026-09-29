@@ -93,9 +93,15 @@ fn colored_flush_bytes() -> usize {
 /// Slots in each bucket's label cache, as a power of two; see [`LabelCache`].
 const LABEL_CACHE_BITS: u8 = 12;
 
-/// Marks a colored record whose label is a slot in the bucket's label cache
-/// rather than inline. Source ids occupy bits 10-30, so bit 31 is free.
-const LABEL_REF_BIT: u32 = 1 << 31;
+/// In a compact colored block's record codes: the record is a reference to
+/// its bucket's label cache, with the slot in the low 12 bits and the
+/// discontinuity flags in bits 12-13. Without it, the code is a literal's
+/// length (bits 0-7) and flags (bits 8-9), and its label follows in the label
+/// stream. See `encode_compact_colored_block`.
+const LABEL_CODE_REF: u16 = 1 << 15;
+
+/// Largest label cache a compact colored block can address.
+const MAX_LABEL_CACHE_BITS: u8 = 12;
 
 /// The cache size above, overridable for measurement; 0 disables the cache.
 fn label_cache_bits() -> u8 {
@@ -104,7 +110,7 @@ fn label_cache_bits() -> u8 {
         std::env::var("CF3_RS_LABEL_CACHE_BITS")
             .ok()
             .and_then(|value| value.parse::<u8>().ok())
-            .filter(|bits| *bits <= 16)
+            .filter(|bits| *bits <= MAX_LABEL_CACHE_BITS)
             .unwrap_or(LABEL_CACHE_BITS)
     })
 }
@@ -187,41 +193,64 @@ fn label_words_from_le(bytes: &[u8], words: &mut [u64]) {
     }
 }
 
-/// Rewrites one colored block's label stream against the bucket's cache:
-/// labels the cache already holds become their 2-byte slot, and their
-/// attributes gain [`LABEL_REF_BIT`]. Returns the number of references.
-fn encode_colored_label_refs(
+/// Encodes one colored block compactly against the bucket's label cache.
+///
+/// Records arrive grouped by source, and a cached label already fixes its
+/// length, so a block is written as two streams:
+///
+/// - codes: the `(source, records)` run count (u32), the runs (two u32
+///   each), then one u16 per record: [`LABEL_CODE_REF`] | flags << 12 | slot
+///   for a label the cache holds, flags << 8 | length for a literal;
+/// - labels: the label words of literals only.
+///
+/// A reference therefore costs 2 bytes before compression instead of a
+/// 4-byte attribute plus its label, and consecutive genomes, whose records
+/// follow nearly the same sequence of cached labels, leave LZ4 long matches.
+/// Returns the number of references.
+fn encode_compact_colored_block(
     cache: &mut LabelCache,
     attrs: &[u8],
     labels: &[u8],
-    out_attrs: &mut Vec<u8>,
+    out_codes: &mut Vec<u8>,
     out_labels: &mut Vec<u8>,
 ) -> u64 {
     let label_words = cache.label_words;
     let label_bytes = label_words * 8;
-    out_attrs.clear();
+    let attrs = attrs.as_chunks::<4>().0;
+    out_codes.clear();
     out_labels.clear();
-    out_attrs.reserve(attrs.len());
-    out_labels.reserve(labels.len());
+    out_codes.extend_from_slice(&0u32.to_le_bytes());
+    let mut runs = 0u32;
+    let mut at = 0usize;
+    while at < attrs.len() {
+        let source = u32::from_le_bytes(attrs[at]) >> 10 & MAX_SOURCE_ID;
+        let mut end = at + 1;
+        while end < attrs.len() && u32::from_le_bytes(attrs[end]) >> 10 & MAX_SOURCE_ID == source {
+            end += 1;
+        }
+        out_codes.extend_from_slice(&source.to_le_bytes());
+        out_codes.extend_from_slice(&((end - at) as u32).to_le_bytes());
+        runs += 1;
+        at = end;
+    }
+    out_codes[..4].copy_from_slice(&runs.to_le_bytes());
+    out_codes.reserve(attrs.len() * 2);
     let mut words = [0u64; 4];
     let mut refs = 0u64;
-    for (attr_bytes, label) in attrs
-        .as_chunks::<4>()
-        .0
-        .iter()
-        .zip(labels.chunks_exact(label_bytes))
-    {
-        let mut attr = u32::from_le_bytes(*attr_bytes);
+    for (attr, label) in attrs.iter().zip(labels.chunks_exact(label_bytes)) {
+        let attr = u32::from_le_bytes(*attr);
+        let len = (attr & 0xff) as u16;
+        let flags = (attr >> 8 & 0b11) as u16;
         label_words_from_le(label, &mut words[..label_words]);
-        let (slot, hit) = cache.lookup_or_store((attr & 0xff) as u16, &words[..label_words]);
-        if hit {
-            attr |= LABEL_REF_BIT;
-            out_labels.extend_from_slice(&(slot as u16).to_le_bytes());
+        let (slot, hit) = cache.lookup_or_store(len, &words[..label_words]);
+        let code = if hit {
             refs += 1;
+            LABEL_CODE_REF | flags << 12 | slot as u16
         } else {
             out_labels.extend_from_slice(label);
-        }
-        out_attrs.extend_from_slice(&attr.to_le_bytes());
+            flags << 8 | len
+        };
+        out_codes.extend_from_slice(&code.to_le_bytes());
     }
     refs
 }
@@ -1498,6 +1527,12 @@ impl BucketReader {
             self.block_record = 0;
             return Ok(());
         }
+        if self.header.label_ref_bits != 0 {
+            self.decode_compact_colored_block(records, attr_bytes)?;
+            self.block_records = records;
+            self.block_record = 0;
+            return Ok(());
+        }
         self.block_attrs.resize(records * fixed_len, 0);
         self.block_labels
             .resize(records * self.header.label_words * 8, 0);
@@ -1509,91 +1544,121 @@ impl BucketReader {
         if decoded_attrs != self.block_attrs.len() {
             return Err(BucketError::MalformedRecord);
         }
-        if self.header.label_ref_bits != 0 {
-            self.expand_label_refs(records, attr_bytes)?;
-        } else {
-            let decoded_labels = lz4_flex::block::decompress_into(
-                &self.compressed_block[attr_bytes..],
-                &mut self.block_labels,
-            )
-            .map_err(|_| BucketError::MalformedRecord)?;
-            if decoded_labels != self.block_labels.len() {
-                return Err(BucketError::MalformedRecord);
-            }
+        let decoded_labels = lz4_flex::block::decompress_into(
+            &self.compressed_block[attr_bytes..],
+            &mut self.block_labels,
+        )
+        .map_err(|_| BucketError::MalformedRecord)?;
+        if decoded_labels != self.block_labels.len() {
+            return Err(BucketError::MalformedRecord);
         }
         self.block_records = records;
         self.block_record = 0;
         Ok(())
     }
 
-    /// Decodes a label stream that may hold cache references and expands it
-    /// into `block_labels`, replaying the writer's cache so every reference
-    /// resolves to the label the writer saw in that slot.
-    fn expand_label_refs(&mut self, records: usize, attr_bytes: usize) -> Result<(), BucketError> {
+    /// Decodes a block written by `encode_compact_colored_block` into the
+    /// usual per-record attributes and full labels, replaying the writer's
+    /// label cache so every reference resolves to the label the writer saw in
+    /// that slot, and records each record's slot in `block_slots`.
+    fn decode_compact_colored_block(
+        &mut self,
+        records: usize,
+        codes_bytes: usize,
+    ) -> Result<(), BucketError> {
         let label_words = self.header.label_words;
         let label_bytes = label_words * 8;
-        let refs = self
-            .block_attrs
-            .as_chunks::<4>()
-            .0
-            .iter()
-            .filter(|attr| u32::from_le_bytes(**attr) & LABEL_REF_BIT != 0)
-            .count();
-        self.block_label_refs
-            .resize(refs * 2 + (records - refs) * label_bytes, 0);
+        // At most one run per record.
+        self.block_label_refs.resize(4 + 10 * records, 0);
         let decoded = lz4_flex::block::decompress_into(
-            &self.compressed_block[attr_bytes..],
+            &self.compressed_block[..codes_bytes],
             &mut self.block_label_refs,
         )
         .map_err(|_| BucketError::MalformedRecord)?;
-        if decoded != self.block_label_refs.len() {
+        let codes_stream = &self.block_label_refs[..decoded];
+        if codes_stream.len() < 4 {
+            return Err(BucketError::MalformedRecord);
+        }
+        let runs = u32::from_le_bytes(codes_stream[..4].try_into().unwrap()) as usize;
+        if runs > records || codes_stream.len() != 4 + 8 * runs + 2 * records {
+            return Err(BucketError::MalformedRecord);
+        }
+        let (run_bytes, code_bytes) = codes_stream[4..].split_at(8 * runs);
+        let codes = code_bytes.as_chunks::<2>().0;
+        let literals = codes
+            .iter()
+            .filter(|code| u16::from_le_bytes(**code) & LABEL_CODE_REF == 0)
+            .count();
+        self.block_labels.resize(records * label_bytes, 0);
+        // Literal labels decode into `block_interleaved`, which split colored
+        // blocks otherwise never use.
+        self.block_interleaved.resize(literals * label_bytes, 0);
+        let decoded_labels = lz4_flex::block::decompress_into(
+            &self.compressed_block[codes_bytes..],
+            &mut self.block_interleaved,
+        )
+        .map_err(|_| BucketError::MalformedRecord)?;
+        if decoded_labels != self.block_interleaved.len() {
             return Err(BucketError::MalformedRecord);
         }
         let bits = self.header.label_ref_bits;
         let cache = self
             .label_cache
             .get_or_insert_with(|| LabelCache::new(bits, label_words));
-        let mut words = [0u64; 4];
-        let mut at = 0usize;
+        self.block_attrs.clear();
+        self.block_attrs.reserve(records * 4);
         self.block_slots.clear();
         self.block_slots.reserve(records);
-        for (idx, attr_bytes) in self
-            .block_attrs
-            .as_chunks_mut::<4>()
-            .0
-            .iter_mut()
-            .enumerate()
-        {
-            let attr = u32::from_le_bytes(*attr_bytes);
-            let tag = (attr & 0xff) as u16;
+        let mut runs_iter = run_bytes.as_chunks::<8>().0.iter().map(|run| {
+            (
+                u32::from_le_bytes(run[..4].try_into().unwrap()),
+                u32::from_le_bytes(run[4..].try_into().unwrap()),
+            )
+        });
+        let (mut source, mut remaining) = (0u32, 0u32);
+        let mut literal = 0usize;
+        let mut words = [0u64; 4];
+        for (idx, code) in codes.iter().enumerate() {
+            if remaining == 0 {
+                (source, remaining) = runs_iter.next().ok_or(BucketError::MalformedRecord)?;
+                if remaining == 0 || source > MAX_SOURCE_ID {
+                    return Err(BucketError::MalformedRecord);
+                }
+            }
+            remaining -= 1;
+            let code = u16::from_le_bytes(*code);
             let out = &mut self.block_labels[idx * label_bytes..(idx + 1) * label_bytes];
-            if attr & LABEL_REF_BIT != 0 {
-                let slot = usize::from(u16::from_le_bytes([
-                    self.block_label_refs[at],
-                    self.block_label_refs[at + 1],
-                ]));
-                at += 2;
+            let (len, flags) = if code & LABEL_CODE_REF != 0 {
+                let slot = usize::from(code & 0x0fff);
                 if slot >= cache.tags.len() {
                     return Err(BucketError::MalformedRecord);
                 }
-                let (held_tag, held) = cache.entry(slot);
-                if held_tag != tag {
+                let (tag, held) = cache.entry(slot);
+                if tag == 0 {
                     return Err(BucketError::MalformedRecord);
                 }
                 for (chunk, word) in out.as_chunks_mut::<8>().0.iter_mut().zip(held) {
                     chunk.copy_from_slice(&word.to_le_bytes());
                 }
-                attr_bytes.copy_from_slice(&(attr & !LABEL_REF_BIT).to_le_bytes());
                 self.block_slots.push(slot as u32 | 1 << 16);
+                (u32::from(tag), u32::from(code >> 12 & 0b11))
             } else {
-                let label = &self.block_label_refs[at..at + label_bytes];
-                at += label_bytes;
+                let len = code & 0xff;
+                let label =
+                    &self.block_interleaved[literal * label_bytes..(literal + 1) * label_bytes];
+                literal += 1;
                 out.copy_from_slice(label);
                 label_words_from_le(label, &mut words[..label_words]);
-                let slot = cache.slot(tag, &words[..label_words]);
-                cache.store(slot, tag, &words[..label_words]);
+                let slot = cache.slot(len, &words[..label_words]);
+                cache.store(slot, len, &words[..label_words]);
                 self.block_slots.push(slot as u32);
-            }
+                (u32::from(len), u32::from(code >> 8 & 0b11))
+            };
+            let attr = len | flags << 8 | source << 10;
+            self.block_attrs.extend_from_slice(&attr.to_le_bytes());
+        }
+        if remaining != 0 || runs_iter.next().is_some() {
+            return Err(BucketError::MalformedRecord);
         }
         Ok(())
     }
@@ -1612,7 +1677,7 @@ impl Iterator for BucketRecords {
     }
 }
 
-const CONTAINER_MANIFEST_MAGIC: &[u8; 8] = b"CF3WSKC1";
+const CONTAINER_MANIFEST_MAGIC: &[u8; 8] = b"CF3WSKC2";
 const CONTAINER_MANIFEST_NAME: &str = "manifest.bin";
 
 /// The parameters every bucket in a container directory shares.
@@ -1777,7 +1842,7 @@ pub fn read_container_manifest(
     // References exist only in split colored compressed blocks.
     if colored > 1
         || compression > 2
-        || label_ref_bits > 16
+        || label_ref_bits > MAX_LABEL_CACHE_BITS
         || (label_ref_bits != 0 && (colored != 1 || compression != 1))
     {
         return Err(BucketError::MalformedManifest(path.clone()));
@@ -3164,7 +3229,7 @@ impl SharedBucketAtlas {
                     .get_or_insert_with(|| LabelCache::new(label_cache_bits, label_words));
                 let mut attrs = std::mem::take(&mut scratch.ref_attrs);
                 let mut labels = std::mem::take(&mut scratch.ref_labels);
-                stats.label_refs += encode_colored_label_refs(
+                stats.label_refs += encode_compact_colored_block(
                     cache,
                     &file.buffer,
                     &file.labels,

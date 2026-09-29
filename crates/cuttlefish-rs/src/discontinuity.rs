@@ -6482,15 +6482,25 @@ const fn vertex_path_info_record_len<const K: usize>() -> usize {
     }
 }
 
-#[repr(C)]
+/// A `.pv` record at k <= 31: vertex, path id, and `rank << 2 | exit side |
+/// cycle << 1` in 32 bits. Packed to 20 bytes; fields are only ever copied
+/// out by value.
+#[repr(C, packed(4))]
 #[derive(Clone, Copy)]
 struct CompactVertexPathInfoRecord {
     vertex: u64,
     path_id: u64,
-    rank_and_flags: u64,
+    rank_and_flags: u32,
 }
 
-const _: () = assert!(std::mem::size_of::<CompactVertexPathInfoRecord>() == 24);
+const _: () = assert!(std::mem::size_of::<CompactVertexPathInfoRecord>() == 20);
+
+/// Packs a vertex path rank and its flags into the compact record's field.
+/// Ranks count unitigs along a path, far below the 2^30 this allows.
+#[inline]
+fn compact_rank_and_flags(rank: u64, flags: u64) -> u32 {
+    u32::try_from((rank << 2) | flags).expect("vertex path rank fits in 30 bits")
+}
 
 struct VertexPathInfoBucketWriters<const K: usize> {
     dir: PathBuf,
@@ -6580,7 +6590,8 @@ fn encoded_vertex_path_info_record<const K: usize>(record: &VertexPathInfo<K>) -
         bytes[8..16].copy_from_slice(&(record.info.path_id.as_u128() as u64).to_le_bytes());
         let flags =
             u64::from(record.info.exit_side == Side::Back) | (u64::from(record.info.is_cycle) << 1);
-        bytes[16..24].copy_from_slice(&((record.info.rank << 2) | flags).to_le_bytes());
+        bytes[16..20]
+            .copy_from_slice(&compact_rank_and_flags(record.info.rank, flags).to_le_bytes());
         return bytes;
     }
     let kmer_bytes = discontinuity_edge_kmer_bytes::<K>();
@@ -6695,14 +6706,18 @@ fn append_encoded_compact_vertex_path_info<const K: usize>(
     }
     output.extend_from_slice(&(vertex.as_u128() as u64).to_le_bytes());
     output.extend_from_slice(&info.path_id.to_le_bytes());
-    output.extend_from_slice(&info.rank_and_flags.to_le_bytes());
+    output.extend_from_slice(
+        &compact_rank_and_flags(info.rank_and_flags >> 2, info.rank_and_flags & 3).to_le_bytes(),
+    );
 }
 
 fn decoded_vertex_path_info_record<const K: usize>(bytes: &[u8]) -> VertexPathInfo<K> {
     if K <= 31 {
         let vertex = u64::from_le_bytes(bytes[..8].try_into().expect("u64 vertex field"));
         let path_id = u64::from_le_bytes(bytes[8..16].try_into().expect("u64 path field"));
-        let rank_and_flags = u64::from_le_bytes(bytes[16..24].try_into().expect("u64 rank field"));
+        let rank_and_flags = u64::from(u32::from_le_bytes(
+            bytes[16..20].try_into().expect("u32 rank field"),
+        ));
         return VertexPathInfo {
             vertex: Kmer::from_bits(vertex as u128),
             info: PathInfo {
@@ -11576,9 +11591,11 @@ impl<const K: usize> ExpansionPathInfoTable<K> {
     #[inline(always)]
     fn insert_compact_record(&self, record: CompactVertexPathInfoRecord) -> bool {
         match self {
-            Self::Compact(table) => {
-                table.insert_packed(record.vertex, record.path_id, record.rank_and_flags)
-            }
+            Self::Compact(table) => table.insert_packed(
+                record.vertex,
+                record.path_id,
+                u64::from(record.rank_and_flags),
+            ),
             Self::Wide(_) => unreachable!("compact path info is only used for k <= 31"),
         }
     }
@@ -11609,12 +11626,12 @@ impl<const K: usize> ExpansionPathInfoTable<K> {
                 key.copy_from_slice(&bytes[..8]);
                 let mut path_id = [0u8; 8];
                 path_id.copy_from_slice(&bytes[8..16]);
-                let mut rank = [0u8; 8];
-                rank.copy_from_slice(&bytes[16..24]);
+                let mut rank = [0u8; 4];
+                rank.copy_from_slice(&bytes[16..20]);
                 table.insert_packed(
                     u64::from_le_bytes(key),
                     u64::from_le_bytes(path_id),
-                    u64::from_le_bytes(rank),
+                    u64::from(u32::from_le_bytes(rank)),
                 )
             }
             Self::Wide(table) => {
@@ -13877,6 +13894,30 @@ fn decoded_materialized_stitched_coord_record(
 #[cfg(test)]
 mod materialized_record_tests {
     use super::*;
+
+    #[test]
+    fn compact_vertex_path_info_writers_agree() {
+        let vertex = Kmer::<31>::from_bits(0x1234_5678_9abc);
+        let info = CompactExpansionPathInfo::new(0xfeed_beef, 12_345, Side::Back, true);
+        let mut appended = Vec::new();
+        append_encoded_compact_vertex_path_info::<31>(&mut appended, vertex, info);
+        let record = VertexPathInfo {
+            vertex,
+            info: PathInfo {
+                path_id: Kmer::from_bits(0xfeed_beef),
+                rank: 12_345,
+                exit_side: Side::Back,
+                is_cycle: true,
+            },
+        };
+        let encoded = encoded_vertex_path_info_record(&record);
+        assert_eq!(appended.len(), vertex_path_info_record_len::<31>());
+        assert_eq!(appended, encoded[..appended.len()]);
+        let decoded = decoded_vertex_path_info_record::<31>(&appended);
+        assert_eq!(decoded.vertex, vertex);
+        assert_eq!(decoded.info.rank, 12_345);
+        assert!(decoded.info.exit_side == Side::Back && decoded.info.is_cycle);
+    }
 
     #[test]
     fn compact_discontinuity_edge_uses_cpp_widths() {

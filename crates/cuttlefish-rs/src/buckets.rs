@@ -978,6 +978,20 @@ pub(crate) struct BorrowedBucketPackedRecord<'a> {
     pub left_discontinuous: bool,
     pub right_discontinuous: bool,
     pub words: &'a [u64],
+    /// Where this record's label sits in the bucket's label cache, when the
+    /// bucket has one. Every reader of a bucket replays the same cache, so a
+    /// slot identifies the same label for all of them until a later literal
+    /// replaces it.
+    pub label_slot: Option<LabelSlot>,
+}
+
+/// A record's place in its bucket's label cache.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct LabelSlot {
+    pub slot: u16,
+    /// The label was a reference to what the slot already held, rather than
+    /// a literal that was just stored there.
+    pub reference: bool,
 }
 
 /// Byte source behind a `BucketReader`.
@@ -1088,6 +1102,9 @@ pub struct BucketReader {
     block_record: usize,
     /// Decoded label stream holding cache references, before expansion.
     block_label_refs: Vec<u8>,
+    /// Per record of the current block: its cache slot, with bit 16 set for
+    /// a reference. Filled only when the bucket has a label cache.
+    block_slots: Vec<u32>,
     /// Replica of the writer's label cache, when the bucket uses one.
     label_cache: Option<LabelCache>,
 }
@@ -1114,6 +1131,7 @@ impl BucketReader {
             block_records: 0,
             block_record: 0,
             block_label_refs: Vec::new(),
+            block_slots: Vec::new(),
             label_cache: None,
         })
     }
@@ -1154,6 +1172,7 @@ impl BucketReader {
             block_records: 0,
             block_record: 0,
             block_label_refs: Vec::new(),
+            block_slots: Vec::new(),
             label_cache: None,
         })
     }
@@ -1344,6 +1363,7 @@ impl BucketReader {
                     left_discontinuous: record.left_discontinuous,
                     right_discontinuous: record.right_discontinuous,
                     words: &record.words,
+                    label_slot: None,
                 })
             });
         }
@@ -1398,6 +1418,14 @@ impl BucketReader {
             {
                 *word = u64::from_le_bytes(*bytes);
             }
+            let label_slot = self
+                .block_slots
+                .get(record_index)
+                .filter(|_| self.header.label_ref_bits != 0)
+                .map(|&packed| LabelSlot {
+                    slot: packed as u16,
+                    reference: packed & 1 << 16 != 0,
+                });
             self.records_read += 1;
             self.block_record += 1;
             f(BorrowedBucketPackedRecord {
@@ -1410,6 +1438,7 @@ impl BucketReader {
                 left_discontinuous: packed_attr & (1 << 8) != 0,
                 right_discontinuous: packed_attr & (1 << 9) != 0,
                 words: &words[..self.header.label_words],
+                label_slot,
             })?;
         }
         Ok(())
@@ -1524,6 +1553,8 @@ impl BucketReader {
             .get_or_insert_with(|| LabelCache::new(bits, label_words));
         let mut words = [0u64; 4];
         let mut at = 0usize;
+        self.block_slots.clear();
+        self.block_slots.reserve(records);
         for (idx, attr_bytes) in self
             .block_attrs
             .as_chunks_mut::<4>()
@@ -1551,6 +1582,7 @@ impl BucketReader {
                     chunk.copy_from_slice(&word.to_le_bytes());
                 }
                 attr_bytes.copy_from_slice(&(attr & !LABEL_REF_BIT).to_le_bytes());
+                self.block_slots.push(slot as u32 | 1 << 16);
             } else {
                 let label = &self.block_label_refs[at..at + label_bytes];
                 at += label_bytes;
@@ -1558,6 +1590,7 @@ impl BucketReader {
                 label_words_from_le(label, &mut words[..label_words]);
                 let slot = cache.slot(tag, &words[..label_words]);
                 cache.store(slot, tag, &words[..label_words]);
+                self.block_slots.push(slot as u32);
             }
         }
         Ok(())

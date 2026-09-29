@@ -3211,11 +3211,78 @@ largest 10k bucket grew from 77K to 174K records. Seeding brought it to 125K.
 All runs produced 252,487,658 unitigs and 16,417,233,428 bases, and
 `cuttlefish compare` matched the uncolored outputs unitig for unitig. The
 largest bucket grows 1.5-3x, but local contraction time and peak RSS did not
-move at t16. That also held at t64. Each worker's vertex map is sized to the largest
-bucket it has seen, so this is where a larger bucket would have cost memory
-or load balance, and neither local contraction time nor peak RSS moved. (The
-starred t64 run was the first of its sequence and ran cold; its partner, run
-last, shows the true local time.)
+move at t16. That also held at t64. Each worker's vertex map is sized to the
+largest bucket it has seen, so this is where a larger bucket would have cost
+memory or load balance, and neither local contraction time nor peak RSS
+moved. (The starred t64 run was the first of its sequence and ran cold; its
+partner, run last, shows the true local time.)
+
+### Why the largest bucket grew: the seed, not the scheme
+
+A standalone analysis replayed both partition schemes over all 149,998
+genomes:
+
+- **old:** `min(wyhash(fwd), wyhash(rev))`; the subgraph is the low 14 bits
+  of the 64-bit window minimum.
+- **new:** `fmix32(canonical ^ seed)`; the subgraph is the low 14 bits of the
+  32-bit minimum.
+
+It computed each (k-1)-mer window's minimum with a monotone deque and cut
+runs of equal-subgraph windows into weak super-k-mer records at the length
+cap. For each scheme and seed it counted windows and records per subgraph.
+For the largest subgraphs it also counted which l-mer was the minimum and how
+many distinct records there were.
+
+Its record counts for the largest subgraphs equal the colored builds' logged
+maxima exactly: 6,669,445 (old) and 9,808,937 (new). Colored builds keep
+every record, so this is a like-for-like check.
+
+| scheme, seed | max / mean (windows) | max / mean (records) | p99.9 / mean | p99 / mean | CV |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| old, 0 (3.0.x) | 2.81 | 2.10 | 2.03 | 1.64 | 0.224 |
+| old, 1 | 3.90 | 2.94 | 2.07 | 1.62 | 0.226 |
+| new, `0x9e3779b9` (this branch) | 3.67 | 3.09 | 2.07 | 1.63 | 0.223 |
+| new, 1 | 2.80 | 2.43 | 1.98 | 1.63 | 0.223 |
+
+The distributions agree everywhere except their single maximum. That
+maximum is a lottery in both schemes: changing the old scheme's seed makes it
+worse than the new one, and changing the new scheme's seed makes it as good
+as the old one. On 1,000 genomes, five seeds of each gave overlapping maxima
+(2.43-3.79 old, 2.49-3.61 new) with a CV of 0.220-0.225 throughout.
+
+The largest subgraphs are dominated by one l-mer:
+
+| scheme, seed | largest subgraph | top minimizer l-mer | share of its windows | records | distinct records |
+| --- | --- | --- | ---: | ---: | ---: |
+| old, 0 | 88.99 M windows | `CCGCCGCCGCCG` | 74.4% | 6.67 M | 172,597 |
+| old, 1 | 123.74 M windows | `GCCGTTGCCGCC` | 81.4% | 8.67 M | 169,423 |
+| new, `0x9e3779b9` | 116.39 M windows | `AAATGCCGTCTG` | 78.1% | 9.13 M | 90,367 |
+| new, `0x9e3779b9`, most records | 103.64 M windows | `CCGCCGTTGCCG` | 52.6% | 9.81 M | 179,457 |
+| new, 1 | 88.61 M windows | `CGCCGTTGCCGC` | 76.2% | 7.63 M | 144,042 |
+
+These l-mers are low-complexity GC runs or sequences repeated in every
+genome; `AAATGCCGTCTG` is the minimum of about 600 windows per genome.
+Whichever such l-mer draws a small enough hash wins every window around each
+of its copies, and all that mass lands in one subgraph. This is a property of
+random minimizers on repetitive sequence, and both schemes have it equally.
+
+The uncolored logs overstated the gap (0.79 M against 2.35 M, 3x). The
+uncolored maximum counts records left after the 4096-slot per-bucket
+duplicate filter, so it depends on how a bucket's records collide in that
+cache as much as on its contents. By distinct records, the new scheme's
+largest subgraphs hold 90 K-179 K against the old's 173 K.
+
+Nothing here is worth changing now, since local contraction time and peak
+RSS were unchanged at t16 and t64. Tuning the seed on this dataset would only
+re-draw the lottery. If a straggler ever shows up at high thread counts, the
+real fix is a frequency-aware minimizer order that demotes the most frequent
+l-mers, as BCALM2- and KMC-style partitioners do, or splitting oversized
+buckets at local contraction.
+
+One genuine hash defect did turn up in development: without the seed, the
+finalizer maps the poly-A l-mer (canonical value 0) to hash 0. Every window
+holding it then went to one subgraph, and the largest 10k bucket grew from
+77 K to 174 K records. The seed fixes this, and a unit test guards it.
 
 ### A colored bug the new partition exposed
 

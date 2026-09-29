@@ -164,9 +164,43 @@ fn materialized_loader_rejects_old_formats_and_out_of_bounds_labels() {
         .unwrap();
     assert!(read_materialized_stitched_coord_bucket_file(&entry).is_ok());
     // A well-formed offset whose label would extend beyond the file.
-    file.write_all_at(&1u32.to_le_bytes(), STITCH_COORD_HEADER_LEN + 8)
-        .unwrap();
+    rewrite_coord_records(&entry.coord_path, |records| {
+        records[8..12].copy_from_slice(&1u32.to_le_bytes());
+    });
     assert!(read_materialized_stitched_coord_bucket_file(&entry).is_err());
+    // Trailing records beyond the header's count are rejected too.
+    rewrite_coord_records(&entry.coord_path, |records| {
+        records[8..12].copy_from_slice(&0u32.to_le_bytes());
+        let first = records[..STITCH_COORD_RECORD_LEN as usize].to_vec();
+        records.extend_from_slice(&first);
+    });
+    assert!(read_materialized_stitched_coord_bucket_file(&entry).is_err());
+}
+
+/// Decodes a coordinate shard's blocked records, edits them, and writes them
+/// back after the unchanged header.
+fn rewrite_coord_records(path: &Path, edit: impl FnOnce(&mut Vec<u8>)) {
+    let bytes = fs::read(path).unwrap();
+    let header = STITCH_COORD_HEADER_LEN as usize;
+    let mut records = Vec::new();
+    crate::block_io::Lz4BlockReader::new(&bytes[header..])
+        .read_to_end(&mut records)
+        .unwrap();
+    edit(&mut records);
+    let mut writer = crate::block_io::Lz4BlockWriter::new(bytes[..header].to_vec());
+    writer.write_all(&records).unwrap();
+    writer.flush().unwrap();
+    fs::write(path, writer.into_inner()).unwrap();
+}
+
+/// A shard's decoded record bytes.
+fn coord_record_bytes(path: &Path) -> Vec<u8> {
+    let bytes = fs::read(path).unwrap();
+    let mut records = Vec::new();
+    crate::block_io::Lz4BlockReader::new(&bytes[STITCH_COORD_HEADER_LEN as usize..])
+        .read_to_end(&mut records)
+        .unwrap();
+    records
 }
 
 #[test]
@@ -382,8 +416,8 @@ fn narrow_uncolored_shards_load_like_wide_shards() {
     let wide = write(0, false);
     let narrow = write(1, true);
     assert_eq!(
-        fs::metadata(&narrow.coord_path).unwrap().len(),
-        STITCH_COORD_HEADER_LEN + 3 * MATERIALIZED_STITCH_COORD_NARROW_RECORD_LEN as u64
+        coord_record_bytes(&narrow.coord_path).len(),
+        3 * MATERIALIZED_STITCH_COORD_NARROW_RECORD_LEN
     );
     let wide = read_materialized_stitched_coord_bucket_file(&wide).unwrap();
     let narrow = read_materialized_stitched_coord_bucket_file(&narrow).unwrap();

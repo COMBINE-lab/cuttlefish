@@ -4,17 +4,46 @@
 //! A stream is a sequence of blocks, each an 8-byte header -- the raw length
 //! and the stored length, both `u32` little-endian -- followed by the stored
 //! bytes. The stored length equals the raw length when a block did not shrink
-//! and was kept uncompressed; otherwise the bytes are an lz4 block. Blocks hold
-//! at most [`BLOCK_BYTES`] raw bytes, so both ends buffer one block.
+//! and was kept uncompressed; otherwise the bytes are an lz4 block. A writer
+//! picks its block size, at most [`MAX_BLOCK_BYTES`]; the reader buffers one
+//! block. The compression scratch is per thread, so a writer holds only its
+//! pending block -- no more than the `BufWriter` it replaces.
 //!
 //! The format is private to a build: files are written and read by the same
 //! binary within one run, so it carries no magic or version.
 
 use std::io::{self, Read, Write};
 
-/// Raw bytes per block. Large enough for lz4 to find the repetition in
-/// fixed-width records, small enough that a writer per bucket stays cheap.
+/// Default raw bytes per block. Large enough for lz4 to find the repetition
+/// in fixed-width records, small enough that a writer per bucket stays cheap.
 pub(crate) const BLOCK_BYTES: usize = 256 * 1024;
+
+/// Largest block a reader accepts.
+pub(crate) const MAX_BLOCK_BYTES: usize = 1024 * 1024;
+
+thread_local! {
+    static COMPRESSED: std::cell::RefCell<Vec<u8>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Writes one block of `raw` -- compressed, or as is if that is no smaller.
+fn write_block(inner: &mut impl Write, raw: &[u8]) -> io::Result<()> {
+    debug_assert!(!raw.is_empty() && raw.len() <= MAX_BLOCK_BYTES);
+    COMPRESSED.with_borrow_mut(|stored| {
+        stored.resize(lz4_flex::block::get_maximum_output_size(raw.len()), 0);
+        let compressed = lz4_flex::block::compress_into(raw, stored)
+            .map_err(|error| io::Error::other(error.to_string()))?;
+        let payload = if compressed < raw.len() {
+            &stored[..compressed]
+        } else {
+            raw
+        };
+        let mut header = [0u8; HEADER_BYTES];
+        header[..4].copy_from_slice(&(raw.len() as u32).to_le_bytes());
+        header[4..].copy_from_slice(&(payload.len() as u32).to_le_bytes());
+        inner.write_all(&header)?;
+        inner.write_all(payload)
+    })
+}
 
 const HEADER_BYTES: usize = 8;
 
@@ -26,36 +55,45 @@ const HEADER_BYTES: usize = 8;
 pub(crate) struct Lz4BlockWriter<W: Write> {
     inner: W,
     raw: Vec<u8>,
-    stored: Vec<u8>,
+    block_bytes: usize,
 }
 
 impl<W: Write> Lz4BlockWriter<W> {
     pub(crate) fn new(inner: W) -> Self {
+        Self::with_block_bytes(inner, BLOCK_BYTES)
+    }
+
+    pub(crate) fn with_block_bytes(inner: W, block_bytes: usize) -> Self {
+        assert!((1..=MAX_BLOCK_BYTES).contains(&block_bytes));
         Self {
             inner,
-            raw: Vec::with_capacity(BLOCK_BYTES),
-            stored: Vec::new(),
+            raw: Vec::new(),
+            block_bytes,
         }
     }
 
-    fn write_block(&mut self) -> io::Result<()> {
+    /// Writes `bytes` straight out as blocks, without copying them into the
+    /// pending block: for callers that already batch their own writes.
+    pub(crate) fn write_blocks(&mut self, bytes: &[u8]) -> io::Result<()> {
+        self.write_pending()?;
+        for block in bytes.chunks(self.block_bytes) {
+            write_block(&mut self.inner, block)?;
+        }
+        Ok(())
+    }
+
+    /// The underlying writer, after writing any pending block.
+    #[cfg(test)]
+    pub(crate) fn into_inner(mut self) -> W {
+        self.write_pending().expect("pending block written");
+        self.inner
+    }
+
+    fn write_pending(&mut self) -> io::Result<()> {
         if self.raw.is_empty() {
             return Ok(());
         }
-        self.stored
-            .resize(lz4_flex::block::get_maximum_output_size(self.raw.len()), 0);
-        let compressed = lz4_flex::block::compress_into(&self.raw, &mut self.stored)
-            .map_err(|error| io::Error::other(error.to_string()))?;
-        let payload = if compressed < self.raw.len() {
-            &self.stored[..compressed]
-        } else {
-            &self.raw[..]
-        };
-        let mut header = [0u8; HEADER_BYTES];
-        header[..4].copy_from_slice(&(self.raw.len() as u32).to_le_bytes());
-        header[4..].copy_from_slice(&(payload.len() as u32).to_le_bytes());
-        self.inner.write_all(&header)?;
-        self.inner.write_all(payload)?;
+        write_block(&mut self.inner, &self.raw)?;
         self.raw.clear();
         Ok(())
     }
@@ -65,18 +103,18 @@ impl<W: Write> Write for Lz4BlockWriter<W> {
     fn write(&mut self, mut bytes: &[u8]) -> io::Result<usize> {
         let written = bytes.len();
         while !bytes.is_empty() {
-            let take = (BLOCK_BYTES - self.raw.len()).min(bytes.len());
+            let take = (self.block_bytes - self.raw.len()).min(bytes.len());
             self.raw.extend_from_slice(&bytes[..take]);
             bytes = &bytes[take..];
-            if self.raw.len() == BLOCK_BYTES {
-                self.write_block()?;
+            if self.raw.len() == self.block_bytes {
+                self.write_pending()?;
             }
         }
         Ok(written)
     }
 
     fn flush(&mut self) -> io::Result<()> {
-        self.write_block()?;
+        self.write_pending()?;
         self.inner.flush()
     }
 }
@@ -112,7 +150,9 @@ impl<R: Read> Lz4BlockReader<R> {
         }
         let raw_len = u32::from_le_bytes(header[..4].try_into().expect("u32")) as usize;
         let stored_len = u32::from_le_bytes(header[4..].try_into().expect("u32")) as usize;
-        if raw_len > BLOCK_BYTES || stored_len > lz4_flex::block::get_maximum_output_size(raw_len) {
+        if raw_len > MAX_BLOCK_BYTES
+            || stored_len > lz4_flex::block::get_maximum_output_size(raw_len)
+        {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "malformed lz4 block header",
@@ -189,6 +229,22 @@ mod tests {
             assert_eq!(round_trip(&data, chunk), data, "chunk {chunk}");
         }
         assert!(round_trip(&[], 1).is_empty());
+    }
+
+    #[test]
+    fn direct_blocks_and_small_blocks_interleave() {
+        let data: Vec<u8> = (0..300_000u32).map(|i| (i % 7 * 3) as u8).collect();
+        let mut writer = Lz4BlockWriter::with_block_bytes(Vec::new(), 4096);
+        writer.write_all(&data[..10]).unwrap();
+        writer.write_blocks(&data[10..200_000]).unwrap();
+        writer.write_all(&data[200_000..200_001]).unwrap();
+        writer.write_blocks(&data[200_001..]).unwrap();
+        writer.flush().unwrap();
+        let mut out = Vec::new();
+        Lz4BlockReader::new(&writer.inner[..])
+            .read_to_end(&mut out)
+            .unwrap();
+        assert_eq!(out, data);
     }
 
     #[test]

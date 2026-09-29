@@ -8900,9 +8900,11 @@ struct MaterializedStitchedCoordShardWriter {
     coord_path: PathBuf,
     label_path: PathBuf,
     color_path: PathBuf,
-    coord_out: Option<BufWriter<File>>,
+    /// Records after the raw 32-byte header, lz4-blocked.
+    coord_out: Option<Lz4BlockWriter<File>>,
     label_out: Option<BufWriter<File>>,
-    color_out: Option<BufWriter<File>>,
+    /// Colour runs, lz4-blocked.
+    color_out: Option<Lz4BlockWriter<File>>,
     record_buffer: Vec<u8>,
     records: u64,
     /// Bytes of packed labels written so far (`pack_2bit_extend`); record
@@ -8951,21 +8953,24 @@ impl MaterializedStitchedCoordShardWriter {
             path: label_path.clone(),
             source,
         })?;
-        let mut coord_out =
-            BufWriter::with_capacity(MATERIALIZED_STITCH_COORD_SHARD_WRITE_BUFFER, coord_file);
-        coord_out
-            .write_all(if narrow {
-                MATERIALIZED_STITCH_COORD_NARROW_MAGIC
-            } else {
-                MATERIALIZED_STITCH_COORD_MAGIC
-            })
-            .and_then(|_| coord_out.write_all(&(bucket_id as u64).to_le_bytes()))
-            .and_then(|_| coord_out.write_all(&0u64.to_le_bytes()))
-            .and_then(|_| coord_out.write_all(&0u64.to_le_bytes()))
+        // The header stays raw, so `finish` can fill in its counts in place;
+        // the records after it are lz4-blocked.
+        let mut header = [0u8; STITCH_COORD_HEADER_LEN as usize];
+        header[..8].copy_from_slice(if narrow {
+            MATERIALIZED_STITCH_COORD_NARROW_MAGIC
+        } else {
+            MATERIALIZED_STITCH_COORD_MAGIC
+        });
+        header[8..16].copy_from_slice(&(bucket_id as u64).to_le_bytes());
+        let mut coord_file = coord_file;
+        coord_file
+            .write_all(&header)
             .map_err(|source| SerialCollationError::Io {
                 path: coord_path.clone(),
                 source,
             })?;
+        let coord_out =
+            Lz4BlockWriter::with_block_bytes(coord_file, materialized_shard_stream_buffer());
         Ok(Self {
             bucket_id,
             coord_path,
@@ -9000,9 +9005,9 @@ impl MaterializedStitchedCoordShardWriter {
                     path: self.coord_path.clone(),
                     source,
                 })?;
-            self.coord_out = Some(BufWriter::with_capacity(
-                MATERIALIZED_STITCH_COORD_SHARD_WRITE_BUFFER,
+            self.coord_out = Some(Lz4BlockWriter::with_block_bytes(
                 coord_file,
+                materialized_shard_stream_buffer(),
             ));
         }
         if self.label_out.is_none() {
@@ -9026,9 +9031,9 @@ impl MaterializedStitchedCoordShardWriter {
                     path: self.color_path.clone(),
                     source,
                 })?;
-            self.color_out = Some(BufWriter::with_capacity(
-                materialized_shard_stream_buffer(),
+            self.color_out = Some(Lz4BlockWriter::with_block_bytes(
                 color_file,
+                materialized_shard_stream_buffer(),
             ));
         }
         Ok(())
@@ -9105,9 +9110,9 @@ impl MaterializedStitchedCoordShardWriter {
                     path: self.color_path.clone(),
                     source,
                 })?;
-            self.color_out = Some(BufWriter::with_capacity(
-                materialized_shard_stream_buffer(),
+            self.color_out = Some(Lz4BlockWriter::with_block_bytes(
                 file,
+                materialized_shard_stream_buffer(),
             ));
         }
         let color_out = self
@@ -9188,9 +9193,9 @@ impl MaterializedStitchedCoordShardWriter {
                         path: self.color_path.clone(),
                         source,
                     })?;
-                self.color_out = Some(BufWriter::with_capacity(
-                    materialized_shard_stream_buffer(),
+                self.color_out = Some(Lz4BlockWriter::with_block_bytes(
                     file,
+                    materialized_shard_stream_buffer(),
                 ));
             }
             let color_out = self
@@ -9229,7 +9234,7 @@ impl MaterializedStitchedCoordShardWriter {
         self.coord_out
             .as_mut()
             .expect("coord writer is open")
-            .write_all(bytes)
+            .write_blocks(bytes)
             .map_err(|source| SerialCollationError::Io {
                 path: self.coord_path.clone(),
                 source,
@@ -10265,6 +10270,21 @@ fn read_materialized_stitched_coord_bucket_file(
     Ok(bucket)
 }
 
+/// Whether a block stream has nothing left to read.
+fn block_stream_ended<R: Read>(
+    input: &mut Lz4BlockReader<R>,
+    path: &Path,
+) -> Result<bool, SerialCollationError> {
+    let mut extra = [0u8; 1];
+    let read = input
+        .read(&mut extra)
+        .map_err(|source| SerialCollationError::Io {
+            path: path.to_path_buf(),
+            source,
+        })?;
+    Ok(read == 0)
+}
+
 /// Copies 24-byte native records into the narrow uncolored disk layout,
 /// dropping the colour index (bytes 12..16) and count (bytes 20..22).
 fn narrow_materialized_coord_records(wide: &[u8], out: &mut Vec<u8>) {
@@ -10306,13 +10326,6 @@ fn append_materialized_stitched_coord_bucket_file(
         path: entry.coord_path.clone(),
         source,
     })?;
-    let actual_len = file
-        .metadata()
-        .map_err(|source| SerialCollationError::Io {
-            path: entry.coord_path.clone(),
-            source,
-        })?
-        .len();
     let mut header = [0u8; STITCH_COORD_HEADER_LEN as usize];
     file.read_exact(&mut header)
         .map_err(|source| SerialCollationError::Io {
@@ -10342,17 +10355,14 @@ fn append_materialized_stitched_coord_bucket_file(
             entry.coord_path.clone(),
         ));
     }
-    let expected_len =
-        STITCH_COORD_HEADER_LEN
-            .checked_add(records.checked_mul(disk_record_len).ok_or_else(|| {
-                SerialCollationError::MalformedCoordBucket(entry.coord_path.clone())
-            })?)
-            .ok_or_else(|| SerialCollationError::MalformedCoordBucket(entry.coord_path.clone()))?;
-    if actual_len != expected_len {
-        return Err(SerialCollationError::MalformedCoordBucket(
-            entry.coord_path.clone(),
-        ));
-    }
+    // The records are lz4-blocked, so the file size says nothing about their
+    // count: the header's claim must not overflow, and the stream must end
+    // exactly after the last record.
+    records
+        .checked_mul(disk_record_len)
+        .filter(|&bytes| bytes <= usize::MAX as u64)
+        .ok_or_else(|| SerialCollationError::MalformedCoordBucket(entry.coord_path.clone()))?;
+    let mut records_input = Lz4BlockReader::new(&mut file);
     let record_base = bucket.records.len();
     let label_base = bucket.labels.len() as u64;
     checked_materialized_label_bytes(label_base, entry.label_bytes, &entry.label_path)?;
@@ -10362,7 +10372,8 @@ fn append_materialized_stitched_coord_bucket_file(
         let mut remaining = records as usize * MATERIALIZED_STITCH_COORD_NARROW_RECORD_LEN;
         while remaining > 0 {
             let len = remaining.min(chunk.len());
-            file.read_exact(&mut chunk[..len])
+            records_input
+                .read_exact(&mut chunk[..len])
                 .map_err(|source| SerialCollationError::Io {
                     path: entry.coord_path.clone(),
                     source,
@@ -10386,13 +10397,19 @@ fn append_materialized_stitched_coord_bucket_file(
                 records as usize * std::mem::size_of::<LoadedMaterializedStitchedCoordRecord>(),
             )
         };
-        file.read_exact(coord_bytes)
+        records_input
+            .read_exact(coord_bytes)
             .map_err(|source| SerialCollationError::Io {
                 path: entry.coord_path.clone(),
                 source,
             })?;
         // SAFETY: read_exact initialized every byte of each native POD record.
         unsafe { bucket.records.set_len(record_base + records as usize) };
+    }
+    if !block_stream_ended(&mut records_input, &entry.coord_path)? {
+        return Err(SerialCollationError::MalformedCoordBucket(
+            entry.coord_path.clone(),
+        ));
     }
 
     let mut label_file =
@@ -10437,24 +10454,12 @@ fn append_materialized_stitched_coord_bucket_file(
         .map_err(|_| SerialCollationError::MalformedCoordBucket(entry.coord_path.clone()))?;
     bucket.colors.reserve(entry.color_runs as usize);
     if let Some(color_path) = &entry.color_path {
-        let mut color_file = File::open(color_path).map_err(|source| SerialCollationError::Io {
+        let color_file = File::open(color_path).map_err(|source| SerialCollationError::Io {
             path: color_path.clone(),
             source,
         })?;
+        let mut color_file = Lz4BlockReader::new(color_file);
         let expected_color_bytes = entry.color_runs * std::mem::size_of::<UnitigColor>() as u64;
-        if color_file
-            .metadata()
-            .map_err(|source| SerialCollationError::Io {
-                path: color_path.clone(),
-                source,
-            })?
-            .len()
-            != expected_color_bytes
-        {
-            return Err(SerialCollationError::MalformedCoordBucket(
-                color_path.clone(),
-            ));
-        }
         let color_record_base = bucket.colors.len();
         let uninitialized_colors = unsafe {
             std::slice::from_raw_parts_mut(
@@ -10475,6 +10480,11 @@ fn append_materialized_stitched_coord_bucket_file(
                 .colors
                 .set_len(color_record_base + entry.color_runs as usize)
         };
+        if !block_stream_ended(&mut color_file, color_path)? {
+            return Err(SerialCollationError::MalformedCoordBucket(
+                color_path.clone(),
+            ));
+        }
     }
 
     for record in &mut bucket.records[record_base..] {
@@ -14498,18 +14508,15 @@ mod materialized_record_tests {
 
         let first = make_entry(0, 11, b"ACGT", 3);
         let second = make_entry(1, 29, b"TTAA", 5);
-        assert_eq!(
-            std::fs::metadata(first.color_path.as_ref().unwrap())
-                .unwrap()
-                .len(),
-            std::mem::size_of::<UnitigColor>() as u64
-        );
-        assert_eq!(
-            std::fs::metadata(second.color_path.as_ref().unwrap())
-                .unwrap()
-                .len(),
-            std::mem::size_of::<UnitigColor>() as u64
-        );
+        for entry in [&first, &second] {
+            let mut colors = Vec::new();
+            crate::block_io::Lz4BlockReader::new(
+                std::fs::File::open(entry.color_path.as_ref().unwrap()).unwrap(),
+            )
+            .read_to_end(&mut colors)
+            .unwrap();
+            assert_eq!(colors.len(), std::mem::size_of::<UnitigColor>());
+        }
         let mut bucket = MaterializedStitchedCoordBucket::default();
         append_materialized_stitched_coord_bucket_file(&first, &mut bucket).unwrap();
         append_materialized_stitched_coord_bucket_file(&second, &mut bucket).unwrap();

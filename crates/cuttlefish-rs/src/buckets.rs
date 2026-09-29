@@ -170,7 +170,9 @@ impl LabelCache {
     fn lookup_or_store(&mut self, tag: u16, words: &[u64]) -> (usize, bool) {
         let slot = self.slot(tag, words);
         let (held_tag, held) = self.entry(slot);
-        if held_tag == tag && held == words {
+        // Word by word rather than slice equality, which is a `memcmp` call
+        // per record.
+        if held_tag == tag && held.iter().zip(words).all(|(held, word)| held == word) {
             return (slot, true);
         }
         self.store(slot, tag, words);

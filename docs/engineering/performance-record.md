@@ -3334,7 +3334,7 @@ worker-s is unaccounted for, and the parse-only diagnostic costs 62
 fragment scan (about 45%).
 
 **Parsing.** Each sequence line is now checked for upper-case ACGT 16 bytes
-at a time (SSE2, part of the x86-64 baseline). A record made only of such
+at a time (SSE2 on x86-64 and NEON on aarch64, both baseline). A record made only of such
 lines is emitted as one fragment, which is what the scan would have found.
 Any other line takes the unchanged path. A randomized test checks the parser
 against the previous algorithm on messy FASTA.
@@ -3408,10 +3408,11 @@ stores its key as two `u32`s so it carries no padding.
 | colored | 24 B | 20 B |
 | uncolored | 16 B | 12 B |
 
-The colour-slot type now also chooses the edge storage. `()` and `u64` use
-presence bits; the new `Counted` and `ColoredCounted` keep 4-bit counts for
-any cutoff. The dispatch uses the presence slots only at cutoff 1, so read
-mode (cutoff 2) keeps its previous layout.
+The colour-slot type now also chooses the edge storage. `Presence` and
+`ColoredPresence` use presence bits; `Counted` and `ColoredCounted` keep
+4-bit counts for any cutoff. The dispatch uses the presence slots only at
+cutoff 1, and `LocalSubgraph` refuses a presence slot at any other cutoff, so
+read mode (cutoff 2) keeps its previous layout.
 
 | order-alternated | local before | local after | wall before | wall after |
 | --- | ---: | ---: | ---: | ---: |
@@ -3419,17 +3420,69 @@ mode (cutoff 2) keeps its previous layout.
 | 10k uncolored t16 | 14.2 / 14.3 s | 12.9 / 12.9 s | 50.9 s | 49.4 s |
 | 150k uncolored t16 | 108.3 / 108.7 s | 96.7 / 96.3 s | 6:21.4 / 6:17.4 | 6:07.7 / 6:05.2 |
 | 150k colored t16 (one pair) | 406.8 s | 403.4 s | 11:22.7 | 11:15.0 |
-| read SRR105788 t4 | -- | -- | 99.0 / 99.4 s | 97.5 / 97.8 s |
+
+Read mode (SRR105788, t4) measured 99.0 / 99.4 s before and 97.5 / 97.8 s
+after. That is noise, not a gain: neither change reaches it. Its input is
+FASTQ, which the FASTA fast path does not touch, and at cutoff 2 it keeps the
+counting states.
 
 Outputs are unchanged:
 - `cuttlefish compare` matches every uncolored and read-mode unitig, and the
   colour digest is unchanged.
 - A randomized test checks that the presence slots answer every edge, flag
   and colour question as the counting slots do at cutoff 1.
+- A second test contracts real buckets once per slot type, colored and
+  uncolored. Local unitigs, exits, colour runs and trivial FASTA must match.
 - Read-mode output order varies from run to run (two baseline runs differ
   byte-wise), so compare, not checksums, is the check there.
 
 The gain holds uncolored at 150k (-11% of the phase) but nearly vanishes for
 colored at 150k (-0.8%, one pair; build -1.6%, walk flat), although colored
 10k gained 5%. At that scale the vertex table is not where colored local
-contraction's time goes. Uncolored peak RSS rose about 0.2 GB (7.3 to 7.5 GB).
+contraction's time goes.
+
+**Peak RSS.** At 150k uncolored the peak rose about 0.2 GB. Three runs of
+each build gave 7.25 / 7.34 / 7.33 GB before and 7.52 / 7.52 / 7.54 after.
+This change did not add that memory:
+
+- The peak is set during discontinuity contraction, which this change does
+  not touch. RSS entering that phase is the same in both builds, and every
+  size logged up to it matches.
+- With jemalloc returning freed pages at once
+  (`_RJEM_MALLOC_CONF=dirty_decay_ms:0,muzzy_decay_ms:0`), local
+  contraction's own peak fell, 4.09 / 4.10 to 3.96 / 3.96 GB.
+- Under the same setting the overall peak was 6.63 / 6.63 GB before and
+  6.79 / 6.79 after. Some of the gap is retained dirty pages. The remaining
+  0.16 GB is allocator state carried into a phase whose code and inputs are
+  unchanged: most likely heap layout left by vertex maps in different size
+  classes. That was not traced further.
+
+The same setting takes about 0.7 GB off the peak for about 13 s of wall
+time. That trade is left for the memory work.
+
+### Wide (K > 31) vertex-map slots
+
+The K > 31 flat map stored `(u128, VertexState)`. The key's 16-byte
+alignment padded every slot to 32 bytes, whatever the state. Storing the key
+as four `u32`s, as the narrow map does, gives 20 B uncolored at cutoff 1 and
+24 B with counts.
+
+The colored presence slot would be 28 B, but that was 6% slower in colored
+local contraction at k = 55 (38.2 / 38.3 to 40.5 / 40.6 s; table build
+209 to 238 worker-s). A 28-byte stride splits about 44% of slots across two
+cache lines, and 12% more density does not pay for that. The narrow colored
+slot shrank by a sixth (24 to 20 B) and did gain, so it is not simply that
+odd sizes lose. `ColorSlot::WidePad` pads the colored slot back to 32 B.
+
+| 10k, k = 55, t16, order-alternated | local before | local after | wall before | wall after |
+| --- | ---: | ---: | ---: | ---: |
+| uncolored | 23.9 / 23.8 / 23.8 s | 20.6 / 20.4 / 20.3 s | 57.1 / 56.9 / 56.6 s | 53.9 / 53.8 / 53.6 s |
+| colored (padded, 32 B) | 38.2 / 38.4 s | 38.2 / 38.3 s | 1:12.2 / 1:12.0 | 1:11.9 / 1:12.3 |
+| read SRR105788 (cutoff 2, 24 B) | 8.60 / 8.61 s | 8.59 / 8.41 s | 21.9 / 22.0 s | 21.9 / 21.7 s |
+
+Read mode's gain is memory, not time: its peak falls during local
+contraction, from 7.07 / 7.14 to 5.98 / 6.13 GB.
+
+For reference inputs, peak RSS was flat or slightly lower. Uncolored and
+read-mode outputs compare equal, and the colour digest is unchanged. The slot-equivalence test now also runs at
+K = 35, which exercises the wide map.

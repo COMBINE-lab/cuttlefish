@@ -22,7 +22,10 @@ use crate::color::{ColorError, ConcurrentColorRepository, UnitigColorRuns};
 use crate::dna::{Base, minimal_rotation};
 use crate::hash::{FastBuildHasher, fast_u64_hash, hash_two_u64};
 use crate::kmer::{Kmer, KmerError};
-use crate::state::{ColorCoordinate, ColorSlot, Counted, UnitigColor, VertexState, source_hash};
+use crate::state::{
+    ColorCoordinate, ColorSlot, ColoredCounted, ColoredPresence, Counted, Presence, UnitigColor,
+    VertexState, source_hash,
+};
 use hashbrown::HashMap;
 use hashbrown::HashTable;
 use std::collections::HashSet;
@@ -65,9 +68,10 @@ struct FlatSlot<C: ColorSlot> {
     state: VertexState<C>,
 }
 
-const _: () = assert!(std::mem::size_of::<FlatSlot<u64>>() == 20);
-const _: () = assert!(std::mem::size_of::<FlatSlot<()>>() == 12);
+const _: () = assert!(std::mem::size_of::<FlatSlot<ColoredPresence>>() == 20);
+const _: () = assert!(std::mem::size_of::<FlatSlot<Presence>>() == 12);
 const _: () = assert!(std::mem::size_of::<FlatSlot<Counted>>() == 16);
+const _: () = assert!(std::mem::size_of::<FlatSlot<ColoredCounted>>() == 24);
 
 impl<C: ColorSlot> FlatSlot<C> {
     const EMPTY: Self = Self {
@@ -1153,6 +1157,10 @@ impl<const K: usize, C: ColorSlot> LocalSubgraph<K, C> {
     ) -> Result<Self, LocalSubgraphError> {
         if cutoff == 0 {
             return Err(LocalSubgraphError::InvalidCutoff);
+        }
+        if !C::COUNTS_EDGES && cutoff != 1 {
+            // Presence bits cannot tell one occurrence of an edge from many.
+            return Err(LocalSubgraphError::PresenceSlotCutoff(cutoff));
         }
         let Some(first_entry) = entries.first() else {
             return Err(LocalSubgraphError::EmptyBucketGroup);
@@ -2632,6 +2640,7 @@ pub enum LocalSubgraphError {
     Color(ColorError),
     Kmer(KmerError),
     InvalidCutoff,
+    PresenceSlotCutoff(u32),
     EmptyBucketGroup,
     KMismatch { expected: usize, got: usize },
     GraphMismatch { expected: usize, got: usize },
@@ -2658,6 +2667,10 @@ impl std::fmt::Display for LocalSubgraphError {
             Self::Color(err) => write!(f, "{err}"),
             Self::Kmer(err) => write!(f, "{err}"),
             Self::InvalidCutoff => write!(f, "local subgraph cutoff must be at least 1"),
+            Self::PresenceSlotCutoff(cutoff) => write!(
+                f,
+                "presence-bit vertex states answer only cutoff 1, not {cutoff}"
+            ),
             Self::EmptyBucketGroup => write!(f, "local subgraph bucket group is empty"),
             Self::KMismatch { expected, got } => {
                 write!(f, "bucket k mismatch: expected {expected}, got {got}")
@@ -2715,7 +2728,7 @@ mod tests {
             right_discontinuous: true,
             label: b"ACGTT".to_vec(),
         };
-        let mut subgraph = LocalSubgraph::<3, u64> {
+        let mut subgraph = LocalSubgraph::<3, ColoredPresence> {
             graph_id: 3,
             colored: true,
             cutoff: 1,
@@ -2797,7 +2810,8 @@ mod tests {
             emitter.finish().unwrap();
             let (store, entries) = BucketStore::open_dir(&dir).unwrap();
             let mut subgraph =
-                LocalSubgraph::<3, u64>::from_manifest_entries(&store, &entries, 1).unwrap();
+                LocalSubgraph::<3, ColoredPresence>::from_manifest_entries(&store, &entries, 1)
+                    .unwrap();
             let mut unitigs = subgraph.contract_colored(&store, &entries).unwrap();
             unitigs.sort_by(|a, b| a.unitig.label.cmp(&b.unitig.label));
             fs::remove_dir_all(dir).unwrap();
@@ -2867,7 +2881,8 @@ mod tests {
         emitter.finish().unwrap();
         let (store, entries) = BucketStore::open_dir(&dir).unwrap();
         let mut subgraph =
-            LocalSubgraph::<3, u64>::from_manifest_entries(&store, &entries, 1).unwrap();
+            LocalSubgraph::<3, ColoredPresence>::from_manifest_entries(&store, &entries, 1)
+                .unwrap();
         let unitigs = subgraph.contract_colored(&store, &entries).unwrap();
         assert_eq!(unitigs.len(), 1);
         assert_eq!(unitigs[0].colors.len(), 1);

@@ -91,8 +91,8 @@ impl EdgeFrequency {
 ///
 /// | slot | colours | edges | state |
 /// | --- | --- | --- | ---: |
-/// | `()` | none | presence (cutoff 1) | 4 B |
-/// | `u64` | set hash | presence (cutoff 1) | 12 B |
+/// | [`Presence`] | none | presence (cutoff 1) | 4 B |
+/// | [`ColoredPresence`] | set hash | presence (cutoff 1) | 12 B |
 /// | [`Counted`] | none | 4-bit counts | 8 B |
 /// | [`ColoredCounted`] | set hash | 4-bit counts | 16 B |
 pub trait ColorSlot: Copy + Default + std::fmt::Debug + PartialEq + Eq {
@@ -111,9 +111,11 @@ pub trait ColorSlot: Copy + Default + std::fmt::Debug + PartialEq + Eq {
     /// which is why the shared contraction code can stay generic.
     fn combine(&mut self, source_hash: u64);
 
-    /// The edge counts of a counting slot.
+    /// The edge counts of a counting slot. Presence slots keep none, so
+    /// asking one is a caller bug.
     #[inline(always)]
     fn edge_frequency(self) -> EdgeFrequency {
+        debug_assert!(Self::COUNTS_EDGES, "presence slots keep no edge counts");
         EdgeFrequency::default()
     }
 
@@ -125,8 +127,12 @@ pub trait ColorSlot: Copy + Default + std::fmt::Debug + PartialEq + Eq {
 }
 
 /// The uncolored cutoff-1 slot: zero-sized, so it costs a vertex nothing.
-impl ColorSlot for () {
-    const ZERO: Self = ();
+/// Edges live as presence bits in the state's flags.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Presence;
+
+impl ColorSlot for Presence {
+    const ZERO: Self = Presence;
     const COUNTS_EDGES: bool = false;
 
     #[inline(always)]
@@ -139,18 +145,25 @@ impl ColorSlot for () {
 }
 
 /// The colored cutoff-1 slot: the running hash of the vertex's colour set.
-impl ColorSlot for u64 {
-    const ZERO: Self = 0;
+/// Edges live as presence bits in the state's flags.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[repr(C, packed(4))]
+pub struct ColoredPresence {
+    hash: u64,
+}
+
+impl ColorSlot for ColoredPresence {
+    const ZERO: Self = Self { hash: 0 };
     const COUNTS_EDGES: bool = false;
 
     #[inline(always)]
     fn hash(self) -> u64 {
-        self
+        self.hash
     }
 
     #[inline(always)]
     fn combine(&mut self, source_hash: u64) {
-        *self = hash_combine(*self, source_hash);
+        self.hash = hash_combine(self.hash, source_hash);
     }
 }
 
@@ -280,6 +293,16 @@ impl<C: ColorSlot> VertexState<C> {
             self.slot = slot.with_edge_frequency(edges);
             return;
         }
+        // An N here would set a bit outside the eight presence bits, in the
+        // last-source field. Callers skip N-adjacent edges, as for counts.
+        debug_assert!(
+            front.bits() < 4 || front == Base::E,
+            "front edge {front:?} is not ACGT"
+        );
+        debug_assert!(
+            back.bits() < 4 || back == Base::E,
+            "back edge {back:?} is not ACGT"
+        );
         if front != Base::E {
             self.flags |= 1 << (Self::EDGE_SHIFT + front.bits() as u32);
         }
@@ -388,11 +411,11 @@ impl<C: ColorSlot> VertexState<C> {
     }
 }
 
-/// The point of the colour-slot parameter: an uncolored vertex costs 8 bytes
-/// and a colored one 16, so a flat-map cache line holds four uncolored slots
-/// where it held two.
-const _: () = assert!(std::mem::size_of::<VertexState<()>>() == 4);
-const _: () = assert!(std::mem::size_of::<VertexState<u64>>() == 12);
+/// The point of the colour-slot parameter: at cutoff 1 an uncolored vertex
+/// costs 4 bytes and a colored one 12 (8 and 16 when the slot counts edges),
+/// so a flat-map slot with its 8-byte key is 12 or 20 bytes.
+const _: () = assert!(std::mem::size_of::<VertexState<Presence>>() == 4);
+const _: () = assert!(std::mem::size_of::<VertexState<ColoredPresence>>() == 12);
 const _: () = assert!(std::mem::size_of::<VertexState<Counted>>() == 8);
 const _: () = assert!(std::mem::size_of::<VertexState<ColoredCounted>>() == 16);
 
@@ -515,9 +538,19 @@ mod tests {
                 presence.add_source(source);
                 counted.add_source(source);
                 if next(7) == 0 {
-                    presence.mark_discontinuous(Side::Back);
-                    counted.mark_discontinuous(Side::Back);
+                    let side = if next(2) == 0 {
+                        Side::Front
+                    } else {
+                        Side::Back
+                    };
+                    presence.mark_discontinuous(side);
+                    counted.mark_discontinuous(side);
                 }
+                if next(11) == 0 {
+                    presence.mark_visited();
+                    counted.mark_visited();
+                }
+                assert_eq!(presence.is_visited(), counted.is_visited());
                 for side in [Side::Front, Side::Back] {
                     assert_eq!(presence.edge_at(side, 1), counted.edge_at(side, 1));
                     assert_eq!(
@@ -538,8 +571,8 @@ mod tests {
             }
         }
         for seed in 0..2000 {
-            check::<(), Counted>(seed);
-            check::<u64, ColoredCounted>(seed);
+            check::<Presence, Counted>(seed);
+            check::<ColoredPresence, ColoredCounted>(seed);
         }
     }
 

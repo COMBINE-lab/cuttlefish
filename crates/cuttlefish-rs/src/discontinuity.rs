@@ -35,7 +35,9 @@ use crate::color::{
 use crate::dna::{Base, complement_ascii, minimal_rotation, reverse_complement_label};
 use crate::hash::{FastBuildHasher, hash_bytes, wyhash_u64};
 use crate::kmer::Kmer;
-use crate::state::{ColorSlot, ColoredCounted, Counted, UnitigColor, VertexState};
+use crate::state::{
+    ColorSlot, ColoredCounted, ColoredPresence, Counted, Presence, UnitigColor, VertexState,
+};
 use crate::subgraph::{LocalSubgraph, LocalSubgraphError, LocalUnitigRef, LocalVertexMap};
 use rayon::prelude::*;
 use rayon::{ThreadPool, ThreadPoolBuilder};
@@ -12596,7 +12598,7 @@ pub fn emit_uncolored_external_discontinuity_inputs_with_threads_in_dir<const K:
     // At cutoff 1 an edge only needs to be present, which frees the edge
     // counts from the vertex state.
     if cutoff == 1 {
-        contract_local_subgraphs_into_external_inputs::<K, ()>(
+        contract_local_subgraphs_into_external_inputs::<K, Presence>(
             &store,
             &entries,
             cutoff,
@@ -12645,7 +12647,7 @@ pub fn emit_colored_external_discontinuity_inputs_with_threads_in_dir<const K: u
     // Colored builds emit no trivial FASTA; every unitig carries colors. At
     // cutoff 1 edges are presence bits, freeing the counts from the state.
     if cutoff == 1 {
-        contract_local_subgraphs_into_external_inputs::<K, u64>(
+        contract_local_subgraphs_into_external_inputs::<K, ColoredPresence>(
             &store,
             &entries,
             cutoff,
@@ -12687,7 +12689,7 @@ fn emit_uncolored_discontinuity_inputs_with_threads_impl<const K: usize>(
     let (store, entries) = BucketStore::open_dir(bucket_dir.as_ref())?;
     if let Some(label_path) = label_path {
         let external = if cutoff == 1 {
-            contract_local_subgraphs_into_external_inputs::<K, ()>(
+            contract_local_subgraphs_into_external_inputs::<K, Presence>(
                 &store, &entries, cutoff, threads, label_path, None, None, None, 0,
             )?
         } else {
@@ -13654,6 +13656,12 @@ fn vertex_map_reuse_slack() -> usize {
     })
 }
 
+/// The in-memory contraction behind the reference and compatibility paths.
+///
+/// It keeps counting vertex states at every cutoff on purpose: it serves
+/// small inputs where the state's size does not matter, and staying on the
+/// general layout makes it an independent check on the presence-bit states
+/// the production path uses at cutoff 1.
 fn contract_local_subgraphs<const K: usize>(
     store: &BucketStore,
     entries: &[BucketManifestEntry],
@@ -14644,3 +14652,163 @@ mod materialized_record_tests {
 #[cfg(test)]
 #[path = "discontinuity/materialized_offset_tests.rs"]
 mod materialized_offset_tests;
+
+#[cfg(test)]
+mod presence_slot_tests {
+    use super::*;
+    use crate::GraphInput;
+    use crate::params::BuildParams;
+    use crate::partition::emit_weak_superkmer_buckets;
+
+    /// A local unitig as contraction hands it on: label, end vertices,
+    /// exits, and its colour runs.
+    type Unitig = (Vec<u8>, Kmer<11>, Kmer<11>, u8, Vec<u64>);
+
+    /// Contracts every bucket group in turn on one vertex map, as a worker
+    /// does, and returns the local unitigs and the trivial FASTA.
+    fn contract_all<C: ColorSlot>(
+        store: &BucketStore,
+        entries: &[BucketManifestEntry],
+        repository: Option<&ConcurrentColorRepository>,
+    ) -> (Vec<Unitig>, Vec<u8>) {
+        let mut reusable = None;
+        let mut buffers = LocalBuffers::<11>::default();
+        let (mut unitigs, mut trivial) = (Vec::new(), Vec::new());
+        for group in local_bucket_groups(entries).unwrap() {
+            let output = contract_local_subgraph::<11, C>(
+                store,
+                &group,
+                1,
+                repository,
+                &mut reusable,
+                repository.is_none(),
+                &mut buffers,
+            )
+            .unwrap();
+            let inputs = DiscontinuityInputs {
+                unitigs: output.unitigs.clone(),
+                labels: output.labels.clone(),
+                stats: DiscontinuityInputStats::default(),
+            };
+            for (index, unitig) in inputs.unitigs.iter().enumerate() {
+                let runs = output.color_runs.as_ref().map_or(Vec::new(), |runs| {
+                    runs.unitig(index).iter().map(|run| run.raw()).collect()
+                });
+                unitigs.push((
+                    unitig.label(&inputs).to_vec(),
+                    unitig.left_vertex,
+                    unitig.right_vertex,
+                    unitig.flags,
+                    runs,
+                ));
+            }
+            trivial.extend_from_slice(&output.trivial_fasta);
+            buffers.recycle(output);
+        }
+        (unitigs, trivial)
+    }
+
+    /// At cutoff 1 the production pipeline keeps edges as presence bits in
+    /// the vertex flags. Contraction must hand on exactly what the counting
+    /// states would, colored and uncolored.
+    #[test]
+    fn presence_and_counting_states_contract_alike_at_cutoff_one() {
+        let root = std::env::temp_dir().join(format!(
+            "cf3-presence-slots-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+
+        // A random genome and mutated copies of pieces of it, spread over a
+        // few sources, so the graph has branches, tips, repeats, N-split
+        // fragments, isolated k-mers and vertices with several colours.
+        let mut state = 0x9e37_79b9_7f4a_7c15u64;
+        let mut next = |n: u64| {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state % n
+        };
+        let genome: Vec<u8> = (0..20_000).map(|_| b"ACGT"[next(4) as usize]).collect();
+        let mut sources = vec![b">genome\n".to_vec()];
+        sources[0].extend_from_slice(&genome);
+        sources[0].push(b'\n');
+        for record in 0..40 {
+            let start = next(19_000) as usize;
+            let mut copy = genome[start..start + 1 + next(1000) as usize].to_vec();
+            for _ in 0..next(4) {
+                let at = next(copy.len() as u64) as usize;
+                copy[at] = b"ACGTN"[next(5) as usize];
+            }
+            if record % 4 == 0 {
+                sources.push(Vec::new());
+            }
+            let fasta = sources.last_mut().unwrap();
+            fasta.extend_from_slice(format!(">copy{record}\n").as_bytes());
+            fasta.extend_from_slice(&copy);
+            fasta.push(b'\n');
+        }
+
+        for colored in [false, true] {
+            let dir = root.join(if colored { "colored" } else { "uncolored" });
+            fs::create_dir_all(&dir).unwrap();
+            let mut params = BuildParams::new(
+                GraphInput::References,
+                dir.join("out").display().to_string(),
+            );
+            params.k = 11;
+            params.minimizer_len = 5;
+            params.color = colored;
+            params.work_dir = dir.display().to_string();
+            for (index, fasta) in sources.iter().enumerate() {
+                let path = dir.join(format!("source{index}.fa"));
+                fs::write(&path, fasta).unwrap();
+                params.seqs.push(path.display().to_string());
+            }
+            assert_eq!(params.cutoff(), 1);
+            let emitted = emit_weak_superkmer_buckets::<11>(&params, 64).unwrap();
+            // Contraction punches out the buckets it consumes, so each pass
+            // reads its own copy.
+            let copy = dir.join("buckets-copy");
+            fs::create_dir_all(&copy).unwrap();
+            for file in fs::read_dir(&emitted.buckets.bucket_dir).unwrap() {
+                let file = file.unwrap().path();
+                fs::copy(&file, copy.join(file.file_name().unwrap())).unwrap();
+            }
+            let (store, entries) = BucketStore::open_dir(&emitted.buckets.bucket_dir).unwrap();
+            let (copy_store, copy_entries) = BucketStore::open_dir(&copy).unwrap();
+
+            let (presence, counted) = if colored {
+                let colors = |tag: &str| {
+                    ConcurrentColorRepository::create(dir.join(tag), 1, 0, 1 + sources.len() as u32)
+                        .unwrap()
+                };
+                let (a, b) = (colors("colors-presence"), colors("colors-counted"));
+                (
+                    contract_all::<ColoredPresence>(&store, &entries, Some(&a)),
+                    contract_all::<ColoredCounted>(&copy_store, &copy_entries, Some(&b)),
+                )
+            } else {
+                (
+                    contract_all::<Presence>(&store, &entries, None),
+                    contract_all::<Counted>(&copy_store, &copy_entries, None),
+                )
+            };
+            assert!(presence.0.len() > 40, "{} local unitigs", presence.0.len());
+            assert_eq!(
+                colored,
+                presence.0.iter().any(|unitig| !unitig.4.is_empty())
+            );
+            assert_eq!(presence, counted, "colored: {colored}");
+
+            // A presence state cannot count to 2, and says so.
+            assert!(matches!(
+                LocalSubgraph::<11, Presence>::from_manifest_entries(&store, &entries[..1], 2),
+                Err(LocalSubgraphError::PresenceSlotCutoff(2))
+            ));
+        }
+        fs::remove_dir_all(&root).unwrap();
+    }
+}

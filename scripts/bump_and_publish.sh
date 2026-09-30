@@ -32,7 +32,12 @@ Options:
   -h, --help    Show this help message
 
 Publish order (dependency-topological):
-  cuttlefish-rs -> cuttlefish-rs-cli
+  scratch-probe (only when its own version is not yet on crates.io)
+    -> cuttlefish-rs -> cuttlefish-rs-cli
+
+Before anything is committed, tagged, pushed or published, every crate to be
+published is packaged and verified together with
+`cargo publish --workspace --dry-run` (cargo 1.90+).
 EOF
 }
 
@@ -101,6 +106,33 @@ DEPENDENCY_CRATES=(
     scratch-probe
 )
 
+# Packages and verifies every crate this release would publish, in one
+# `cargo publish --workspace --dry-run`. Cargo resolves the workspace's own
+# unpublished versions against a temporary local registry, so the CLI is
+# checked against this cuttlefish-rs and cuttlefish-rs against this
+# scratch-probe, whatever the index holds. A dependency crate already on
+# crates.io at its manifest version is excluded, as the real publish skips it.
+validate_packaging() {
+    local exclude=() crate version published
+    for crate in "${DEPENDENCY_CRATES[@]}"; do
+        version="$(crate_version "$crate")"
+        published=0
+        crate_published "$crate" "$version" || published=$?
+        case "$published" in
+            0)
+                echo "--- $crate $version is already on crates.io; not packaged again"
+                exclude+=(--exclude "$crate")
+                ;;
+            1) echo "--- $crate $version will be published first" ;;
+            *) die "could not check whether $crate $version is on crates.io" ;;
+        esac
+    done
+    echo "Packaging and verifying (cargo publish --workspace --dry-run)"
+    # `${exclude[@]+...}` keeps an empty array safe under `set -u` on bash < 4.4.
+    cargo publish --workspace ${exclude[@]+"${exclude[@]}"} --dry-run --allow-dirty \
+        || die "packaging validation failed"
+}
+
 crate_version() {
     sed -n 's/^version = "\(.*\)"/\1/p' "crates/$1/Cargo.toml" | head -1
 }
@@ -162,7 +194,7 @@ echo "New workspace version     : $VERSION"
 echo "Tag                       : $TAG"
 echo "Publish                   : $([[ "$PUBLISH" == true ]] && echo yes || echo no)"
 echo "Dry-run                   : $([[ "$DRY_RUN" == true ]] && echo yes || echo no)"
-echo "Crates (in order)         : ${CRATES[*]}"
+echo "Crates (in order)         : ${DEPENDENCY_CRATES[*]} (if unpublished) ${CRATES[*]}"
 echo
 
 echo "Preflight: cargo check"
@@ -208,65 +240,18 @@ else
 fi
 
 if [[ "$DRY_RUN" == true ]]; then
-    # Per-crate packaging validation. Only meaningful in --dry-run mode, where
-    # the version is NOT bumped, so cuttlefish-rs-cli's library requirement
-    # still resolves against the already-published version in the index. In
-    # --publish mode the version IS bumped, so the CLI's `cuttlefish-rs =
-    # "^<new>"` cannot resolve until the library is actually published; the real
-    # publish loop below handles that ordering via cargo's wait-for-publish.
-    #
-    # Until the library has been published at the version the CLI requires,
-    # the CLI's dependency cannot resolve against the index -- whether the
-    # index holds nothing at all or only older versions (e.g. the 0.0.x name
-    # placeholders). Both are facts about the index and not about this
-    # workspace, and the real publish loop below resolves them by publishing
-    # the library first; so a CLI resolution failure of that shape is reported
-    # and tolerated rather than treated as a validation failure.
     echo
-    echo "Per-crate package validation (cargo publish --dry-run, in order)"
-    validation_failed=false
-    for crate in "${DEPENDENCY_CRATES[@]}"; do
-        version="$(crate_version "$crate")"
-        published=0
-        crate_published "$crate" "$version" || published=$?
-        if [[ "$published" -eq 0 ]]; then
-            echo "--- $crate $version already on crates.io; not republished"
-            continue
-        elif [[ "$published" -ne 1 ]]; then
-            validation_failed=true
-            echo "::  $crate: could not check crates.io" >&2
-            continue
-        fi
-        echo "--- $crate $version (to be published first)"
-        cargo publish -p "$crate" --dry-run --allow-dirty || {
-            validation_failed=true
-            echo "::  $crate failed packaging validation" >&2
-        }
-    done
-    for crate in "${CRATES[@]}"; do
-        echo "--- $crate"
-        status=0
-        output=$(cargo publish -p "$crate" --dry-run --allow-dirty 2>&1) || status=$?
-        printf '%s\n' "$output"
-        if [[ $status -ne 0 ]]; then
-            # cargo says "failed to select a version" when the index holds only
-            # other versions, and "no matching package named" when it holds none
-            # (as for scratch-probe before its first release).
-            if grep -qE 'failed to select a version for the requirement `(cuttlefish-rs|scratch-probe)|no matching package named `(cuttlefish-rs|scratch-probe)` found' <<<"$output"; then
-                echo ":: $crate cannot be validated until its workspace dependency is" >&2
-                echo "::    published at the required version; the index cannot resolve" >&2
-                echo "::    it yet. Not treated as a failure." >&2
-            else
-                validation_failed=true
-                echo "::  $crate failed packaging validation" >&2
-            fi
-        fi
-    done
-    [[ "$validation_failed" == false ]] || die "packaging validation failed"
+    validate_packaging
     echo
     echo "Dry-run complete (no commit, tag, push, or publish performed)"
     exit 0
 fi
+
+# The same validation, on the bumped version, before anything irreversible:
+# a crate that fails to package stops the release here, while the version
+# bump can still be restored and no tag or crate exists yet.
+echo
+validate_packaging
 
 run git add "$ROOT_CARGO" "$LOCKFILE"
 run git commit -m "chore(release): bump cuttlefish workspace to v${VERSION}"

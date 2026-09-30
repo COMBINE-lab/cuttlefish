@@ -274,9 +274,10 @@ mod tests {
         assert!(!off.compress && off.probe.is_none());
     }
 
-    /// A build's own setting reaches the writers it opens. The one test that
-    /// changes the process-wide setting; others that care set theirs per
-    /// writer, and readers take either.
+    /// A build's own setting reaches the writers it opens. The only unit
+    /// test in this crate that changes the process-wide setting; others that
+    /// care set theirs per writer, and readers take either. (The compat
+    /// tests, a separate binary, serialize their builds on a lock.)
     #[test]
     fn a_builds_setting_reaches_its_writers() {
         use std::io::Write;

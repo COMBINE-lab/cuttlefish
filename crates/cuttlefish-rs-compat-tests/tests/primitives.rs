@@ -132,6 +132,8 @@ fn normalized_uncolored_fixture_tuned(
         params.threads = threads;
     }
 
+    params.compress_intermediates = IntermediateCompression::On;
+    let _build = build_lock();
     let emitted = emit_weak_superkmer_buckets::<7>(&params, subgraph_count).unwrap();
     let built = build_uncolored_from_buckets::<7>(&params, &emitted.buckets.bucket_dir).unwrap();
     let actual = normalized_fasta_labels(&built.output_path);
@@ -199,6 +201,8 @@ fn normalized_read_fixture_k<const K: usize>(
     // check that a depth-one read is discarded, which only happens above 1.
     assert_eq!(params.cutoff(), 2);
 
+    params.compress_intermediates = IntermediateCompression::On;
+    let _build = build_lock();
     let emitted = emit_weak_superkmer_buckets::<K>(&params, DEFAULT_SUBGRAPH_COUNT).unwrap();
     let built = build_uncolored_from_buckets::<K>(&params, &emitted.buckets.bucket_dir).unwrap();
     let actual = normalized_fasta_labels(&built.output_path);
@@ -243,6 +247,8 @@ fn normalized_uncolored_fixture_k<const K: usize>(
         .push(fixture(fixture_path).display().to_string());
     params.work_dir = output_prefix.parent().unwrap().display().to_string();
 
+    params.compress_intermediates = IntermediateCompression::On;
+    let _build = build_lock();
     let emitted = emit_weak_superkmer_buckets::<K>(&params, DEFAULT_SUBGRAPH_COUNT).unwrap();
     let built = build_uncolored_from_buckets::<K>(&params, &emitted.buckets.bucket_dir).unwrap();
     let actual = normalized_fasta_labels(&built.output_path);
@@ -1672,6 +1678,8 @@ fn serial_discontinuity_pipeline_builds_fasta_from_emitted_buckets() {
         .push(fixture("data/refs2.fa").display().to_string());
     params.work_dir = output_prefix.parent().unwrap().display().to_string();
 
+    params.compress_intermediates = IntermediateCompression::On;
+    let _build = build_lock();
     let emitted = emit_weak_superkmer_buckets::<7>(&params, DEFAULT_SUBGRAPH_COUNT).unwrap();
     let built = build_uncolored_with_serial_discontinuity_pipeline::<7>(
         &params,
@@ -1718,6 +1726,8 @@ fn builds_uncolored_fasta_from_emitted_buckets() {
         .push(fixture("data/refs2.fa").display().to_string());
     params.work_dir = output_prefix.parent().unwrap().display().to_string();
 
+    params.compress_intermediates = IntermediateCompression::On;
+    let _build = build_lock();
     let emitted = emit_weak_superkmer_buckets::<7>(&params, DEFAULT_SUBGRAPH_COUNT).unwrap();
     let built = build_uncolored_from_buckets::<7>(&params, &emitted.buckets.bucket_dir).unwrap();
 
@@ -1749,6 +1759,17 @@ fn builds_uncolored_fasta_from_emitted_buckets() {
 
     let _ = fs::remove_dir_all(emitted.buckets.bucket_dir);
     let _ = fs::remove_file(built.output_path);
+}
+
+/// Builds set the process-wide compression switch from their own parameters.
+/// Every build in this file states its setting, so none probes the temp
+/// directory, and holds this lock, so none runs under another test's setting.
+static BUILD_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn build_lock() -> std::sync::MutexGuard<'static, ()> {
+    BUILD_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 /// The library applies each build's own `compress_intermediates`, and the
@@ -1798,6 +1819,7 @@ fn intermediate_compression_setting_changes_nothing_but_storage() {
         params.compress_intermediates = compression;
         params.work_dir = dir.display().to_string();
         params.seqs = sources.clone();
+        let _build = build_lock();
         let emitted = emit_weak_superkmer_buckets::<21>(&params, 64).unwrap();
         let output = if colored {
             build_colored_from_buckets::<21>(&params, &emitted.buckets.bucket_dir)

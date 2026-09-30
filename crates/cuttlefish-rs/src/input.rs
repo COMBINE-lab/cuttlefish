@@ -326,8 +326,10 @@ impl FastaRecords {
     where
         F: for<'a> FnMut(BorrowedSequenceFragment<'a>) -> Result<(), InputError>,
     {
-        if self.clean {
-            // What `emit_actg_fragments` would find, without looking.
+        if self.clean && !self.seq.is_empty() {
+            // What `emit_actg_fragments` would find, without looking. An empty
+            // record still goes the long way, which emits nothing even when
+            // `min_len` is 0.
             emit_fragment(
                 self.source_id,
                 self.record_id,
@@ -951,6 +953,7 @@ mod tests {
         }
         for record in 0..1 + next(5) {
             text.extend_from_slice(format!(">r{record} desc\n").as_bytes());
+            // `next(6)` is 0 about one time in six: a header-only record.
             for _ in 0..next(6) {
                 let width = 1 + next(90) as usize;
                 for _ in 0..width {
@@ -961,6 +964,7 @@ mod tests {
                         7..=8 => b' ',
                         9 => b'\t',
                         10 => b'R',
+                        11 => b'U',
                         _ => b"ACGT"[(roll % 4) as usize],
                     });
                 }
@@ -982,7 +986,7 @@ mod tests {
     fn fasta_fast_paths_match_the_reference_parser() {
         for seed in 0..500 {
             let text = messy_fasta(seed);
-            for min_len in [1, 5, 32] {
+            for min_len in [0, 1, 5, 32] {
                 let expected = reference_fasta(&text, min_len);
                 let streamed = collect(|f| {
                     parse_input_reader(Path::new("<memory>"), &text[..], 7, min_len, &mut |x| f(x))

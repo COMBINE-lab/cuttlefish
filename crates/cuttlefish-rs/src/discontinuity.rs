@@ -619,26 +619,6 @@ fn read_discontinuity_unitig_from_reader<const K: usize>(
 /// the flag byte, and three bytes of padding.
 const EXTERNAL_UNITIG_RECORD_LEN: usize = 8;
 
-fn read_discontinuity_unitig_from_reader_for_input<const K: usize>(
-    input: &mut BufReader<File>,
-    path: &Path,
-) -> Result<DiscontinuityUnitig<K>, DiscontinuityInputError> {
-    let mut out = MaybeUninit::<DiscontinuityUnitig<K>>::zeroed();
-    let bytes = unsafe {
-        std::slice::from_raw_parts_mut(
-            out.as_mut_ptr().cast::<u8>(),
-            std::mem::size_of::<DiscontinuityUnitig<K>>(),
-        )
-    };
-    input
-        .read_exact(bytes)
-        .map_err(|source| DiscontinuityInputError::Io {
-            path: path.to_path_buf(),
-            source,
-        })?;
-    Ok(unsafe { out.assume_init() })
-}
-
 #[inline]
 fn discontinuity_unitig_flags<const K: usize>(
     left_exit: Option<DiscontinuityEndpoint<K>>,
@@ -12571,7 +12551,35 @@ pub fn emit_uncolored_discontinuity_inputs_with_threads<const K: usize>(
     cutoff: u32,
     threads: usize,
 ) -> Result<DiscontinuityInputs<K>, DiscontinuityInputError> {
-    emit_uncolored_discontinuity_inputs_with_threads_impl::<K>(bucket_dir, cutoff, threads, None)
+    if cutoff == 0 {
+        return Err(DiscontinuityInputError::InvalidCutoff);
+    }
+    if threads == 0 {
+        return Err(DiscontinuityInputError::InvalidThreadCount);
+    }
+
+    let (store, entries) = BucketStore::open_dir(bucket_dir.as_ref())?;
+    let outputs = contract_local_subgraphs::<K>(&store, &entries, cutoff, threads)?;
+    let mut inputs = DiscontinuityInputs::empty(DiscontinuityInputStats {
+        input_buckets: entries.len(),
+        ..DiscontinuityInputStats::default()
+    });
+
+    for output in outputs {
+        inputs.stats.weak_superkmers += output.weak_superkmers;
+        let label_offset = inputs.labels.len() as u64;
+        inputs.labels.extend_from_slice(&output.labels);
+        for mut unitig in output.unitigs {
+            inputs.stats.local_unitigs += 1;
+            inputs.stats.discontinuity_exits +=
+                u64::from(unitig.left_exit().is_some()) + u64::from(unitig.right_exit().is_some());
+            inputs.stats.unitig_bases += unitig.label_len as u64;
+            unitig.label_start += label_offset;
+            inputs.unitigs.push(unitig);
+        }
+    }
+
+    Ok(inputs)
 }
 
 /// Contracts uncolored local bucket graphs directly into external streams.
@@ -12671,100 +12679,6 @@ pub fn emit_colored_external_discontinuity_inputs_with_threads_in_dir<const K: u
             num_colors,
         )
     }
-}
-
-fn emit_uncolored_discontinuity_inputs_with_threads_impl<const K: usize>(
-    bucket_dir: impl AsRef<Path>,
-    cutoff: u32,
-    threads: usize,
-    label_path: Option<&Path>,
-) -> Result<DiscontinuityInputs<K>, DiscontinuityInputError> {
-    if cutoff == 0 {
-        return Err(DiscontinuityInputError::InvalidCutoff);
-    }
-    if threads == 0 {
-        return Err(DiscontinuityInputError::InvalidThreadCount);
-    }
-
-    let (store, entries) = BucketStore::open_dir(bucket_dir.as_ref())?;
-    if let Some(label_path) = label_path {
-        let external = if cutoff == 1 {
-            contract_local_subgraphs_into_external_inputs::<K, Presence>(
-                &store, &entries, cutoff, threads, label_path, None, None, None, 0,
-            )?
-        } else {
-            contract_local_subgraphs_into_external_inputs::<K, Counted>(
-                &store, &entries, cutoff, threads, label_path, None, None, None, 0,
-            )?
-        };
-        return external_inputs_to_memory_inputs(external);
-    }
-
-    let outputs = contract_local_subgraphs::<K>(&store, &entries, cutoff, threads)?;
-    let mut inputs = DiscontinuityInputs::empty(DiscontinuityInputStats {
-        input_buckets: entries.len(),
-        ..DiscontinuityInputStats::default()
-    });
-
-    for output in outputs {
-        inputs.stats.weak_superkmers += output.weak_superkmers;
-        let label_offset = inputs.labels.len() as u64;
-        inputs.labels.extend_from_slice(&output.labels);
-        for mut unitig in output.unitigs {
-            inputs.stats.local_unitigs += 1;
-            inputs.stats.discontinuity_exits +=
-                u64::from(unitig.left_exit().is_some()) + u64::from(unitig.right_exit().is_some());
-            inputs.stats.unitig_bases += unitig.label_len as u64;
-            unitig.label_start += label_offset;
-            inputs.unitigs.push(unitig);
-        }
-    }
-
-    Ok(inputs)
-}
-
-fn external_inputs_to_memory_inputs<const K: usize>(
-    external: ExternalDiscontinuityInputs<K>,
-) -> Result<DiscontinuityInputs<K>, DiscontinuityInputError> {
-    let unitig_file =
-        File::open(&external.unitig_path).map_err(|source| DiscontinuityInputError::Io {
-            path: external.unitig_path.clone(),
-            source,
-        })?;
-    let mut unitig_input = BufReader::with_capacity(1024 * 1024, unitig_file);
-    let mut unitigs = Vec::with_capacity(external.unitigs);
-    for _ in 0..external.unitigs {
-        unitigs.push(read_discontinuity_unitig_from_reader_for_input(
-            &mut unitig_input,
-            &external.unitig_path,
-        )?);
-    }
-
-    let mut label_file =
-        File::open(&external.label_path).map_err(|source| DiscontinuityInputError::Io {
-            path: external.label_path.clone(),
-            source,
-        })?;
-    let label_len = label_file
-        .metadata()
-        .map_err(|source| DiscontinuityInputError::Io {
-            path: external.label_path.clone(),
-            source,
-        })?
-        .len() as usize;
-    let mut labels = vec![0u8; label_len];
-    label_file
-        .read_exact(&mut labels)
-        .map_err(|source| DiscontinuityInputError::Io {
-            path: external.label_path.clone(),
-            source,
-        })?;
-
-    Ok(DiscontinuityInputs {
-        unitigs,
-        labels,
-        stats: external.stats,
-    })
 }
 
 #[allow(clippy::too_many_arguments)]

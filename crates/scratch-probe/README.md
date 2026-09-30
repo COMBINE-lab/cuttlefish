@@ -13,8 +13,10 @@ the work directory. `scratch-probe` answers cheaply enough to ask at startup:
   Device-mapper and md stacks are followed down to their disks.
 - `probe(dir, &Limits::default())` also times a sequential write (with
   `fdatasync`) and read-back of random bytes.
-  - It is capped at 256 MiB and about half a second, so fast storage costs a
-    fraction of a second and slow storage stops early.
+  - It is capped at 256 MiB and about half a second each way, so fast
+    storage costs a fraction of a second and slow storage stops early. Where
+    it has to fall back to buffered I/O, it syncs every chunk so the cap
+    still measures the device.
   - It bypasses the page cache (`O_DIRECT` on Linux, `F_NOCACHE` on macOS),
     so it measures the device rather than memory. It falls back to buffered
     I/O where that is refused.

@@ -37,7 +37,9 @@ use std::time::{Duration, Instant};
 pub struct Limits {
     /// Most bytes written, then read back.
     pub max_bytes: u64,
-    /// Writing stops once this much time has passed, after at least one chunk.
+    /// Writing, and then reading, each stop once this much time has passed,
+    /// after at least one chunk; so a probe takes about twice this, plus a
+    /// chunk each way on slow storage.
     pub max_time: Duration,
     /// Bytes per write and read call; rounded up to 4 KiB.
     pub chunk_bytes: usize,
@@ -177,7 +179,7 @@ pub fn probe(dir: &Path, limits: &Limits) -> io::Result<Probe> {
         }
         Err(error) => return Err(error),
     };
-    let read = timed_read(&path, &mut buffer, direct_io)?;
+    let read = timed_read(&path, &mut buffer, limits, direct_io)?;
     Ok(Probe {
         dir: dir.to_path_buf(),
         storage: classify(dir),
@@ -202,6 +204,13 @@ fn timed_write(
     while written < limits.max_bytes && (written == 0 || started.elapsed() < limits.max_time) {
         file.write_all(buffer.as_slice())?;
         written += buffer.len() as u64;
+        // Buffered writes land in the page cache at memory speed, so the
+        // clock would stop long before the device had done any work, and
+        // the final sync alone could take seconds. Syncing each chunk keeps
+        // the time cap honest.
+        if !direct {
+            file.sync_data()?;
+        }
     }
     file.sync_data()?;
     Ok(Throughput {
@@ -210,14 +219,19 @@ fn timed_write(
     })
 }
 
-fn timed_read(path: &Path, buffer: &mut AlignedBuffer, direct: bool) -> io::Result<Throughput> {
+fn timed_read(
+    path: &Path,
+    buffer: &mut AlignedBuffer,
+    limits: &Limits,
+    direct: bool,
+) -> io::Result<Throughput> {
     let mut file = open(path, false, direct)?;
     if !direct {
         drop_cached_pages(&file);
     }
     let started = Instant::now();
     let mut read = 0u64;
-    loop {
+    while read == 0 || started.elapsed() < limits.max_time {
         match file.read(buffer.as_mut_slice())? {
             0 => break,
             n => read += n as u64,
@@ -533,7 +547,8 @@ mod tests {
         };
         let probe = probe(&dir, &limits).unwrap();
         assert!(probe.write.bytes >= 1024 * 1024 && probe.write.bytes <= limits.max_bytes);
-        assert_eq!(probe.read.bytes, probe.write.bytes);
+        // Reading stops at the time cap too, so it may not reach the end.
+        assert!(probe.read.bytes >= 1024 * 1024 && probe.read.bytes <= probe.write.bytes);
         assert!(probe.slowest_bytes_per_second() > 0.0);
         assert!(probe.sustains(1.0, 1.0));
         assert!(!probe.sustains(f64::MAX, 1.0));
@@ -562,6 +577,20 @@ mod tests {
             let shm = classify(Path::new("/dev/shm"));
             assert_eq!(shm.kind, StorageKind::Memory);
             assert_eq!(shm.rotational, None);
+            // tmpfs refuses O_DIRECT, so this is the buffered fallback.
+            let limits = Limits {
+                max_bytes: 8 * 1024 * 1024,
+                max_time: Duration::from_millis(100),
+                chunk_bytes: 1024 * 1024,
+            };
+            let before = fs::read_dir("/dev/shm").unwrap().count();
+            let measured = probe(Path::new("/dev/shm"), &limits).unwrap();
+            assert!(!measured.direct_io);
+            assert!(measured.read.bytes > 0 && measured.read.bytes <= measured.write.bytes);
+            assert!(
+                fs::read_dir("/dev/shm").unwrap().count() <= before,
+                "probe file removed"
+            );
         }
         assert!(mem_available().is_some_and(|bytes| bytes > 0));
     }

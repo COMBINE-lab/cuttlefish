@@ -39,6 +39,7 @@ pub fn build_colored_from_buckets<const K: usize>(
     if !params.color {
         return Err(ColoredBuildError::ColorRequired);
     }
+    crate::intermediates::apply_params(params);
     let bucket_dir = bucket_dir.as_ref().to_path_buf();
     let output_name = Path::new(&params.output_prefix)
         .file_name()

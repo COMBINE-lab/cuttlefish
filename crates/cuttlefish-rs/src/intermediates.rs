@@ -12,8 +12,8 @@
 //! [`choose`] makes the call with [`scratch_probe`].
 //! * A network filesystem or a rotational disk: compress, without timing
 //!   anything.
-//! * Otherwise, a probe of at most 256 MiB and about half a second times
-//!   direct writes and reads. Storage that sustains twice the rate the build
+//! * Otherwise, a probe of at most 256 MiB and about half a second each way
+//!   times direct writes and reads. Storage that sustains twice the rate the build
 //!   produces intermediates ([`intermediate_bytes_per_second`]) absorbs them
 //!   without stalling the build, so compression is left off; slower storage
 //!   gets it.
@@ -142,6 +142,35 @@ pub fn apply(compress: bool) {
     crate::block_io::set_compress_blocks(compress);
 }
 
+/// Applies a build's own setting before it opens any intermediate stream:
+/// `on` and `off` as given, and `auto` by probing the work directory, which
+/// is reported. The library's build entry points call this, so a caller that
+/// wants the decision made earlier (the CLI makes it before partitioning)
+/// resolves `auto` itself and passes `on` or `off` down.
+///
+/// The setting is process-wide. Builds running concurrently in one process
+/// with different settings may each write some streams under the other's;
+/// every block records how it is stored, so that changes speed, never the
+/// output.
+pub fn apply_params(params: &crate::params::BuildParams) {
+    let compress = match params.compress_intermediates {
+        IntermediateCompression::On => true,
+        IntermediateCompression::Off => false,
+        IntermediateCompression::Auto => {
+            let work_dir = Path::new(&params.work_dir);
+            let _ = std::fs::create_dir_all(work_dir);
+            let choice = choose(IntermediateCompression::Auto, work_dir, params.threads);
+            eprintln!(
+                "cuttlefish: intermediate compression {} (auto: {})",
+                if choice.compress { "on" } else { "off" },
+                choice.reason
+            );
+            choice.compress
+        }
+    };
+    apply(compress);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -187,6 +216,30 @@ mod tests {
         assert!(choose(IntermediateCompression::On, missing, 16).compress);
         let off = choose(IntermediateCompression::Off, missing, 16);
         assert!(!off.compress && off.probe.is_none());
+    }
+
+    /// A build's own setting reaches the writers it opens. The one test that
+    /// changes the process-wide setting; others that care set theirs per
+    /// writer, and readers take either.
+    #[test]
+    fn a_builds_setting_reaches_its_writers() {
+        use std::io::Write;
+        let stored = |setting: IntermediateCompression| {
+            let mut params = crate::params::BuildParams::new(
+                crate::GraphInput::References,
+                "unused".to_string(),
+            );
+            params.compress_intermediates = setting;
+            apply_params(&params);
+            let mut writer = crate::block_io::Lz4BlockWriter::new(Vec::new());
+            writer.write_all(&[7u8; 64 * 1024]).unwrap();
+            writer.into_inner().len()
+        };
+        assert!(
+            stored(IntermediateCompression::Off) > 64 * 1024,
+            "stored raw"
+        );
+        assert!(stored(IntermediateCompression::On) < 4096, "compressed");
     }
 
     #[test]

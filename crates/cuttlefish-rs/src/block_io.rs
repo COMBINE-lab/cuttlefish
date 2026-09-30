@@ -21,9 +21,11 @@ pub(crate) const BLOCK_BYTES: usize = 256 * 1024;
 /// Largest block a reader accepts.
 pub(crate) const MAX_BLOCK_BYTES: usize = 1024 * 1024;
 
-/// Whether new writers compress their blocks; set once at startup from
-/// [`crate::intermediates`]. With it off, blocks are stored raw and the
-/// format -- and the reader -- are unchanged.
+/// Whether new writers compress their blocks. Each build sets it from its
+/// own parameters ([`crate::intermediates::apply_params`]) before opening any
+/// stream; on is the default for streams opened outside a build. With it
+/// off, blocks are stored raw and the format -- and the reader -- are
+/// unchanged.
 static COMPRESS_BLOCKS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
 
 pub(crate) fn set_compress_blocks(compress: bool) {

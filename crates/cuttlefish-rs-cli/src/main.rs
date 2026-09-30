@@ -75,11 +75,13 @@ fn report_cpu_capabilities() {
     }
 }
 
-/// Decides, reports and applies whether intermediate streams are compressed.
+/// Decides and reports whether intermediate streams are compressed, before
+/// partitioning, and returns the decision as an explicit setting for the
+/// library to apply without probing again.
 ///
-/// `auto` times the work directory's storage for up to about half a second;
+/// `auto` times the work directory's storage for about a second at most;
 /// on a long build that choice is cheap, and the flag overrides it.
-fn choose_intermediate_compression(params: &BuildParams) {
+fn choose_intermediate_compression(params: &BuildParams) -> IntermediateCompression {
     let work_dir = std::path::Path::new(&params.work_dir);
     // The build creates it anyway; the probe needs it now.
     let _ = std::fs::create_dir_all(work_dir);
@@ -100,7 +102,11 @@ fn choose_intermediate_compression(params: &BuildParams) {
         choice.reason,
         started.elapsed().as_secs_f64(),
     );
-    cuttlefish_rs::intermediates::apply(choice.compress);
+    if choice.compress {
+        IntermediateCompression::On
+    } else {
+        IntermediateCompression::Off
+    }
 }
 
 fn run<I>(mut args: I) -> Result<i32, CliError>
@@ -116,7 +122,7 @@ where
         "build" => {
             // `--help` is a satisfied request, not an error: exit 0 like the
             // other subcommands do.
-            let params = match parse_build(args) {
+            let mut params = match parse_build(args) {
                 Ok(params) => params,
                 Err(CliError::Help) => return Ok(0),
                 Err(err) => return Err(err),
@@ -136,7 +142,7 @@ where
                 eprintln!("cuttlefish: raised open-file limit from {fd_before} to {fd_after}");
             }
             report_cpu_capabilities();
-            choose_intermediate_compression(&params);
+            params.compress_intermediates = choose_intermediate_compression(&params);
             eprintln!(
                 "cuttlefish: parsed build request for k={}, l={}, cutoff={}, color={}",
                 params.k,

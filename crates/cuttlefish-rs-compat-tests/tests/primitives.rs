@@ -1,5 +1,6 @@
 use cuttlefish_rs::Side;
 use cuttlefish_rs::buckets::{BucketLocation, BucketStore, read_container_manifest};
+use cuttlefish_rs::colored::build_colored_from_buckets;
 use cuttlefish_rs::discontinuity::{
     DISCONTINUITY_PARALLELIZATION_OPPORTUNITIES, DiscontinuityEdge, DiscontinuityEndpoint,
     DiscontinuityInputStats, DiscontinuityInputs, EdgePathInfo, FullSerialContractionStats,
@@ -13,7 +14,7 @@ use cuttlefish_rs::dna::Base;
 use cuttlefish_rs::input::{expand_input_paths, parse_fragments};
 use cuttlefish_rs::kmer::Kmer;
 use cuttlefish_rs::minimizer::canonical_minimizer;
-use cuttlefish_rs::params::BuildParams;
+use cuttlefish_rs::params::{BuildParams, IntermediateCompression};
 use cuttlefish_rs::partition::{emit_weak_superkmer_buckets, partition_fragment, partition_inputs};
 use cuttlefish_rs::state::VertexState;
 use cuttlefish_rs::subgraph::LocalSubgraph;
@@ -1748,4 +1749,99 @@ fn builds_uncolored_fasta_from_emitted_buckets() {
 
     let _ = fs::remove_dir_all(emitted.buckets.bucket_dir);
     let _ = fs::remove_file(built.output_path);
+}
+
+/// The library applies each build's own `compress_intermediates`, and the
+/// production loaders read the streams back either way: compression off and
+/// on must give the same unitigs, colored and uncolored.
+#[test]
+fn intermediate_compression_setting_changes_nothing_but_storage() {
+    let root = scratch_prefix("compression-setting");
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).unwrap();
+    let mut state = 0x2545_f491_4f6c_dd1du64;
+    let mut next = |n: u64| {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        state % n
+    };
+    let genome: Vec<u8> = (0..30_000).map(|_| b"ACGT"[next(4) as usize]).collect();
+    let mut sources = Vec::new();
+    for source in 0..3 {
+        let path = root.join(format!("source{source}.fa"));
+        let mut fasta = Vec::new();
+        for record in 0..20 {
+            let start = next(25_000) as usize;
+            let mut piece = genome[start..start + 200 + next(4000) as usize].to_vec();
+            let at = next(piece.len() as u64) as usize;
+            piece[at] = b"ACGT"[next(4) as usize];
+            fasta.extend_from_slice(format!(">s{source}r{record}\n").as_bytes());
+            fasta.extend_from_slice(&piece);
+            fasta.push(b'\n');
+        }
+        fs::write(&path, fasta).unwrap();
+        sources.push(path.display().to_string());
+    }
+
+    let build = |colored: bool, compression: IntermediateCompression, tag: &str| {
+        let dir = root.join(tag);
+        fs::create_dir_all(&dir).unwrap();
+        let mut params = BuildParams::new(
+            GraphInput::References,
+            dir.join("out").display().to_string(),
+        );
+        params.k = 21;
+        params.minimizer_len = 9;
+        params.color = colored;
+        params.threads = 4;
+        params.compress_intermediates = compression;
+        params.work_dir = dir.display().to_string();
+        params.seqs = sources.clone();
+        let emitted = emit_weak_superkmer_buckets::<21>(&params, 64).unwrap();
+        let output = if colored {
+            build_colored_from_buckets::<21>(&params, &emitted.buckets.bucket_dir)
+                .unwrap()
+                .output_path
+        } else {
+            build_uncolored_from_buckets::<21>(&params, &emitted.buckets.bucket_dir)
+                .unwrap()
+                .output_path
+        };
+        let mut labels: Vec<String> = fs::read_to_string(output)
+            .unwrap()
+            .lines()
+            .filter(|line| !line.starts_with('>'))
+            .map(|label| {
+                let reverse: String = label
+                    .bytes()
+                    .rev()
+                    .map(|b| match b {
+                        b'A' => 'T',
+                        b'C' => 'G',
+                        b'G' => 'C',
+                        _ => 'A',
+                    })
+                    .collect();
+                reverse.min(label.to_string())
+            })
+            .collect();
+        labels.sort();
+        labels
+    };
+    for colored in [false, true] {
+        let off = build(
+            colored,
+            IntermediateCompression::Off,
+            &format!("off-{colored}"),
+        );
+        let on = build(
+            colored,
+            IntermediateCompression::On,
+            &format!("on-{colored}"),
+        );
+        assert!(off.len() > 20, "{} unitigs", off.len());
+        assert_eq!(off, on, "colored: {colored}");
+    }
+    let _ = fs::remove_dir_all(&root);
 }

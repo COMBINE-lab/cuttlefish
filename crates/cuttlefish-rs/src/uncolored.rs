@@ -58,6 +58,7 @@ pub fn build_uncolored_with_debug_global_contractor<const K: usize>(
     if params.color {
         return Err(UncoloredBuildError::ColoredUnsupported);
     }
+    crate::intermediates::apply_params(params);
 
     let bucket_dir = bucket_dir.as_ref();
     let cutoff = params.cutoff();
@@ -106,6 +107,7 @@ pub fn build_uncolored_with_serial_discontinuity_pipeline<const K: usize>(
     if params.color {
         return Err(UncoloredBuildError::ColoredUnsupported);
     }
+    crate::intermediates::apply_params(params);
 
     let local_start = Instant::now();
     report_process_memory("before local contraction");

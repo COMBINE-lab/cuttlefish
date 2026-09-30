@@ -249,7 +249,10 @@ if [[ "$DRY_RUN" == true ]]; then
         output=$(cargo publish -p "$crate" --dry-run --allow-dirty 2>&1) || status=$?
         printf '%s\n' "$output"
         if [[ $status -ne 0 ]]; then
-            if grep -qE 'failed to select a version for the requirement `(cuttlefish-rs|scratch-probe)' <<<"$output"; then
+            # cargo says "failed to select a version" when the index holds only
+            # other versions, and "no matching package named" when it holds none
+            # (as for scratch-probe before its first release).
+            if grep -qE 'failed to select a version for the requirement `(cuttlefish-rs|scratch-probe)|no matching package named `(cuttlefish-rs|scratch-probe)` found' <<<"$output"; then
                 echo ":: $crate cannot be validated until its workspace dependency is" >&2
                 echo "::    published at the required version; the index cannot resolve" >&2
                 echo "::    it yet. Not treated as a failure." >&2

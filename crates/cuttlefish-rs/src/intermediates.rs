@@ -12,6 +12,9 @@
 //! [`choose`] makes the call with [`scratch_probe`].
 //! * A network filesystem or a rotational disk: compress, without timing
 //!   anything.
+//! * A FUSE filesystem: compress without timing, with a warning. It may
+//!   front a fast local disk or a remote object store, and a short probe
+//!   cannot tell a cache from the store behind it.
 //! * Otherwise, a probe of at most 256 MiB and about half a second each way
 //!   times direct writes and reads. Storage that sustains twice the rate the build
 //!   produces intermediates ([`intermediate_bytes_per_second`]) absorbs them
@@ -51,6 +54,9 @@ pub struct CompressionChoice {
     pub reason: String,
     /// The storage measurement, when one was made.
     pub probe: Option<scratch_probe::Probe>,
+    /// Something the user should know about the choice, such as a guess
+    /// made without measuring.
+    pub warning: Option<String>,
 }
 
 /// Decides whether to compress intermediates for a build of `threads` workers
@@ -65,37 +71,21 @@ pub fn choose(
             compress: true,
             reason: "requested".to_string(),
             probe: None,
+            warning: None,
         },
         IntermediateCompression::Off => CompressionChoice {
             compress: false,
             reason: "requested".to_string(),
             probe: None,
+            warning: None,
         },
         IntermediateCompression::Auto => choose_auto(work_dir, threads),
     }
 }
 
 fn choose_auto(work_dir: &Path, threads: usize) -> CompressionChoice {
-    let storage = scratch_probe::classify(work_dir);
-    if storage.kind == scratch_probe::StorageKind::Network {
-        return CompressionChoice {
-            compress: true,
-            reason: format!(
-                "work directory is on a network filesystem ({})",
-                storage.filesystem
-            ),
-            probe: None,
-        };
-    }
-    if storage.rotational == Some(true) {
-        return CompressionChoice {
-            compress: true,
-            reason: format!(
-                "work directory is on a rotational disk ({})",
-                storage.filesystem
-            ),
-            probe: None,
-        };
+    if let Some(choice) = choose_without_timing(&scratch_probe::classify(work_dir)) {
+        return choice;
     }
     let probe = match scratch_probe::probe(work_dir, &scratch_probe::Limits::default()) {
         Ok(probe) => probe,
@@ -104,17 +94,63 @@ fn choose_auto(work_dir: &Path, threads: usize) -> CompressionChoice {
                 compress: true,
                 reason: format!("could not measure the work directory's storage ({error})"),
                 probe: None,
+                warning: None,
             };
         }
     };
     decide(probe, intermediate_bytes_per_second(threads))
 }
 
+/// The storage that is compressed for without timing, from metadata alone:
+/// network filesystems and rotational disks, which are slow as a rule, and
+/// FUSE mounts, whose speed says little about what they front.
+fn choose_without_timing(storage: &scratch_probe::Storage) -> Option<CompressionChoice> {
+    if storage.kind == scratch_probe::StorageKind::Network {
+        return Some(CompressionChoice {
+            compress: true,
+            reason: format!(
+                "work directory is on a network filesystem ({})",
+                storage.filesystem
+            ),
+            probe: None,
+            warning: None,
+        });
+    }
+    if storage.kind == scratch_probe::StorageKind::Fuse {
+        return Some(CompressionChoice {
+            compress: true,
+            reason: format!(
+                "work directory is on a FUSE filesystem ({})",
+                storage.filesystem
+            ),
+            probe: None,
+            warning: Some(
+                "the work directory is on a FUSE filesystem, which may be a local disk or a \
+                 remote store; intermediates are compressed without timing it. Pass \
+                 --compress-intermediates off if it is fast local storage."
+                    .to_string(),
+            ),
+        });
+    }
+    if storage.rotational == Some(true) {
+        return Some(CompressionChoice {
+            compress: true,
+            reason: format!(
+                "work directory is on a rotational disk ({})",
+                storage.filesystem
+            ),
+            probe: None,
+            warning: None,
+        });
+    }
+    None
+}
+
 /// The timed half of the decision, on a finished probe.
 fn decide(probe: scratch_probe::Probe, need: f64) -> CompressionChoice {
     let compress = !probe.sustains(need, STORAGE_MARGIN);
     let reason = format!(
-        "{} storage ({}{}) writes {:.2} GB/s and reads {:.2} GB/s; the build produces about {:.2} GB/s",
+        "{} storage ({}{}) writes {:.2} GB/s and reads {:.2} GB/s; the build produces about {:.2} GB/s, so storage must sustain {:.2} GB/s",
         probe.storage.filesystem,
         if probe.direct_io {
             "direct I/O"
@@ -128,11 +164,13 @@ fn decide(probe: scratch_probe::Probe, need: f64) -> CompressionChoice {
         probe.write.bytes_per_second() / 1e9,
         probe.read.bytes_per_second() / 1e9,
         need / 1e9,
+        need * STORAGE_MARGIN / 1e9,
     );
     CompressionChoice {
         compress,
         reason,
         probe: Some(probe),
+        warning: None,
     }
 }
 
@@ -160,6 +198,9 @@ pub fn apply_params(params: &crate::params::BuildParams) {
             let work_dir = Path::new(&params.work_dir);
             let _ = std::fs::create_dir_all(work_dir);
             let choice = choose(IntermediateCompression::Auto, work_dir, params.threads);
+            if let Some(warning) = &choice.warning {
+                eprintln!("cuttlefish: warning: {warning}");
+            }
             eprintln!(
                 "cuttlefish: intermediate compression {} (auto: {})",
                 if choice.compress { "on" } else { "off" },
@@ -240,6 +281,30 @@ mod tests {
             "stored raw"
         );
         assert!(stored(IntermediateCompression::On) < 4096, "compressed");
+    }
+
+    #[test]
+    fn some_storage_compresses_without_timing() {
+        let storage = |kind, rotational| scratch_probe::Storage {
+            filesystem: "test",
+            kind,
+            rotational,
+        };
+        use scratch_probe::StorageKind::{Fuse, Local, Memory, Network, Unknown};
+        let fuse = choose_without_timing(&storage(Fuse, None)).unwrap();
+        assert!(fuse.compress && fuse.probe.is_none() && fuse.warning.is_some());
+        for (kind, rotational) in [(Network, None), (Local, Some(true))] {
+            let choice = choose_without_timing(&storage(kind, rotational)).unwrap();
+            assert!(choice.compress && choice.warning.is_none());
+        }
+        for (kind, rotational) in [
+            (Local, Some(false)),
+            (Local, None),
+            (Memory, None),
+            (Unknown, None),
+        ] {
+            assert!(choose_without_timing(&storage(kind, rotational)).is_none());
+        }
     }
 
     #[test]

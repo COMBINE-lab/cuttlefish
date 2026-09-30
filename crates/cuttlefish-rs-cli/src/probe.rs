@@ -110,6 +110,9 @@ where
         if choice.compress { "on" } else { "off" },
         choice.reason
     );
+    if let Some(warning) = &choice.warning {
+        println!("warning          {warning}");
+    }
     Ok(0)
 }
 

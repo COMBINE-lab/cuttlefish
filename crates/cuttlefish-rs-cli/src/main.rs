@@ -91,6 +91,9 @@ fn choose_intermediate_compression(params: &BuildParams) -> IntermediateCompress
         work_dir,
         params.threads,
     );
+    if let Some(warning) = &choice.warning {
+        eprintln!("cuttlefish: warning: {warning}");
+    }
     let setting = match params.compress_intermediates {
         IntermediateCompression::Auto => "auto",
         IntermediateCompression::On => "--compress-intermediates on",

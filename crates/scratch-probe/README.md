@@ -9,7 +9,8 @@ the work directory. `scratch-probe` answers cheaply enough to ask at startup:
 
 - `classify(dir)` uses metadata only (no I/O). It reports the filesystem;
   whether it is local, networked (NFS, SMB, Lustre, GPFS, CephFS, BeeGFS, ...)
-  or memory-backed; and whether the block device under it rotates.
+  memory-backed or a userspace (FUSE) mount; and whether the block device
+  under it rotates.
   Device-mapper and md stacks are followed down to their disks.
 - `probe(dir, &Limits::default())` also times a sequential write (with
   `fdatasync`) and read-back of random bytes.

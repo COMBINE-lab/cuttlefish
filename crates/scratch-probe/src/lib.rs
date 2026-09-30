@@ -64,7 +64,10 @@ pub enum StorageKind {
     Network,
     /// Memory: tmpfs or ramfs.
     Memory,
-    /// Not recognised, including FUSE filesystems, which may be either.
+    /// A userspace (FUSE) filesystem, which may front a local disk or a
+    /// remote object store; its speed says little about either.
+    Fuse,
+    /// Not recognised.
     Unknown,
 }
 
@@ -382,14 +385,14 @@ mod linux {
         (0x1983_0326, "beegfs", StorageKind::Network),
         (0x5346_414F, "afs", StorageKind::Network),
         (0xAAD7_AAEA, "panfs", StorageKind::Network),
-        (0x6573_5546, "fuse", StorageKind::Unknown),
+        (0x6573_5546, "fuse", StorageKind::Fuse),
     ];
 
     pub(super) fn classify(dir: &Path) -> Storage {
         let (filesystem, kind) = filesystem(dir);
         let rotational = match kind {
             StorageKind::Local | StorageKind::Unknown => rotational(dir),
-            StorageKind::Network | StorageKind::Memory => None,
+            StorageKind::Network | StorageKind::Memory | StorageKind::Fuse => None,
         };
         Storage {
             filesystem,
@@ -511,16 +514,15 @@ mod macos {
             .map_or_else(
                 // An unlisted filesystem is still local or not; the kernel
                 // says which. FUSE mounts (macFUSE) report themselves local
-                // whatever they front, so they stay unknown.
+                // whatever they front, so they get their own kind.
                 || {
-                    let kind = if name.windows(4).any(|w| w == b"fuse") {
-                        StorageKind::Unknown
+                    if name.windows(4).any(|w| w == b"fuse") {
+                        ("fuse", StorageKind::Fuse)
                     } else if stats.f_flags & libc::MNT_LOCAL as u32 != 0 {
-                        StorageKind::Local
+                        ("unknown", StorageKind::Local)
                     } else {
-                        StorageKind::Network
-                    };
-                    ("unknown", kind)
+                        ("unknown", StorageKind::Network)
+                    }
                 },
                 |&(name, kind)| (name, kind),
             );

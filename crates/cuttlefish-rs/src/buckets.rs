@@ -3386,6 +3386,12 @@ impl SharedBucketEmitter {
 
     /// Adds a super-k-mer of the fragment last given to
     /// [`Self::pack_fragment`], slicing its label out of the packed words.
+    // Inlined into the partition's scan loop, as is `add_impl` into it: this
+    // runs once per weak super-k-mer, and left to the optimizer the inlining
+    // depends on how the crate falls into codegen units. An unrelated
+    // addition once outlined `add_impl` and cost 25% of the partition's
+    // worker time (scan+pack 171 -> 213 worker-s at 10k, t16).
+    #[inline]
     pub fn add_packed(&mut self, superkmer: &WeakSuperKmer) -> Result<(), BucketError> {
         if superkmer.len > self.sink.label_words * 32 {
             return Err(BucketError::MalformedRecord);
@@ -3399,6 +3405,7 @@ impl SharedBucketEmitter {
         self.add_impl(superkmer, LabelSource::Packed(&words, superkmer.len))
     }
 
+    #[inline(always)]
     fn add_impl(
         &mut self,
         superkmer: &WeakSuperKmer,

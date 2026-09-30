@@ -33,15 +33,25 @@ use crate::params::IntermediateCompression;
 /// uncolored), so the smaller corpus gives the demanding estimate.
 pub const BYTES_PER_SECOND_AT_16_THREADS: f64 = 0.96e9;
 
-/// How the rate grows with threads. The phases do not scale linearly: 150k
-/// wrote 1.33 GB/s colored and 1.24 GB/s uncolored at 64 threads against
-/// 0.50 and 0.55 at 16, a growth of threads^0.65.
+/// How the rate grows with threads, up to [`SATURATING_THREADS`]. The phases
+/// do not scale linearly: 150k wrote 1.33 GB/s colored and 1.24 GB/s
+/// uncolored at 64 threads against 0.50 and 0.55 at 16, a growth of
+/// threads^0.65.
 pub const THREAD_SCALING_EXPONENT: f64 = 0.65;
+
+/// Past this many threads the rate stops growing. Measured with compression
+/// off, both corpora plateau near 2 GB/s: 10k wrote 1.96 / 1.89 GB/s
+/// (colored / uncolored) at 128 threads and 2.00 / 1.78 at 256; 150k wrote
+/// 1.60 / 1.53 and 2.03 / 1.75. Holding the curve at its 64-thread value,
+/// 2.36 GB/s, stays above every measurement, where extrapolating it would
+/// have claimed 3.7 and 5.8 GB/s.
+pub const SATURATING_THREADS: usize = 64;
 
 /// The rate, in bytes per second, at which a build of `threads` workers
 /// produces intermediates.
 pub fn intermediate_bytes_per_second(threads: usize) -> f64 {
-    BYTES_PER_SECOND_AT_16_THREADS * (threads.max(1) as f64 / 16.0).powf(THREAD_SCALING_EXPONENT)
+    let threads = threads.clamp(1, SATURATING_THREADS);
+    BYTES_PER_SECOND_AT_16_THREADS * (threads as f64 / 16.0).powf(THREAD_SCALING_EXPONENT)
 }
 
 /// How far storage must outrun that rate to be left uncompressed.
@@ -244,11 +254,16 @@ mod tests {
         assert!(!decide(probe_at(5.7, 6.8), need).compress, "striped NVMe");
         assert!(decide(probe_at(0.5, 0.55), need).compress, "SATA SSD");
         assert!(decide(probe_at(5.7, 1.5), need).compress, "slow reads");
-        // The same NVMe still keeps up at 64 threads (about 2.4 GB/s), but
-        // not at 256 (about 5.8 GB/s).
+        // The rate stops growing at 64 threads (about 2.4 GB/s), so the same
+        // NVMe keeps up at any thread count, and a slower SSD does not.
         let nvme = probe_at(5.7, 6.8);
-        assert!(!decide(nvme.clone(), intermediate_bytes_per_second(64)).compress);
-        assert!(decide(nvme, intermediate_bytes_per_second(256)).compress);
+        for threads in [64, 128, 256, 1024] {
+            let need = intermediate_bytes_per_second(threads);
+            assert_eq!(need, intermediate_bytes_per_second(64));
+            assert!(!decide(nvme.clone(), need).compress);
+            assert!(decide(probe_at(3.0, 3.5), need).compress);
+        }
+        assert!(intermediate_bytes_per_second(32) < intermediate_bytes_per_second(64));
     }
 
     #[test]

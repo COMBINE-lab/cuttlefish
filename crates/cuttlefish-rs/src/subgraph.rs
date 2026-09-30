@@ -586,8 +586,9 @@ impl<const K: usize, C: ColorSlot> LocalVertexMap<K, C> {
     }
 
     /// Pulls the home cache line of every vertex in a packed record before
-    /// the state-update loop probes them. Flat map only: it is the one table
-    /// whose slot addresses this crate can compute.
+    /// the state-update loop probes them. Only the line holding the start
+    /// of the home slot is fetched, which is all of it except when the slot
+    /// straddles a line.
     #[inline]
     fn prefetch_packed_record(&self, words: &[u64], len: usize) {
         let last_vertex_offset = len - K;

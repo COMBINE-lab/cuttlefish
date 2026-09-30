@@ -105,9 +105,12 @@ pub trait ColorSlot: Copy + Default + std::fmt::Debug + PartialEq + Eq {
     const COUNTS_EDGES: bool;
 
     /// Padding for a K > 31 flat-map slot, whose 16-byte key and state
-    /// otherwise pack without any. A slot of an odd size straddles cache
-    /// lines, so a colored presence slot is padded from 28 to 32 bytes; the
-    /// others (20 and 24) are small enough that their density wins.
+    /// otherwise pack without any. Unpadded, a colored presence slot would be
+    /// 28 bytes, and it measured slower than a 32-byte slot, which never
+    /// straddles a cache line when the table starts on one. jemalloc's large
+    /// blocks do; other allocators may not, and a `repr(align(32))` pad that
+    /// would guarantee it measured 1.5% slower. The 20- and 24-byte slots
+    /// straddle too, but gain enough density to win.
     type WidePad: Copy + Default + std::fmt::Debug;
 
     /// The colour-set hash, or zero when the build carries no colours.
@@ -304,7 +307,10 @@ impl<C: ColorSlot> VertexState<C> {
             return;
         }
         // An N here would set a bit outside the eight presence bits, in the
-        // last-source field. Callers skip N-adjacent edges, as for counts.
+        // last-source field. It cannot arrive: bucket labels are ACGT by
+        // construction (N splits fragments before partitioning, and labels
+        // are decoded from 2-bit packing), which is why this hot path checks
+        // only in debug builds.
         debug_assert!(
             front.bits() < 4 || front == Base::E,
             "front edge {front:?} is not ACGT"

@@ -3468,11 +3468,16 @@ as four `u32`s, as the narrow map does, gives 20 B uncolored at cutoff 1 and
 24 B with counts.
 
 The colored presence slot would be 28 B, but that was 6% slower in colored
-local contraction at k = 55 (38.2 / 38.3 to 40.5 / 40.6 s; table build
-209 to 238 worker-s). A 28-byte stride splits about 44% of slots across two
-cache lines, and 12% more density does not pay for that. The narrow colored
-slot shrank by a sixth (24 to 20 B) and did gain, so it is not simply that
-odd sizes lose. `ColorSlot::WidePad` pads the colored slot back to 32 B.
+local contraction at k = 55 (38.2 / 38.3 to 40.5 / 40.6 s; table build 209
+to 238 worker-s). A 28-byte stride splits 6 of every 16 slots (37.5%) across
+two cache lines, and 12% more density does not pay for that. The 20- and
+24-byte slots split 25% but are a third and a quarter smaller, and the
+narrow colored slot gained from 24 to 20 B, so no simple size rule decides
+it. `ColorSlot::WidePad` pads the colored slot back to 32 B. That relies on
+the table starting on a cache line, which jemalloc's large blocks do. A
+`repr(align(32))` pad would guarantee it under any allocator. It was
+measured and cost 1.5% of colored local contraction (38.6 / 38.9 / 39.0
+against 38.0 / 38.4 / 38.3 s, order-alternated), so it was not kept.
 
 | 10k, k = 55, t16, order-alternated | local before | local after | wall before | wall after |
 | --- | ---: | ---: | ---: | ---: |

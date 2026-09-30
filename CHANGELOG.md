@@ -1,46 +1,73 @@
 # Changelog
 
-## Unreleased
+## 3.1.0
 
-- Much less intermediate I/O. On 149,998 Salmonella assemblies at 16 threads,
-  uncolored builds write 202 GB instead of 470 GB and colored builds 346 GB
-  instead of 614 GB. Partition buckets store each label once per bucket and
-  reference it after that. Local contraction replays its colour pass from
-  memory instead of re-reading the bucket. Intermediate labels are stored 2
-  bits per base, and the path-info, coordinate and edge records are narrower.
-  Private intermediate formats change (`CF3WSKC2`, `CF3SCB3`, `CF3MCB4`,
-  `CF3MCU1`); final outputs do not.
-- The partition's minimizer scan is vectorized with AVX2, after
-  simd-minimizers (Groot Koerkamp and Martayan, SEA 2025). It is chosen at
-  run time, with an identical scalar fallback, so output does not depend on
-  the CPU. Partitioning is 23-27% faster. Super-k-mers are assigned to
-  subgraphs by a new hash, so subgraph contents differ from earlier releases
-  and from C++ Cuttlefish 3. The unitigs are unchanged.
-- End to end at 16 threads, 150k-assembly uncolored builds take roughly half
-  3.0.3's time and colored builds roughly a third less. These combine
-  measurements taken in two host conditions; see the performance record.
-  Colored peak RSS rises by about 0.5 GB, to 9.4 GB.
-- Reference builds parse all-ACGT FASTA records without scanning each byte
-  for fragment breaks (SSE2 on x86-64, NEON on aarch64). At cutoff 1 local
-  contraction keeps edges as presence bits in the vertex state, shrinking
-  vertex-table slots from 24 to 20 bytes colored and from 16 to 12
-  uncolored. For k > 31 the table no longer pads every slot to 32 bytes.
-  At 150k uncolored, t16, local contraction is 11% faster. At k = 55 it is
-  15% faster uncolored, and read mode's peak RSS falls from 7.1 to 6.0 GB.
+Faster builds that write far less to the working directory, with the same
+graphs. On 149,998 Salmonella assemblies (k = 31), measured back to back on
+one host against 3.0.3:
+
+| | 16 threads | 64 threads | written (t16) |
+| --- | ---: | ---: | ---: |
+| uncolored | 12:12 to 6:05 (-50%) | 4:45 to 2:42 (-43%) | 472 to 204 GB |
+| colored | 17:47 to 11:57 (-33%) | 6:30 to 4:20 (-33%) | 616 to 355 GB |
+
+Peak memory is within 0.4 GB of 3.0.3 (the largest gap, colored at 64 threads,
+is 18.5 against 18.1 GB). For comparison, C++ Cuttlefish 3
+took 14:43 uncolored and 25:06 colored at 16 threads, writing 645 and 970 GB.
+Output is identical to 3.0.3: the same unitigs, and colour digests that match
+(one cycle may be written from a different starting point).
+
+### Speed
+
+- The partition's minimizer scan is vectorized: AVX2 on x86-64, chosen at
+  run time with an identical scalar fallback, and NEON on aarch64. It follows
+  simd-minimizers (Groot Koerkamp and Martayan, SEA 2025). Partitioning is
+  23-27% faster.
+- Reference FASTA records made only of upper-case ACGT skip the per-byte
+  fragment scan (SSE2 on x86-64, NEON on aarch64).
+- At cutoff 1, the reference default, local contraction keeps edges as
+  presence bits in the vertex state. Vertex-table slots shrink from 24 to
+  20 bytes colored and from 16 to 12 uncolored, making uncolored local
+  contraction 11% faster at 150k.
+- For k > 31 the vertex table no longer pads every slot to 32 bytes.
+  Uncolored local contraction is 15% faster at k = 55, and read mode's peak
+  memory falls from 7.1 to 6.0 GB.
+
+### Intermediate I/O
+
+- Much less is written to the working directory:
+  - partition buckets store each label once and reference it after that;
+  - local contraction replays its colour pass from memory instead of
+    re-reading the bucket;
+  - intermediate labels are stored at 2 bits per base;
+  - the path-info, coordinate and edge records are narrower.
 - `--compress-intermediates auto|on|off` lz4-compresses the local-unitig,
-  coordinate and colour intermediate streams. `auto`, the default, decides
-  at startup from the work directory's storage. Network filesystems,
-  rotational disks and FUSE mounts compress (FUSE with a warning). Other
-  storage is timed for about a second, and compressed unless it keeps well
-  ahead of the build. `cuttlefish probe -w DIR -t N` shows the measurement
-  and the choice. The measurement lives in a new crate, `scratch-probe`, on
-  Linux and macOS. Those three private intermediate formats change; final
-  outputs do not.
-- The new SIMD paths (minimizer scan, ACGT line check, label packing) have
-  NEON forms on aarch64.
-- Fix: a colored build whose super-k-mers all fall in one subgraph, and so
-  has no discontinuity edges, wrote an empty FASTA. This affected only very
-  small inputs.
+  coordinate and colour streams. `auto`, the default, decides at startup from
+  the storage under `--work-dir`:
+  - network filesystems, rotational disks and FUSE mounts (with a warning)
+    are compressed without timing;
+  - other storage is timed for about a second, and compressed unless it
+    keeps well ahead of the build.
+  On a spinning disk, compression made colored builds 24% faster. On fast
+  NVMe, forcing it on costs about 2%, and `auto` leaves it off.
+- `cuttlefish probe -w DIR -t N` shows that measurement and what `auto`
+  would choose. It is built on a new crate, `scratch-probe`, supported on
+  Linux and macOS.
+- `cuttlefish cleanup` also removes files left by an interrupted probe, but
+  skips any modified in the last minute.
+
+### Compatibility
+
+- Final outputs are unchanged. The private intermediate formats change, so
+  intermediates left by an interrupted 3.0.x build are not readable by 3.1.0.
+- Super-k-mers are assigned to subgraphs by a new hash, so subgraph contents
+  differ from earlier releases and from C++ Cuttlefish 3. The unitigs do not.
+
+### Fixes
+
+- A colored build whose super-k-mers all fall in one subgraph, and so has no
+  discontinuity edges, wrote an empty FASTA. This affected only very small
+  inputs.
 
 ## 3.0.3
 

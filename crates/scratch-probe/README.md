@@ -33,6 +33,10 @@ The crate reports; policy (what rate a program produces, and what margin is
 safe) stays with the caller. A probe is a snapshot of idle storage: shared or
 network storage can be busier later.
 
+On macOS the probe syncs with `fsync`, which leaves data in the drive's own
+cache, as ordinary writes do. So a short probe of an SSD can report the cache's
+speed (15 GB/s on an Apple Silicon laptop) rather than the sustained rate.
+
 Linux and macOS are supported. On macOS, `classify` names the filesystem from
 `statfs` and trusts the kernel's local flag for filesystems it does not know,
 but does not report rotation, which lives in IOKit. `mem_available` is Linux

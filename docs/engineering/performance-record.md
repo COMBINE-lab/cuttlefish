@@ -3540,6 +3540,33 @@ At 150k and high thread counts the cost stays within noise (order-alternated):
 The t256 colored pair is noisy: expansion swung between 34 and 42 s
 independently of the setting.
 
+### On a spinning disk
+
+The measurements above keep intermediates in page cache, so they show only
+compression's CPU cost. To see what it buys when storage cannot keep up, 10k
+ran on newton's HDD scratch (ext4; the probe measures 0.06 GB/s direct write
+and 0.10 GB/s read), t16. The build ran inside a 16 GiB memory cgroup, so page
+cache could not absorb the 50-64 GB of intermediates. The cgroup peaked at its
+limit in every run.
+
+| 10k, t16, HDD, 16 GiB cgroup | off | on | written, off to on |
+| --- | ---: | ---: | ---: |
+| colored | 1,722 / 1,781 s | 1,341 / 1,304 s | 63.9 to 57.6 GB |
+| uncolored | 677 / 816 s | 770 / 695 s | 49.6 to 47.1 GB |
+
+Colored builds are 24% faster compressed, and each run's colour digest
+matched. Uncolored builds compress only 5% of their writes, and the pairs'
+spread (677 to 816 s) swamps any difference. `auto` classifies this disk as
+rotational and compresses without timing it.
+
+On an Apple Silicon laptop (APFS, 8 threads, 1k colored), `auto` chose off,
+and forcing compression on or off made no difference (37.45 / 36.53 s on
+against 37.74 / 35.40 s off). The probe reported about 15 GB/s write there. That
+is the drive's write cache absorbing a 256 MiB burst: on macOS the probe
+syncs with `fsync`, which does not flush the drive's cache, as a build's writes
+never do either. A long build's sustained rate would be lower, but here it
+still cleared the 1.2 GB/s bar with room to spare.
+
 ### The build's intermediate rate, and where it stops growing
 
 `auto` compares the probe with an estimate of how fast the build writes

@@ -6103,6 +6103,12 @@ fn materialized_shard_stream_buffer() -> usize {
             .unwrap_or(MATERIALIZED_SHARD_STREAM_BUFFER)
     })
 }
+
+/// [`materialized_shard_stream_buffer`] as a block size, which the block
+/// format caps; the tuning variable may ask for more, for the plain buffers.
+fn materialized_shard_block_bytes() -> usize {
+    materialized_shard_stream_buffer().min(crate::block_io::MAX_BLOCK_BYTES)
+}
 const EDGE_PATH_INFO_WORKER_BUFFER: usize = 128 * 1024;
 const STITCH_COORD_REVERSE_FLAG: u8 = 1;
 const STITCH_COORD_CYCLE_FLAG: u8 = 2;
@@ -7476,6 +7482,25 @@ where
                 crate::dna::packed_2bit_len(unitig.label_len as usize) as u64,
             )?;
         }
+    }
+    // Every record and label has been consumed; anything left over means the
+    // bucket does not match the path-info that indexed it.
+    if !block_stream_ended(&mut unitig_input, &bucket.unitig_path)? {
+        return Err(SerialCollationError::MalformedCoordBucket(
+            bucket.unitig_path.clone(),
+        ));
+    }
+    let mut extra = [0u8; 1];
+    let label_tail = label_input
+        .read(&mut extra)
+        .map_err(|source| SerialCollationError::Io {
+            path: bucket.label_path.clone(),
+            source,
+        })?;
+    if label_tail != 0 {
+        return Err(SerialCollationError::MalformedCoordBucket(
+            bucket.label_path.clone(),
+        ));
     }
     let _ = inputs;
     Ok(())
@@ -8970,7 +8995,7 @@ impl MaterializedStitchedCoordShardWriter {
                 source,
             })?;
         let coord_out =
-            Lz4BlockWriter::with_block_bytes(coord_file, materialized_shard_stream_buffer());
+            Lz4BlockWriter::with_block_bytes(coord_file, materialized_shard_block_bytes());
         Ok(Self {
             bucket_id,
             coord_path,
@@ -9007,7 +9032,7 @@ impl MaterializedStitchedCoordShardWriter {
                 })?;
             self.coord_out = Some(Lz4BlockWriter::with_block_bytes(
                 coord_file,
-                materialized_shard_stream_buffer(),
+                materialized_shard_block_bytes(),
             ));
         }
         if self.label_out.is_none() {
@@ -9033,7 +9058,7 @@ impl MaterializedStitchedCoordShardWriter {
                 })?;
             self.color_out = Some(Lz4BlockWriter::with_block_bytes(
                 color_file,
-                materialized_shard_stream_buffer(),
+                materialized_shard_block_bytes(),
             ));
         }
         Ok(())
@@ -9112,7 +9137,7 @@ impl MaterializedStitchedCoordShardWriter {
                 })?;
             self.color_out = Some(Lz4BlockWriter::with_block_bytes(
                 file,
-                materialized_shard_stream_buffer(),
+                materialized_shard_block_bytes(),
             ));
         }
         let color_out = self
@@ -9195,7 +9220,7 @@ impl MaterializedStitchedCoordShardWriter {
                     })?;
                 self.color_out = Some(Lz4BlockWriter::with_block_bytes(
                     file,
-                    materialized_shard_stream_buffer(),
+                    materialized_shard_block_bytes(),
                 ));
             }
             let color_out = self

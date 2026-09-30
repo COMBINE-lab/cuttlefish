@@ -176,9 +176,10 @@ impl<R: Read> Lz4BlockReader<R> {
         }
         let raw_len = u32::from_le_bytes(header[..4].try_into().expect("u32")) as usize;
         let stored_len = u32::from_le_bytes(header[4..].try_into().expect("u32")) as usize;
-        if raw_len > MAX_BLOCK_BYTES
-            || stored_len > lz4_flex::block::get_maximum_output_size(raw_len)
-        {
+        // The writer never emits an empty block, and stores a block
+        // compressed only when that is smaller. Accepting either shape would
+        // let zero-filled or torn tails pass for a clean end of stream.
+        if raw_len == 0 || raw_len > MAX_BLOCK_BYTES || stored_len > raw_len {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "malformed lz4 block header",
@@ -282,6 +283,27 @@ mod tests {
             .read_to_end(&mut out)
             .unwrap();
         assert_eq!(out, data);
+    }
+
+    #[test]
+    fn headers_the_writer_never_emits_are_errors() {
+        let header = |raw: u32, stored: u32| {
+            let mut bytes = raw.to_le_bytes().to_vec();
+            bytes.extend_from_slice(&stored.to_le_bytes());
+            bytes.resize(bytes.len() + stored as usize, 0);
+            bytes
+        };
+        for bad in [
+            header(0, 0),
+            header(16, 17),
+            header(MAX_BLOCK_BYTES as u32 + 1, 8),
+            vec![0u8; 64],
+        ] {
+            let error = Lz4BlockReader::new(&bad[..])
+                .read_to_end(&mut Vec::new())
+                .unwrap_err();
+            assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        }
     }
 
     #[test]

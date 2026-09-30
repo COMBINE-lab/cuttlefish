@@ -11,7 +11,7 @@ forward-looking implementation of Cuttlefish 3, and lives on the repository's
 default branch.
 
 :::note[Release status]
-Cuttlefish 3 is released as version **3.0.0**, feature-complete and validated
+Cuttlefish 3 is released as version **3.1.0**, feature-complete and validated
 on reference and read inputs, uncolored and colored, for odd *k* from 3 to 63.
 The major version tracks the product generation, so a backward-incompatible
 change to what a user depends on — the output FASTA, the color repository

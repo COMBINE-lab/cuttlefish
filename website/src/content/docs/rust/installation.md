@@ -98,7 +98,7 @@ Rust directly rather than through the CLI:
 
 ```toml
 [dependencies]
-cuttlefish-rs = "=3.0.0"
+cuttlefish-rs = "=3.1.0"
 ```
 
 API documentation can be generated locally:
@@ -110,7 +110,7 @@ cargo doc --workspace --no-deps --open
 :::note[Pin an exact version]
 The library API is not covered by semver: Cuttlefish's major version tracks the
 product generation, and a breaking change bumps the minor version — which
-cargo's default caret ranges would accept silently. Pin exactly (`=3.0.0`) and
+cargo's default caret ranges would accept silently. Pin exactly (`=3.1.0`) and
 review the changelog before moving the pin.
 :::
 

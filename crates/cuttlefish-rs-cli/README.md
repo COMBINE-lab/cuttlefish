@@ -9,7 +9,8 @@ cargo install cuttlefish-rs-cli
 ```
 
 This installs one binary, `cuttlefish`. It carries `build`, `compare`,
-`colors` (`dump`/`sets`/`grep`), and `cleanup`, plus `help` and `version`:
+`colors` (`dump`/`sets`/`grep`), `cleanup` and `probe`, plus `help` and
+`version`:
 
 ```bash
 # construct a compacted graph
@@ -29,6 +30,10 @@ cuttlefish colors grep -r graph.cf3rs.color-repository -i graph.fa --all-of 3
 
 # remove the intermediates an interrupted build left behind
 cuttlefish cleanup -w work --dry-run
+
+# time the work directory's storage and show whether a build at 16 threads
+# would compress its intermediates (--compress-intermediates auto)
+cuttlefish probe -w work -t 16
 ```
 
 The default build links jemalloc. `--no-default-features` selects the system

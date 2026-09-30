@@ -66,12 +66,15 @@ compression usually wins.
 ## Intermediate compression
 
 The later phases write three more compressible streams (local unitigs,
-unitig coordinates, colour runs). `--compress-intermediates auto`, the
+unitig coordinates, color runs). `--compress-intermediates auto`, the
 default, measures the working directory's storage at startup and compresses
 them unless the storage keeps well ahead of the build; network filesystems,
 rotational disks and FUSE mounts are compressed without measuring. On fast
-local NVMe, compression is left off; forcing it on there costs about 2% of
-wall time and saves 4–10% of the build's writes.
+local NVMe, compression is left off at moderate thread counts; forcing it on
+there costs about 2% of wall time and saves 4–10% of the build's writes. The
+storage rate `auto` asks for rises with `--threads` (to about 4.7 GB/s from 64
+threads on), so at high thread counts even fast storage may be compressed.
+Either way the graph is the same.
 
 Run `cuttlefish probe -w DIR -t N` to see what a build would choose, and
 override with `on` or `off` — for example `on` when scratch space is tight.

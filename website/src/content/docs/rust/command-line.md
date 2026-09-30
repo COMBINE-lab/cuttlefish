@@ -105,18 +105,21 @@ either flag.
 ### Intermediate compression
 
 `--compress-intermediates` controls LZ4 compression of three later
-intermediate streams: local unitigs, unitig coordinates, and colour runs.
+intermediate streams: local unitigs, unitig coordinates, and color runs.
 Compressing them costs a little CPU (about 2% of wall time where storage is
 fast) and cuts what the build writes and reads back, which pays on slower
 storage.
 
 - `auto` (the default) decides at startup from the storage under
   `--work-dir`:
-  - network filesystems and rotational disks are compressed without timing;
+  - network filesystems and rotational disks are compressed without timing
+    (rotational disks are detected on Linux; on macOS they are timed);
   - FUSE mounts are compressed too, with a warning, because they may be a
     fast local disk or a remote store;
   - anything else is timed for about a second, and left uncompressed only if
-    it keeps well ahead of the rate the build writes.
+    it keeps well ahead of the rate the build writes;
+  - if the measurement fails, intermediates are compressed.
+
   The build log states the choice and why:
 
   ```text
@@ -160,7 +163,8 @@ See [Comparing graphs](../comparing-graphs/) for what it does and why a plain
 ```
 
 `probe` runs the measurement behind `--compress-intermediates auto` and says
-what a build with those threads would choose, without building anything:
+what a build with those threads would choose, without building anything. An
+excerpt of its output:
 
 ```text
 write            6.09 GB/s (268 MB in 0.044s, direct, with fdatasync)
@@ -172,7 +176,7 @@ auto chooses     compression off (xfs storage (direct I/O, solid state) ...)
 
 It writes, then reads back, at most 256 MiB of random data in a hidden
 `.scratch-probe-*` file, bypassing the page cache where the filesystem allows,
-and removes the file before it exits. Unlike `auto`, it times network and
+and removes the file before it exits. Unlike `auto`, it times network, FUSE and
 rotational storage too, since measuring is what it is for.
 
 ## Diagnostics

@@ -3973,7 +3973,66 @@ fn pack_valid_word_32(seq: &[u8]) -> u64 {
         // SAFETY: the bmi2 feature was just detected on this CPU.
         return unsafe { pack_valid_word_32_bmi2(seq) };
     }
+    // NEON is part of the aarch64 baseline, so there is nothing to detect.
+    #[cfg(target_arch = "aarch64")]
+    // SAFETY: NEON is always present on aarch64.
+    return unsafe { pack_valid_word_32_neon(seq) };
+    #[cfg(not(target_arch = "aarch64"))]
     pack_valid_word_32_scalar(seq)
+}
+
+/// Packs 32 bases with NEON, all lanes at once.
+///
+/// Each byte becomes its 2-bit code; each code is shifted to its place
+/// within a group of four bases (6, 4, 2, 0 bits, first base highest); two
+/// pairwise adds then sum each group into one byte, leaving the eight packed
+/// bytes in base order. Read big-endian, they are the scalar word. The fields
+/// are disjoint, so the adds are ORs and cannot carry.
+/// [`pack_valid_word_32_lane_model`] runs the same steps in scalar code so
+/// the lane arithmetic is checked on every architecture.
+#[cfg(target_arch = "aarch64")]
+#[target_feature(enable = "neon")]
+unsafe fn pack_valid_word_32_neon(seq: &[u8]) -> u64 {
+    use std::arch::aarch64::*;
+
+    let seq = &seq[..32];
+    // SAFETY: `seq` holds 32 bytes, two 16-byte loads.
+    let (lo, hi) = unsafe { (vld1q_u8(seq.as_ptr()), vld1q_u8(seq.as_ptr().add(16))) };
+    let three = vdupq_n_u8(0b11);
+    let code = |bytes: uint8x16_t| {
+        vandq_u8(
+            veorq_u8(vshrq_n_u8::<2>(bytes), vshrq_n_u8::<1>(bytes)),
+            three,
+        )
+    };
+    const SHIFTS: [i8; 16] = [6, 4, 2, 0, 6, 4, 2, 0, 6, 4, 2, 0, 6, 4, 2, 0];
+    // SAFETY: `SHIFTS` holds 16 bytes.
+    let shifts = unsafe { vld1q_s8(SHIFTS.as_ptr()) };
+    let (lo, hi) = (vshlq_u8(code(lo), shifts), vshlq_u8(code(hi), shifts));
+    // Pairs of bases, then groups of four: 32 -> 16 -> 8 bytes.
+    let pairs = vpaddq_u8(lo, hi);
+    let groups = vpaddq_u8(pairs, pairs);
+    let mut packed = [0u8; 8];
+    // SAFETY: `packed` holds 8 bytes.
+    unsafe { vst1_u8(packed.as_mut_ptr(), vget_low_u8(groups)) };
+    u64::from_be_bytes(packed)
+}
+
+/// The NEON packer's steps in scalar code: per-byte codes, the 6/4/2/0
+/// shifts, and the two pairwise adds. Only the tests call it, on every
+/// architecture.
+#[cfg(test)]
+fn pack_valid_word_32_lane_model(seq: &[u8]) -> u64 {
+    let shifted: Vec<u8> = seq[..32]
+        .iter()
+        .enumerate()
+        .map(|(i, &b)| (((b >> 2) ^ (b >> 1)) & 0b11) << (6 - 2 * (i % 4)))
+        .collect();
+    // `vpaddq_u8(a, b)` is the pairwise sums of `a` followed by those of `b`.
+    let pairwise = |v: &[u8]| -> Vec<u8> { v.chunks(2).map(|p| p[0].wrapping_add(p[1])).collect() };
+    let pairs = pairwise(&shifted);
+    let groups = pairwise(&pairs);
+    u64::from_be_bytes(groups[..8].try_into().expect("eight groups"))
 }
 
 #[cfg(target_arch = "x86_64")]
@@ -3999,6 +4058,9 @@ unsafe fn pack_valid_word_32_bmi2(seq: &[u8]) -> u64 {
     word
 }
 
+/// The portable packer. On aarch64 NEON always takes its place, so there it
+/// is kept only as the tests' reference.
+#[cfg(any(not(target_arch = "aarch64"), test))]
 fn pack_valid_word_32_scalar(seq: &[u8]) -> u64 {
     let mut word = 0u64;
     for &base in &seq[..32] {
@@ -4513,6 +4575,46 @@ impl std::error::Error for BucketError {}
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The dispatched packer (BMI2 or NEON where available) and the NEON
+    /// lane model must both match the scalar packer bit for bit.
+    #[test]
+    fn packed_words_match_the_scalar_packer() {
+        let mut state = 0x9E37_79B9_7F4A_7C15u64;
+        let mut cases: Vec<Vec<u8>> = vec![vec![b'A'; 32], vec![b'T'; 32], b"ACGT".repeat(8)];
+        for _ in 0..5000 {
+            cases.push(
+                (0..32)
+                    .map(|_| {
+                        state ^= state << 13;
+                        state ^= state >> 7;
+                        state ^= state << 17;
+                        b"ACGT"[(state >> 33) as usize & 3]
+                    })
+                    .collect(),
+            );
+        }
+        for seq in &cases {
+            let expected = pack_valid_word_32_scalar(seq);
+            assert_eq!(pack_valid_word_32(seq), expected);
+            assert_eq!(pack_valid_word_32_lane_model(seq), expected);
+        }
+        for len in 1..=96usize {
+            let seq: Vec<u8> = cases[len % cases.len()]
+                .iter()
+                .chain(&cases[(len + 1) % cases.len()])
+                .chain(&cases[(len + 2) % cases.len()])
+                .copied()
+                .take(len)
+                .collect();
+            let words = pack_valid_label(&seq, 3).unwrap();
+            let mut expected = [0u64; 4];
+            for (at, &base) in seq.iter().enumerate() {
+                expected[at / 32] |= u64::from(valid_ascii_base_bits(base)) << (62 - 2 * (at % 32));
+            }
+            assert_eq!(words, expected, "length {len}");
+        }
+    }
 
     /// Builds a payload whose sources are deliberately interleaved.
     fn interleaved_payload(record_len: usize, plan: &[(u32, usize)]) -> Vec<u8> {

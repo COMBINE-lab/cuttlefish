@@ -810,7 +810,8 @@ fn canonical_minimizer_is_strand_invariant_for_fixture_sequence() {
 
 #[test]
 fn vertex_state_matches_cutoff_model() {
-    let mut state = VertexState::<()>::default();
+    // The counting slot: presence bits cannot model cutoffs above 1.
+    let mut state = VertexState::<cuttlefish_rs::state::Counted>::default();
     state.update_edges(Base::E, Base::A);
     state.update_edges(Base::E, Base::A);
     state.update_edges(Base::E, Base::C);

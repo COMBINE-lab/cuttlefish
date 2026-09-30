@@ -185,16 +185,177 @@ where
     } else {
         Box::new(file)
     };
-    let mut reader = BufReader::with_capacity(1024 * 1024, input);
+    let reader = BufReader::with_capacity(1024 * 1024, input);
+    parse_input_reader(path, reader, source_id, min_len, &mut on_fragment)
+}
+
+/// Parses a FASTA, FASTQ or plain-sequence stream, chosen by its first line.
+fn parse_input_reader<R, F>(
+    path: &Path,
+    mut reader: R,
+    source_id: u32,
+    min_len: usize,
+    on_fragment: &mut F,
+) -> Result<u64, InputError>
+where
+    R: BufRead,
+    F: for<'a> FnMut(BorrowedSequenceFragment<'a>) -> Result<(), InputError>,
+{
     let first_line = next_non_empty_line(&mut reader, path)?;
     match first_line.first().copied() {
-        Some(b'>') => parse_fasta_reader(first_line, reader, source_id, min_len, &mut on_fragment),
-        Some(b'@') => parse_fastq_reader(first_line, reader, source_id, min_len, &mut on_fragment),
+        Some(b'>') => parse_fasta_reader(first_line, reader, source_id, min_len, on_fragment),
+        Some(b'@') => parse_fastq_reader(first_line, reader, source_id, min_len, on_fragment),
         Some(_) if first_line.iter().copied().all(is_dna_ascii) => {
-            parse_plain_sequence_reader(first_line, reader, source_id, min_len, &mut on_fragment)
+            parse_plain_sequence_reader(first_line, reader, source_id, min_len, on_fragment)
         }
         Some(_) => Err(InputError::UnknownFormat(path.to_path_buf())),
         None => Err(InputError::EmptyFile(path.to_path_buf())),
+    }
+}
+
+/// Whether every byte is an upper-case `A`, `C`, `G` or `T`: the common
+/// sequence line, which needs neither whitespace removal nor a fragment break.
+/// Checked 16 bytes at a time with SSE2 on x86-64 and NEON on aarch64, both
+/// part of their architecture's baseline.
+#[inline]
+fn is_upper_acgt(bytes: &[u8]) -> bool {
+    #[cfg(target_arch = "x86_64")]
+    {
+        use std::arch::x86_64::*;
+        let (chunks, tail) = bytes.as_chunks::<16>();
+        // SAFETY: SSE2 is part of the x86-64 baseline, and each load reads
+        // one whole 16-byte chunk of `bytes`.
+        let chunks_ok = unsafe {
+            let (a, c, g, t) = (
+                _mm_set1_epi8(b'A' as i8),
+                _mm_set1_epi8(b'C' as i8),
+                _mm_set1_epi8(b'G' as i8),
+                _mm_set1_epi8(b'T' as i8),
+            );
+            chunks.iter().all(|chunk| {
+                let v = _mm_loadu_si128(chunk.as_ptr().cast());
+                let valid = _mm_or_si128(
+                    _mm_or_si128(_mm_cmpeq_epi8(v, a), _mm_cmpeq_epi8(v, c)),
+                    _mm_or_si128(_mm_cmpeq_epi8(v, g), _mm_cmpeq_epi8(v, t)),
+                );
+                _mm_movemask_epi8(valid) == 0xffff
+            })
+        };
+        chunks_ok && tail.iter().all(|&b| matches!(b, b'A' | b'C' | b'G' | b'T'))
+    }
+    #[cfg(target_arch = "aarch64")]
+    {
+        use std::arch::aarch64::*;
+        let (chunks, tail) = bytes.as_chunks::<16>();
+        // SAFETY: NEON is part of the aarch64 baseline, and each load reads
+        // one whole 16-byte chunk of `bytes`.
+        let chunks_ok = unsafe {
+            let (a, c, g, t) = (
+                vdupq_n_u8(b'A'),
+                vdupq_n_u8(b'C'),
+                vdupq_n_u8(b'G'),
+                vdupq_n_u8(b'T'),
+            );
+            chunks.iter().all(|chunk| {
+                let v = vld1q_u8(chunk.as_ptr());
+                let valid = vorrq_u8(
+                    vorrq_u8(vceqq_u8(v, a), vceqq_u8(v, c)),
+                    vorrq_u8(vceqq_u8(v, g), vceqq_u8(v, t)),
+                );
+                // Every lane matched when the smallest is all ones.
+                vminvq_u8(valid) == 0xff
+            })
+        };
+        chunks_ok && tail.iter().all(|&b| matches!(b, b'A' | b'C' | b'G' | b'T'))
+    }
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+    {
+        bytes
+            .iter()
+            .all(|&b| matches!(b, b'A' | b'C' | b'G' | b'T'))
+    }
+}
+
+/// Assembles FASTA records from trimmed lines (after the first header) and
+/// emits each record's ACGT fragments.
+struct FastaRecords {
+    source_id: u32,
+    min_len: usize,
+    records: u64,
+    record_id: u64,
+    seq: Vec<u8>,
+    /// Every line so far was upper-case ACGT, so the record is one fragment.
+    clean: bool,
+}
+
+impl FastaRecords {
+    fn new(source_id: u32, min_len: usize) -> Self {
+        Self {
+            source_id,
+            min_len,
+            records: 0,
+            record_id: 1,
+            seq: Vec::new(),
+            clean: true,
+        }
+    }
+
+    #[inline]
+    fn line<F>(&mut self, line: &[u8], on_fragment: &mut F) -> Result<(), InputError>
+    where
+        F: for<'a> FnMut(BorrowedSequenceFragment<'a>) -> Result<(), InputError>,
+    {
+        if line.starts_with(b">") {
+            self.records += 1;
+            self.emit(on_fragment)?;
+            self.seq.clear();
+            self.clean = true;
+            self.record_id += 1;
+        } else if !line.is_empty() {
+            if is_upper_acgt(line) {
+                self.seq.extend_from_slice(line);
+            } else {
+                self.clean = false;
+                append_sequence_line(&mut self.seq, line);
+            }
+        }
+        Ok(())
+    }
+
+    fn emit<F>(&self, on_fragment: &mut F) -> Result<(), InputError>
+    where
+        F: for<'a> FnMut(BorrowedSequenceFragment<'a>) -> Result<(), InputError>,
+    {
+        if self.clean && !self.seq.is_empty() {
+            // What `emit_actg_fragments` would find, without looking. An empty
+            // record still goes the long way, which emits nothing even when
+            // `min_len` is 0.
+            emit_fragment(
+                self.source_id,
+                self.record_id,
+                0,
+                &self.seq,
+                self.min_len,
+                on_fragment,
+            )
+        } else {
+            emit_actg_fragments(
+                self.source_id,
+                self.record_id,
+                &self.seq,
+                self.min_len,
+                on_fragment,
+            )
+        }
+    }
+
+    fn finish<F>(mut self, on_fragment: &mut F) -> Result<u64, InputError>
+    where
+        F: for<'a> FnMut(BorrowedSequenceFragment<'a>) -> Result<(), InputError>,
+    {
+        self.records += 1;
+        self.emit(on_fragment)?;
+        Ok(self.records)
     }
 }
 
@@ -469,9 +630,7 @@ where
     F: for<'a> FnMut(BorrowedSequenceFragment<'a>) -> Result<(), InputError>,
 {
     debug_assert!(first_header.starts_with(b">"));
-    let mut records = 0u64;
-    let mut record_id = 1u64;
-    let mut seq = Vec::new();
+    let mut records = FastaRecords::new(source_id, min_len);
     let mut line = Vec::new();
 
     loop {
@@ -483,20 +642,10 @@ where
             break;
         }
         trim_ascii_line_in_place(&mut line);
-        if line.starts_with(b">") {
-            records += 1;
-            emit_actg_fragments(source_id, record_id, &seq, min_len, on_fragment)?;
-            seq.clear();
-            record_id += 1;
-        } else if !line.is_empty() {
-            append_sequence_line(&mut seq, &line);
-        }
+        records.line(&line, on_fragment)?;
     }
 
-    records += 1;
-    emit_actg_fragments(source_id, record_id, &seq, min_len, on_fragment)?;
-
-    Ok(records)
+    records.finish(on_fragment)
 }
 
 fn parse_fastq_reader<R, F>(
@@ -743,6 +892,133 @@ mod tests {
     use flate2::Compression;
     use flate2::write::GzEncoder;
     use std::io::Write;
+
+    type Owned = (u32, u64, usize, Vec<u8>);
+
+    fn collect(
+        run: impl FnOnce(
+            &mut dyn for<'a> FnMut(BorrowedSequenceFragment<'a>) -> Result<(), InputError>,
+        ) -> Result<u64, InputError>,
+    ) -> (u64, Vec<Owned>) {
+        let mut out = Vec::new();
+        let records = run(&mut |f: BorrowedSequenceFragment<'_>| {
+            out.push((f.source_id, f.record_id, f.offset, f.seq.to_vec()));
+            Ok(())
+        })
+        .unwrap();
+        (records, out)
+    }
+
+    /// The FASTA parser before the upper-case fast path: every record is
+    /// scanned for its ACGT fragments.
+    fn reference_fasta(bytes: &[u8], min_len: usize) -> (u64, Vec<Owned>) {
+        collect(|on_fragment| {
+            let mut reader = bytes;
+            let first = next_non_empty_line(&mut reader, Path::new("<memory>"))?;
+            assert!(first.starts_with(b">"));
+            let (mut records, mut record_id, mut seq) = (0u64, 1u64, Vec::new());
+            let mut line = Vec::new();
+            loop {
+                line.clear();
+                if reader.read_until(b'\n', &mut line).unwrap() == 0 {
+                    break;
+                }
+                trim_ascii_line_in_place(&mut line);
+                if line.starts_with(b">") {
+                    records += 1;
+                    emit_actg_fragments(7, record_id, &seq, min_len, &mut |x| on_fragment(x))?;
+                    seq.clear();
+                    record_id += 1;
+                } else if !line.is_empty() {
+                    append_sequence_line(&mut seq, &line);
+                }
+            }
+            records += 1;
+            emit_actg_fragments(7, record_id, &seq, min_len, &mut |x| on_fragment(x))?;
+            Ok(records)
+        })
+    }
+
+    fn messy_fasta(seed: u64) -> Vec<u8> {
+        let mut state = seed | 1;
+        let mut next = |n: u64| {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state % n
+        };
+        let mut text = Vec::new();
+        for _ in 0..next(3) {
+            text.extend_from_slice(b"\n");
+        }
+        for record in 0..1 + next(5) {
+            text.extend_from_slice(format!(">r{record} desc\n").as_bytes());
+            // `next(6)` is 0 about one time in six: a header-only record.
+            for _ in 0..next(6) {
+                let width = 1 + next(90) as usize;
+                for _ in 0..width {
+                    let roll = next(1000);
+                    text.push(match roll {
+                        0..=3 => b'N',
+                        4..=6 => b'a',
+                        7..=8 => b' ',
+                        9 => b'\t',
+                        10 => b'R',
+                        11 => b'U',
+                        _ => b"ACGT"[(roll % 4) as usize],
+                    });
+                }
+                text.extend_from_slice(match next(10) {
+                    0 => b"\r\n".as_slice(),
+                    1 => b"  \n",
+                    2 => b"\n\n",
+                    _ => b"\n",
+                });
+            }
+        }
+        if next(2) == 0 {
+            text.pop();
+        }
+        text
+    }
+
+    #[test]
+    fn fasta_fast_paths_match_the_reference_parser() {
+        for seed in 0..500 {
+            let text = messy_fasta(seed);
+            for min_len in [0, 1, 5, 32] {
+                let expected = reference_fasta(&text, min_len);
+                let streamed = collect(|f| {
+                    parse_input_reader(Path::new("<memory>"), &text[..], 7, min_len, &mut |x| f(x))
+                });
+                assert_eq!(streamed, expected, "streaming parser, seed {seed}");
+            }
+        }
+    }
+
+    #[test]
+    fn simd_byte_helpers_match_scalar() {
+        let mut state = 99u64;
+        for len in 0..200 {
+            let bytes: Vec<u8> = (0..len)
+                .map(|_| {
+                    state ^= state << 13;
+                    state ^= state >> 7;
+                    state ^= state << 17;
+                    b"ACGTACGTACGTN\x1f"[(state % 14) as usize]
+                })
+                .collect();
+            assert_eq!(
+                is_upper_acgt(&bytes),
+                bytes.iter().all(|b| b"ACGT".contains(b))
+            );
+            let clean: Vec<u8> = bytes
+                .iter()
+                .map(|&b| if b == b'N' || b == 0x1f { b'A' } else { b })
+                .collect();
+            assert!(is_upper_acgt(&clean));
+        }
+    }
 
     #[test]
     fn fasta_splits_on_non_actg() {

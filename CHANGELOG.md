@@ -20,6 +20,15 @@
   3.0.3's time and colored builds roughly a third less. These combine
   measurements taken in two host conditions; see the performance record.
   Colored peak RSS rises by about 0.5 GB, to 9.4 GB.
+- Reference builds parse all-ACGT FASTA records without scanning each byte
+  for fragment breaks (SSE2 on x86-64, NEON on aarch64). At cutoff 1 local
+  contraction keeps edges as presence bits in the vertex state, shrinking
+  vertex-table slots from 24 to 20 bytes colored and from 16 to 12
+  uncolored. For k > 31 the table no longer pads every slot to 32 bytes.
+  At 150k uncolored, t16, local contraction is 11% faster. At k = 55 it is
+  15% faster uncolored, and read mode's peak RSS falls from 7.1 to 6.0 GB.
+- The new SIMD paths (minimizer scan, ACGT line check, label packing) have
+  NEON forms on aarch64.
 - Fix: a colored build whose super-k-mers all fall in one subgraph, and so
   has no discontinuity edges, wrote an empty FASTA. This affected only very
   small inputs.

@@ -260,7 +260,7 @@ impl<C: ColorSlot> Eq for FlatVertexMap<C> {}
 /// vector instead).
 #[derive(Debug, Clone)]
 pub struct WideFlatVertexMap<C: ColorSlot = Counted> {
-    slots: Vec<(u128, VertexState<C>)>,
+    slots: Vec<WideFlatSlot<C>>,
     /// Insertion order, for the dispatch iteration.
     keys: Vec<u128>,
     mask: usize,
@@ -271,6 +271,57 @@ pub struct WideFlatVertexMap<C: ColorSlot = Counted> {
 
 const WIDE_FLAT_EMPTY_KEY: u128 = u128::MAX;
 
+/// A wide key and its state. As in [`FlatSlot`], the key is stored as
+/// `u32`s so the slot needs only 4-byte alignment: a `(u128, state)` tuple
+/// pads every slot to 32 bytes, where this is 20 bytes uncolored at cutoff 1
+/// and 24 with counts. Colored slots stay at 32 (see
+/// [`ColorSlot::WidePad`]).
+#[derive(Debug, Clone, Copy)]
+#[repr(C)]
+struct WideFlatSlot<C: ColorSlot> {
+    key: [u32; 4],
+    state: VertexState<C>,
+    _pad: C::WidePad,
+}
+
+const _: () = assert!(std::mem::size_of::<WideFlatSlot<Presence>>() == 20);
+const _: () = assert!(std::mem::size_of::<WideFlatSlot<ColoredPresence>>() == 32);
+const _: () = assert!(std::mem::size_of::<WideFlatSlot<Counted>>() == 24);
+const _: () = assert!(std::mem::size_of::<WideFlatSlot<ColoredCounted>>() == 32);
+
+impl<C: ColorSlot> WideFlatSlot<C> {
+    #[inline(always)]
+    fn empty() -> Self {
+        Self {
+            key: [u32::MAX; 4],
+            state: VertexState::<C>::EMPTY,
+            _pad: C::WidePad::default(),
+        }
+    }
+
+    #[inline(always)]
+    fn new(key: u128, state: VertexState<C>) -> Self {
+        Self {
+            key: [
+                key as u32,
+                (key >> 32) as u32,
+                (key >> 64) as u32,
+                (key >> 96) as u32,
+            ],
+            state,
+            _pad: C::WidePad::default(),
+        }
+    }
+
+    #[inline(always)]
+    fn key(&self) -> u128 {
+        u128::from(self.key[0])
+            | (u128::from(self.key[1]) << 32)
+            | (u128::from(self.key[2]) << 64)
+            | (u128::from(self.key[3]) << 96)
+    }
+}
+
 impl<C: ColorSlot> WideFlatVertexMap<C> {
     fn slot_count(capacity: usize) -> usize {
         (capacity.max(8) * 5 / 4 + 1).next_power_of_two()
@@ -279,7 +330,7 @@ impl<C: ColorSlot> WideFlatVertexMap<C> {
     fn with_capacity(capacity: usize) -> Self {
         let slots = Self::slot_count(capacity);
         Self {
-            slots: vec![(WIDE_FLAT_EMPTY_KEY, VertexState::default()); slots],
+            slots: vec![WideFlatSlot::empty(); slots],
             keys: Vec::with_capacity(capacity),
             mask: slots - 1,
             generation: 0,
@@ -289,11 +340,10 @@ impl<C: ColorSlot> WideFlatVertexMap<C> {
     fn clear_and_reserve(&mut self, capacity: usize) {
         let needed = Self::slot_count(capacity.max(self.keys.len()));
         if self.slots.len() < needed {
-            self.slots = vec![(WIDE_FLAT_EMPTY_KEY, VertexState::default()); needed];
+            self.slots = vec![WideFlatSlot::empty(); needed];
             self.mask = needed - 1;
         } else {
-            self.slots
-                .fill((WIDE_FLAT_EMPTY_KEY, VertexState::default()));
+            self.slots.fill(WideFlatSlot::empty());
         }
         self.keys.clear();
         if self.keys.capacity() < capacity {
@@ -325,7 +375,7 @@ impl<C: ColorSlot> WideFlatVertexMap<C> {
     fn probe(&self, key: u128) -> (usize, bool) {
         let mut index = (Self::hash(key) as usize) & self.mask;
         loop {
-            let stored = self.slots[index].0;
+            let stored = self.slots[index].key();
             if stored == key {
                 return (index, true);
             }
@@ -339,31 +389,31 @@ impl<C: ColorSlot> WideFlatVertexMap<C> {
     #[inline(always)]
     fn get(&self, key: u128) -> Option<&VertexState<C>> {
         let (index, hit) = self.probe(key);
-        hit.then(|| &self.slots[index].1)
+        hit.then(|| &self.slots[index].state)
     }
 
     #[inline(always)]
     fn get_mut(&mut self, key: u128) -> Option<&mut VertexState<C>> {
         let (index, hit) = self.probe(key);
-        hit.then(|| &mut self.slots[index].1)
+        hit.then(|| &mut self.slots[index].state)
     }
 
     #[inline(always)]
     fn state_or_default(&mut self, key: u128) -> &mut VertexState<C> {
         let (index, hit) = self.probe(key);
         if hit {
-            return &mut self.slots[index].1;
+            return &mut self.slots[index].state;
         }
         if (self.keys.len() + 1) * 5 > self.slots.len() * 4 {
             self.grow();
             let (index, _) = self.probe(key);
             self.keys.push(key);
-            self.slots[index] = (key, VertexState::default());
-            return &mut self.slots[index].1;
+            self.slots[index] = WideFlatSlot::new(key, VertexState::default());
+            return &mut self.slots[index].state;
         }
         self.keys.push(key);
-        self.slots[index] = (key, VertexState::default());
-        &mut self.slots[index].1
+        self.slots[index] = WideFlatSlot::new(key, VertexState::default());
+        &mut self.slots[index].state
     }
 
     /// The slot index of `key`, inserting a default state when absent.
@@ -378,17 +428,17 @@ impl<C: ColorSlot> WideFlatVertexMap<C> {
             self.grow();
             let (index, _) = self.probe(key);
             self.keys.push(key);
-            self.slots[index] = (key, VertexState::default());
+            self.slots[index] = WideFlatSlot::new(key, VertexState::default());
             return index;
         }
         self.keys.push(key);
-        self.slots[index] = (key, VertexState::default());
+        self.slots[index] = WideFlatSlot::new(key, VertexState::default());
         index
     }
 
     #[inline(always)]
     fn state_at_mut(&mut self, index: usize) -> &mut VertexState<C> {
-        &mut self.slots[index].1
+        &mut self.slots[index].state
     }
 
     #[inline(always)]
@@ -408,16 +458,14 @@ impl<C: ColorSlot> WideFlatVertexMap<C> {
     fn grow(&mut self) {
         self.generation = self.generation.wrapping_add(1);
         let new_len = self.slots.len() * 2;
-        let old = std::mem::replace(
-            &mut self.slots,
-            vec![(WIDE_FLAT_EMPTY_KEY, VertexState::default()); new_len],
-        );
+        let old = std::mem::replace(&mut self.slots, vec![WideFlatSlot::empty(); new_len]);
         self.mask = new_len - 1;
-        for (key, state) in old {
+        for slot in old {
+            let (key, state) = (slot.key(), slot.state);
             if key != WIDE_FLAT_EMPTY_KEY {
                 let (index, hit) = self.probe(key);
                 debug_assert!(!hit);
-                self.slots[index] = (key, state);
+                self.slots[index] = WideFlatSlot::new(key, state);
             }
         }
     }

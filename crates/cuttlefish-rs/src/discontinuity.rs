@@ -14662,20 +14662,20 @@ mod presence_slot_tests {
 
     /// A local unitig as contraction hands it on: label, end vertices,
     /// exits, and its colour runs.
-    type Unitig = (Vec<u8>, Kmer<11>, Kmer<11>, u8, Vec<u64>);
+    type Unitig<const K: usize> = (Vec<u8>, Kmer<K>, Kmer<K>, u8, Vec<u64>);
 
     /// Contracts every bucket group in turn on one vertex map, as a worker
     /// does, and returns the local unitigs and the trivial FASTA.
-    fn contract_all<C: ColorSlot>(
+    fn contract_all<const K: usize, C: ColorSlot>(
         store: &BucketStore,
         entries: &[BucketManifestEntry],
         repository: Option<&ConcurrentColorRepository>,
-    ) -> (Vec<Unitig>, Vec<u8>) {
+    ) -> (Vec<Unitig<K>>, Vec<u8>) {
         let mut reusable = None;
-        let mut buffers = LocalBuffers::<11>::default();
+        let mut buffers = LocalBuffers::<K>::default();
         let (mut unitigs, mut trivial) = (Vec::new(), Vec::new());
         for group in local_bucket_groups(entries).unwrap() {
-            let output = contract_local_subgraph::<11, C>(
+            let output = contract_local_subgraph::<K, C>(
                 store,
                 &group,
                 1,
@@ -14710,11 +14710,17 @@ mod presence_slot_tests {
 
     /// At cutoff 1 the production pipeline keeps edges as presence bits in
     /// the vertex flags. Contraction must hand on exactly what the counting
-    /// states would, colored and uncolored.
+    /// states would, colored and uncolored, in the narrow (K <= 31) and wide
+    /// vertex maps.
     #[test]
     fn presence_and_counting_states_contract_alike_at_cutoff_one() {
+        contract_alike::<11>(5);
+        contract_alike::<35>(9);
+    }
+
+    fn contract_alike<const K: usize>(minimizer_len: u16) {
         let root = std::env::temp_dir().join(format!(
-            "cf3-presence-slots-{}-{:?}",
+            "cf3-presence-slots-k{K}-{}-{:?}",
             std::process::id(),
             std::thread::current().id()
         ));
@@ -14758,8 +14764,8 @@ mod presence_slot_tests {
                 GraphInput::References,
                 dir.join("out").display().to_string(),
             );
-            params.k = 11;
-            params.minimizer_len = 5;
+            params.k = K as u16;
+            params.minimizer_len = minimizer_len;
             params.color = colored;
             params.work_dir = dir.display().to_string();
             for (index, fasta) in sources.iter().enumerate() {
@@ -14768,7 +14774,7 @@ mod presence_slot_tests {
                 params.seqs.push(path.display().to_string());
             }
             assert_eq!(params.cutoff(), 1);
-            let emitted = emit_weak_superkmer_buckets::<11>(&params, 64).unwrap();
+            let emitted = emit_weak_superkmer_buckets::<K>(&params, 64).unwrap();
             // Contraction punches out the buckets it consumes, so each pass
             // reads its own copy.
             let copy = dir.join("buckets-copy");
@@ -14787,13 +14793,13 @@ mod presence_slot_tests {
                 };
                 let (a, b) = (colors("colors-presence"), colors("colors-counted"));
                 (
-                    contract_all::<ColoredPresence>(&store, &entries, Some(&a)),
-                    contract_all::<ColoredCounted>(&copy_store, &copy_entries, Some(&b)),
+                    contract_all::<K, ColoredPresence>(&store, &entries, Some(&a)),
+                    contract_all::<K, ColoredCounted>(&copy_store, &copy_entries, Some(&b)),
                 )
             } else {
                 (
-                    contract_all::<Presence>(&store, &entries, None),
-                    contract_all::<Counted>(&copy_store, &copy_entries, None),
+                    contract_all::<K, Presence>(&store, &entries, None),
+                    contract_all::<K, Counted>(&copy_store, &copy_entries, None),
                 )
             };
             assert!(presence.0.len() > 40, "{} local unitigs", presence.0.len());
@@ -14805,7 +14811,7 @@ mod presence_slot_tests {
 
             // A presence state cannot count to 2, and says so.
             assert!(matches!(
-                LocalSubgraph::<11, Presence>::from_manifest_entries(&store, &entries[..1], 2),
+                LocalSubgraph::<K, Presence>::from_manifest_entries(&store, &entries[..1], 2),
                 Err(LocalSubgraphError::PresenceSlotCutoff(2))
             ));
         }

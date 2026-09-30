@@ -104,6 +104,12 @@ pub trait ColorSlot: Copy + Default + std::fmt::Debug + PartialEq + Eq {
     /// answer only for cutoff 1.
     const COUNTS_EDGES: bool;
 
+    /// Padding for a K > 31 flat-map slot, whose 16-byte key and state
+    /// otherwise pack without any. A slot of an odd size straddles cache
+    /// lines, so a colored presence slot is padded from 28 to 32 bytes; the
+    /// others (20 and 24) are small enough that their density wins.
+    type WidePad: Copy + Default + std::fmt::Debug;
+
     /// The colour-set hash, or zero when the build carries no colours.
     fn hash(self) -> u64;
 
@@ -134,6 +140,7 @@ pub struct Presence;
 impl ColorSlot for Presence {
     const ZERO: Self = Presence;
     const COUNTS_EDGES: bool = false;
+    type WidePad = ();
 
     #[inline(always)]
     fn hash(self) -> u64 {
@@ -155,6 +162,7 @@ pub struct ColoredPresence {
 impl ColorSlot for ColoredPresence {
     const ZERO: Self = Self { hash: 0 };
     const COUNTS_EDGES: bool = false;
+    type WidePad = u32;
 
     #[inline(always)]
     fn hash(self) -> u64 {
@@ -178,6 +186,7 @@ impl ColorSlot for Counted {
         edges: EdgeFrequency { packed: 0 },
     };
     const COUNTS_EDGES: bool = true;
+    type WidePad = ();
 
     #[inline(always)]
     fn hash(self) -> u64 {
@@ -213,6 +222,7 @@ impl ColorSlot for ColoredCounted {
         hash: 0,
     };
     const COUNTS_EDGES: bool = true;
+    type WidePad = ();
 
     #[inline(always)]
     fn hash(self) -> u64 {

@@ -84,12 +84,12 @@ impl EdgeFrequency {
 /// This is the Rust spelling of C++'s `State_Config<bool Colored_>`
 /// specialization, extended to edges. Local contraction is
 /// memory-bandwidth-bound, so every byte of a vertex costs: dropping the
-/// colour field from uncolored states was worth 14% of the phase (the R1
+/// color field from uncolored states was worth 14% of the phase (the R1
 /// profile in the performance record), and keeping edges as presence bits in
 /// the flags at cutoff 1 took the colored slot from 24 to 20 bytes and the
 /// uncolored from 16 to 12.
 ///
-/// | slot | colours | edges | state |
+/// | slot | colors | edges | state |
 /// | --- | --- | --- | ---: |
 /// | [`Presence`] | none | presence (cutoff 1) | 4 B |
 /// | [`ColoredPresence`] | set hash | presence (cutoff 1) | 12 B |
@@ -113,7 +113,7 @@ pub trait ColorSlot: Copy + Default + std::fmt::Debug + PartialEq + Eq {
     /// straddle too, but gain enough density to win.
     type WidePad: Copy + Default + std::fmt::Debug;
 
-    /// The colour-set hash, or zero when the build carries no colours.
+    /// The color-set hash, or zero when the build carries no colors.
     fn hash(self) -> u64;
 
     /// Folds another source's hash in. A no-op without a slot to fold into,
@@ -154,7 +154,7 @@ impl ColorSlot for Presence {
     fn combine(&mut self, _source_hash: u64) {}
 }
 
-/// The colored cutoff-1 slot: the running hash of the vertex's colour set.
+/// The colored cutoff-1 slot: the running hash of the vertex's color set.
 /// Edges live as presence bits in the state's flags.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[repr(C, packed(4))]
@@ -210,7 +210,7 @@ impl ColorSlot for Counted {
     }
 }
 
-/// The colored slot for any cutoff: edge counts and the colour-set hash,
+/// The colored slot for any cutoff: edge counts and the color-set hash,
 /// packed to 12 bytes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[repr(C, packed(4))]
@@ -256,10 +256,10 @@ impl ColorSlot for ColoredCounted {
 /// Colored builds track the previously seen source per vertex in 21 bits of
 /// `flags`; partitioning rejects larger source sets before contraction so this
 /// bound is never reached at run time. It lives outside [`VertexState`] so a
-/// caller can check it without naming a colour slot.
+/// caller can check it without naming a color slot.
 pub const MAX_SOURCE_ID: u32 = 0x1F_FFFF;
 
-/// A vertex's edges, flags and colours.
+/// A vertex's edges, flags and colors.
 ///
 /// `flags` holds, from bit 0: visited, the two discontinuity marks, eight
 /// edge-presence bits (front A..T, back A..T; unused when the slot counts
@@ -427,7 +427,7 @@ impl<C: ColorSlot> VertexState<C> {
     }
 }
 
-/// The point of the colour-slot parameter: at cutoff 1 an uncolored vertex
+/// The point of the color-slot parameter: at cutoff 1 an uncolored vertex
 /// costs 4 bytes and a colored one 12 (8 and 16 when the slot counts edges),
 /// so a flat-map slot with its 8-byte key is 12 or 20 bytes.
 const _: () = assert!(std::mem::size_of::<VertexState<Presence>>() == 4);

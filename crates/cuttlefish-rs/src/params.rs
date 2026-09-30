@@ -52,7 +52,7 @@ pub struct BuildParams {
     /// time across five interleaved pairs at 64 threads.
     pub compress_buckets: bool,
     /// Whether intermediate record streams (local-unitig records,
-    /// coordinate and colour shards) are lz4-blocked. `Auto` decides from the
+    /// coordinate and color shards) are lz4-blocked. `Auto` decides from the
     /// work directory's storage at startup; see [`crate::intermediates`].
     pub compress_intermediates: IntermediateCompression,
     /// Whether an input that fails to parse is skipped instead of aborting.

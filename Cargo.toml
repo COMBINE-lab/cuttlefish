@@ -3,6 +3,7 @@ members = [
     "crates/cuttlefish-rs",
     "crates/cuttlefish-rs-cli",
     "crates/cuttlefish-rs-compat-tests",
+    "crates/scratch-probe",
 ]
 resolver = "2"
 
@@ -27,6 +28,9 @@ categories = ["science"]
 # version is what the published crate requires. `bump_and_publish.sh` keeps the
 # version here in step with [workspace.package].
 cuttlefish-rs = { path = "crates/cuttlefish-rs", version = "3.0.3" }
+# Versioned on its own, not with the workspace: a small general crate that
+# cuttlefish-rs depends on, published before it.
+scratch-probe = { path = "crates/scratch-probe", version = "0.1.0" }
 
 [profile.release]
 codegen-units = 8

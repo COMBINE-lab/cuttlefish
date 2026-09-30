@@ -556,6 +556,27 @@ mod tests {
         fs::remove_dir(&dir).unwrap();
     }
 
+    /// The buffered fallback, driven directly: which filesystems refuse
+    /// direct I/O depends on the kernel (tmpfs accepts it since Linux 6.6).
+    #[test]
+    fn buffered_passes_measure_within_the_limits() {
+        let dir = std::env::temp_dir().join(format!("scratch-probe-buf-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("probe");
+        let limits = Limits {
+            max_bytes: 8 * 1024 * 1024,
+            max_time: Duration::from_millis(100),
+            chunk_bytes: 1024 * 1024,
+        };
+        let mut buffer = AlignedBuffer::new(limits.chunk_bytes);
+        fill_random(buffer.as_mut_slice());
+        let write = timed_write(&path, &buffer, &limits, false).unwrap();
+        assert!(write.bytes >= 1024 * 1024 && write.bytes <= limits.max_bytes);
+        let read = timed_read(&path, &mut buffer, &limits, false).unwrap();
+        assert!(read.bytes >= 1024 * 1024 && read.bytes <= write.bytes);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
     #[test]
     fn chunk_sizes_round_to_the_alignment() {
         let dir = std::env::temp_dir().join(format!("scratch-probe-odd-{}", std::process::id()));
@@ -577,20 +598,6 @@ mod tests {
             let shm = classify(Path::new("/dev/shm"));
             assert_eq!(shm.kind, StorageKind::Memory);
             assert_eq!(shm.rotational, None);
-            // tmpfs refuses O_DIRECT, so this is the buffered fallback.
-            let limits = Limits {
-                max_bytes: 8 * 1024 * 1024,
-                max_time: Duration::from_millis(100),
-                chunk_bytes: 1024 * 1024,
-            };
-            let before = fs::read_dir("/dev/shm").unwrap().count();
-            let measured = probe(Path::new("/dev/shm"), &limits).unwrap();
-            assert!(!measured.direct_io);
-            assert!(measured.read.bytes > 0 && measured.read.bytes <= measured.write.bytes);
-            assert!(
-                fs::read_dir("/dev/shm").unwrap().count() <= before,
-                "probe file removed"
-            );
         }
         assert!(mem_available().is_some_and(|bytes| bytes > 0));
     }

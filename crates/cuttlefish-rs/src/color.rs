@@ -1504,7 +1504,9 @@ pub(crate) fn read_unitig_color_runs(
 ) -> std::io::Result<()> {
     let count = read_varint(input)?;
     colors.clear();
-    colors.reserve(count as usize);
+    // The count comes from the file; reserve only what a sane record could
+    // need, and let a larger (or corrupt) one grow as it is read.
+    colors.reserve((count as usize).min(1 << 16));
     for _ in 0..count {
         let mut raw = [0u8; 8];
         input.read_exact(&mut raw)?;

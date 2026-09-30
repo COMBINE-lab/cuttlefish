@@ -1,7 +1,7 @@
 use cuttlefish_rs::colored::{ColoredBuildError, build_colored_from_buckets};
 use cuttlefish_rs::discontinuity::{raise_open_file_limit, report_process_memory};
 use cuttlefish_rs::input::InputError;
-use cuttlefish_rs::params::{BuildParams, ParamError};
+use cuttlefish_rs::params::{BuildParams, IntermediateCompression, ParamError};
 use cuttlefish_rs::partition::{
     PartitionEmissionStats, PartitionRunError, emit_weak_superkmer_buckets,
 };
@@ -15,6 +15,7 @@ use std::time::Instant;
 mod cleanup;
 mod colors;
 mod compare;
+mod probe;
 
 #[cfg(all(feature = "jemalloc", feature = "mimalloc"))]
 compile_error!("allocator features `jemalloc` and `mimalloc` are mutually exclusive");
@@ -74,6 +75,43 @@ fn report_cpu_capabilities() {
     }
 }
 
+/// Decides and reports whether intermediate streams are compressed, before
+/// partitioning, and returns the decision as an explicit setting for the
+/// library to apply without probing again.
+///
+/// `auto` times the work directory's storage for about a second at most;
+/// on a long build that choice is cheap, and the flag overrides it.
+fn choose_intermediate_compression(params: &BuildParams) -> IntermediateCompression {
+    let work_dir = std::path::Path::new(&params.work_dir);
+    // The build creates it anyway; the probe needs it now.
+    let _ = std::fs::create_dir_all(work_dir);
+    let started = Instant::now();
+    let choice = cuttlefish_rs::intermediates::choose(
+        params.compress_intermediates,
+        work_dir,
+        params.threads,
+    );
+    if let Some(warning) = &choice.warning {
+        eprintln!("cuttlefish: warning: {warning}");
+    }
+    let setting = match params.compress_intermediates {
+        IntermediateCompression::Auto => "auto",
+        IntermediateCompression::On => "--compress-intermediates on",
+        IntermediateCompression::Off => "--compress-intermediates off",
+    };
+    eprintln!(
+        "cuttlefish: intermediate compression {} ({setting}: {}; decided in {:.2}s)",
+        if choice.compress { "on" } else { "off" },
+        choice.reason,
+        started.elapsed().as_secs_f64(),
+    );
+    if choice.compress {
+        IntermediateCompression::On
+    } else {
+        IntermediateCompression::Off
+    }
+}
+
 fn run<I>(mut args: I) -> Result<i32, CliError>
 where
     I: Iterator<Item = String>,
@@ -87,7 +125,7 @@ where
         "build" => {
             // `--help` is a satisfied request, not an error: exit 0 like the
             // other subcommands do.
-            let params = match parse_build(args) {
+            let mut params = match parse_build(args) {
                 Ok(params) => params,
                 Err(CliError::Help) => return Ok(0),
                 Err(err) => return Err(err),
@@ -107,6 +145,7 @@ where
                 eprintln!("cuttlefish: raised open-file limit from {fd_before} to {fd_after}");
             }
             report_cpu_capabilities();
+            params.compress_intermediates = choose_intermediate_compression(&params);
             eprintln!(
                 "cuttlefish: parsed build request for k={}, l={}, cutoff={}, color={}",
                 params.k,
@@ -202,6 +241,7 @@ where
         "compare" => compare::run(args).map_err(|err| CliError::Compare(err.to_string())),
         "colors" => colors::run(args).map_err(|err| CliError::Colors(err.to_string())),
         "cleanup" => cleanup::run(args).map_err(|err| CliError::Cleanup(err.to_string())),
+        "probe" => probe::run(args).map_err(|err| CliError::Probe(err.to_string())),
         "help" | "--help" | "-h" => {
             print_top_help();
             Ok(0)
@@ -306,6 +346,17 @@ where
             "--compress-buckets" => raw.compress_buckets = Some(true),
             "--no-compress-buckets" => raw.compress_buckets = Some(false),
             "--skip-unreadable" => raw.skip_unreadable = true,
+            "--compress-intermediates" => {
+                raw.compress_intermediates = Some(parse_compression(&take_value(
+                    "--compress-intermediates",
+                    &mut args,
+                )?)?)
+            }
+            _ if arg.starts_with("--compress-intermediates=") => {
+                raw.compress_intermediates = Some(parse_compression(
+                    &arg["--compress-intermediates=".len()..],
+                )?)
+            }
             _ if arg.starts_with("--seq=") => split_values(arg[6..].to_string(), &mut raw.seqs),
             _ if arg.starts_with("--list=") => split_values(arg[7..].to_string(), &mut raw.lists),
             _ if arg.starts_with("--dir=") => split_values(arg[6..].to_string(), &mut raw.dirs),
@@ -357,6 +408,9 @@ where
         params.compress_buckets = compress;
     }
     params.skip_unreadable = raw.skip_unreadable;
+    if let Some(compression) = raw.compress_intermediates {
+        params.compress_intermediates = compression;
+    }
     params.max_memory_gb = raw.max_memory_gb;
     if let Some(threads) = raw.threads {
         params.threads = threads;
@@ -384,7 +438,12 @@ struct RawBuild {
     reference: bool,
     color: bool,
     compress_buckets: Option<bool>,
+    compress_intermediates: Option<IntermediateCompression>,
     skip_unreadable: bool,
+}
+
+fn parse_compression(value: &str) -> Result<IntermediateCompression, CliError> {
+    IntermediateCompression::parse(value).ok_or(CliError::InvalidValue("--compress-intermediates"))
 }
 
 fn split_values(value: String, out: &mut Vec<String>) {
@@ -424,12 +483,15 @@ where
 
 fn print_top_help() {
     println!("cuttlefish {}", env!("CARGO_PKG_VERSION"));
-    println!("Supported commands: `build`, `compare`, `colors`, `cleanup`, `help`, `version`.");
+    println!(
+        "Supported commands: `build`, `compare`, `colors`, `cleanup`, `probe`, `help`, `version`."
+    );
     println!("Usage:");
     println!("    cuttlefish build [options]");
     println!("    cuttlefish compare [options]");
     println!("    cuttlefish colors dump|sets|grep [options]");
     println!("    cuttlefish cleanup [options]");
+    println!("    cuttlefish probe [options]");
 }
 
 fn print_build_help() {
@@ -457,6 +519,10 @@ fn print_build_help() {
     println!("      --color           color the compacted graph");
     println!("      --compress-buckets compress uncolored temporary buckets (default)");
     println!("      --no-compress-buckets store uncolored temporary buckets uncompressed");
+    println!("      --compress-intermediates <auto|on|off>");
+    println!("                        lz4-compress intermediate record streams (default: auto,");
+    println!("                        which times the work directory's storage at startup;");
+    println!("                        see `cuttlefish probe`)");
     println!("      --skip-unreadable skip inputs that fail to parse instead of aborting");
     println!("  -h, --help            print usage");
 }
@@ -472,6 +538,7 @@ enum CliError {
     Compare(String),
     Colors(String),
     Cleanup(String),
+    Probe(String),
     Param(ParamError),
     Input(InputError),
     Partition(PartitionRunError),
@@ -521,6 +588,7 @@ impl std::fmt::Display for CliError {
             Self::Compare(err) => write!(f, "cuttlefish compare: {err}"),
             Self::Colors(err) => write!(f, "cuttlefish colors: {err}"),
             Self::Cleanup(err) => write!(f, "cuttlefish cleanup: {err}"),
+            Self::Probe(err) => write!(f, "cuttlefish probe: {err}"),
             Self::Param(err) => write!(f, "{err}"),
             Self::Input(err) => write!(f, "{err}"),
             Self::Partition(err) => write!(f, "{err}"),

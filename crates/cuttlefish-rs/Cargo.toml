@@ -45,6 +45,7 @@ lz4_flex = { version = "0.11", default-features = false, features = [
 # is what lets a consumed bucket release its segments from a shared container.
 libc = "0.2"
 rayon = "1.12.0"
+scratch-probe.workspace = true
 scc = "3.8.4"
 xxhash-rust = { version = "0.8.15", features = ["xxh3"] }
 rapidgzip-core = { version = "0.3.1" }

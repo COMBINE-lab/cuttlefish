@@ -15,6 +15,7 @@
 //! them requires both topology tests and matched scale benchmarks.
 #![warn(rustdoc::broken_intra_doc_links)]
 
+mod block_io;
 pub mod buckets;
 pub mod color;
 pub mod colored;
@@ -22,6 +23,7 @@ pub mod discontinuity;
 pub mod dna;
 pub mod hash;
 pub mod input;
+pub mod intermediates;
 pub mod kmer;
 pub mod minimizer;
 pub mod params;

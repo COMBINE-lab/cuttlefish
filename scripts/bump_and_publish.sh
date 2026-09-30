@@ -93,6 +93,35 @@ CRATES=(
     cuttlefish-rs-cli
 )
 
+# Workspace crates versioned on their own that the crates above depend on.
+# They are published first, and only when their manifest's version is not
+# already on crates.io, so a cuttlefish release that did not touch them skips
+# them.
+DEPENDENCY_CRATES=(
+    scratch-probe
+)
+
+crate_version() {
+    sed -n 's/^version = "\(.*\)"/\1/p' "crates/$1/Cargo.toml" | head -1
+}
+
+# Whether crate $1 at version $2 is on crates.io: 0 yes, 1 no, 2 unknown.
+# Only cargo's "could not find" means no. Any other failure (network, index)
+# is retried, then reported, so a flaky lookup never leads to publishing a
+# version that already exists.
+crate_published() {
+    local output status attempt
+    for attempt in 1 2 3; do
+        status=0
+        output=$(cargo info "$1@$2" --registry crates-io 2>&1) || status=$?
+        [[ "$status" -eq 0 ]] && return 0
+        grep -q "could not find \`$1@$2\`" <<<"$output" && return 1
+        [[ "$attempt" -lt 3 ]] && sleep 5
+    done
+    printf 'could not tell whether %s %s is on crates.io:\n%s\n' "$1" "$2" "$output" >&2
+    return 2
+}
+
 MANIFEST_BACKUP=""
 LOCKFILE_BACKUP=""
 MANIFEST_UPDATED=false
@@ -196,17 +225,34 @@ if [[ "$DRY_RUN" == true ]]; then
     echo
     echo "Per-crate package validation (cargo publish --dry-run, in order)"
     validation_failed=false
+    for crate in "${DEPENDENCY_CRATES[@]}"; do
+        version="$(crate_version "$crate")"
+        published=0
+        crate_published "$crate" "$version" || published=$?
+        if [[ "$published" -eq 0 ]]; then
+            echo "--- $crate $version already on crates.io; not republished"
+            continue
+        elif [[ "$published" -ne 1 ]]; then
+            validation_failed=true
+            echo "::  $crate: could not check crates.io" >&2
+            continue
+        fi
+        echo "--- $crate $version (to be published first)"
+        cargo publish -p "$crate" --dry-run --allow-dirty || {
+            validation_failed=true
+            echo "::  $crate failed packaging validation" >&2
+        }
+    done
     for crate in "${CRATES[@]}"; do
         echo "--- $crate"
         status=0
         output=$(cargo publish -p "$crate" --dry-run --allow-dirty 2>&1) || status=$?
         printf '%s\n' "$output"
         if [[ $status -ne 0 ]]; then
-            if [[ "$crate" != "cuttlefish-rs" ]] && \
-               grep -q 'failed to select a version for the requirement `cuttlefish-rs' <<<"$output"; then
-                echo ":: $crate cannot be validated until cuttlefish-rs is published" >&2
-                echo "::    at the required version; the index cannot resolve its" >&2
-                echo "::    dependency yet. Not treated as a failure." >&2
+            if grep -qE 'failed to select a version for the requirement `(cuttlefish-rs|scratch-probe)' <<<"$output"; then
+                echo ":: $crate cannot be validated until its workspace dependency is" >&2
+                echo "::    published at the required version; the index cannot resolve" >&2
+                echo "::    it yet. Not treated as a failure." >&2
             else
                 validation_failed=true
                 echo "::  $crate failed packaging validation" >&2
@@ -228,6 +274,19 @@ run git push origin HEAD
 run git push origin "$TAG"
 
 if [[ "$PUBLISH" == true ]]; then
+    for crate in "${DEPENDENCY_CRATES[@]}"; do
+        version="$(crate_version "$crate")"
+        published=0
+        crate_published "$crate" "$version" || published=$?
+        case "$published" in
+            0) echo "$crate $version is already on crates.io; skipping" ;;
+            1)
+                echo "Publishing $crate $version ..."
+                run cargo publish -p "$crate"
+                ;;
+            *) die "could not check whether $crate $version is on crates.io; publish it by hand, then rerun" ;;
+        esac
+    done
     for crate in "${CRATES[@]}"; do
         echo "Publishing $crate ..."
         run cargo publish -p "$crate"

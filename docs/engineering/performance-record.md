@@ -3489,5 +3489,96 @@ Read mode's gain is memory, not time: its peak falls during local
 contraction, from 7.07 / 7.14 to 5.98 / 6.13 GB.
 
 For reference inputs, peak RSS was flat or slightly lower. Uncolored and
-read-mode outputs compare equal, and the colour digest is unchanged. The slot-equivalence test now also runs at
-K = 35, which exercises the wide map.
+read-mode outputs compare equal, and the colour digest is unchanged. The
+slot-equivalence test now also runs at K = 35, which exercises the wide map.
+
+## Compressed intermediates, chosen from the work directory's storage
+
+Three intermediate streams compress well: the local-unitig `.unitigs`
+records (about 3x), `.mcoord` coordinates (about 1.25x) and `.mcolor` colour
+runs (about 2.2x). They are now written as lz4 blocks, each with an 8-byte
+header of raw and stored length; a block that does not shrink is stored raw.
+The edge matrix, path-info, P_e and labels were measured as incompressible
+and are left alone.
+
+Compressing costs CPU and saves I/O, so whether it pays depends on the
+storage under the work directory. `--compress-intermediates auto|on|off`
+chooses; `auto` (the default) asks the new `scratch-probe` crate:
+
+- **Untimed:** network filesystems and rotational disks compress, and so
+  do FUSE mounts (with a warning), whose speed says little about what they
+  front.
+- **Otherwise:** a probe times a direct write and read-back of up to
+  256 MiB, about half a second each way. Storage that sustains twice the
+  build's intermediate rate stays uncompressed.
+- **A failed probe compresses.**
+
+### What compression costs
+
+On this host, which keeps intermediates in page cache over striped NVMe,
+compression's cost is pure CPU. At 10k, t16, order-alternated:
+
+| forced on | written | read | wall |
+| --- | ---: | ---: | ---: |
+| uncolored | -2.6 GB | -2.7 GB | unchanged |
+| colored | -6.5 GB (63.4 to 56.9) | -6.5 GB | +1.7 s (+2.4%) |
+
+That is about 0.26 s of wall time per GB of writes saved, so compression
+pays wherever writing and reading those bytes costs more. At 10k `auto`
+chose off in 0.07 s and matched the baseline: colored 1:10.33 / 1:09.56
+against 1:09.64 / 1:09.62, uncolored 48.26 / 48.43 against 48.00 / 48.73 s.
+
+At 150k and high thread counts the cost stays within noise (order-alternated):
+
+| 150k | wall, on | wall, off | writes saved |
+| --- | ---: | ---: | ---: |
+| t128 uncolored | 2:12.2 / 2:12.6 | 2:11.8 / 2:12.1 | 7.5 GB (3.7%) |
+| t128 colored | 3:39.5 / 3:35.8 | 3:37.1 / 3:36.9 | 20.6 GB (5.9%) |
+| t256 uncolored | 1:57.0 / 1:57.1 | 1:54.8 / 1:56.6 | 7.7 GB (3.8%) |
+| t256 colored | 2:43.5 / 2:52.2 | 2:52.8 / 2:50.9 | 20.4 GB (5.8%) |
+
+The t256 colored pair is noisy: expansion swung between 34 and 42 s
+independently of the setting.
+
+### The build's intermediate rate, and where it stops growing
+
+`auto` compares the probe with an estimate of how fast the build writes
+intermediates. The estimate started from 10k at 16 threads (0.96 GB/s, the
+more demanding corpus) and grew as threads^0.65, fitted to 150k at 16 and 64
+threads. Extrapolated, it claimed 3.7 GB/s at 128 threads and 5.8 at 256,
+so `auto` compressed on this NVMe (about 6 GB/s write) from 128 threads up.
+The rate actually plateaus near 2 GB/s (bytes written over wall time,
+compression off):
+
+| threads | 10k colored / uncolored | 150k colored / uncolored | old estimate |
+| ---: | ---: | ---: | ---: |
+| 16 | 0.88 / 0.99 | 0.50 / 0.55 | 0.96 |
+| 64 | -- | 1.33 / 1.24 | 2.36 |
+| 128 | 1.96 / 1.89 | 1.60 / 1.53 | 3.71 |
+| 256 | 2.00 / 1.78 | 2.03 / 1.75 | 5.82 |
+
+The estimate now holds its 64-thread value, 2.36 GB/s, for any larger
+thread count. That still sits above every measurement. With the 2x margin
+storage must sustain about 4.7 GB/s, and this host's NVMe stays uncompressed
+at every thread count.
+
+### Choices not taken
+
+- **Free memory.** A host with ample page cache absorbs intermediates at
+  memory speed, which would argue for leaving them uncompressed there. But
+  free memory is a startup snapshot and host-wide, not per cgroup (SLURM,
+  containers). Writeback thresholds vary by system. Using it would also need
+  an estimate of the build's total intermediate volume. A wrong "off" on
+  slow storage costs far more than a wrong "on" (about 2%). The probe
+  reports it; the decision ignores it.
+- **Timing rotational disks.** sysfs reports some SSD-backed virtual disks
+  as rotational, so these can be compressed without need. That is kept as
+  a deliberate, cheap bias toward compressing.
+
+### An inlining regression on the way
+
+Adding the probe outlined the weak-super-k-mer append path (`add_impl`),
+which made partitioning slower at 10k: 13.8 to 16.4 s of wall time (+19%)
+and 171 to 213 worker-s (+25%). `#[inline]` on `add_packed` and `#[inline(always)]` on `add_impl`
+restore it (13.5 s).
+

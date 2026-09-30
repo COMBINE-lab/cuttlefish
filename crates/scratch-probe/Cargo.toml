@@ -1,0 +1,18 @@
+[package]
+name = "scratch-probe"
+version = "0.1.0"
+description = """
+Measure how fast a directory's storage absorbs and returns a stream, and \
+classify it (local, network, memory; rotational or not), so a program can \
+choose how to spend CPU on its temporary files.\
+"""
+readme = "README.md"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+keywords = ["storage", "io", "benchmark", "filesystem", "tempfile"]
+categories = ["filesystem", "development-tools::profiling"]
+
+[dependencies]
+libc = "0.2"

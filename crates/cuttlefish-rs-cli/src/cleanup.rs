@@ -78,6 +78,13 @@ where
         let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
             continue;
         };
+        if name.starts_with(PROBE_PREFIX) && recently_modified(&path, PROBE_GRACE) {
+            println!(
+                "skipping {} (a storage probe from the last minute may still be running)",
+                path.display()
+            );
+            continue;
+        }
         match classify(name, params.prefix.as_deref()) {
             Some(Kind::Intermediate) => intermediates.push(measure(&path)?),
             Some(Kind::Repository) => repositories.push(measure(&path)?),
@@ -161,12 +168,34 @@ enum Kind {
     Repository,
 }
 
+/// The name `scratch_probe::probe` gives its temporary file.
+const PROBE_PREFIX: &str = ".scratch-probe-";
+
+/// How long a probe file is left alone. A probe takes about a second, so
+/// one this young may belong to a build starting in the same directory;
+/// deleting it would fail that probe and make the build compress. Age, not
+/// a pid, decides, because work directories are often shared across hosts.
+const PROBE_GRACE: std::time::Duration = std::time::Duration::from_secs(60);
+
+fn recently_modified(path: &Path, within: std::time::Duration) -> bool {
+    fs::symlink_metadata(path)
+        .and_then(|metadata| metadata.modified())
+        .ok()
+        .and_then(|modified| modified.elapsed().ok())
+        .is_some_and(|age| age < within)
+}
+
 /// Decides whether a directory entry is cuttlefish's to delete.
 ///
 /// The match is exact on the whole `<prefix>.cf3rs.<suffix>` shape rather than
 /// a substring test: this runs against shared scratch directories, so a name
 /// that merely mentions `cf3rs` is somebody else's.
 fn classify(name: &str, prefix: Option<&str>) -> Option<Kind> {
+    // A storage probe interrupted before it removed its file. Its name
+    // carries no output prefix, so a prefix filter does not apply.
+    if name.starts_with(PROBE_PREFIX) {
+        return Some(Kind::Intermediate);
+    }
     let (found_prefix, rest) = name.split_once(".cf3rs.")?;
     if let Some(prefix) = prefix
         && found_prefix != prefix
@@ -348,6 +377,26 @@ mod tests {
         // Prefix filtering picks one build out of a shared directory.
         assert!(classify("graph.cf3rs.wsk", Some("graph")).is_some());
         assert!(classify("other.cf3rs.wsk", Some("graph")).is_none());
+        // An interrupted storage probe, whatever the prefix.
+        assert!(matches!(
+            classify(".scratch-probe-4242-17", Some("graph")),
+            Some(Kind::Intermediate)
+        ));
+        assert!(classify("scratch-probe-notes", None).is_none());
+    }
+
+    #[test]
+    fn leaves_a_running_probe_alone() {
+        let path =
+            std::env::temp_dir().join(format!("{PROBE_PREFIX}cleanup-test-{}", std::process::id()));
+        fs::write(&path, b"probe").unwrap();
+        assert!(recently_modified(&path, PROBE_GRACE));
+        assert!(!recently_modified(&path, std::time::Duration::ZERO));
+        assert!(!recently_modified(
+            &path.with_extension("missing"),
+            PROBE_GRACE
+        ));
+        fs::remove_file(&path).unwrap();
     }
 
     #[test]

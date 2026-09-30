@@ -195,6 +195,9 @@ pub fn probe(dir: &Path, limits: &Limits) -> io::Result<Probe> {
 
 const ALIGN: usize = 4096;
 
+/// Bytes a buffered probe writes between syncs.
+const BUFFERED_SYNC_BYTES: u64 = 32 * 1024 * 1024;
+
 /// Largest chunk a probe allocates and moves per call.
 const MAX_CHUNK: usize = 64 * 1024 * 1024;
 
@@ -247,15 +250,20 @@ fn timed_write(
     let mut file = open(path, true, direct)?;
     let started = Instant::now();
     let mut written = 0u64;
+    let mut unsynced = 0u64;
     while written < limits.max_bytes && (written == 0 || started.elapsed() < limits.max_time) {
         file.write_all(buffer.as_slice())?;
         written += buffer.len() as u64;
+        unsynced += buffer.len() as u64;
         // Buffered writes land in the page cache at memory speed, so the
         // clock would stop long before the device had done any work, and
-        // the final sync alone could take seconds. Syncing each chunk keeps
-        // the time cap honest.
-        if !direct {
+        // the final sync alone could take seconds. Syncing every
+        // `BUFFERED_SYNC_BYTES` keeps the time cap honest, overrunning it by
+        // at most one such sync. Syncing every chunk instead would time a
+        // journal commit per few MiB, which a build never pays.
+        if !direct && unsynced >= BUFFERED_SYNC_BYTES {
             sync(&file)?;
+            unsynced = 0;
         }
     }
     sync(&file)?;

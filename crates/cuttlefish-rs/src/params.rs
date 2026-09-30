@@ -51,6 +51,10 @@ pub struct BuildParams {
     /// 439 GB and peak RSS by about a quarter, at no measurable cost in wall
     /// time across five interleaved pairs at 64 threads.
     pub compress_buckets: bool,
+    /// Whether intermediate record streams (local-unitig records,
+    /// coordinate and colour shards) are lz4-blocked. `Auto` decides from the
+    /// work directory's storage at startup; see [`crate::intermediates`].
+    pub compress_intermediates: IntermediateCompression,
     /// Whether an input that fails to parse is skipped instead of aborting.
     ///
     /// A skipped source retains its position in the input list, so colored
@@ -69,6 +73,27 @@ pub struct BuildParams {
     pub max_memory_gb: Option<usize>,
 }
 
+/// How intermediate record streams are compressed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum IntermediateCompression {
+    /// Decide from the work directory's storage at startup.
+    #[default]
+    Auto,
+    On,
+    Off,
+}
+
+impl IntermediateCompression {
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.to_ascii_lowercase().as_str() {
+            "auto" => Some(Self::Auto),
+            "on" | "yes" | "true" => Some(Self::On),
+            "off" | "no" | "false" => Some(Self::Off),
+            _ => None,
+        }
+    }
+}
+
 impl BuildParams {
     /// Constructs parameters with Cuttlefish-compatible defaults.
     pub fn new(input: GraphInput, output_prefix: String) -> Self {
@@ -82,6 +107,7 @@ impl BuildParams {
             cutoff: None,
             color: false,
             compress_buckets: true,
+            compress_intermediates: IntermediateCompression::Auto,
             skip_unreadable: false,
             output_prefix,
             work_dir: default_work_dir(),

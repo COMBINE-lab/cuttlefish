@@ -96,6 +96,7 @@ dependencies = [
  "rapidgzip-core",
  "rayon",
  "scc",
+ "scratch-probe",
  "thread-broker",
  "xxhash-rust",
 ]
@@ -107,6 +108,7 @@ dependencies = [
  "cuttlefish-rs",
  "flate2",
  "mimalloc",
+ "scratch-probe",
  "tikv-jemallocator",
 ]
 
@@ -342,6 +344,13 @@ checksum = "7800bc2c7e91b26aeae70c2ab6eaa653efc133104b7756e674c99304adff3fdb"
 dependencies = [
  "saa",
  "sdd",
+]
+
+[[package]]
+name = "scratch-probe"
+version = "0.1.0"
+dependencies = [
+ "libc",
 ]
 
 [[package]]

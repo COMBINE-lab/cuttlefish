@@ -167,6 +167,11 @@ enum Kind {
 /// a substring test: this runs against shared scratch directories, so a name
 /// that merely mentions `cf3rs` is somebody else's.
 fn classify(name: &str, prefix: Option<&str>) -> Option<Kind> {
+    // A storage probe interrupted before it removed its file. Its name
+    // carries no output prefix, so a prefix filter does not apply.
+    if name.starts_with(".scratch-probe-") {
+        return Some(Kind::Intermediate);
+    }
     let (found_prefix, rest) = name.split_once(".cf3rs.")?;
     if let Some(prefix) = prefix
         && found_prefix != prefix
@@ -348,6 +353,12 @@ mod tests {
         // Prefix filtering picks one build out of a shared directory.
         assert!(classify("graph.cf3rs.wsk", Some("graph")).is_some());
         assert!(classify("other.cf3rs.wsk", Some("graph")).is_none());
+        // An interrupted storage probe, whatever the prefix.
+        assert!(matches!(
+            classify(".scratch-probe-4242-17", Some("graph")),
+            Some(Kind::Intermediate)
+        ));
+        assert!(classify("scratch-probe-notes", None).is_none());
     }
 
     #[test]

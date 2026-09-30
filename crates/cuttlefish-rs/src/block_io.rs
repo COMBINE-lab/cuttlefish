@@ -21,13 +21,30 @@ pub(crate) const BLOCK_BYTES: usize = 256 * 1024;
 /// Largest block a reader accepts.
 pub(crate) const MAX_BLOCK_BYTES: usize = 1024 * 1024;
 
+/// Whether new writers compress their blocks; set once at startup from
+/// [`crate::intermediates`]. With it off, blocks are stored raw and the
+/// format -- and the reader -- are unchanged.
+static COMPRESS_BLOCKS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
+pub(crate) fn set_compress_blocks(compress: bool) {
+    COMPRESS_BLOCKS.store(compress, std::sync::atomic::Ordering::Relaxed);
+}
+
 thread_local! {
     static COMPRESSED: std::cell::RefCell<Vec<u8>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
-/// Writes one block of `raw` -- compressed, or as is if that is no smaller.
-fn write_block(inner: &mut impl Write, raw: &[u8]) -> io::Result<()> {
+/// Writes one block of `raw` -- compressed, or as is if that is no smaller
+/// or compression is off.
+fn write_block(inner: &mut impl Write, raw: &[u8], compress: bool) -> io::Result<()> {
     debug_assert!(!raw.is_empty() && raw.len() <= MAX_BLOCK_BYTES);
+    if !compress {
+        let mut header = [0u8; HEADER_BYTES];
+        header[..4].copy_from_slice(&(raw.len() as u32).to_le_bytes());
+        header[4..].copy_from_slice(&(raw.len() as u32).to_le_bytes());
+        inner.write_all(&header)?;
+        return inner.write_all(raw);
+    }
     COMPRESSED.with_borrow_mut(|stored| {
         stored.resize(lz4_flex::block::get_maximum_output_size(raw.len()), 0);
         let compressed = lz4_flex::block::compress_into(raw, stored)
@@ -56,6 +73,7 @@ pub(crate) struct Lz4BlockWriter<W: Write> {
     inner: W,
     raw: Vec<u8>,
     block_bytes: usize,
+    compress: bool,
 }
 
 impl<W: Write> Lz4BlockWriter<W> {
@@ -69,7 +87,15 @@ impl<W: Write> Lz4BlockWriter<W> {
             inner,
             raw: Vec::new(),
             block_bytes,
+            compress: COMPRESS_BLOCKS.load(std::sync::atomic::Ordering::Relaxed),
         }
+    }
+
+    /// Overrides the process-wide setting for this writer.
+    #[cfg(test)]
+    pub(crate) fn with_compression(mut self, compress: bool) -> Self {
+        self.compress = compress;
+        self
     }
 
     /// Writes `bytes` straight out as blocks, without copying them into the
@@ -77,7 +103,7 @@ impl<W: Write> Lz4BlockWriter<W> {
     pub(crate) fn write_blocks(&mut self, bytes: &[u8]) -> io::Result<()> {
         self.write_pending()?;
         for block in bytes.chunks(self.block_bytes) {
-            write_block(&mut self.inner, block)?;
+            write_block(&mut self.inner, block, self.compress)?;
         }
         Ok(())
     }
@@ -93,7 +119,7 @@ impl<W: Write> Lz4BlockWriter<W> {
         if self.raw.is_empty() {
             return Ok(());
         }
-        write_block(&mut self.inner, &self.raw)?;
+        write_block(&mut self.inner, &self.raw, self.compress)?;
         self.raw.clear();
         Ok(())
     }
@@ -200,15 +226,26 @@ mod tests {
     use super::*;
 
     fn round_trip(data: &[u8], chunk: usize) -> Vec<u8> {
-        let mut writer = Lz4BlockWriter::new(Vec::new());
-        for piece in data.chunks(chunk.max(1)) {
-            writer.write_all(piece).unwrap();
-        }
-        writer.flush().unwrap();
         let mut out = Vec::new();
-        Lz4BlockReader::new(&writer.inner[..])
-            .read_to_end(&mut out)
-            .unwrap();
+        // Compressed and raw blocks read back through the same reader.
+        for compress in [true, false] {
+            let mut writer = Lz4BlockWriter::new(Vec::new()).with_compression(compress);
+            for piece in data.chunks(chunk.max(1)) {
+                writer.write_all(piece).unwrap();
+            }
+            writer.flush().unwrap();
+            if !compress {
+                assert_eq!(
+                    writer.inner.len(),
+                    data.len() + data.len().div_ceil(BLOCK_BYTES) * HEADER_BYTES
+                );
+            }
+            out.clear();
+            Lz4BlockReader::new(&writer.inner[..])
+                .read_to_end(&mut out)
+                .unwrap();
+            assert_eq!(out, data);
+        }
         out
     }
 

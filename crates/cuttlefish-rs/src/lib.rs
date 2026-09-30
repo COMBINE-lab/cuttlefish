@@ -23,6 +23,7 @@ pub mod discontinuity;
 pub mod dna;
 pub mod hash;
 pub mod input;
+pub mod intermediates;
 pub mod kmer;
 pub mod minimizer;
 pub mod params;

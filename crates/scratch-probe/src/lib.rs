@@ -12,8 +12,12 @@
 //!   rotates.
 //! * [`probe`] also times a short sequential write and read-back of random
 //!   bytes, capped in both bytes and time, so a fast device costs a fraction
-//!   of a second and a slow one stops early. On Linux it uses direct I/O, so
-//!   the numbers describe the device rather than the page cache.
+//!   of a second and a slow one stops early. It bypasses the page cache
+//!   (`O_DIRECT` on Linux, `F_NOCACHE` on macOS), so the numbers describe the
+//!   device rather than memory.
+//!
+//! Linux and macOS are supported. Elsewhere [`classify`] answers
+//! [`StorageKind::Unknown`] and [`probe`] measures buffered I/O.
 //!
 //! The crate reports; policy stays with the caller. [`Probe::sustains`] is a
 //! small helper for the usual question -- can this storage keep up with a
@@ -70,7 +74,8 @@ pub struct Storage {
     pub kind: StorageKind,
     /// Whether the block device under the directory rotates; for a
     /// device-mapper or md device, whether any device under it does. `None`
-    /// when there is no local block device to ask about.
+    /// when there is no local block device to ask about, and always on
+    /// macOS, where the answer lives in IOKit.
     pub rotational: Option<bool>,
 }
 
@@ -124,7 +129,11 @@ pub fn classify(dir: &Path) -> Storage {
     {
         linux::classify(dir)
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(target_os = "macos")]
+    {
+        macos::classify(dir)
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     {
         let _ = dir;
         Storage {
@@ -232,11 +241,22 @@ fn open(path: &Path, write: bool, direct: bool) -> io::Result<File> {
         use std::os::unix::fs::OpenOptionsExt;
         options.custom_flags(libc::O_DIRECT);
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     if direct {
         return Err(io::Error::from(io::ErrorKind::Unsupported));
     }
-    options.open(path)
+    let file = options.open(path)?;
+    // macOS has no `O_DIRECT`; `F_NOCACHE` keeps this descriptor's reads and
+    // writes out of the unified buffer cache, which is what the probe needs.
+    #[cfg(target_os = "macos")]
+    if direct {
+        use std::os::unix::io::AsRawFd;
+        // SAFETY: the descriptor is open for the duration of the call.
+        if unsafe { libc::fcntl(file.as_raw_fd(), libc::F_NOCACHE, 1) } == -1 {
+            return Err(io::Error::last_os_error());
+        }
+    }
+    Ok(file)
 }
 
 fn direct_io_refused(error: &io::Error) -> bool {
@@ -430,6 +450,74 @@ mod linux {
     }
 }
 
+#[cfg(target_os = "macos")]
+mod macos {
+    use super::{Storage, StorageKind};
+    use std::path::Path;
+
+    /// `statfs::f_fstypename` values and what they mean.
+    const FILESYSTEMS: &[(&str, StorageKind)] = &[
+        ("apfs", StorageKind::Local),
+        ("hfs", StorageKind::Local),
+        ("msdos", StorageKind::Local),
+        ("exfat", StorageKind::Local),
+        ("nfs", StorageKind::Network),
+        ("smbfs", StorageKind::Network),
+        ("afpfs", StorageKind::Network),
+        ("webdav", StorageKind::Network),
+        ("tmpfs", StorageKind::Memory),
+    ];
+
+    pub(super) fn classify(dir: &Path) -> Storage {
+        use std::os::unix::ffi::OsStrExt;
+        let unknown = Storage {
+            filesystem: "unknown",
+            kind: StorageKind::Unknown,
+            rotational: None,
+        };
+        let Ok(path) = std::ffi::CString::new(dir.as_os_str().as_bytes()) else {
+            return unknown;
+        };
+        let mut stats = std::mem::MaybeUninit::<libc::statfs>::zeroed();
+        // SAFETY: `path` is NUL-terminated and `stats` is a valid out-pointer.
+        if unsafe { libc::statfs(path.as_ptr(), stats.as_mut_ptr()) } != 0 {
+            return unknown;
+        }
+        // SAFETY: `statfs` succeeded and initialized `stats`.
+        let stats = unsafe { stats.assume_init() };
+        let name: Vec<u8> = stats
+            .f_fstypename
+            .iter()
+            .take_while(|&&byte| byte != 0)
+            .map(|&byte| byte as u8)
+            .collect();
+        let (filesystem, kind) = FILESYSTEMS
+            .iter()
+            .find(|&&(known, _)| known.as_bytes() == name.as_slice())
+            .map_or_else(
+                // An unlisted filesystem is still local or not; the kernel
+                // says which. FUSE mounts (macFUSE) report themselves local
+                // whatever they front, so they stay unknown.
+                || {
+                    let kind = if name.windows(4).any(|w| w == b"fuse") {
+                        StorageKind::Unknown
+                    } else if stats.f_flags & libc::MNT_LOCAL as u32 != 0 {
+                        StorageKind::Local
+                    } else {
+                        StorageKind::Network
+                    };
+                    ("unknown", kind)
+                },
+                |&(name, kind)| (name, kind),
+            );
+        Storage {
+            filesystem,
+            kind,
+            rotational: None,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -476,5 +564,22 @@ mod tests {
             assert_eq!(shm.rotational, None);
         }
         assert!(mem_available().is_some_and(|bytes| bytes > 0));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_bypasses_the_cache_on_local_disks() {
+        let dir = std::env::temp_dir().join(format!("scratch-probe-mac-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let storage = classify(&dir);
+        assert_eq!(storage.kind, StorageKind::Local, "{storage:?}");
+        assert_eq!(storage.rotational, None);
+        let limits = Limits {
+            max_bytes: 4 * 1024 * 1024,
+            max_time: Duration::from_millis(100),
+            chunk_bytes: 1024 * 1024,
+        };
+        assert!(probe(&dir, &limits).unwrap().direct_io);
+        fs::remove_dir_all(&dir).unwrap();
     }
 }

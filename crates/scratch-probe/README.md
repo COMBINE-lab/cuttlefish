@@ -15,8 +15,9 @@ the work directory. `scratch-probe` answers cheaply enough to ask at startup:
   `fdatasync`) and read-back of random bytes.
   - It is capped at 256 MiB and about half a second, so fast storage costs a
     fraction of a second and slow storage stops early.
-  - On Linux it uses `O_DIRECT`, so it measures the device rather than the
-    page cache. It falls back to buffered I/O where direct I/O is refused.
+  - It bypasses the page cache (`O_DIRECT` on Linux, `F_NOCACHE` on macOS),
+    so it measures the device rather than memory. It falls back to buffered
+    I/O where that is refused.
   - The probe file is removed before returning.
 
 ```rust
@@ -29,5 +30,8 @@ The crate reports; policy (what rate a program produces, and what margin is
 safe) stays with the caller. A probe is a snapshot of idle storage: shared or
 network storage can be busier later.
 
-Classification is Linux-specific. Elsewhere `classify` reports `Unknown`, and
-`probe` times buffered I/O.
+Linux and macOS are supported. On macOS, `classify` names the filesystem from
+`statfs` and trusts the kernel's local flag for filesystems it does not know,
+but does not report rotation, which lives in IOKit. `mem_available` is Linux
+only. On other platforms `classify` reports `Unknown`, and `probe` times
+buffered I/O.

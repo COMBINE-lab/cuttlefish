@@ -37,31 +37,55 @@ thread_local! {
 }
 
 /// Writes one block of `raw` -- compressed, or as is if that is no smaller
-/// or compression is off.
+/// or compression is off -- in one write call where the writer allows: the
+/// streams write straight to files, so a separate header write would be a
+/// second syscall per block.
 fn write_block(inner: &mut impl Write, raw: &[u8], compress: bool) -> io::Result<()> {
     debug_assert!(!raw.is_empty() && raw.len() <= MAX_BLOCK_BYTES);
-    if !compress {
+    let header = |stored: usize| {
         let mut header = [0u8; HEADER_BYTES];
         header[..4].copy_from_slice(&(raw.len() as u32).to_le_bytes());
-        header[4..].copy_from_slice(&(raw.len() as u32).to_le_bytes());
-        inner.write_all(&header)?;
-        return inner.write_all(raw);
+        header[4..].copy_from_slice(&(stored as u32).to_le_bytes());
+        header
+    };
+    if !compress {
+        return write_all_pair(inner, &header(raw.len()), raw);
     }
     COMPRESSED.with_borrow_mut(|stored| {
-        stored.resize(lz4_flex::block::get_maximum_output_size(raw.len()), 0);
-        let compressed = lz4_flex::block::compress_into(raw, stored)
+        // Compress behind room for the header, so a compressed block goes
+        // out as one contiguous write.
+        stored.resize(
+            HEADER_BYTES + lz4_flex::block::get_maximum_output_size(raw.len()),
+            0,
+        );
+        let compressed = lz4_flex::block::compress_into(raw, &mut stored[HEADER_BYTES..])
             .map_err(|error| io::Error::other(error.to_string()))?;
-        let payload = if compressed < raw.len() {
-            &stored[..compressed]
+        if compressed < raw.len() {
+            stored[..HEADER_BYTES].copy_from_slice(&header(compressed));
+            inner.write_all(&stored[..HEADER_BYTES + compressed])
         } else {
-            raw
-        };
-        let mut header = [0u8; HEADER_BYTES];
-        header[..4].copy_from_slice(&(raw.len() as u32).to_le_bytes());
-        header[4..].copy_from_slice(&(payload.len() as u32).to_le_bytes());
-        inner.write_all(&header)?;
-        inner.write_all(payload)
+            write_all_pair(inner, &header(raw.len()), raw)
+        }
     })
+}
+
+/// Writes `first` then `second`, gathered into one vectored write when the
+/// writer takes it all, without copying `second`.
+fn write_all_pair(inner: &mut impl Write, first: &[u8], second: &[u8]) -> io::Result<()> {
+    let written = loop {
+        match inner.write_vectored(&[io::IoSlice::new(first), io::IoSlice::new(second)]) {
+            Ok(0) => return Err(io::ErrorKind::WriteZero.into()),
+            Ok(written) => break written,
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+            Err(error) => return Err(error),
+        }
+    };
+    if written < first.len() {
+        inner.write_all(&first[written..])?;
+        inner.write_all(second)
+    } else {
+        inner.write_all(&second[written - first.len()..])
+    }
 }
 
 const HEADER_BYTES: usize = 8;
@@ -101,7 +125,10 @@ impl<W: Write> Lz4BlockWriter<W> {
     }
 
     /// Writes `bytes` straight out as blocks, without copying them into the
-    /// pending block: for callers that already batch their own writes.
+    /// pending block: for callers that already batch their own writes. The
+    /// batch's last block may be short; holding it back to fill would cost
+    /// every writer a pending block, and the coordinate writers -- the one
+    /// caller, up to a thousand live at once -- keep none.
     pub(crate) fn write_blocks(&mut self, bytes: &[u8]) -> io::Result<()> {
         self.write_pending()?;
         for block in bytes.chunks(self.block_bytes) {
@@ -285,6 +312,64 @@ mod tests {
             .read_to_end(&mut out)
             .unwrap();
         assert_eq!(out, data);
+    }
+
+    /// Counts write calls, taking at most `limit` bytes per call.
+    struct Calls {
+        out: Vec<u8>,
+        calls: usize,
+        limit: usize,
+    }
+
+    impl Write for Calls {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            self.write_vectored(&[io::IoSlice::new(bytes)])
+        }
+
+        fn write_vectored(&mut self, slices: &[io::IoSlice<'_>]) -> io::Result<usize> {
+            self.calls += 1;
+            let before = self.out.len();
+            for slice in slices {
+                let room = self.limit - (self.out.len() - before);
+                self.out.extend_from_slice(&slice[..slice.len().min(room)]);
+            }
+            Ok(self.out.len() - before)
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn a_block_is_one_write_call() {
+        let compressible = vec![5u8; 4096];
+        let random: Vec<u8> = (0..4096u32)
+            .map(|i| (i.wrapping_mul(2_654_435_761) >> 13) as u8)
+            .collect();
+        for (data, compress) in [(&compressible, true), (&random, true), (&random, false)] {
+            let mut calls = Calls {
+                out: Vec::new(),
+                calls: 0,
+                limit: usize::MAX,
+            };
+            write_block(&mut calls, data, compress).unwrap();
+            assert_eq!(calls.calls, 1, "compress {compress}");
+            // A writer taking a few bytes at a time still gets it all, in
+            // order.
+            let mut trickle = Calls {
+                out: Vec::new(),
+                calls: 0,
+                limit: 3,
+            };
+            write_block(&mut trickle, data, compress).unwrap();
+            assert_eq!(trickle.out, calls.out);
+            let mut read = Vec::new();
+            Lz4BlockReader::new(&calls.out[..])
+                .read_to_end(&mut read)
+                .unwrap();
+            assert_eq!(&read, data);
+        }
     }
 
     #[test]

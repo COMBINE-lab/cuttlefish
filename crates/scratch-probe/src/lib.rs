@@ -41,7 +41,8 @@ pub struct Limits {
     /// after at least one chunk; so a probe takes about twice this, plus a
     /// chunk each way on slow storage.
     pub max_time: Duration,
-    /// Bytes per write and read call; rounded up to 4 KiB.
+    /// Bytes per write and read call; rounded up to 4 KiB and capped at
+    /// 64 MiB.
     pub chunk_bytes: usize,
 }
 
@@ -107,7 +108,9 @@ pub struct Probe {
     /// Reading the same bytes back.
     pub read: Throughput,
     /// Whether both passes bypassed the page cache. Without direct I/O the
-    /// read may be served from cache and overstate the device.
+    /// read may be served from cache and overstate the device. ZFS before
+    /// 2.3 accepts `O_DIRECT` but can still serve reads from its ARC, so
+    /// there the read may overstate the device even with this set.
     pub direct_io: bool,
     /// `MemAvailable` from `/proc/meminfo`, in bytes, where there is one.
     pub mem_available: Option<u64>,
@@ -164,25 +167,22 @@ pub fn mem_available() -> Option<u64> {
 /// Writes a hidden file in `dir` and removes it before returning, including
 /// on error.
 pub fn probe(dir: &Path, limits: &Limits) -> io::Result<Probe> {
-    let chunk = limits.chunk_bytes.max(1).div_ceil(ALIGN) * ALIGN;
+    let chunk = limits.chunk_bytes.clamp(1, MAX_CHUNK).div_ceil(ALIGN) * ALIGN;
     let mut buffer = AlignedBuffer::new(chunk);
     fill_random(buffer.as_mut_slice());
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.subsec_nanos());
-    let path = dir.join(format!(".scratch-probe-{}-{nanos}", std::process::id()));
-    let _remove = RemoveOnDrop(&path);
+    let remove = create_probe_file(dir)?;
+    let path = remove.0.as_path();
 
-    let (write, direct_io) = match timed_write(&path, &buffer, limits, true) {
+    let (write, direct_io) = match timed_write(path, &buffer, limits, true) {
         Ok(write) => (write, true),
         // Direct I/O is refused by some filesystems (tmpfs, several network
         // ones) at open or at the first write; measure buffered instead.
         Err(error) if direct_io_refused(&error) => {
-            (timed_write(&path, &buffer, limits, false)?, false)
+            (timed_write(path, &buffer, limits, false)?, false)
         }
         Err(error) => return Err(error),
     };
-    let read = timed_read(&path, &mut buffer, limits, direct_io)?;
+    let read = timed_read(path, &mut buffer, limits, direct_io)?;
     Ok(Probe {
         dir: dir.to_path_buf(),
         storage: classify(dir),
@@ -194,6 +194,49 @@ pub fn probe(dir: &Path, limits: &Limits) -> io::Result<Probe> {
 }
 
 const ALIGN: usize = 4096;
+
+/// Largest chunk a probe allocates and moves per call.
+const MAX_CHUNK: usize = 64 * 1024 * 1024;
+
+/// Creates the probe's file under a name no other file has, so the probe
+/// never writes into, or removes, a file it did not create.
+fn create_probe_file(dir: &Path) -> io::Result<RemoveOnDrop> {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.subsec_nanos());
+    let mut attempt = 0;
+    loop {
+        let path = dir.join(format!(
+            ".scratch-probe-{}-{nanos}-{attempt}",
+            std::process::id()
+        ));
+        match OpenOptions::new().write(true).create_new(true).open(&path) {
+            Ok(_) => return Ok(RemoveOnDrop(path)),
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists && attempt < 16 => {
+                attempt += 1;
+            }
+            Err(error) => return Err(error),
+        }
+    }
+}
+
+/// Flushes written data to the device as a build's own writes would reach
+/// it. On macOS `File::sync_data` is `F_FULLFSYNC`, which also flushes the
+/// drive's cache; a build never does that, so it would understate the
+/// storage.
+fn sync(file: &File) -> io::Result<()> {
+    #[cfg(target_os = "macos")]
+    {
+        use std::os::unix::io::AsRawFd;
+        // SAFETY: the descriptor is open for the duration of the call.
+        if unsafe { libc::fsync(file.as_raw_fd()) } == -1 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(())
+    }
+    #[cfg(not(target_os = "macos"))]
+    file.sync_data()
+}
 
 fn timed_write(
     path: &Path,
@@ -212,10 +255,10 @@ fn timed_write(
         // the final sync alone could take seconds. Syncing each chunk keeps
         // the time cap honest.
         if !direct {
-            file.sync_data()?;
+            sync(&file)?;
         }
     }
-    file.sync_data()?;
+    sync(&file)?;
     Ok(Throughput {
         bytes: written,
         elapsed: started.elapsed(),
@@ -249,7 +292,8 @@ fn timed_read(
 fn open(path: &Path, write: bool, direct: bool) -> io::Result<File> {
     let mut options = OpenOptions::new();
     if write {
-        options.write(true).create(true).truncate(true);
+        // `create_probe_file` made it; never create one here.
+        options.write(true).truncate(true);
     } else {
         options.read(true);
     }
@@ -311,11 +355,11 @@ fn fill_random(bytes: &mut [u8]) {
     }
 }
 
-struct RemoveOnDrop<'a>(&'a Path);
+struct RemoveOnDrop(PathBuf);
 
-impl Drop for RemoveOnDrop<'_> {
+impl Drop for RemoveOnDrop {
     fn drop(&mut self) {
-        let _ = fs::remove_file(self.0);
+        let _ = fs::remove_file(&self.0);
     }
 }
 
@@ -564,7 +608,8 @@ mod tests {
     fn buffered_passes_measure_within_the_limits() {
         let dir = std::env::temp_dir().join(format!("scratch-probe-buf-{}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("probe");
+        let file = create_probe_file(&dir).unwrap();
+        let path = file.0.clone();
         let limits = Limits {
             max_bytes: 8 * 1024 * 1024,
             max_time: Duration::from_millis(100),
@@ -576,7 +621,16 @@ mod tests {
         assert!(write.bytes >= 1024 * 1024 && write.bytes <= limits.max_bytes);
         let read = timed_read(&path, &mut buffer, &limits, false).unwrap();
         assert!(read.bytes >= 1024 * 1024 && read.bytes <= write.bytes);
-        fs::remove_dir_all(&dir).unwrap();
+        // A second probe file never takes the first one's name.
+        let other = create_probe_file(&dir).unwrap();
+        assert_ne!(other.0, path);
+        drop((file, other));
+        assert_eq!(
+            fs::read_dir(&dir).unwrap().count(),
+            0,
+            "probe files removed"
+        );
+        fs::remove_dir(&dir).unwrap();
     }
 
     #[test]

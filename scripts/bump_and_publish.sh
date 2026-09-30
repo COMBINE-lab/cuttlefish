@@ -105,8 +105,21 @@ crate_version() {
     sed -n 's/^version = "\(.*\)"/\1/p' "crates/$1/Cargo.toml" | head -1
 }
 
+# Whether crate $1 at version $2 is on crates.io: 0 yes, 1 no, 2 unknown.
+# Only cargo's "could not find" means no. Any other failure (network, index)
+# is retried, then reported, so a flaky lookup never leads to publishing a
+# version that already exists.
 crate_published() {
-    cargo info "$1@$2" --registry crates-io >/dev/null 2>&1
+    local output status attempt
+    for attempt in 1 2 3; do
+        status=0
+        output=$(cargo info "$1@$2" --registry crates-io 2>&1) || status=$?
+        [[ "$status" -eq 0 ]] && return 0
+        grep -q "could not find \`$1@$2\`" <<<"$output" && return 1
+        [[ "$attempt" -lt 3 ]] && sleep 5
+    done
+    printf 'could not tell whether %s %s is on crates.io:\n%s\n' "$1" "$2" "$output" >&2
+    return 2
 }
 
 MANIFEST_BACKUP=""
@@ -214,8 +227,14 @@ if [[ "$DRY_RUN" == true ]]; then
     validation_failed=false
     for crate in "${DEPENDENCY_CRATES[@]}"; do
         version="$(crate_version "$crate")"
-        if crate_published "$crate" "$version"; then
+        published=0
+        crate_published "$crate" "$version" || published=$?
+        if [[ "$published" -eq 0 ]]; then
             echo "--- $crate $version already on crates.io; not republished"
+            continue
+        elif [[ "$published" -ne 1 ]]; then
+            validation_failed=true
+            echo "::  $crate: could not check crates.io" >&2
             continue
         fi
         echo "--- $crate $version (to be published first)"
@@ -257,12 +276,16 @@ run git push origin "$TAG"
 if [[ "$PUBLISH" == true ]]; then
     for crate in "${DEPENDENCY_CRATES[@]}"; do
         version="$(crate_version "$crate")"
-        if crate_published "$crate" "$version"; then
-            echo "$crate $version is already on crates.io; skipping"
-        else
-            echo "Publishing $crate $version ..."
-            run cargo publish -p "$crate"
-        fi
+        published=0
+        crate_published "$crate" "$version" || published=$?
+        case "$published" in
+            0) echo "$crate $version is already on crates.io; skipping" ;;
+            1)
+                echo "Publishing $crate $version ..."
+                run cargo publish -p "$crate"
+                ;;
+            *) die "could not check whether $crate $version is on crates.io; publish it by hand, then rerun" ;;
+        esac
     done
     for crate in "${CRATES[@]}"; do
         echo "Publishing $crate ..."

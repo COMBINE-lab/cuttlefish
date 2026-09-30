@@ -38,6 +38,11 @@ Removals are listed largest-first with human-readable sizes. Use
 `-p`/`--prefix` to restrict it to one build's artifacts when several builds
 share a directory.
 
+It also removes `.scratch-probe-*` files, left by a storage measurement
+(`--compress-intermediates auto` or `cuttlefish probe`) that was interrupted.
+One modified in the last minute is skipped and reported: it may belong to a
+build starting in the same directory, whose measurement it would break.
+
 Two things are never removed by default:
 
 - **The output FASTA.** After a bailed run it is partial, and whether to keep

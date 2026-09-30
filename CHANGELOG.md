@@ -1,5 +1,29 @@
 # Changelog
 
+## Unreleased
+
+- Much less intermediate I/O. On 149,998 Salmonella assemblies at 16 threads,
+  uncolored builds write 202 GB instead of 470 GB and colored builds 346 GB
+  instead of 614 GB. Partition buckets store each label once per bucket and
+  reference it after that. Local contraction replays its colour pass from
+  memory instead of re-reading the bucket. Intermediate labels are stored 2
+  bits per base, and the path-info, coordinate and edge records are narrower.
+  Private intermediate formats change (`CF3WSKC2`, `CF3SCB3`, `CF3MCB4`,
+  `CF3MCU1`); final outputs do not.
+- The partition's minimizer scan is vectorized with AVX2, after
+  simd-minimizers (Groot Koerkamp and Martayan, SEA 2025). It is chosen at
+  run time, with an identical scalar fallback, so output does not depend on
+  the CPU. Partitioning is 23-27% faster. Super-k-mers are assigned to
+  subgraphs by a new hash, so subgraph contents differ from earlier releases
+  and from C++ Cuttlefish 3. The unitigs are unchanged.
+- End to end at 16 threads, 150k-assembly uncolored builds take roughly half
+  3.0.3's time and colored builds roughly a third less. These combine
+  measurements taken in two host conditions; see the performance record.
+  Colored peak RSS rises by about 0.5 GB, to 9.4 GB.
+- Fix: a colored build whose super-k-mers all fall in one subgraph, and so
+  has no discontinuity edges, wrote an empty FASTA. This affected only very
+  small inputs.
+
 ## 3.0.3
 
 - Colored builds use far less memory at low and moderate thread counts. On

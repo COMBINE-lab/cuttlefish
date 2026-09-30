@@ -29,6 +29,7 @@ pub mod partition;
 pub mod state;
 pub mod subgraph;
 pub mod uncolored;
+mod window_min;
 
 /// Default k-mer length used by the CLI.
 pub const DEFAULT_K: u16 = 31;

@@ -143,7 +143,10 @@ fn normalized_uncolored_fixture_tuned(
     assert_eq!(actual, expected);
     assert_eq!(built.unitigs, expected_unitigs.len() as u64);
     assert_eq!(built.unitig_bases, expected_bases);
-    assert_eq!(built.bucket_records, emitted.partition.weak_superkmers);
+    assert_eq!(
+        built.bucket_records + emitted.buckets.dropped_records,
+        emitted.partition.weak_superkmers
+    );
     assert_eq!(built.observed_edges > 0, expect_discontinuity_edges);
     assert_eq!(built.retained_edges > 0, expect_discontinuity_edges);
 
@@ -251,7 +254,10 @@ fn normalized_uncolored_fixture_k<const K: usize>(
     assert_eq!(actual, expected);
     assert_eq!(built.unitigs, expected_unitigs.len() as u64);
     assert_eq!(built.unitig_bases, expected_bases);
-    assert_eq!(built.bucket_records, emitted.partition.weak_superkmers);
+    assert_eq!(
+        built.bucket_records + emitted.buckets.dropped_records,
+        emitted.partition.weak_superkmers
+    );
 
     let _ = fs::remove_dir_all(emitted.buckets.bucket_dir);
     let _ = fs::remove_file(built.output_path);
@@ -376,6 +382,28 @@ const COLORED_WIDE_SOURCES: [&[u8]; 3] = [
 /// Builds a colored graph from `sequences` and checks every vertex's colours
 /// against the sources that actually contain that k-mer.
 fn colored_run_sources_at<const K: usize>(name: &str, threads: usize, sequences: &[&[u8]]) {
+    colored_run_sources_in::<K>(name, threads, sequences, DEFAULT_SUBGRAPH_COUNT);
+}
+
+/// With every super-k-mer in one subgraph there are no discontinuity edges,
+/// and colored collation used to emit nothing at all: every local unitig is
+/// then a direct one, and none were written.
+#[test]
+fn colored_single_subgraph_emits_every_unitig() {
+    colored_run_sources_in::<33>(
+        "colored-run-sources-single-subgraph",
+        3,
+        &COLORED_WIDE_SOURCES,
+        1,
+    );
+}
+
+fn colored_run_sources_in<const K: usize>(
+    name: &str,
+    threads: usize,
+    sequences: &[&[u8]],
+    graph_count: usize,
+) {
     let root = scratch_prefix(name);
     let _ = fs::remove_dir_all(&root);
     fs::create_dir_all(&root).unwrap();
@@ -401,7 +429,7 @@ fn colored_run_sources_at<const K: usize>(name: &str, threads: usize, sequences:
     params.threads = threads;
     params.work_dir = root.display().to_string();
     params.seqs = seqs;
-    let emitted = emit_weak_superkmer_buckets::<K>(&params, DEFAULT_SUBGRAPH_COUNT).unwrap();
+    let emitted = emit_weak_superkmer_buckets::<K>(&params, graph_count).unwrap();
     let mut inputs = emit_colored_external_discontinuity_inputs_with_threads_in_dir::<K>(
         &emitted.buckets.bucket_dir,
         1,
@@ -1650,7 +1678,10 @@ fn serial_discontinuity_pipeline_builds_fasta_from_emitted_buckets() {
     .unwrap();
 
     assert_eq!(built.input_buckets, emitted.buckets.bucket_files);
-    assert_eq!(built.bucket_records, emitted.partition.weak_superkmers);
+    assert_eq!(
+        built.bucket_records + emitted.buckets.dropped_records,
+        emitted.partition.weak_superkmers
+    );
     assert_eq!(built.output_path, fasta_path);
 
     let fasta = fs::read_to_string(&built.output_path).unwrap();
@@ -1689,7 +1720,10 @@ fn builds_uncolored_fasta_from_emitted_buckets() {
     let built = build_uncolored_from_buckets::<7>(&params, &emitted.buckets.bucket_dir).unwrap();
 
     assert_eq!(built.input_buckets, emitted.buckets.bucket_files);
-    assert_eq!(built.bucket_records, emitted.partition.weak_superkmers);
+    assert_eq!(
+        built.bucket_records + emitted.buckets.dropped_records,
+        emitted.partition.weak_superkmers
+    );
     assert!(built.observed_edges > 0);
     assert!(built.retained_edges > 0);
     assert!(built.unitigs > 0);

@@ -15,7 +15,9 @@
 use crate::Side;
 #[cfg(test)]
 use crate::buckets::BucketRecord;
-use crate::buckets::{BorrowedBucketPackedRecord, BucketError, BucketManifestEntry, BucketStore};
+use crate::buckets::{
+    BorrowedBucketPackedRecord, BucketError, BucketManifestEntry, BucketStore, LabelSlot,
+};
 use crate::color::{ColorError, ConcurrentColorRepository, UnitigColorRuns};
 use crate::dna::{Base, minimal_rotation};
 use crate::hash::{FastBuildHasher, fast_u64_hash, hash_two_u64};
@@ -45,6 +47,9 @@ pub struct FlatVertexMap<C: ColorSlot = ()> {
     /// Insertion order, for the dispatch iteration.
     keys: Vec<u64>,
     mask: usize,
+    /// Bumped whenever entries move or vanish (growth, clearing), so a slot
+    /// index recorded under an older generation is known to be stale.
+    generation: u32,
 }
 
 const FLAT_EMPTY_KEY: u64 = u64::MAX;
@@ -61,6 +66,7 @@ impl<C: ColorSlot> FlatVertexMap<C> {
             slots: vec![(FLAT_EMPTY_KEY, VertexState::default()); slots],
             keys: Vec::with_capacity(capacity),
             mask: slots - 1,
+            generation: 0,
         }
     }
 
@@ -76,6 +82,7 @@ impl<C: ColorSlot> FlatVertexMap<C> {
         if self.keys.capacity() < capacity {
             self.keys.reserve(capacity - self.keys.capacity());
         }
+        self.generation = self.generation.wrapping_add(1);
     }
 
     #[inline(always)]
@@ -137,8 +144,47 @@ impl<C: ColorSlot> FlatVertexMap<C> {
         &mut self.slots[index].1
     }
 
+    /// The slot index of `key`, inserting a default state when absent.
+    /// Indices stay valid until [`Self::generation`] changes.
+    #[inline(always)]
+    fn index_or_insert(&mut self, key: u64) -> usize {
+        let (index, hit) = self.probe(key);
+        if hit {
+            return index;
+        }
+        if (self.keys.len() + 1) * 5 > self.slots.len() * 4 {
+            self.grow();
+            let (index, _) = self.probe(key);
+            self.keys.push(key);
+            self.slots[index] = (key, VertexState::default());
+            return index;
+        }
+        self.keys.push(key);
+        self.slots[index] = (key, VertexState::default());
+        index
+    }
+
+    #[inline(always)]
+    fn state_at_mut(&mut self, index: usize) -> &mut VertexState<C> {
+        &mut self.slots[index].1
+    }
+
+    #[inline(always)]
+    fn prefetch_index(&self, index: usize) {
+        #[cfg(target_arch = "x86_64")]
+        unsafe {
+            use std::arch::x86_64::{_MM_HINT_T0, _mm_prefetch};
+            // SAFETY: callers pass indices below `slots.len()`, and
+            // prefetching any mapped address is side-effect free.
+            _mm_prefetch(self.slots.as_ptr().add(index).cast::<i8>(), _MM_HINT_T0);
+        }
+        #[cfg(not(target_arch = "x86_64"))]
+        let _ = index;
+    }
+
     #[cold]
     fn grow(&mut self) {
+        self.generation = self.generation.wrapping_add(1);
         let new_len = self.slots.len() * 2;
         let old = std::mem::replace(
             &mut self.slots,
@@ -181,6 +227,9 @@ pub struct WideFlatVertexMap<C: ColorSlot = ()> {
     /// Insertion order, for the dispatch iteration.
     keys: Vec<u128>,
     mask: usize,
+    /// Bumped whenever entries move or vanish (growth, clearing), so a slot
+    /// index recorded under an older generation is known to be stale.
+    generation: u32,
 }
 
 const WIDE_FLAT_EMPTY_KEY: u128 = u128::MAX;
@@ -196,6 +245,7 @@ impl<C: ColorSlot> WideFlatVertexMap<C> {
             slots: vec![(WIDE_FLAT_EMPTY_KEY, VertexState::default()); slots],
             keys: Vec::with_capacity(capacity),
             mask: slots - 1,
+            generation: 0,
         }
     }
 
@@ -212,6 +262,7 @@ impl<C: ColorSlot> WideFlatVertexMap<C> {
         if self.keys.capacity() < capacity {
             self.keys.reserve(capacity - self.keys.capacity());
         }
+        self.generation = self.generation.wrapping_add(1);
     }
 
     #[inline(always)]
@@ -278,8 +329,47 @@ impl<C: ColorSlot> WideFlatVertexMap<C> {
         &mut self.slots[index].1
     }
 
+    /// The slot index of `key`, inserting a default state when absent.
+    /// Indices stay valid until [`Self::generation`] changes.
+    #[inline(always)]
+    fn index_or_insert(&mut self, key: u128) -> usize {
+        let (index, hit) = self.probe(key);
+        if hit {
+            return index;
+        }
+        if (self.keys.len() + 1) * 5 > self.slots.len() * 4 {
+            self.grow();
+            let (index, _) = self.probe(key);
+            self.keys.push(key);
+            self.slots[index] = (key, VertexState::default());
+            return index;
+        }
+        self.keys.push(key);
+        self.slots[index] = (key, VertexState::default());
+        index
+    }
+
+    #[inline(always)]
+    fn state_at_mut(&mut self, index: usize) -> &mut VertexState<C> {
+        &mut self.slots[index].1
+    }
+
+    #[inline(always)]
+    fn prefetch_index(&self, index: usize) {
+        #[cfg(target_arch = "x86_64")]
+        unsafe {
+            use std::arch::x86_64::{_MM_HINT_T0, _mm_prefetch};
+            // SAFETY: callers pass indices below `slots.len()`, and
+            // prefetching any mapped address is side-effect free.
+            _mm_prefetch(self.slots.as_ptr().add(index).cast::<i8>(), _MM_HINT_T0);
+        }
+        #[cfg(not(target_arch = "x86_64"))]
+        let _ = index;
+    }
+
     #[cold]
     fn grow(&mut self) {
+        self.generation = self.generation.wrapping_add(1);
         let new_len = self.slots.len() * 2;
         let old = std::mem::replace(
             &mut self.slots,
@@ -527,6 +617,43 @@ impl<const K: usize, C: ColorSlot> LocalVertexMap<K, C> {
             Self::Unused(_) => unreachable!("placeholder variant is never built"),
         }
     }
+
+    #[inline(always)]
+    fn index_or_insert(&mut self, kmer: Kmer<K>) -> usize {
+        match self {
+            Self::Flat(map) => map.index_or_insert(kmer.as_u128() as u64),
+            Self::WideFlat(map) => map.index_or_insert(kmer.as_u128()),
+            Self::Unused(_) => unreachable!("placeholder variant is never built"),
+        }
+    }
+
+    #[inline(always)]
+    fn state_at_mut(&mut self, index: usize) -> &mut VertexState<C> {
+        match self {
+            Self::Flat(map) => map.state_at_mut(index),
+            Self::WideFlat(map) => map.state_at_mut(index),
+            Self::Unused(_) => unreachable!("placeholder variant is never built"),
+        }
+    }
+
+    #[inline(always)]
+    fn prefetch_index(&self, index: usize) {
+        match self {
+            Self::Flat(map) => map.prefetch_index(index),
+            Self::WideFlat(map) => map.prefetch_index(index),
+            Self::Unused(_) => {}
+        }
+    }
+
+    /// Changes whenever a recorded slot index may have become stale.
+    #[inline(always)]
+    fn generation(&self) -> u32 {
+        match self {
+            Self::Flat(map) => map.generation,
+            Self::WideFlat(map) => map.generation,
+            Self::Unused(_) => 0,
+        }
+    }
 }
 type LocalEdgeSet<const K: usize> = HashSet<LocalEdge<K>, FastBuildHasher>;
 
@@ -562,6 +689,83 @@ pub struct LocalSubgraphStats {
     pub cyclic_unitigs: u64,
     pub discontinuity_exits: u64,
     pub unitig_bases: u64,
+}
+
+impl LocalSubgraphStats {
+    #[inline]
+    fn count_discontinuity(&mut self, side: Side) {
+        match side {
+            Side::Front => self.discontinuity_fronts += 1,
+            Side::Back => self.discontinuity_backs += 1,
+        }
+    }
+}
+
+/// Per-slot memory of where a cached label's vertices sit in the vertex
+/// table, for [`LocalSubgraph::add_slotted_record`].
+///
+/// A slot's record is current only for the bucket file being read (`epoch`)
+/// and while the table has not moved entries since (`generation`). Kept per
+/// thread and reused across buckets, so no bucket allocates it.
+#[derive(Default)]
+struct BuildSlotCache {
+    epoch: u64,
+    stride: usize,
+    stamps: Vec<u64>,
+    generations: Vec<u32>,
+    counts: Vec<u8>,
+    canonical: Vec<u64>,
+    indices: Vec<u32>,
+}
+
+impl BuildSlotCache {
+    fn next_epoch(&mut self) {
+        self.epoch += 1;
+    }
+
+    fn ensure(&mut self, slot: usize, stride: usize) {
+        if stride != self.stride {
+            self.stride = stride;
+            self.stamps.clear();
+            self.generations.clear();
+            self.counts.clear();
+            self.canonical.clear();
+            self.indices.clear();
+        }
+        if slot >= self.stamps.len() {
+            let slots = (slot + 1).next_power_of_two();
+            self.stamps.resize(slots, 0);
+            self.generations.resize(slots, 0);
+            self.counts.resize(slots, 0);
+            self.canonical.resize(slots, 0);
+            self.indices.resize(slots * stride, 0);
+        }
+    }
+
+    #[inline]
+    fn is_current(&self, slot: usize, generation: u32, vertex_count: usize) -> bool {
+        self.stamps[slot] == self.epoch
+            && self.generations[slot] == generation
+            && usize::from(self.counts[slot]) == vertex_count
+    }
+
+    #[inline]
+    fn record(&mut self, slot: usize, generation: u32, vertex_count: usize, canonical: u64) {
+        self.stamps[slot] = self.epoch;
+        self.generations[slot] = generation;
+        self.counts[slot] = vertex_count as u8;
+        self.canonical[slot] = canonical;
+    }
+
+    #[inline]
+    fn forget(&mut self, slot: usize) {
+        self.stamps[slot] = 0;
+    }
+}
+
+thread_local! {
+    static BUILD_SLOTS: std::cell::RefCell<BuildSlotCache> =
+        std::cell::RefCell::new(BuildSlotCache::default());
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -920,6 +1124,7 @@ impl<const K: usize, C: ColorSlot> LocalSubgraph<K, C> {
         let Some(first_entry) = entries.first() else {
             return Err(LocalSubgraphError::EmptyBucketGroup);
         };
+        BUILD_SLOTS.with_borrow_mut(BuildSlotCache::next_epoch);
         let mut reader = store.reader(first_entry)?;
         if reader.header().k as usize != K {
             return Err(LocalSubgraphError::KMismatch {
@@ -945,14 +1150,20 @@ impl<const K: usize, C: ColorSlot> LocalSubgraph<K, C> {
         // Diagnostic: `CF3_RS_DECODE_ONLY` reads and decodes bucket records
         // without inserting vertices, separating decode cost from table cost.
         let decode_only = decode_only_diagnostic();
-        reader.try_for_each_borrowed_packed_record(|record| {
-            if decode_only {
-                std::hint::black_box(record.words.first());
-                return Ok(());
-            }
-            subgraph.add_borrowed_packed_record(record)
+        OCCURRENCE_LOG.with_borrow_mut(|log| {
+            log.start(graph_id, colored);
+            log.start_entry();
+            reader.try_for_each_borrowed_packed_record(|record| {
+                if decode_only {
+                    std::hint::black_box(record.words.first());
+                    return Ok(());
+                }
+                log.push(&record);
+                subgraph.add_borrowed_packed_record(record)
+            })
         })?;
         for entry in &entries[1..] {
+            BUILD_SLOTS.with_borrow_mut(BuildSlotCache::next_epoch);
             let mut reader = store.reader(entry)?;
             if reader.header().k as usize != K {
                 return Err(LocalSubgraphError::KMismatch {
@@ -969,12 +1180,16 @@ impl<const K: usize, C: ColorSlot> LocalSubgraph<K, C> {
             if reader.header().colored != subgraph.colored {
                 return Err(LocalSubgraphError::MalformedRecord);
             }
-            reader.try_for_each_borrowed_packed_record(|record| {
-                if decode_only {
-                    std::hint::black_box(record.words.first());
-                    return Ok(());
-                }
-                subgraph.add_borrowed_packed_record(record)
+            OCCURRENCE_LOG.with_borrow_mut(|log| {
+                log.start_entry();
+                reader.try_for_each_borrowed_packed_record(|record| {
+                    if decode_only {
+                        std::hint::black_box(record.words.first());
+                        return Ok(());
+                    }
+                    log.push(&record);
+                    subgraph.add_borrowed_packed_record(record)
+                })
             })?;
         }
 
@@ -1186,10 +1401,44 @@ impl<const K: usize, C: ColorSlot> LocalSubgraph<K, C> {
             wanted.insert(vertex, index);
         }
         let mut source_sets = vec![Vec::<u32>::new(); representatives.len()];
-        for entry in entries {
-            let mut reader = store.reader(entry)?;
-            reader.try_for_each_borrowed_packed_record(|record| {
-                collect_wanted_color_relations::<K>(record, &wanted, &mut source_sets)
+        // Every color class in this bucket is already in the repository, so
+        // there is no source set to collect and no reason to read it again.
+        let entries = if representatives.is_empty() {
+            &[][..]
+        } else {
+            entries
+        };
+        let replayed = entries.is_empty()
+            || OCCURRENCE_LOG.with_borrow(|log| {
+                WANTED_SLOTS.with_borrow_mut(|slots| {
+                    log.replay::<K>(
+                        self.graph_id,
+                        entries.len(),
+                        &wanted,
+                        &mut source_sets,
+                        slots,
+                    )
+                })
+            })?;
+        if replayed {
+            COLOR_PASS_REPLAYED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        } else {
+            COLOR_PASS_REREAD.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            WANTED_SLOTS.with_borrow_mut(|slots| {
+                for entry in entries {
+                    // Each bucket file replays its own label cache from empty.
+                    slots.next_epoch();
+                    let mut reader = store.reader(entry)?;
+                    reader.try_for_each_borrowed_packed_record(|record| {
+                        collect_wanted_color_relations_cached::<K>(
+                            record,
+                            &wanted,
+                            &mut source_sets,
+                            slots,
+                        )
+                    })?;
+                }
+                Ok::<_, LocalSubgraphError>(())
             })?;
         }
         normalize_source_sets(&mut source_sets);
@@ -1739,6 +1988,12 @@ impl<const K: usize, C: ColorSlot> LocalSubgraph<K, C> {
         &mut self,
         record: BorrowedBucketPackedRecord<'_>,
     ) -> Result<(), LocalSubgraphError> {
+        // The replay skips edge updates, which only leave the graph unchanged
+        // when every edge counts once; at a higher cutoff edge counts matter.
+        if let (Some(label_slot), Some(_), 1) = (record.label_slot, record.source_id, self.cutoff) {
+            return BUILD_SLOTS
+                .with_borrow_mut(|slots| self.add_slotted_record(record, label_slot, slots));
+        }
         self.add_packed_parts(
             record.graph_id,
             record.len,
@@ -1749,7 +2004,97 @@ impl<const K: usize, C: ColorSlot> LocalSubgraph<K, C> {
         )
     }
 
+    /// Adds a colored record whose label has a place in the bucket's label
+    /// cache.
+    ///
+    /// A reference repeats a label this bucket already added, so its vertices,
+    /// their orientations and their edges are the ones recorded for that slot;
+    /// only the source and the record's own discontinuity flags are new. When
+    /// the slot's record is current the record is applied straight to the
+    /// recorded vertex slots, with no k-mer rolling, hashing or probing.
+    /// Anything else -- a literal, or a slot recorded before the vertex table
+    /// last moved -- takes the full path and records the slot afresh.
+    fn add_slotted_record(
+        &mut self,
+        record: BorrowedBucketPackedRecord<'_>,
+        label_slot: LabelSlot,
+        slots: &mut BuildSlotCache,
+    ) -> Result<(), LocalSubgraphError> {
+        let len = record.len;
+        if record.graph_id != self.graph_id || len < K || len > record.words.len() * 32 {
+            return self.add_packed_parts(
+                record.graph_id,
+                len,
+                record.source_id,
+                record.left_discontinuous,
+                record.right_discontinuous,
+                record.words,
+            );
+        }
+        let vertex_count = len - K + 1;
+        let stride = record.words.len() * 32 - K + 1;
+        let slot = usize::from(label_slot.slot);
+        slots.ensure(slot, stride);
+        let generation = self.vertices.generation();
+        let source = record.source_id.expect("slotted records are colored");
+        if label_slot.reference && slots.is_current(slot, generation, vertex_count) {
+            let hash = source_hash(source);
+            let indices = &slots.indices[slot * stride..slot * stride + vertex_count];
+            let canonical_bits = slots.canonical[slot];
+            for &index in indices {
+                self.vertices.prefetch_index(index as usize);
+            }
+            let last = vertex_count - 1;
+            for (offset, &index) in indices.iter().enumerate() {
+                let state = self.vertices.state_at_mut(index as usize);
+                state.add_source_hashed(source, hash);
+                let in_canonical_form = canonical_bits >> offset & 1 != 0;
+                if offset == 0 && record.left_discontinuous {
+                    let side = if in_canonical_form {
+                        Side::Front
+                    } else {
+                        Side::Back
+                    };
+                    state.mark_discontinuous(side);
+                    self.stats.count_discontinuity(side);
+                }
+                if offset == last && record.right_discontinuous {
+                    let side = if in_canonical_form {
+                        Side::Back
+                    } else {
+                        Side::Front
+                    };
+                    state.mark_discontinuous(side);
+                    self.stats.count_discontinuity(side);
+                }
+            }
+            self.stats.weak_superkmers += 1;
+            self.stats.weak_superkmer_bases += len as u64;
+            self.stats.observed_vertices += vertex_count as u64;
+            self.stats.observed_edges += last as u64;
+            return Ok(());
+        }
+        let recorded = &mut slots.indices[slot * stride..slot * stride + vertex_count];
+        let canonical_bits = self.add_packed_parts_impl::<true>(
+            record.graph_id,
+            len,
+            record.source_id,
+            record.left_discontinuous,
+            record.right_discontinuous,
+            record.words,
+            recorded,
+        )?;
+        if self.vertices.generation() == generation {
+            slots.record(slot, generation, vertex_count, canonical_bits);
+        } else {
+            // The table grew mid-record, so the earlier indices moved.
+            slots.forget(slot);
+        }
+        Ok(())
+    }
+
     #[allow(clippy::too_many_arguments)]
+    #[inline]
     fn add_packed_parts(
         &mut self,
         graph_id: usize,
@@ -1759,6 +2104,35 @@ impl<const K: usize, C: ColorSlot> LocalSubgraph<K, C> {
         right_discontinuous: bool,
         words: &[u64],
     ) -> Result<(), LocalSubgraphError> {
+        self.add_packed_parts_impl::<false>(
+            graph_id,
+            len,
+            source_id,
+            left_discontinuous,
+            right_discontinuous,
+            words,
+            &mut [],
+        )
+        .map(|_| ())
+    }
+
+    /// Adds one packed weak super-k-mer. With `RECORD`, also writes each
+    /// vertex's table slot into `recorded` and returns a bit per vertex that
+    /// is set when the vertex was seen in canonical form.
+    // The offset drives the k-mer roll and the base lookups; `recorded` is
+    // indexed by it only as a side output.
+    #[allow(clippy::too_many_arguments, clippy::needless_range_loop)]
+    #[inline(always)]
+    fn add_packed_parts_impl<const RECORD: bool>(
+        &mut self,
+        graph_id: usize,
+        len: usize,
+        source_id: Option<u32>,
+        left_discontinuous: bool,
+        right_discontinuous: bool,
+        words: &[u64],
+        recorded: &mut [u32],
+    ) -> Result<u64, LocalSubgraphError> {
         if graph_id != self.graph_id {
             return Err(LocalSubgraphError::GraphMismatch {
                 expected: self.graph_id,
@@ -1779,6 +2153,7 @@ impl<const K: usize, C: ColorSlot> LocalSubgraph<K, C> {
         let mut reverse = observed.reverse_complement();
         let mut prev = None;
         let source = source_id.map(|source| (source, source_hash(source)));
+        let mut canonical_bits = 0u64;
         for offset in 0..=last_vertex_offset {
             let in_canonical_form = observed <= reverse;
             let canonical = if in_canonical_form { observed } else { reverse };
@@ -1814,7 +2189,16 @@ impl<const K: usize, C: ColorSlot> LocalSubgraph<K, C> {
             let mut discontinuity_fronts = 0;
             let mut discontinuity_backs = 0;
             {
-                let state = self.vertex_state_or_default(canonical);
+                let state = if RECORD {
+                    let index = self.vertices.index_or_insert(canonical);
+                    recorded[offset] = index as u32;
+                    if in_canonical_form {
+                        canonical_bits |= 1 << offset;
+                    }
+                    self.vertices.state_at_mut(index)
+                } else {
+                    self.vertex_state_or_default(canonical)
+                };
                 state.update_edges(front, back);
                 if let Some((source_id, hash)) = source {
                     state.add_source_hashed(source_id, hash);
@@ -1867,7 +2251,7 @@ impl<const K: usize, C: ColorSlot> LocalSubgraph<K, C> {
             }
         }
 
-        Ok(())
+        Ok(canonical_bits)
     }
 
     #[inline]
@@ -1909,10 +2293,247 @@ fn normalize_source_sets(source_sets: &mut [Vec<u32>]) {
     }
 }
 
+/// What the color pass needs of each record, kept from the build pass so the
+/// pass need not read and decode the bucket a second time.
+///
+/// Records carry label-cache slots (see `LabelSlot`), so a reference is just
+/// its slot: the color pass replays the wanted classes recorded for that slot.
+/// Only literals keep their label words. Sources arrive grouped, so they are
+/// kept as runs. On 150k Salmonella assemblies about 93% of records are
+/// references, making the log roughly 3 bytes per record. A bucket whose log
+/// would exceed `OCCURRENCE_LOG_BYTES`, or any record without a slot, turns
+/// the log off for that subgraph and the color pass reads the bucket instead.
+#[derive(Default)]
+struct OccurrenceLog {
+    graph_id: usize,
+    valid: bool,
+    label_words: usize,
+    /// Index into `slots` where each bucket file of the subgraph starts; each
+    /// file's label cache starts empty.
+    entry_starts: Vec<usize>,
+    /// `(source, records)` runs, in record order.
+    runs: Vec<(u32, u32)>,
+    /// Per record: its cache slot, with `LOG_LITERAL` set for literals.
+    slots: Vec<u16>,
+    /// Label words of literals, `label_words` per literal.
+    words: Vec<u64>,
+    /// Label lengths of literals.
+    lens: Vec<u8>,
+}
+
+const LOG_LITERAL: u16 = 1 << 15;
+
+/// Subgraphs whose color pass ran from the occurrence log, and those that
+/// read their bucket again; reported with the local contraction summary.
+pub(crate) static COLOR_PASS_REPLAYED: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+pub(crate) static COLOR_PASS_REREAD: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+
+/// Log size past which the color pass reads the bucket again instead. Kept
+/// per worker thread, so this bounds the added memory per thread.
+const OCCURRENCE_LOG_BYTES: usize = 64 * 1024 * 1024;
+
+thread_local! {
+    static OCCURRENCE_LOG: std::cell::RefCell<OccurrenceLog> =
+        std::cell::RefCell::new(OccurrenceLog::default());
+}
+
+impl OccurrenceLog {
+    fn start(&mut self, graph_id: usize, colored: bool) {
+        self.graph_id = graph_id;
+        self.valid = colored;
+        self.label_words = 0;
+        self.clear();
+    }
+
+    fn clear(&mut self) {
+        self.entry_starts.clear();
+        self.runs.clear();
+        self.slots.clear();
+        self.words.clear();
+        self.lens.clear();
+    }
+
+    fn start_entry(&mut self) {
+        if self.valid {
+            self.entry_starts.push(self.slots.len());
+        }
+    }
+
+    fn bytes(&self) -> usize {
+        self.runs.len() * 8 + self.slots.len() * 2 + self.words.len() * 8 + self.lens.len()
+    }
+
+    fn abandon(&mut self) {
+        self.valid = false;
+        self.clear();
+        // Do not keep a huge bucket's capacity for the rest of the run.
+        if self.slots.capacity() * 2 + self.words.capacity() * 8 > OCCURRENCE_LOG_BYTES {
+            *self = Self::default();
+        }
+    }
+
+    #[inline]
+    fn push(&mut self, record: &BorrowedBucketPackedRecord<'_>) {
+        if !self.valid {
+            return;
+        }
+        let (Some(label_slot), Some(source)) = (record.label_slot, record.source_id) else {
+            self.abandon();
+            return;
+        };
+        if label_slot.slot >= LOG_LITERAL
+            || (self.label_words != 0 && self.label_words != record.words.len())
+            || record.len > usize::from(u8::MAX)
+        {
+            self.abandon();
+            return;
+        }
+        self.label_words = record.words.len();
+        match self.runs.last_mut() {
+            Some((last, count)) if *last == source && *count < u32::MAX => *count += 1,
+            _ => self.runs.push((source, 1)),
+        }
+        if label_slot.reference {
+            self.slots.push(label_slot.slot);
+        } else {
+            self.slots.push(label_slot.slot | LOG_LITERAL);
+            self.words.extend_from_slice(record.words);
+            self.lens.push(record.len as u8);
+        }
+        if (self.slots.len() & 0xffff) == 0 && self.bytes() > OCCURRENCE_LOG_BYTES {
+            self.abandon();
+        }
+    }
+
+    /// Runs the color pass from the log. Returns `false`, having done
+    /// nothing, when the log does not cover this subgraph.
+    fn replay<const K: usize>(
+        &self,
+        graph_id: usize,
+        entries: usize,
+        wanted: &WantedColorMap<K>,
+        source_sets: &mut [Vec<u32>],
+        slots: &mut WantedSlotCache,
+    ) -> Result<bool, LocalSubgraphError> {
+        if !self.valid || self.graph_id != graph_id || self.entry_starts.len() != entries {
+            return Ok(false);
+        }
+        let label_words = self.label_words;
+        let mut runs = self.runs.iter().copied();
+        let (mut source, mut remaining) = runs.next().unwrap_or((0, 0));
+        let mut literal = 0usize;
+        let mut next_entry = 0usize;
+        for (index, &packed) in self.slots.iter().enumerate() {
+            while next_entry < self.entry_starts.len() && self.entry_starts[next_entry] == index {
+                slots.next_epoch();
+                next_entry += 1;
+            }
+            if remaining == 0 {
+                (source, remaining) = runs
+                    .next()
+                    .ok_or_else(|| LocalSubgraphError::MalformedRecord)?;
+            }
+            remaining -= 1;
+            let reference = packed & LOG_LITERAL == 0;
+            let (words, len): (&[u64], usize) = if reference {
+                (&[], 0)
+            } else {
+                let at = literal * label_words;
+                let len = usize::from(self.lens[literal]);
+                literal += 1;
+                (&self.words[at..at + label_words], len)
+            };
+            collect_wanted_color_relations_cached::<K>(
+                BorrowedBucketPackedRecord {
+                    graph_id,
+                    len,
+                    source_id: Some(source),
+                    left_discontinuous: false,
+                    right_discontinuous: false,
+                    words,
+                    label_slot: Some(LabelSlot {
+                        slot: packed & !LOG_LITERAL,
+                        reference,
+                    }),
+                },
+                wanted,
+                source_sets,
+                slots,
+            )?;
+        }
+        Ok(true)
+    }
+}
+
+/// Per-slot memory of which wanted color classes a cached label reaches.
+///
+/// A label-cache reference repeats a label the bucket already held, so its
+/// k-mers are the same and so are the wanted classes they hit; replaying the
+/// recorded class list with the record's own source gives exactly the source
+/// sets rolling the label again would. Kept per thread and reused across
+/// buckets; `epoch` invalidates every slot at once.
+#[derive(Default)]
+struct WantedSlotCache {
+    epoch: u64,
+    stamps: Vec<u64>,
+    classes: Vec<Vec<u32>>,
+}
+
+impl WantedSlotCache {
+    fn next_epoch(&mut self) {
+        self.epoch += 1;
+    }
+
+    fn slot_mut(&mut self, slot: usize) -> (&mut u64, &mut Vec<u32>) {
+        if slot >= self.stamps.len() {
+            self.stamps.resize(slot + 1, 0);
+            self.classes.resize_with(slot + 1, Vec::new);
+        }
+        (&mut self.stamps[slot], &mut self.classes[slot])
+    }
+}
+
+thread_local! {
+    static WANTED_SLOTS: std::cell::RefCell<WantedSlotCache> =
+        std::cell::RefCell::new(WantedSlotCache::default());
+}
+
+fn collect_wanted_color_relations_cached<const K: usize>(
+    record: BorrowedBucketPackedRecord<'_>,
+    wanted: &WantedColorMap<K>,
+    source_sets: &mut [Vec<u32>],
+    slots: &mut WantedSlotCache,
+) -> Result<(), LocalSubgraphError> {
+    let Some(label_slot) = record.label_slot else {
+        return collect_wanted_color_relations::<K>(record, wanted, source_sets, None);
+    };
+    let epoch = slots.epoch;
+    let (stamp, classes) = slots.slot_mut(usize::from(label_slot.slot));
+    if label_slot.reference && *stamp == epoch {
+        let source = record
+            .source_id
+            .ok_or_else(|| LocalSubgraphError::MalformedRecord)?;
+        for &class in classes.iter() {
+            let sources = &mut source_sets[class as usize];
+            if sources.last().copied() != Some(source) {
+                sources.push(source);
+            }
+        }
+        return Ok(());
+    }
+    classes.clear();
+    collect_wanted_color_relations::<K>(record, wanted, source_sets, Some(classes))?;
+    *stamp = epoch;
+    Ok(())
+}
+
 fn collect_wanted_color_relations<const K: usize>(
     record: BorrowedBucketPackedRecord<'_>,
     wanted: &WantedColorMap<K>,
     source_sets: &mut [Vec<u32>],
+    mut classes: Option<&mut Vec<u32>>,
 ) -> Result<(), LocalSubgraphError> {
     let source = record
         .source_id
@@ -1925,6 +2546,9 @@ fn collect_wanted_color_relations<const K: usize>(
     for offset in 0..=record.len - K {
         let canonical = vertex.min(reverse);
         if let Some(color_index) = wanted.get(canonical) {
+            if let Some(classes) = classes.as_deref_mut() {
+                classes.push(color_index as u32);
+            }
             let sources = &mut source_sets[color_index];
             if sources.last().copied() != Some(source) {
                 sources.push(source);

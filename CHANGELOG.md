@@ -4,11 +4,11 @@
 
 Faster builds that write far less to the working directory, with the same
 graphs. On 149,998 Salmonella assemblies (k = 31), measured back to back on
-one host against 3.0.3:
+one host against 3.0.3, with intermediate compression off (3.0.3 has none):
 
 | | 16 threads | 64 threads | written (t16) |
 | --- | ---: | ---: | ---: |
-| uncolored | 12:12 to 6:05 (-50%) | 4:45 to 2:42 (-43%) | 472 to 204 GB |
+| uncolored | 12:12 to 6:05 (-50%) | 4:45 to 2:45 (-42%) | 472 to 204 GB |
 | colored | 17:46 to 11:56 (-33%) | 6:30 to 4:20 (-33%) | 616 to 347 GB |
 
 Peak memory stays close to 3.0.3: within 0.2 GB in three of the four

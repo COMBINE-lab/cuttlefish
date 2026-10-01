@@ -9,7 +9,7 @@ The production pipeline partitions input into weak super-k-mer buckets,
 contracts independent local subgraphs, resolves their discontinuities through
 a blocked external graph, and emits maximal unitigs directly to FASTA.
 
-> **Version 3.0.2.** Cuttlefish 3 is feature-complete and validated on
+> **Version 3.1.0.** Cuttlefish 3 is feature-complete and validated on
 > reference and read inputs, uncolored and colored, for odd k from 3 to 63.
 > The major version tracks the product generation, so a backward-incompatible
 > change to what a user depends on — the output FASTA, the color repository
@@ -123,6 +123,9 @@ cuttlefish build [OPTIONS]
       --color               emit positional colors
       --compress-buckets    LZ4-compress uncolored partition buckets (default)
       --no-compress-buckets store uncolored partition buckets uncompressed
+      --compress-intermediates <auto|on|off>
+                            LZ4-compress later intermediate streams
+                            (default: auto, chosen from the storage)
       --skip-unreadable     skip inputs that fail to parse
   -h, --help                print build help
 ```
@@ -150,7 +153,9 @@ Besides `build`, the binary carries `compare`, which decides whether two unitig
 FASTA files describe the same graph up to strand and rotation; `colors`, which
 reads a colored build's repository back (see [Output](#output)); and `cleanup`,
 which removes the intermediates a bailed run left behind (see [Working
-Directory and Cleanup](#working-directory-and-cleanup)). Each prints its own
+Directory and Cleanup](#working-directory-and-cleanup)); and `probe`, which
+times the work directory's storage and shows whether a build would compress its
+intermediates (`--compress-intermediates auto`). Each prints its own
 `--help`. `cuttlefish version` prints the release version, and `cuttlefish
 help` reprints the command summary.
 
@@ -195,6 +200,13 @@ limit, and narrows the maximal-unitig fanout at high worker counts, so a large
 default, trading CPU for temporary-disk usage; `--no-compress-buckets` turns
 that off. Colored buckets are always compressed, and are unaffected by either
 flag.
+
+`--compress-intermediates` separately LZ4-compresses three later streams (local
+unitigs, unitig coordinates, color runs). Its default, `auto`, compresses on
+network filesystems, rotational disks and FUSE mounts; it times other storage
+for about a second and leaves compression off only if the storage keeps well
+ahead of the build. `cuttlefish probe -w DIR -t N` shows the measurement and
+the choice. The setting never changes the graph.
 
 ## Output
 

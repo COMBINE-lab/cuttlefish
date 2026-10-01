@@ -1,20 +1,21 @@
 ---
 title: Command line
-description: The cuttlefish commands — build, compare, colors, cleanup — and how input is resolved.
+description: The cuttlefish commands — build, compare, colors, cleanup, probe — and how input is resolved.
 ---
 
-The `cuttlefish` binary carries six commands:
+The `cuttlefish` binary carries seven commands:
 
 ```bash
 cuttlefish build [OPTION...]      # construct a (colored) compacted graph
 cuttlefish compare [OPTION...]    # decide whether two unitig FASTAs match
 cuttlefish colors dump|sets|grep [OPTION...]   # query a colored build
 cuttlefish cleanup [OPTION...]    # remove an interrupted build's intermediates
+cuttlefish probe [OPTION...]      # measure a work directory's storage
 cuttlefish help                   # print the command summary
 cuttlefish version                # print the release version
 ```
 
-`build` and `compare` are detailed below. `colors` has [its own
+`build`, `compare` and `probe` are detailed below. `colors` has [its own
 page](../colors/), as does [`cleanup`](../cleanup/). Every command prints its
 own `--help`.
 
@@ -37,6 +38,10 @@ own `--help`.
       --color           color the compacted graph
       --compress-buckets compress uncolored temporary buckets (default)
       --no-compress-buckets store uncolored temporary buckets uncompressed
+      --compress-intermediates <auto|on|off>
+                        lz4-compress intermediate record streams (default: auto,
+                        which times the work directory's storage at startup;
+                        see `cuttlefish probe`)
       --skip-unreadable skip inputs that fail to parse instead of aborting
   -h, --help            print usage
 ```
@@ -97,6 +102,35 @@ Whether compression improves wall time depends on your storage bandwidth
 relative to spare CPU. Colored buckets are always compressed, regardless of
 either flag.
 
+### Intermediate compression
+
+`--compress-intermediates` controls LZ4 compression of three later
+intermediate streams: local unitigs, unitig coordinates, and color runs.
+Compressing them costs a little CPU (about 2% of wall time where storage is
+fast) and cuts what the build writes and reads back, which pays on slower
+storage.
+
+- `auto` (the default) decides at startup from the storage under
+  `--work-dir`:
+  - network filesystems and rotational disks are compressed without timing
+    (rotational disks are detected on Linux; on macOS they are timed);
+  - FUSE mounts are compressed too, with a warning, because they may be a
+    fast local disk or a remote store;
+  - anything else is timed for about a second, and left uncompressed only if
+    it keeps well ahead of the rate the build writes;
+  - if the measurement fails, intermediates are compressed.
+
+  The build log states the choice and why:
+
+  ```text
+  cuttlefish: intermediate compression off (auto: xfs storage (direct I/O, solid state) writes 6.09 GB/s and reads 13.22 GB/s; the build produces about 0.96 GB/s, so storage must sustain 1.92 GB/s; decided in 0.07s)
+  ```
+- `on` and `off` skip the measurement. Pass `off` for the last few percent on
+  fast local storage that `auto` classified cautiously (a FUSE mount, say),
+  and `on` when scratch space is tight.
+
+The setting never changes the graph, only how the intermediates are stored.
+
 ## `cuttlefish compare`
 
 ```text
@@ -119,6 +153,31 @@ either flag.
 
 See [Comparing graphs](../comparing-graphs/) for what it does and why a plain
 `diff` will not do.
+
+## `cuttlefish probe`
+
+```text
+  -w, --work-dir <arg>  directory to measure (default: the system temp directory)
+  -t, --threads <arg>   worker threads the build would use (default: as for build)
+  -h, --help            print usage
+```
+
+`probe` runs the measurement behind `--compress-intermediates auto` and says
+what a build with those threads would choose, without building anything. An
+excerpt of its output:
+
+```text
+write            6.09 GB/s (268 MB in 0.044s, direct, with fdatasync)
+read             13.22 GB/s (268 MB in 0.020s, direct)
+probe took       0.08s
+build produces   about 0.96 GB/s of intermediates at 16 thread(s)
+auto chooses     compression off (xfs storage (direct I/O, solid state) ...)
+```
+
+It writes, then reads back, at most 256 MiB of random data in a hidden
+`.scratch-probe-*` file, bypassing the page cache where the filesystem allows,
+and removes the file before it exits. Unlike `auto`, it times network, FUSE and
+rotational storage too, since measuring is what it is for.
 
 ## Diagnostics
 

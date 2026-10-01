@@ -206,3 +206,76 @@ mod tests {
         }
     }
 }
+
+/// Bytes a label of `bases` takes packed 2 bits per base.
+#[inline]
+pub(crate) const fn packed_2bit_len(bases: usize) -> usize {
+    bases.div_ceil(4)
+}
+
+/// Appends an ACGT label packed 2 bits per base, first base in the high bits
+/// of the first byte, the last byte zero-padded. Each call starts on a byte
+/// boundary, so labels packed one after another stay independently
+/// addressable by byte offset.
+pub(crate) fn pack_2bit_extend(dst: &mut Vec<u8>, ascii: &[u8]) {
+    debug_assert!(
+        ascii
+            .iter()
+            .all(|&base| matches!(base, b'A' | b'C' | b'G' | b'T'))
+    );
+    dst.reserve(packed_2bit_len(ascii.len()));
+    let (quads, tail) = ascii.as_chunks::<4>();
+    for quad in quads {
+        dst.push(
+            valid_ascii_base_bits(quad[0]) << 6
+                | valid_ascii_base_bits(quad[1]) << 4
+                | valid_ascii_base_bits(quad[2]) << 2
+                | valid_ascii_base_bits(quad[3]),
+        );
+    }
+    if !tail.is_empty() {
+        let mut byte = 0u8;
+        for (index, &base) in tail.iter().enumerate() {
+            byte |= valid_ascii_base_bits(base) << (6 - 2 * index);
+        }
+        dst.push(byte);
+    }
+}
+
+/// Appends the `len` ASCII bases of a label packed by [`pack_2bit_extend`].
+pub(crate) fn unpack_2bit_extend(dst: &mut Vec<u8>, packed: &[u8], len: usize) {
+    debug_assert!(packed.len() >= packed_2bit_len(len));
+    let start = dst.len();
+    dst.reserve(packed.len() * 4);
+    for &byte in &packed[..packed_2bit_len(len)] {
+        dst.extend_from_slice(&crate::kmer::ASCII_QUADS[usize::from(byte)].to_le_bytes());
+    }
+    dst.truncate(start + len);
+}
+
+#[cfg(test)]
+mod packed_label_tests {
+    use super::*;
+
+    #[test]
+    fn packed_labels_round_trip_at_every_length() {
+        let mut state = 0x243f_6a88_85a3_08d3u64;
+        for len in 0..=130usize {
+            let label: Vec<u8> = (0..len)
+                .map(|_| {
+                    state ^= state << 13;
+                    state ^= state >> 7;
+                    state ^= state << 17;
+                    b"ACGT"[(state % 4) as usize]
+                })
+                .collect();
+            let mut packed = vec![0xAAu8];
+            pack_2bit_extend(&mut packed, &label);
+            assert_eq!(packed.len(), 1 + packed_2bit_len(len));
+            let mut out = b"prefix".to_vec();
+            unpack_2bit_extend(&mut out, &packed[1..], len);
+            assert_eq!(&out[..6], b"prefix");
+            assert_eq!(&out[6..], &label[..], "length {len}");
+        }
+    }
+}

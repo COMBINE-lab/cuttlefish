@@ -1288,6 +1288,9 @@ where
     if parse_only_diagnostic() {
         return Ok(());
     }
+    if !scan_only {
+        buckets.pack_fragment(seq);
+    }
     for_each_valid_weak_superkmer::<K, E, _>(
         seq,
         params.minimizer_len as usize,
@@ -1295,7 +1298,7 @@ where
         params.color.then_some(source_id),
         |sk| {
             if !scan_only {
-                buckets.add_valid(&sk, sk.sequence(seq))?;
+                buckets.add_packed(&sk)?;
             }
             stats.weak_superkmers += 1;
             stats.weak_superkmer_bases += sk.len as u64;
@@ -1485,6 +1488,15 @@ where
     if fragment.len() < K + 1 {
         return Ok(());
     }
+    if minimizer_len <= crate::window_min::MAX_LMER_LEN {
+        return for_each_weak_superkmer_windowed::<K, E, F, CHECK_BASES>(
+            fragment,
+            minimizer_len,
+            graph_count,
+            source_id,
+            visit,
+        );
+    }
 
     let window_k = K - 1;
     let max_super_km1_len = 2 * (K - 1) - minimizer_len;
@@ -1583,6 +1595,99 @@ where
     })?;
 
     Ok(())
+}
+
+/// Windows scanned per [`crate::window_min::fill_window_mins`] call: 128 KiB of
+/// minima, which stays in L2 while the boundary loop reads it back.
+const WINDOW_BLOCK: usize = 32 * 1024;
+
+thread_local! {
+    static WINDOW_MINS: std::cell::RefCell<Vec<u32>> = std::cell::RefCell::new(vec![0; WINDOW_BLOCK]);
+}
+
+/// [`for_each_weak_superkmer_impl`] for l-mers of at most
+/// [`crate::window_min::MAX_LMER_LEN`] bases: the minimum hash of each
+/// (k-1)-mer window comes from the vectorized scan in [`crate::window_min`],
+/// a block of windows at a time, and this loop only finds where the graph id
+/// changes. The boundary rules are those of the scalar scan below.
+#[inline(never)]
+fn for_each_weak_superkmer_windowed<const K: usize, E, F, const CHECK_BASES: bool>(
+    fragment: &[u8],
+    minimizer_len: usize,
+    graph_count: usize,
+    source_id: Option<u32>,
+    visit: &mut F,
+) -> Result<(), E>
+where
+    E: From<PartitionError>,
+    F: FnMut(WeakSuperKmer) -> Result<(), E>,
+{
+    if CHECK_BASES {
+        for &base in fragment {
+            partition_base_bits::<true, E>(base)?;
+        }
+    }
+    let window_k = K - 1;
+    let max_super_km1_len = 2 * (K - 1) - minimizer_len;
+    let windows = fragment.len() - window_k + 1;
+    let mask = graph_count - 1;
+
+    let mut cur_off = 0usize;
+    let mut km1_idx = 0usize;
+    let mut cur_g = 0usize;
+    let mut prev_g = graph_count;
+    WINDOW_MINS.with_borrow_mut(|mins| -> Result<(), E> {
+        let mut block_start = 0;
+        while block_start < windows {
+            let len = WINDOW_BLOCK.min(windows - block_start);
+            crate::window_min::fill_window_mins(
+                fragment,
+                minimizer_len,
+                window_k,
+                block_start,
+                &mut mins[..len],
+            );
+            let mut from = 0;
+            if block_start == 0 {
+                cur_g = mins[0] as usize & mask;
+                from = 1;
+            }
+            for &min in &mins[from..len] {
+                let len = km1_idx + window_k;
+                let next_g = min as usize & mask;
+                km1_idx += 1;
+                if next_g != cur_g || len == max_super_km1_len {
+                    let next_off = cur_off + km1_idx;
+                    let left_joined = cur_off > 0;
+                    visit(WeakSuperKmer {
+                        graph_id: cur_g,
+                        offset: cur_off - usize::from(left_joined),
+                        len: usize::from(left_joined) + len + 1,
+                        source_id,
+                        left_discontinuous: left_joined && prev_g != cur_g,
+                        right_discontinuous: next_g != cur_g,
+                    })?;
+                    cur_off = next_off;
+                    prev_g = cur_g;
+                    cur_g = next_g;
+                    km1_idx = 0;
+                }
+            }
+            block_start += len;
+        }
+        Ok(())
+    })?;
+
+    let len = fragment.len() - cur_off;
+    let left_joined = cur_off > 0;
+    visit(WeakSuperKmer {
+        graph_id: cur_g,
+        offset: cur_off - usize::from(left_joined),
+        len: usize::from(left_joined) + len,
+        source_id,
+        left_discontinuous: left_joined && prev_g != cur_g,
+        right_discontinuous: false,
+    })
 }
 
 fn reset_min_window(hashes: &[u64], prefix_min: &mut [u64], ring_size: usize, pivot: &mut usize) {
@@ -1724,6 +1829,64 @@ mod tests {
             seq.len()
         );
         assert!(parts.iter().all(|p| p.source_id == Some(1)));
+    }
+
+    /// Every (k-1)-mer must land in the same subgraph whichever strand it is
+    /// read from, and the super-k-mers must tile the fragment.
+    #[test]
+    fn weak_superkmer_graphs_are_strand_invariant() {
+        fn reverse_complement(seq: &[u8]) -> Vec<u8> {
+            seq.iter()
+                .rev()
+                .map(|&b| match b {
+                    b'A' => b'T',
+                    b'C' => b'G',
+                    b'G' => b'C',
+                    _ => b'A',
+                })
+                .collect()
+        }
+        fn graph_by_vertex(seq: &[u8], minimizer_len: usize) -> Vec<(Vec<u8>, usize)> {
+            let parts = partition_fragment::<31>(seq, minimizer_len, 16_384, None).unwrap();
+            let mut vertices = Vec::new();
+            let mut next = 0;
+            for (idx, part) in parts.iter().enumerate() {
+                // Adjacent super-k-mers share the k-mer across their
+                // boundary, so each holds one (k-1)-mer of its neighbour on
+                // either joined side.
+                let first = part.offset + usize::from(idx > 0);
+                assert_eq!(first, next, "super-k-mers must tile the fragment");
+                let last = part.offset + part.len - 30 - usize::from(idx + 1 < parts.len());
+                for at in first..=last {
+                    let vertex = &seq[at..at + 30];
+                    let rc = reverse_complement(vertex);
+                    vertices.push((vertex.min(&rc[..]).to_vec(), part.graph_id));
+                }
+                next = last + 1;
+            }
+            assert_eq!(next, seq.len() - 29);
+            vertices.sort();
+            vertices.dedup();
+            vertices
+        }
+
+        let mut state = 0x9E37_79B9_7F4A_7C15u64;
+        let seq: Vec<u8> = (0..20_000)
+            .map(|_| {
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                b"ACGT"[(state >> 32) as usize & 3]
+            })
+            .collect();
+        let rc = reverse_complement(&seq);
+        // 12 takes the vectorized scan; 20 the scalar wyhash scan.
+        for minimizer_len in [12, 20] {
+            let forward = graph_by_vertex(&seq, minimizer_len);
+            // A vertex is in exactly one subgraph.
+            assert!(forward.windows(2).all(|pair| pair[0].0 != pair[1].0));
+            assert_eq!(forward, graph_by_vertex(&rc, minimizer_len));
+        }
     }
 
     #[test]

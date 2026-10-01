@@ -15,7 +15,7 @@ import sys
 W = H = 256
 MARGIN = 6  # keep all geometry this far inside the canvas
 
-# Colour classes = input sources. Distinguishable on both light and dark
+# Color classes = input sources. Distinguishable on both light and dark
 # backgrounds, with differing lightnesses so the mark survives greyscale.
 SRC = {
     "a": "#E4572E",  # coral
@@ -56,7 +56,7 @@ def arm_points(start, angle_deg, length, n, hook=0.55):
     return [bezier(p0, p1, p2, p3, i / n) for i in range(n + 1)]
 
 
-# attachment x, heading, length, vertex count, colour class per edge.
+# attachment x, heading, length, vertex count, color class per edge.
 ARMS = [
     (108, -40, 74, 4, ["c", "c", "d", "d"]),
     (115, -25, 62, 3, ["a", "b", "b"]),
@@ -141,7 +141,7 @@ def build_arms(favicon=False):
 
 
 def render(body, eye, favicon=False):
-    """`eye` is the sclera colour; it must contrast with `body`, which is what
+    """`eye` is the sclera color; it must contrast with `body`, which is what
     the W-shaped pupil is drawn in. On the dark-page variant the body is light,
     so the sclera has to go dark or the eyes disappear entirely."""
     edges, nodes, (x0, x1, y0, y1) = build_arms(favicon)

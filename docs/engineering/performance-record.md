@@ -623,7 +623,7 @@ raising both the estimate ceiling and the slot cap, which produced a
 134,217,728-slot table with zero overflow — changed nothing measurable: the
 colored full-corpus build took 4:42.34 and 75.0 GB against 4:41.22 and 75.7 GB
 for the saturated configuration. Overflow is a slope, not a cliff, and the
-`scc` map absorbs tens of millions of colours at the cost of the flat table.
+`scc` map absorbs tens of millions of colors at the cost of the flat table.
 The default ceiling is therefore unchanged; `CF3_RS_EXPECTED_COLORS` and
 `CF3_RS_COLOR_TABLE_SLOTS` expose both bounds for further measurement.
 
@@ -1154,7 +1154,7 @@ and 16,417,233,428 bases with identical internal counts -- 162,177,995
 meta-vertices and 703,792,519 reinserted edges -- and `cuttlefish compare`
 matched all 252,487,658 strand-normalized unitigs against the 64-thread C++
 reference. Colored is flat as well: 6:39.70 against 6:42.00, with an unchanged
-41 GiB colour index and exact counts.
+41 GiB color index and exact counts.
 
 One container-arm contraction sample was a 14.681 s outlier against 12.9, 12.9
 and 12.6; the +4.0% above excludes it. Including it the figure is +7.8%.
@@ -1332,7 +1332,7 @@ Uncolored, three pairs; colored, two:
 That is -1.7% wall and -29.5% peak disk uncolored, and -2.8% and -32.3%
 colored. Colored gains more on both because it writes more -- 619 GB against
 439 GB -- so the flush count and the preallocation slack both scale with it.
-The colour index is unchanged at 41 GiB and every run emitted the exact
+The color index is unchanged at 41 GiB and every run emitted the exact
 252,487,658 unitigs and 16,417,233,428 bases.
 
 Partitioning carries the whole time win: -7.9 s uncolored and -10.8 s colored.
@@ -1650,19 +1650,19 @@ durable hiding place for dead code than forgetting to delete it, and no lint
 will say so. Probing what the process actually reads is cheap and is the only
 way to tell.
 
-## Colour-set encoding
+## Color-set encoding
 
-The colour repository is the largest artifact a colored build produces, and it
+The color repository is the largest artifact a colored build produces, and it
 was four times the size of C++'s: 176.0 GB against 43.6 GB on 149,998
 Salmonella assemblies.
 
 Two things about it were initially misread and are worth recording, because
 both look like defects and neither is. It is not residue -- it carries a
 `metadata.tsv` declaring format, k, encoding and source count, the CLI prints
-its path, and it is the colour index that accompanies the FASTA. And the
-primary colour table's overflow, 36,810,130 entries past a 2^26 ceiling, has
+its path, and it is the color index that accompanies the FASTA. And the
+primary color table's overflow, 36,810,130 entries past a 2^26 ceiling, has
 nothing to do with it: that table is 1 GiB of memory, and admitting every
-overflowed colour was already measured to leave wall time and peak RSS
+overflowed color was already measured to leave wall time and peak RSS
 unchanged.
 
 The size came from the encoding. Each set was a varint count followed by varint
@@ -1672,7 +1672,7 @@ costs over a hundred kilobytes.
 
 C++ avoids this with `fulgor::color_set_builder`, vendored at
 `include/color_sets/hybrid.hpp`, which picks one of three regimes by how much of
-the source set a colour covers:
+the source set a color covers:
 
 | coverage | encoding |
 | --- | --- |
@@ -1716,7 +1716,7 @@ Peak RSS moves by about 1%.
 
 The repository also now defaults to `<output_prefix>.cf3rs.color-repository`,
 beside the FASTA. It was written into `--work-dir`, which callers treat as
-scratch; C++ likewise writes its own colour files next to the FASTA as
+scratch; C++ likewise writes its own color files next to the FASTA as
 `<output>.fa.col.N`.
 
 ## The dead-code removal campaign, and an order-bias lesson
@@ -2342,21 +2342,21 @@ buys ~8% of colored wall at the cost of re-opening the one invariant that took
 the most work to establish. It is specified and costed here so it can be the
 first change after RC1 rather than the last one inside it.
 
-### Acting on it: the colour slot leaves uncolored vertices
+### Acting on it: the color slot leaves uncolored vertices
 
 The profile above pointed at bytes per vertex, and the C++ implementation had
 already drawn the same conclusion: `State_Config<bool Colored_>` specializes,
-and its uncolored specialization has no colour field. Rust carried one in both
+and its uncolored specialization has no color field. Rust carried one in both
 modes -- `{ edges, flags, color_hash: u64 }`, 16 bytes -- so an uncolored build
 spent 8 bytes per vertex on a hash it never reads.
 
-`VertexState<C: ColorSlot>` now takes its colour half as a type parameter,
+`VertexState<C: ColorSlot>` now takes its color half as a type parameter,
 zero-sized for uncolored builds and `u64` for colored, with the shared
 contraction code staying generic through two slot methods (`hash`, `combine`)
 that the uncolored slot implements as constants. Compile-time assertions pin
 both sizes. The flat map, wide flat map, local vertex map, subgraph, reusable
 map and contraction driver thread the parameter; the three drivers pick `()` or
-`u64`, which is the only place colouredness has to be decided.
+`u64`, which is the only place coloredness has to be decided.
 
 Uncolored slots go from 24 bytes to 16 -- four to a cache line instead of
 2.67 -- on 10000 genomes at k = 31, t64, interleaved order-alternated pairs:
@@ -2369,7 +2369,7 @@ Uncolored slots go from 24 bytes to 16 -- four to a cache line instead of
 
 Colored is unchanged, as it must be: its slot is still 16 bytes, and its pairs
 are neutral inside a wide spread (35.9-43.3 s for the same binary). Counts are
-exact in every run, colour sets validate against source-derived truth at k = 31
+exact in every run, color sets validate against source-derived truth at k = 31
 through 63, and the k > 31 sweep against C++ still matches on all 32
 graph/k combinations.
 
@@ -2447,7 +2447,7 @@ staged payload under its atlas lock (pointer swaps, microseconds),
 `flush_colored_job` sorts and compresses outside every lock and re-locks only
 for the segment-chain append, and a crew thread runs one window while the
 workers parse the next, joined before the next take so a bucket's chain still
-grows in ascending source order. It is correct: colour sets validate against
+grows in ascending source order. It is correct: color sets validate against
 source-derived truth at k = 31, 33 and 55 with a 4 KiB window, which forces a
 flush every few records and so exercises the overlap far harder than production.
 
@@ -2566,7 +2566,7 @@ genomes and 27.7% (34.9 s of 125.9 s) at 150000.
 `CF3_RS_INTERLEAVE_COLORED` compresses colored blocks interleaved, which skips
 the deinterleave pass entirely. The block header already records the layout, so
 buckets written this way read back correctly -- verified against source-derived
-colour truth at k = 31 and 55 before trusting the timings. On 10000 genomes,
+color truth at k = 31 and 55 before trusting the timings. On 10000 genomes,
 colored, t64, interleaved pairs:
 
 | | split (shipped) | interleaved | change |
@@ -2662,7 +2662,7 @@ to build the histogram, whether every source occupies a single run, and skips
 the permutation when it does. On 150000 genomes, colored, t64: **1,277,952
 payloads arrived grouped and 0 needed repair.** On 10000 genomes, 98,304 and 0.
 
-Skipping is sound because grouping, not ordering, is what colour exactness
+Skipping is sound because grouping, not ordering, is what color exactness
 requires: the class hash is an XOR over distinct sources, so it does not depend
 on the order they appear in, only on each source's records being uninterrupted.
 
@@ -2673,7 +2673,7 @@ on the order they appear in, only on each source's records being uninterrupted.
 
 **-2.1% on the phase**, and more than the sort's own cost, because the skipped
 path also stops allocating and zero-filling a payload-sized scratch buffer per
-bucket per window. Unitig and base counts are exact, and colour sets validate
+bucket per window. Unitig and base counts are exact, and color sets validate
 against source-derived truth.
 
 ### The fallback, and why correctness does not depend on the fast path
@@ -2687,7 +2687,7 @@ The point of detecting grouping from the payload rather than tracking it with a
 flag is that this case then repairs itself. The flush sees the interleaving and
 counting-sorts, exactly as before. Correctness rests on the repair, never on the
 drain discipline -- so a future change that introduces a mid-source hand-over
-costs the sort, not the colours.
+costs the sort, not the colors.
 
 Detection itself avoids touching a per-source array. A payload's runs are few,
 so recording where the source changes and checking those sources for duplicates
@@ -2704,7 +2704,7 @@ forcing a 64 KiB cap on 1000 real genomes turns the counters right over -- 0
 grouped, 16,384 permuted -- and still produces the exact 18,910,541 unitigs and
 1,783,360,006 bases.
 
-Colours themselves were checked on real data for *both* paths rather than only
+Colors themselves were checked on real data for *both* paths rather than only
 the fast one: 150 Salmonella assemblies at k = 31, once with the flush skipping
 its permutation and once with a 64 KiB cap forcing every payload through the
 repair, each yielding 2,797,788 colored unitigs whose source sets match truth
@@ -2786,7 +2786,7 @@ canonical k-mers rolled, hashed, and asked about, to learn 139 million answers.
 The only changes that can pay are ones that ask fewer questions -- which means
 not making the traversal, i.e. accumulating source sets during the first pass,
 before contraction has decided which vertices are representatives. That is an
-algorithmic change to how colour classes are discovered, not a mechanical one,
+algorithmic change to how color classes are discovered, not a mechanical one,
 and it is the only remaining candidate here.
 
 **A note on the instrumentation, because it distorted the thing it measured.**
@@ -3112,3 +3112,501 @@ fewer (100.4 M against 107.6 M), but kernel time is higher (780 against 644 s):
 3.0.2 reused memory its partition had already faulted in. jemalloc's
 `background_thread:true` did not change it (local 103.4 / 106.4 s, kernel
 750 / 839 s), so it is recorded rather than tuned.
+
+## Intermediate I/O: smaller representations, and a vectorized minimizer scan
+
+After 3.0.3 a `perf` profile of 150k Salmonella and a per-stream size census
+named the targets. Nothing below was I/O-bound on this host (NVMe, ~1.5 TB of
+RAM). The work is aimed at hosts where intermediate traffic is not free, so
+bytes written and read are reported alongside wall time. Unless stated
+otherwise, measurements are 150k Salmonella at k = 31, t16, order-alternated.
+Output was checked with `cuttlefish compare` and, when colored, with the
+color digest of 10,000 genomes.
+
+### What was changed
+
+| change | stream | effect |
+| --- | --- | --- |
+| pack each fragment once, extract every label from the packed words | partition staging | label packing no longer repeats per weak super-k-mer |
+| 4096-slot per-bucket label cache: colored records reference a cached label; uncolored exact duplicates are dropped at cutoff 1 | `.wskc` | 10k colored buckets 19.74 -> 11.39 GB (with the compact block encoding) |
+| local contraction reuses cached-label slots in the build pass and replays the color pass from a 64 MiB per-thread occurrence log instead of reading the bucket again | bucket reads | 150k colored reads 879 -> 631 GB, local 512.7 -> 486.0 s |
+| intermediate unitig labels stored 2 bits per base | `.labels`, `.mlabel`, retained tails | |
+| compact colored block encoding: source runs plus a u16 code per record (cache reference or literal) | `.wskc` | 150k colored 15:13 -> 13:54, writes 489 -> 361 GB, reads 631 -> 503 GB |
+| edge path-info records 24 -> 16 bytes | P_e `.scb` | 10k 7.04 -> 4.69 GB |
+| vertex path-info records 24 -> 20 bytes at k <= 31 | `.pv` | 10k 9.87 -> 8.25 GB |
+| uncolored coordinate shards drop the unused color fields, 24 -> 18 bytes | `.mcoord` | with the two rows above: 150k uncolored writes 224 -> 204 GB, reads 414 -> 394 GB |
+| discontinuity edges 25 -> 24 bytes at k <= 31 (flags folded into spare bits) | edge matrix | 10k 12.75 -> 12.24 GB |
+
+Against 3.0.3, the first six rows took 150k colored from 19:00 to 15:10 and
+uncolored from 12:26 to 8:00. Writes fell from 614 to 489 GB colored and from
+470 to 224 GB uncolored. Colored peak RSS rose from 8.9 to 9.3 GB, and the
+occurrence log added 0.3 GB more. Two bugs were caught before commit, each
+now covered by a test: a second `.pv` writer still emitting 24-byte records,
+and a stale padding-byte offset after the P_e change.
+
+### The minimizer scan, after simd-minimizers
+
+With the I/O cut, partition was about 60% of uncolored wall time. The
+existing `CF3_RS_SCAN_ONLY` and `CF3_RS_PARSE_ONLY` diagnostics split it at
+10k: parsing 3.7 s, parsing plus the minimizer scan 13.2 s (150.8
+worker-seconds, about 4.3 ns per base per thread), full partition 19.6 s.
+The scalar scan hashes both strands of every l-mer with 64-bit wyhash, whose
+128-bit products do not vectorize.
+
+A standalone benchmark on 0.85 Gbp of real fragments, one core, compared the
+scan with simd-minimizers 3.0 (Groot Koerkamp and Martayan, SEA 2025,
+doi:10.4230/LIPIcs.SEA.2025.20):
+
+| ns per base | native | x86-64-v3 | baseline x86-64 |
+| --- | ---: | ---: | ---: |
+| current scan | 3.79 | 3.75 | 3.91 |
+| simd-minimizers, positions only | 0.94 | 0.97 | 4.29 (`scalar` feature) |
+| simd-minimizers + super-k-mer boundaries | 1.72 | 1.54 | 11.2 |
+
+The crate could not be used as it is. It compares only the upper 16 bits of
+each hash and breaks ties by position, and positions tie-break differently on
+the two strands:
+
+| graph id taken from | windows whose reverse complement disagrees | max / mean bucket | CV |
+| --- | ---: | ---: | ---: |
+| the compared 16 bits | 0 of 188 M | 4.67 | 0.84 |
+| those 16 bits, mixed | 0 of 188 M | 10.7 | 1.28 |
+| the full 32-bit hash | 28,395 of 188 M | 2.55 | 0.17 |
+| current scan | -- | 2.62 | 0.17 |
+
+A strand disagreement sends a k-mer and its reverse complement to different
+subgraphs, which breaks the graph. Using only the compared bits keeps the
+strands consistent, but the minimum of a window concentrates in few values,
+so buckets become badly unbalanced. Baseline x86-64 builds also refuse to
+compile without the crate's slower `scalar` feature.
+
+`window_min` takes the crate's ideas and not its tie rule:
+
+- eight contiguous chunks scanned in AVX2 lanes, reading bases with gathers
+- the two-stacks sliding minimum
+- a 32-bit hash that vectorizes: the murmur3 finalizer of the seeded canonical
+  l-mer
+
+Whole hashes are compared. The hash is a bijection on l-mers of at most 16
+bases, so equal hashes mean equal l-mers, and the window minimum, from which
+the subgraph is taken, is strand-invariant by construction. The AVX2 path is
+chosen at run time and is tested equal to the scalar path, so output does not
+depend on the CPU. Longer minimizers keep the wyhash scan.
+
+The first version left out the seed, and the finalizer maps 0 to 0. The
+poly-A l-mer then became the minimum of every window holding it, and the
+largest 10k bucket grew from 77K to 174K records. Seeding brought it to 125K.
+
+| 150k, node 1 | partition | local | wall | peak RSS | largest bucket |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| uncolored t16, before | 283.5 / 284.1 s | 108.3 / 109.8 s | 7:46.05 / 7:47.39 | 7.3 GB | 786 K |
+| uncolored t16, after | 207.4 / 207.4 s | 109.4 / 109.3 s | 6:30.56 / 6:30.29 | 7.3 GB | 2.35 M |
+| colored t16, before | 286.5 s | 409.8 s | 12:54.52 | 9.4 GB | 6.67 M |
+| colored t16, after | 207.4 s | 404.7 s | 11:29.88 | 9.4 GB | 9.81 M |
+| uncolored t64, before | 102.4 / 103.0 s | 42.9* / 36.3 s | 3:14.14* / 3:06.27 | 11.2 GB | 787 K |
+| uncolored t64, after | 78.8 / 79.1 s | 36.7 / 36.6 s | 2:43.21 / 2:43.45 | 11.2 GB | 2.35 M |
+| colored t64, before | 101.6 s | 138.0 s | 4:47.05 | 19.6 GB | 6.67 M |
+| colored t64, after | 77.0 s | 136.9 s | 4:21.47 | 19.5 GB | 9.81 M |
+
+All runs produced 252,487,658 unitigs and 16,417,233,428 bases, and
+`cuttlefish compare` matched the uncolored outputs unitig for unitig. The
+largest bucket grows 1.5-3x, but local contraction time and peak RSS did not
+move at t16. That also held at t64. Each worker's vertex map is sized to the
+largest bucket it has seen, so this is where a larger bucket would have cost
+memory or load balance, and neither local contraction time nor peak RSS
+moved. (The starred t64 run was the first of its sequence and ran cold; its
+partner, run last, shows the true local time.)
+
+### Why the largest bucket grew: the seed, not the scheme
+
+A standalone analysis replayed both partition schemes over all 149,998
+genomes:
+
+- **old:** `min(wyhash(fwd), wyhash(rev))`; the subgraph is the low 14 bits
+  of the 64-bit window minimum.
+- **new:** `fmix32(canonical ^ seed)`; the subgraph is the low 14 bits of the
+  32-bit minimum.
+
+It computed each (k-1)-mer window's minimum with a monotone deque and cut
+runs of equal-subgraph windows into weak super-k-mer records at the length
+cap. For each scheme and seed it counted windows and records per subgraph.
+For the largest subgraphs it also counted which l-mer was the minimum and how
+many distinct records there were.
+
+Its record counts for the largest subgraphs equal the colored builds' logged
+maxima exactly: 6,669,445 (old) and 9,808,937 (new). Colored builds keep
+every record, so this is a like-for-like check.
+
+| scheme, seed | max / mean (windows) | max / mean (records) | p99.9 / mean | p99 / mean | CV |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| old, 0 (3.0.x) | 2.81 | 2.10 | 2.03 | 1.64 | 0.224 |
+| old, 1 | 3.90 | 2.94 | 2.07 | 1.62 | 0.226 |
+| new, `0x9e3779b9` (this branch) | 3.67 | 3.09 | 2.07 | 1.63 | 0.223 |
+| new, 1 | 2.80 | 2.43 | 1.98 | 1.63 | 0.223 |
+
+The distributions agree everywhere except their single maximum. That
+maximum is a lottery in both schemes: changing the old scheme's seed makes it
+worse than the new one, and changing the new scheme's seed makes it as good
+as the old one. On 1,000 genomes, five seeds of each gave overlapping maxima
+(2.43-3.79 old, 2.49-3.61 new) with a CV of 0.220-0.225 throughout.
+
+The largest subgraphs are dominated by one l-mer:
+
+| scheme, seed | largest subgraph | top minimizer l-mer | share of its windows | records | distinct records |
+| --- | --- | --- | ---: | ---: | ---: |
+| old, 0 | 88.99 M windows | `CCGCCGCCGCCG` | 74.4% | 6.67 M | 172,597 |
+| old, 1 | 123.74 M windows | `GCCGTTGCCGCC` | 81.4% | 8.67 M | 169,423 |
+| new, `0x9e3779b9` | 116.39 M windows | `AAATGCCGTCTG` | 78.1% | 9.13 M | 90,367 |
+| new, `0x9e3779b9`, most records | 103.64 M windows | `CCGCCGTTGCCG` | 52.6% | 9.81 M | 179,457 |
+| new, 1 | 88.61 M windows | `CGCCGTTGCCGC` | 76.2% | 7.63 M | 144,042 |
+
+These l-mers are low-complexity GC runs or sequences repeated in every
+genome; `AAATGCCGTCTG` is the minimum of about 600 windows per genome.
+Whichever such l-mer draws a small enough hash wins every window around each
+of its copies, and all that mass lands in one subgraph. This is a property of
+random minimizers on repetitive sequence, and both schemes have it equally.
+
+The uncolored logs overstated the gap (0.79 M against 2.35 M, 3x). The
+uncolored maximum counts records left after the 4096-slot per-bucket
+duplicate filter, so it depends on how a bucket's records collide in that
+cache as much as on its contents. By distinct records, the new scheme's
+largest subgraphs hold 90 K-179 K against the old's 173 K.
+
+Nothing here is worth changing now, since local contraction time and peak
+RSS were unchanged at t16 and t64. Tuning the seed on this dataset would only
+re-draw the lottery. If a straggler ever shows up at high thread counts, the
+real fix is a frequency-aware minimizer order that demotes the most frequent
+l-mers, as BCALM2- and KMC-style partitioners do, or splitting oversized
+buckets at local contraction.
+
+One genuine hash defect did turn up in development: without the seed, the
+finalizer maps the poly-A l-mer (canonical value 0) to hash 0. Every window
+holding it then went to one subgraph, and the largest 10k bucket grew from
+77 K to 174 K records. The seed fixes this, and a unit test guards it.
+
+### A colored bug the new partition exposed
+
+With the seeded hash, the k = 33 and k = 63 colored compat fixtures (three
+short sources, minimizer length 3) fell into a single subgraph. The colored
+build then wrote an empty FASTA. Without discontinuity edges the external
+expansion writes no path-info files. Collation mapped range buckets only
+from those files, fell through to a branch for in-memory records that the
+external path never produces, and declared the direct local unitigs complete
+without emitting one. The old code fails the same way when forced to one
+subgraph. Uncolored builds escape it because their edge-free unitigs leave
+through the trivial FASTA. Collation now maps every range bucket from the
+(possibly empty) manifest, and `colored_single_subgraph_emits_every_unitig`
+covers it.
+
+### Measured and rejected
+
+- **Direct stores for partition staging.** 93% of `append_labelled_record`'s
+  samples sat on one load. The record was built in a stack array with
+  unaligned 8-byte stores and copied out with 16-byte loads, which cannot be
+  store-forwarded. Writing straight into the bucket buffer cut the function
+  to 0.8% of samples, but its caller rose from 9.3% to 16.0%, and scan+pack
+  went from 272.5 to 279.0 worker-seconds. The real cost is write-allocate
+  misses on the 128 worker-atlas buffers, which the stall only exposed.
+  Reverted.
+- **Smaller worker-atlas chunks.** 32 KiB matched 64 KiB, and 16 and 8 KiB
+  were slower.
+
+### Host conditions
+
+During this work another tenant's process grew to about 1 TB, most of it on
+NUMA node 0, leaving that node 1 GB free and 20 GB of page cache. Identical
+binaries pinned there slowed from 8:03 to 9:29 within one sequence. The
+comparisons above were run in alternating order within one window, and the
+minimizer-scan measurements were run on node 1. Absolute times in the last
+table are therefore not comparable with the earlier node-0 numbers.
+
+## Partition's hidden quarter, and the vertex state at cutoff 1
+
+### The partition workers were never idle
+
+At 150k the partition's workers looked about 27% idle: 2,431 worker-seconds
+of scan+pack in a 207 s phase at t16. They were not idle. Each worker
+inflates and parses its own input files, and the scan+pack timer starts only
+once a fragment has been parsed. At 10k, 16 x 15.7 s - 187.6 worker-s = 64
+worker-s is unaccounted for, and the parse-only diagnostic costs 62
+(16 x 3.9 s). A parse-only profile split that time between zlib-rs inflate
+(54%) and FASTA parsing: line copies, whitespace checks and a per-byte
+fragment scan (about 45%).
+
+**Parsing.** Each sequence line is now checked for upper-case ACGT 16 bytes
+at a time (SSE2 on x86-64 and NEON on aarch64, both baseline). A record made only of such
+lines is emitted as one fragment, which is what the scan would have found.
+Any other line takes the unchanged path. A randomized test checks the parser
+against the previous algorithm on messy FASTA.
+
+| 150k uncolored t16, order-alternated | partition | wall |
+| --- | ---: | ---: |
+| before | 209.9 / 206.4 s | 6:36.03 / 6:28.26 |
+| after | 195.7 / 193.9 s | 6:18.65 / 6:15.21 |
+
+At 10k the parse-only diagnostic went from 3.74 to 2.89 s.
+
+**Inflation, twice rejected.** Two whole-file decoders beat zlib-rs's
+streaming decode in isolation but not inside the pipeline:
+
+- **zune-inflate** (pure Rust): 785 against 602 MB/s per core, 16 cores
+  concurrently.
+  - Its first integration made parse-only *slower*, 3.7 against 2.9 s.
+  - Two causes were fixed: it regrew (and, under jemalloc, copied) its
+    output buffer at the end of nearly every file, and its CRC32 is a table
+    loop. Verifying through flate2's zlib-rs CRC instead, which uses
+    carry-less multiplication, left the decode itself still slower
+    in-pipeline, 3.7 against 3.0 s.
+  - Neither SMT placement nor jemalloc purging explained the rest.
+- **libdeflate**: 1,290 MB/s per core in isolation.
+  - Parse-only was 10% faster (2.84 to 2.55 s).
+  - Full partition was 3% slower, because scan+pack grew by about 12
+    worker-s. The likely cause, not measured: a whole decompressed file per
+    thread (about 4 MB) evicts what bucket staging keeps in cache, whereas
+    the streaming path cycles a 1 MiB buffer.
+  - The wall time was a wash, and it would have added a C toolchain.
+
+Both are kept only as local throwaway branches.
+
+### Colored local contraction: where the time is, and what it cannot buy
+
+A colored 10k profile at t16 puts local contraction at 52% of samples:
+
+| stage | share of samples |
+| --- | ---: |
+| vertex-table build | 24.7% |
+| - of which repeated-label references (`add_slotted_record`) | 12.3% |
+| unitig walk and color runs | ~18% |
+| color-pass replay | 6.9% |
+| repository inserts | 1.9% |
+
+Two ideas for the reference path were measured and dropped:
+
+- **Skipping a label repeated within one source's run.** It is exact: every
+  vertex already carries that source, so only the end flags change. But it
+  fires on 14.2 M of 3.05 billion references (0.47%). Labels recur across
+  genomes, not within them.
+- **Upper bound for any layout change to that path.** Deleting every
+  reference-path vertex update, which gives wrong output, took build time
+  from 245 to 182 worker-s but walk time from 262 to 313, for about 2% of the
+  phase. The walk pays the misses the build had been paying while bringing
+  the table into cache. A dense, insertion-ordered vertex table would help
+  that path at most this much, so it was not built.
+
+The phase is bound by total memory traffic over the vertex table. The lever
+that follows is bytes per vertex.
+
+### The vertex state at cutoff 1
+
+At cutoff 1, the reference default, an edge only needs to be present. Its
+eight presence bits fit in `VertexState`'s unused flag bits 3-10, freeing the
+4-byte counts. The state is packed to 4-byte alignment, and a flat-map slot
+stores its key as two `u32`s so it carries no padding.
+
+| slot | before | after |
+| --- | ---: | ---: |
+| colored | 24 B | 20 B |
+| uncolored | 16 B | 12 B |
+
+The color-slot type now also chooses the edge storage. `Presence` and
+`ColoredPresence` use presence bits; `Counted` and `ColoredCounted` keep
+4-bit counts for any cutoff. The dispatch uses the presence slots only at
+cutoff 1, and `LocalSubgraph` refuses a presence slot at any other cutoff, so
+read mode (cutoff 2) keeps its previous layout.
+
+| order-alternated | local before | local after | wall before | wall after |
+| --- | ---: | ---: | ---: | ---: |
+| 10k colored t16 | 34.8 / 35.2 s | 33.3 / 33.0 s | 1:12.6 | 1:10.3 |
+| 10k uncolored t16 | 14.2 / 14.3 s | 12.9 / 12.9 s | 50.9 s | 49.4 s |
+| 150k uncolored t16 | 108.3 / 108.7 s | 96.7 / 96.3 s | 6:21.4 / 6:17.4 | 6:07.7 / 6:05.2 |
+| 150k colored t16 (one pair) | 406.8 s | 403.4 s | 11:22.7 | 11:15.0 |
+
+Read mode (SRR105788, t4) measured 99.0 / 99.4 s before and 97.5 / 97.8 s
+after. That is noise, not a gain: neither change reaches it. Its input is
+FASTQ, which the FASTA fast path does not touch, and at cutoff 2 it keeps the
+counting states.
+
+Outputs are unchanged:
+- `cuttlefish compare` matches every uncolored and read-mode unitig, and the
+  color digest is unchanged.
+- A randomized test checks that the presence slots answer every edge, flag
+  and color question as the counting slots do at cutoff 1.
+- A second test contracts real buckets once per slot type, colored and
+  uncolored. Local unitigs, exits, color runs and trivial FASTA must match.
+- Read-mode output order varies from run to run (two baseline runs differ
+  byte-wise), so compare, not checksums, is the check there.
+
+The gain holds uncolored at 150k (-11% of the phase) but nearly vanishes for
+colored at 150k (-0.8%, one pair; build -1.6%, walk flat), although colored
+10k gained 5%. At that scale the vertex table is not where colored local
+contraction's time goes.
+
+**Peak RSS.** At 150k uncolored the peak rose about 0.2 GB. Three runs of
+each build gave 7.25 / 7.34 / 7.33 GB before and 7.52 / 7.52 / 7.54 after.
+This change did not add that memory:
+
+- The peak is set during discontinuity contraction, which this change does
+  not touch. RSS entering that phase is the same in both builds, and every
+  size logged up to it matches.
+- With jemalloc returning freed pages at once
+  (`_RJEM_MALLOC_CONF=dirty_decay_ms:0,muzzy_decay_ms:0`), local
+  contraction's own peak fell, 4.09 / 4.10 to 3.96 / 3.96 GB.
+- Under the same setting the overall peak was 6.63 / 6.63 GB before and
+  6.79 / 6.79 after. Some of the gap is retained dirty pages. The remaining
+  0.16 GB is allocator state carried into a phase whose code and inputs are
+  unchanged: most likely heap layout left by vertex maps in different size
+  classes. That was not traced further.
+
+The same setting takes about 0.7 GB off the peak for about 13 s of wall
+time. That trade is left for the memory work.
+
+### Wide (K > 31) vertex-map slots
+
+The K > 31 flat map stored `(u128, VertexState)`. The key's 16-byte
+alignment padded every slot to 32 bytes, whatever the state. Storing the key
+as four `u32`s, as the narrow map does, gives 20 B uncolored at cutoff 1 and
+24 B with counts.
+
+The colored presence slot would be 28 B, but that was 6% slower in colored
+local contraction at k = 55 (38.2 / 38.3 to 40.5 / 40.6 s; table build 209
+to 238 worker-s). A 28-byte stride splits 6 of every 16 slots (37.5%) across
+two cache lines, and 12% more density does not pay for that. The 20- and
+24-byte slots split 25% but are a third and a quarter smaller, and the
+narrow colored slot gained from 24 to 20 B, so no simple size rule decides
+it. `ColorSlot::WidePad` pads the colored slot back to 32 B. That relies on
+the table starting on a cache line, which jemalloc's large blocks do. A
+`repr(align(32))` pad would guarantee it under any allocator. It was
+measured and cost 1.5% of colored local contraction (38.6 / 38.9 / 39.0
+against 38.0 / 38.4 / 38.3 s, order-alternated), so it was not kept.
+
+| 10k, k = 55, t16, order-alternated | local before | local after | wall before | wall after |
+| --- | ---: | ---: | ---: | ---: |
+| uncolored | 23.9 / 23.8 / 23.8 s | 20.6 / 20.4 / 20.3 s | 57.1 / 56.9 / 56.6 s | 53.9 / 53.8 / 53.6 s |
+| colored (padded, 32 B) | 38.2 / 38.4 s | 38.2 / 38.3 s | 1:12.2 / 1:12.0 | 1:11.9 / 1:12.3 |
+| read SRR105788 (cutoff 2, 24 B) | 8.60 / 8.61 s | 8.59 / 8.41 s | 21.9 / 22.0 s | 21.9 / 21.7 s |
+
+Read mode's gain is memory, not time: its peak falls during local
+contraction, from 7.07 / 7.14 to 5.98 / 6.13 GB.
+
+For reference inputs, peak RSS was flat or slightly lower. Uncolored and
+read-mode outputs compare equal, and the color digest is unchanged. The
+slot-equivalence test now also runs at K = 35, which exercises the wide map.
+
+## Compressed intermediates, chosen from the work directory's storage
+
+Three intermediate streams compress well: the local-unitig `.unitigs`
+records (about 3x), `.mcoord` coordinates (about 1.25x) and `.mcolor` color
+runs (about 2.2x). They are now written as lz4 blocks, each with an 8-byte
+header of raw and stored length; a block that does not shrink is stored raw.
+The edge matrix, path-info, P_e and labels were measured as incompressible
+and are left alone.
+
+Compressing costs CPU and saves I/O, so whether it pays depends on the
+storage under the work directory. `--compress-intermediates auto|on|off`
+chooses; `auto` (the default) asks the new `scratch-probe` crate:
+
+- **Untimed:** network filesystems and rotational disks compress, and so
+  do FUSE mounts (with a warning), whose speed says little about what they
+  front.
+- **Otherwise:** a probe times a direct write and read-back of up to
+  256 MiB, about half a second each way. Storage that sustains twice the
+  build's intermediate rate stays uncompressed.
+- **A failed probe compresses.**
+
+### What compression costs
+
+On this host, which keeps intermediates in page cache over striped NVMe,
+compression's cost is pure CPU. At 10k, t16, order-alternated:
+
+| forced on | written | read | wall |
+| --- | ---: | ---: | ---: |
+| uncolored | -2.6 GB | -2.7 GB | unchanged |
+| colored | -6.5 GB (63.4 to 56.9) | -6.5 GB | +1.7 s (+2.4%) |
+
+That is about 0.26 s of wall time per GB of writes saved, so compression
+pays wherever writing and reading those bytes costs more. At 10k `auto`
+chose off in 0.07 s and matched the baseline: colored 1:10.33 / 1:09.56
+against 1:09.64 / 1:09.62, uncolored 48.26 / 48.43 against 48.00 / 48.73 s.
+
+At 150k and high thread counts the cost stays within noise (order-alternated):
+
+| 150k | wall, on | wall, off | writes saved |
+| --- | ---: | ---: | ---: |
+| t128 uncolored | 2:12.2 / 2:12.6 | 2:11.8 / 2:12.1 | 7.5 GB (3.7%) |
+| t128 colored | 3:39.5 / 3:35.8 | 3:37.1 / 3:36.9 | 20.6 GB (5.9%) |
+| t256 uncolored | 1:57.0 / 1:57.1 | 1:54.8 / 1:56.6 | 7.7 GB (3.8%) |
+| t256 colored | 2:43.5 / 2:52.2 | 2:52.8 / 2:50.9 | 20.4 GB (5.8%) |
+
+The t256 colored pair is noisy: expansion swung between 34 and 42 s
+independently of the setting.
+
+### On a spinning disk
+
+The measurements above keep intermediates in page cache, so they show only
+compression's CPU cost. To see what it buys when storage cannot keep up, 10k
+ran on newton's HDD scratch (ext4; the probe measures 0.06 GB/s direct write
+and 0.10 GB/s read), t16. The build ran inside a 16 GiB memory cgroup, so page
+cache could not absorb the 50-64 GB of intermediates. In the four runs where
+the cgroup's peak was recorded, it sat at its limit. Written GB is the mean of
+each pair.
+
+| 10k, t16, HDD, 16 GiB cgroup | off | on | written, off to on |
+| --- | ---: | ---: | ---: |
+| colored | 1,722 / 1,781 s | 1,341 / 1,304 s | 63.8 to 57.6 GB |
+| uncolored | 677 / 816 s | 770 / 695 s | 49.6 to 47.2 GB |
+
+Colored builds are 24% faster compressed, and each run's color digest
+matched. Uncolored builds compress only 5% of their writes, and the pairs'
+spread (677 to 816 s) swamps any difference. `auto` classifies this disk as
+rotational and compresses without timing it.
+
+On an Apple Silicon laptop (APFS, 8 threads, 1k colored), `auto` chose off,
+and forcing compression on or off made no difference (37.45 / 36.53 s on
+against 37.74 / 35.40 s off). The probe reported about 15 GB/s write there. That
+is the drive's write cache absorbing a 256 MiB burst: on macOS the probe
+syncs with `fsync`, which does not flush the drive's cache, as a build's writes
+never do either. A long build's sustained rate would be lower, but here it
+still cleared the 1.2 GB/s bar with room to spare.
+
+### The build's intermediate rate, and where it stops growing
+
+`auto` compares the probe with an estimate of how fast the build writes
+intermediates. The estimate started from 10k at 16 threads (0.96 GB/s, the
+more demanding corpus) and grew as threads^0.65, fitted to 150k at 16 and 64
+threads. Extrapolated, it claimed 3.7 GB/s at 128 threads and 5.8 at 256,
+so `auto` compressed on this NVMe (about 6 GB/s write) from 128 threads up.
+The rate actually plateaus near 2 GB/s (bytes written over wall time,
+compression off):
+
+| threads | 10k colored / uncolored | 150k colored / uncolored | old estimate |
+| ---: | ---: | ---: | ---: |
+| 16 | 0.88 / 0.99 | 0.50 / 0.55 | 0.96 |
+| 64 | -- | 1.33 / 1.24 | 2.36 |
+| 128 | 1.96 / 1.89 | 1.60 / 1.53 | 3.71 |
+| 256 | 2.00 / 1.78 | 2.03 / 1.75 | 5.82 |
+
+The estimate now holds its 64-thread value, 2.36 GB/s, for any larger
+thread count. That still sits above every measurement. With the 2x margin
+storage must sustain about 4.7 GB/s, and this host's NVMe stays uncompressed
+at every thread count.
+
+### Choices not taken
+
+- **Free memory.** A host with ample page cache absorbs intermediates at
+  memory speed, which would argue for leaving them uncompressed there. But
+  free memory is a startup snapshot and host-wide, not per cgroup (SLURM,
+  containers). Writeback thresholds vary by system. Using it would also need
+  an estimate of the build's total intermediate volume. A wrong "off" on
+  slow storage costs far more than a wrong "on" (about 2%). The probe
+  reports it; the decision ignores it.
+- **Timing rotational disks.** sysfs reports some SSD-backed virtual disks
+  as rotational, so these can be compressed without need. That is kept as
+  a deliberate, cheap bias toward compressing.
+
+### An inlining regression on the way
+
+Adding the probe outlined the weak-super-k-mer append path (`add_impl`),
+which made partitioning slower at 10k: 13.8 to 16.4 s of wall time (+19%)
+and 171 to 213 worker-s (+25%). `#[inline]` on `add_packed` and `#[inline(always)]` on `add_impl`
+restore it (13.5 s).
+

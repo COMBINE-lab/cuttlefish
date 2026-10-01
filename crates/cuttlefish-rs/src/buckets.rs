@@ -5,6 +5,13 @@
 //! build does not require one descriptor per subgraph. The on-disk format is a
 //! private, versioned Rust format and may be compressed with LZ4 blocks.
 
+// Errors on the per-record paths here are built with `ok_or_else`, not
+// `ok_or`: `BucketError` can own heap data, so an eagerly built error must be
+// dropped on the success path, and when the optimizer fails to prove that drop
+// trivial the call lands in the partitioner's hot loop. See "k = 55: an eager
+// error value" in docs/engineering/performance-record.md.
+#![allow(clippy::unnecessary_lazy_evaluations)]
+
 use crate::discontinuity::{current_open_file_count, open_file_limit};
 use crate::dna::{Base, ascii_base_bits, valid_ascii_base_bits};
 use crate::params::BuildParams;
@@ -83,6 +90,196 @@ fn colored_flush_bytes() -> usize {
             .unwrap_or(COLORED_FLUSH_BYTES)
     })
 }
+/// Slots in each bucket's label cache, as a power of two; see [`LabelCache`].
+const LABEL_CACHE_BITS: u8 = 12;
+
+/// In a compact colored block's record codes: the record is a reference to
+/// its bucket's label cache, with the slot in the low 12 bits and the
+/// discontinuity flags in bits 12-13. Without it, the code is a literal's
+/// length (bits 0-7) and flags (bits 8-9), and its label follows in the label
+/// stream. See `encode_compact_colored_block`.
+const LABEL_CODE_REF: u16 = 1 << 15;
+
+/// Largest label cache a compact colored block can address.
+const MAX_LABEL_CACHE_BITS: u8 = 12;
+
+/// The cache size above, overridable for measurement; 0 disables the cache.
+fn label_cache_bits() -> u8 {
+    static BITS: std::sync::OnceLock<u8> = std::sync::OnceLock::new();
+    *BITS.get_or_init(|| {
+        std::env::var("CF3_RS_LABEL_CACHE_BITS")
+            .ok()
+            .and_then(|value| value.parse::<u8>().ok())
+            .filter(|bits| *bits <= MAX_LABEL_CACHE_BITS)
+            .unwrap_or(LABEL_CACHE_BITS)
+    })
+}
+
+/// A direct-mapped cache of the labels one bucket has seen most recently.
+///
+/// Weak super-k-mers repeat heavily across a collection of related genomes: on
+/// 50,000 Salmonella assemblies 17.85 G records carry 0.67 G distinct labels,
+/// and a 4,096-slot cache per bucket already holds the label of 91% of
+/// records. A colored record that hits is written as its 2-byte slot instead
+/// of its label; an uncolored duplicate at cutoff 1 adds nothing to the graph
+/// and is dropped. The reader replays the same cache over the same records in
+/// the same order, so the cache itself is never stored.
+///
+/// `tag` distinguishes entries whose padded label words coincide: the label
+/// length for colored buckets, the whole 16-bit attribute (length and
+/// discontinuity flags) for uncolored ones. A tag of 0 marks an empty slot;
+/// labels are never empty, so a real tag is never 0.
+struct LabelCache {
+    shift: u32,
+    label_words: usize,
+    tags: Vec<u16>,
+    words: Vec<u64>,
+}
+
+impl LabelCache {
+    fn new(bits: u8, label_words: usize) -> Self {
+        let slots = 1usize << bits;
+        Self {
+            shift: 64 - u32::from(bits),
+            label_words,
+            tags: vec![0; slots],
+            words: vec![0; slots * label_words],
+        }
+    }
+
+    #[inline]
+    fn slot(&self, tag: u16, words: &[u64]) -> usize {
+        let mut hash = u64::from(tag).wrapping_mul(0xff51_afd7_ed55_8ccd);
+        for &word in words {
+            hash = (hash ^ word).wrapping_mul(0x9e37_79b9_7f4a_7c15);
+            hash ^= hash >> 29;
+        }
+        (hash.wrapping_mul(0x9e37_79b9_7f4a_7c15) >> self.shift) as usize
+    }
+
+    #[inline]
+    fn entry(&self, slot: usize) -> (u16, &[u64]) {
+        let at = slot * self.label_words;
+        (self.tags[slot], &self.words[at..at + self.label_words])
+    }
+
+    #[inline]
+    fn store(&mut self, slot: usize, tag: u16, words: &[u64]) {
+        let at = slot * self.label_words;
+        self.tags[slot] = tag;
+        self.words[at..at + self.label_words].copy_from_slice(words);
+    }
+
+    /// Returns the label's slot and whether it already held this label,
+    /// storing it there when it did not.
+    #[inline]
+    fn lookup_or_store(&mut self, tag: u16, words: &[u64]) -> (usize, bool) {
+        let slot = self.slot(tag, words);
+        let (held_tag, held) = self.entry(slot);
+        // Word by word rather than slice equality, which is a `memcmp` call
+        // per record.
+        if held_tag == tag && held.iter().zip(words).all(|(held, word)| held == word) {
+            return (slot, true);
+        }
+        self.store(slot, tag, words);
+        (slot, false)
+    }
+}
+
+#[inline]
+fn label_words_from_le(bytes: &[u8], words: &mut [u64]) {
+    for (word, chunk) in words.iter_mut().zip(bytes.as_chunks::<8>().0) {
+        *word = u64::from_le_bytes(*chunk);
+    }
+}
+
+/// Encodes one colored block compactly against the bucket's label cache.
+///
+/// Records arrive grouped by source, and a cached label already fixes its
+/// length, so a block is written as two streams:
+///
+/// - codes: the `(source, records)` run count (u32), the runs (two u32
+///   each), then one u16 per record: [`LABEL_CODE_REF`] | flags << 12 | slot
+///   for a label the cache holds, flags << 8 | length for a literal;
+/// - labels: the label words of literals only.
+///
+/// A reference therefore costs 2 bytes before compression instead of a
+/// 4-byte attribute plus its label, and consecutive genomes, whose records
+/// follow nearly the same sequence of cached labels, leave LZ4 long matches.
+/// Returns the number of references.
+fn encode_compact_colored_block(
+    cache: &mut LabelCache,
+    attrs: &[u8],
+    labels: &[u8],
+    out_codes: &mut Vec<u8>,
+    out_labels: &mut Vec<u8>,
+) -> u64 {
+    let label_words = cache.label_words;
+    let label_bytes = label_words * 8;
+    let attrs = attrs.as_chunks::<4>().0;
+    out_codes.clear();
+    out_labels.clear();
+    out_codes.extend_from_slice(&0u32.to_le_bytes());
+    let mut runs = 0u32;
+    let mut at = 0usize;
+    while at < attrs.len() {
+        let source = u32::from_le_bytes(attrs[at]) >> 10 & MAX_SOURCE_ID;
+        let mut end = at + 1;
+        while end < attrs.len() && u32::from_le_bytes(attrs[end]) >> 10 & MAX_SOURCE_ID == source {
+            end += 1;
+        }
+        out_codes.extend_from_slice(&source.to_le_bytes());
+        out_codes.extend_from_slice(&((end - at) as u32).to_le_bytes());
+        runs += 1;
+        at = end;
+    }
+    out_codes[..4].copy_from_slice(&runs.to_le_bytes());
+    out_codes.reserve(attrs.len() * 2);
+    let mut words = [0u64; 4];
+    let mut refs = 0u64;
+    for (attr, label) in attrs.iter().zip(labels.chunks_exact(label_bytes)) {
+        let attr = u32::from_le_bytes(*attr);
+        let len = (attr & 0xff) as u16;
+        let flags = (attr >> 8 & 0b11) as u16;
+        label_words_from_le(label, &mut words[..label_words]);
+        let (slot, hit) = cache.lookup_or_store(len, &words[..label_words]);
+        let code = if hit {
+            refs += 1;
+            LABEL_CODE_REF | flags << 12 | slot as u16
+        } else {
+            out_labels.extend_from_slice(label);
+            flags << 8 | len
+        };
+        out_codes.extend_from_slice(&code.to_le_bytes());
+    }
+    refs
+}
+
+/// Copies the uncolored records of one block whose label and attribute the
+/// bucket's cache does not already hold, returning how many were kept. At
+/// edge-frequency cutoff 1 a repeated record changes nothing downstream.
+fn drop_uncolored_duplicates(
+    cache: &mut LabelCache,
+    records: &[u8],
+    record_len: usize,
+    out: &mut Vec<u8>,
+) -> u64 {
+    let label_words = cache.label_words;
+    out.clear();
+    out.reserve(records.len());
+    let mut words = [0u64; 4];
+    let mut kept = 0u64;
+    for record in records.chunks_exact(record_len) {
+        let tag = u16::from_le_bytes([record[0], record[1]]);
+        label_words_from_le(&record[2..], &mut words[..label_words]);
+        if !cache.lookup_or_store(tag, &words[..label_words]).1 {
+            out.extend_from_slice(record);
+            kept += 1;
+        }
+    }
+    kept
+}
+
 const ATLAS_GRAPH_COUNT: usize = 128;
 const SUBGRAPH_CHUNK_BYTES: usize = 64 * 1024;
 
@@ -433,6 +630,10 @@ pub struct BucketEmitStats {
     pub bucket_dir: PathBuf,
     pub bucket_files: usize,
     pub bytes_written: u64,
+    /// Uncolored records dropped as duplicates of one their bucket already
+    /// held; see [`LabelCache`]. Records written plus these equal the weak
+    /// super-k-mers emitted.
+    pub dropped_records: u64,
 }
 
 pub struct BucketEmitter {
@@ -478,6 +679,10 @@ pub struct SharedBucketSink {
     retain_colored: AtomicBool,
     /// Staged bytes at which a colored bucket is written while not retaining.
     colored_flush_bytes: usize,
+    /// Label-cache size for these buckets; 0 when disabled. See [`LabelCache`].
+    label_cache_bits: u8,
+    label_refs: AtomicU64,
+    label_dropped: AtomicU64,
     /// Cumulative wall time inside the per-window source sorts (diagnostics).
     window_sort_nanos: AtomicU64,
 }
@@ -493,6 +698,8 @@ pub struct SharedBucketEmitter {
     /// A colored source has records staged here and has not been closed by a
     /// source-boundary drain. Any hand-over while this is set is mid-source.
     source_open: bool,
+    /// The current fragment packed 2 bits per base; see [`Self::pack_fragment`].
+    fragment_words: Vec<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -561,7 +768,7 @@ impl AtlasSortScratch {
             let local = usize::from(graph_id)
                 .checked_sub(first_graph_id)
                 .filter(|&local| local < ATLAS_GRAPH_COUNT)
-                .ok_or(BucketError::InvalidGraphId(usize::from(graph_id)))?;
+                .ok_or_else(|| BucketError::InvalidGraphId(usize::from(graph_id)))?;
             self.counts[local] += 1;
         }
         self.offsets.clear();
@@ -673,12 +880,16 @@ struct SharedBucketFileMeta {
     /// a freshly reserved one, which the reader stitches back because it walks
     /// the chain in order.
     segment_used: u64,
+    /// Recent labels, allocated at this bucket's first flush when enabled.
+    label_cache: Option<LabelCache>,
 }
 
 struct SharedBucketAtlas {
     first_graph_id: usize,
     files: Vec<SharedBucketFileMeta>,
     buffered_bytes: usize,
+    /// Label-cache size for this sink's buckets; 0 when disabled.
+    label_cache_bits: u8,
     /// Shared by every flush through this atlas, which the atlas lock already
     /// serializes, so it costs no contention and saves an allocation per block.
     scratch: CompressionScratch,
@@ -687,6 +898,10 @@ struct SharedBucketAtlas {
 #[derive(Default)]
 struct SharedBucketFlushStats {
     calls: u64,
+    /// Colored records written as label-cache references.
+    label_refs: u64,
+    /// Uncolored duplicate records dropped.
+    label_dropped: u64,
 }
 
 /// Where one bucket's bytes live.
@@ -760,6 +975,9 @@ pub struct BucketHeader {
     pub interleaved_compression: bool,
     pub label_words: usize,
     pub records: u64,
+    /// Label-cache size when colored labels may be cache references; 0 when
+    /// every label is inline. See [`LabelCache`].
+    pub label_ref_bits: u8,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -791,6 +1009,20 @@ pub(crate) struct BorrowedBucketPackedRecord<'a> {
     pub left_discontinuous: bool,
     pub right_discontinuous: bool,
     pub words: &'a [u64],
+    /// Where this record's label sits in the bucket's label cache, when the
+    /// bucket has one. Every reader of a bucket replays the same cache, so a
+    /// slot identifies the same label for all of them until a later literal
+    /// replaces it.
+    pub label_slot: Option<LabelSlot>,
+}
+
+/// A record's place in its bucket's label cache.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct LabelSlot {
+    pub slot: u16,
+    /// The label was a reference to what the slot already held, rather than
+    /// a literal that was just stored there.
+    pub reference: bool,
 }
 
 /// Byte source behind a `BucketReader`.
@@ -899,6 +1131,13 @@ pub struct BucketReader {
     compressed_block: Vec<u8>,
     block_records: usize,
     block_record: usize,
+    /// Decoded label stream holding cache references, before expansion.
+    block_label_refs: Vec<u8>,
+    /// Per record of the current block: its cache slot, with bit 16 set for
+    /// a reference. Filled only when the bucket has a label cache.
+    block_slots: Vec<u32>,
+    /// Replica of the writer's label cache, when the bucket uses one.
+    label_cache: Option<LabelCache>,
 }
 
 impl BucketReader {
@@ -922,6 +1161,9 @@ impl BucketReader {
             compressed_block: Vec::new(),
             block_records: 0,
             block_record: 0,
+            block_label_refs: Vec::new(),
+            block_slots: Vec::new(),
+            label_cache: None,
         })
     }
 
@@ -960,6 +1202,9 @@ impl BucketReader {
             compressed_block: Vec::new(),
             block_records: 0,
             block_record: 0,
+            block_label_refs: Vec::new(),
+            block_slots: Vec::new(),
+            label_cache: None,
         })
     }
 
@@ -1089,7 +1334,7 @@ impl BucketReader {
         let record_size = record_size(self.header.colored, self.header.label_words);
         let payload_bytes = remaining
             .checked_mul(record_size as u64)
-            .ok_or(BucketError::TooManyRecords)?;
+            .ok_or_else(|| BucketError::TooManyRecords)?;
         let mut payload = vec![0u8; payload_bytes as usize];
         self.file
             .read_exact(&mut payload)
@@ -1149,6 +1394,7 @@ impl BucketReader {
                     left_discontinuous: record.left_discontinuous,
                     right_discontinuous: record.right_discontinuous,
                     words: &record.words,
+                    label_slot: None,
                 })
             });
         }
@@ -1203,6 +1449,14 @@ impl BucketReader {
             {
                 *word = u64::from_le_bytes(*bytes);
             }
+            let label_slot = self
+                .block_slots
+                .get(record_index)
+                .filter(|_| self.header.label_ref_bits != 0)
+                .map(|&packed| LabelSlot {
+                    slot: packed as u16,
+                    reference: packed & 1 << 16 != 0,
+                });
             self.records_read += 1;
             self.block_record += 1;
             f(BorrowedBucketPackedRecord {
@@ -1215,6 +1469,7 @@ impl BucketReader {
                 left_discontinuous: packed_attr & (1 << 8) != 0,
                 right_discontinuous: packed_attr & (1 << 9) != 0,
                 words: &words[..self.header.label_words],
+                label_slot,
             })?;
         }
         Ok(())
@@ -1272,6 +1527,12 @@ impl BucketReader {
             self.block_record = 0;
             return Ok(());
         }
+        if self.header.label_ref_bits != 0 {
+            self.decode_compact_colored_block(records, attr_bytes)?;
+            self.block_records = records;
+            self.block_record = 0;
+            return Ok(());
+        }
         self.block_attrs.resize(records * fixed_len, 0);
         self.block_labels
             .resize(records * self.header.label_words * 8, 0);
@@ -1280,16 +1541,125 @@ impl BucketReader {
             &mut self.block_attrs,
         )
         .map_err(|_| BucketError::MalformedRecord)?;
+        if decoded_attrs != self.block_attrs.len() {
+            return Err(BucketError::MalformedRecord);
+        }
         let decoded_labels = lz4_flex::block::decompress_into(
             &self.compressed_block[attr_bytes..],
             &mut self.block_labels,
         )
         .map_err(|_| BucketError::MalformedRecord)?;
-        if decoded_attrs != self.block_attrs.len() || decoded_labels != self.block_labels.len() {
+        if decoded_labels != self.block_labels.len() {
             return Err(BucketError::MalformedRecord);
         }
         self.block_records = records;
         self.block_record = 0;
+        Ok(())
+    }
+
+    /// Decodes a block written by `encode_compact_colored_block` into the
+    /// usual per-record attributes and full labels, replaying the writer's
+    /// label cache so every reference resolves to the label the writer saw in
+    /// that slot, and records each record's slot in `block_slots`.
+    fn decode_compact_colored_block(
+        &mut self,
+        records: usize,
+        codes_bytes: usize,
+    ) -> Result<(), BucketError> {
+        let label_words = self.header.label_words;
+        let label_bytes = label_words * 8;
+        // At most one run per record.
+        self.block_label_refs.resize(4 + 10 * records, 0);
+        let decoded = lz4_flex::block::decompress_into(
+            &self.compressed_block[..codes_bytes],
+            &mut self.block_label_refs,
+        )
+        .map_err(|_| BucketError::MalformedRecord)?;
+        let codes_stream = &self.block_label_refs[..decoded];
+        if codes_stream.len() < 4 {
+            return Err(BucketError::MalformedRecord);
+        }
+        let runs = u32::from_le_bytes(codes_stream[..4].try_into().unwrap()) as usize;
+        if runs > records || codes_stream.len() != 4 + 8 * runs + 2 * records {
+            return Err(BucketError::MalformedRecord);
+        }
+        let (run_bytes, code_bytes) = codes_stream[4..].split_at(8 * runs);
+        let codes = code_bytes.as_chunks::<2>().0;
+        let literals = codes
+            .iter()
+            .filter(|code| u16::from_le_bytes(**code) & LABEL_CODE_REF == 0)
+            .count();
+        self.block_labels.resize(records * label_bytes, 0);
+        // Literal labels decode into `block_interleaved`, which split colored
+        // blocks otherwise never use.
+        self.block_interleaved.resize(literals * label_bytes, 0);
+        let decoded_labels = lz4_flex::block::decompress_into(
+            &self.compressed_block[codes_bytes..],
+            &mut self.block_interleaved,
+        )
+        .map_err(|_| BucketError::MalformedRecord)?;
+        if decoded_labels != self.block_interleaved.len() {
+            return Err(BucketError::MalformedRecord);
+        }
+        let bits = self.header.label_ref_bits;
+        let cache = self
+            .label_cache
+            .get_or_insert_with(|| LabelCache::new(bits, label_words));
+        self.block_attrs.clear();
+        self.block_attrs.reserve(records * 4);
+        self.block_slots.clear();
+        self.block_slots.reserve(records);
+        let mut runs_iter = run_bytes.as_chunks::<8>().0.iter().map(|run| {
+            (
+                u32::from_le_bytes(run[..4].try_into().unwrap()),
+                u32::from_le_bytes(run[4..].try_into().unwrap()),
+            )
+        });
+        let (mut source, mut remaining) = (0u32, 0u32);
+        let mut literal = 0usize;
+        let mut words = [0u64; 4];
+        for (idx, code) in codes.iter().enumerate() {
+            if remaining == 0 {
+                (source, remaining) = runs_iter.next().ok_or(BucketError::MalformedRecord)?;
+                if remaining == 0 || source > MAX_SOURCE_ID {
+                    return Err(BucketError::MalformedRecord);
+                }
+            }
+            remaining -= 1;
+            let code = u16::from_le_bytes(*code);
+            let out = &mut self.block_labels[idx * label_bytes..(idx + 1) * label_bytes];
+            let (len, flags) = if code & LABEL_CODE_REF != 0 {
+                let slot = usize::from(code & 0x0fff);
+                if slot >= cache.tags.len() {
+                    return Err(BucketError::MalformedRecord);
+                }
+                let (tag, held) = cache.entry(slot);
+                if tag == 0 {
+                    return Err(BucketError::MalformedRecord);
+                }
+                for (chunk, word) in out.as_chunks_mut::<8>().0.iter_mut().zip(held) {
+                    chunk.copy_from_slice(&word.to_le_bytes());
+                }
+                self.block_slots.push(slot as u32 | 1 << 16);
+                (u32::from(tag), u32::from(code >> 12 & 0b11))
+            } else {
+                let len = code & 0xff;
+                let label =
+                    &self.block_interleaved[literal * label_bytes..(literal + 1) * label_bytes];
+                literal += 1;
+                out.copy_from_slice(label);
+                label_words_from_le(label, &mut words[..label_words]);
+                let slot = cache.slot(len, &words[..label_words]);
+                cache.store(slot, len, &words[..label_words]);
+                self.block_slots.push(slot as u32);
+                (u32::from(len), u32::from(code >> 8 & 0b11))
+            };
+            let attr = len | flags << 8 | source << 10;
+            self.block_attrs.extend_from_slice(&attr.to_le_bytes());
+        }
+        if remaining != 0 || runs_iter.next().is_some() {
+            return Err(BucketError::MalformedRecord);
+        }
         Ok(())
     }
 }
@@ -1307,7 +1677,7 @@ impl Iterator for BucketRecords {
     }
 }
 
-const CONTAINER_MANIFEST_MAGIC: &[u8; 8] = b"CF3WSKC1";
+const CONTAINER_MANIFEST_MAGIC: &[u8; 8] = b"CF3WSKC2";
 const CONTAINER_MANIFEST_NAME: &str = "manifest.bin";
 
 /// The parameters every bucket in a container directory shares.
@@ -1328,6 +1698,8 @@ pub struct ContainerManifestHeader {
     pub interleaved_compression: bool,
     pub segment_bytes: u64,
     pub container_count: usize,
+    /// See [`BucketHeader::label_ref_bits`].
+    pub label_ref_bits: u8,
 }
 
 impl ContainerManifestHeader {
@@ -1351,6 +1723,7 @@ impl ContainerManifestHeader {
             compressed: self.compressed,
             interleaved_compression: self.interleaved_compression,
             records,
+            label_ref_bits: self.label_ref_bits,
         }
     }
 }
@@ -1378,7 +1751,7 @@ pub fn write_container_manifest(
     out.push(u8::from(header.colored));
     out.push(header.label_words as u8);
     out.push(header.compression_code());
-    out.push(0);
+    out.push(header.label_ref_bits);
     write_u64_to(&mut out, header.segment_bytes);
     write_u64_to(&mut out, header.container_count as u64);
     write_u64_to(&mut out, entries.len() as u64);
@@ -1464,8 +1837,14 @@ pub fn read_container_manifest(
     let minimizer_len = cursor.u16()?;
     let graph_count = cursor.u64()? as usize;
     let flags = cursor.take(4)?;
-    let (colored, label_words, compression) = (flags[0], flags[1], flags[2]);
-    if colored > 1 || compression > 2 || flags[3] != 0 {
+    let (colored, label_words, compression, label_ref_bits) =
+        (flags[0], flags[1], flags[2], flags[3]);
+    // References exist only in split colored compressed blocks.
+    if colored > 1
+        || compression > 2
+        || label_ref_bits > MAX_LABEL_CACHE_BITS
+        || (label_ref_bits != 0 && (colored != 1 || compression != 1))
+    {
         return Err(BucketError::MalformedManifest(path.clone()));
     }
     let header = ContainerManifestHeader {
@@ -1478,6 +1857,7 @@ pub fn read_container_manifest(
         interleaved_compression: compression == 2,
         segment_bytes: cursor.u64()?,
         container_count: cursor.u64()? as usize,
+        label_ref_bits,
     };
     if header.segment_bytes == 0 || header.label_words != label_word_count(k, minimizer_len) {
         return Err(BucketError::MalformedManifest(path.clone()));
@@ -1619,7 +1999,9 @@ impl BucketEmitter {
         }
 
         let attr = if self.colored {
-            let source_id = superkmer.source_id.ok_or(BucketError::MissingSourceId)?;
+            let source_id = superkmer
+                .source_id
+                .ok_or_else(|| BucketError::MissingSourceId)?;
             if source_id > MAX_SOURCE_ID {
                 return Err(BucketError::SourceIdTooLarge(source_id));
             }
@@ -1642,7 +2024,7 @@ impl BucketEmitter {
         pending.records = pending
             .records
             .checked_add(1)
-            .ok_or(BucketError::TooManyRecords)?;
+            .ok_or_else(|| BucketError::TooManyRecords)?;
         append_record(
             &mut pending.bytes,
             attr,
@@ -1790,6 +2172,7 @@ impl BucketEmitter {
             bucket_dir: self.bucket_dir,
             bucket_files: manifest.len(),
             bytes_written: self.files.values().map(|meta| meta.bytes_written).sum(),
+            dropped_records: 0,
         })
     }
 }
@@ -1829,6 +2212,23 @@ impl SharedBucketSink {
         }
         let containers = BucketContainers::create(&bucket_dir, container_count)?;
 
+        // References need compressed split colored blocks; dropping uncolored
+        // duplicates is only exact when every record's count is irrelevant.
+        let compress_buckets = params.color || params.compress_buckets;
+        let label_cache_bits = if !compress_buckets {
+            0
+        } else if params.color {
+            if interleave_colored_compression() {
+                0
+            } else {
+                label_cache_bits()
+            }
+        } else if params.cutoff() == 1 {
+            label_cache_bits()
+        } else {
+            0
+        };
+
         Ok(Arc::new(Self {
             bucket_dir,
             containers,
@@ -1849,6 +2249,7 @@ impl SharedBucketSink {
                             .map(|_| SharedBucketFileMeta::default())
                             .collect(),
                         buffered_bytes: 0,
+                        label_cache_bits,
                         scratch: CompressionScratch::default(),
                     })
                 })
@@ -1858,6 +2259,9 @@ impl SharedBucketSink {
             colored_staged_bytes: AtomicU64::new(0),
             retain_colored: AtomicBool::new(false),
             colored_flush_bytes: colored_flush_bytes.max(1),
+            label_cache_bits,
+            label_refs: AtomicU64::new(0),
+            label_dropped: AtomicU64::new(0),
             window_sort_nanos: AtomicU64::new(0),
         }))
     }
@@ -1896,6 +2300,7 @@ impl SharedBucketSink {
             deferred_uncolored,
             sort_scratch: AtlasSortScratch::default(),
             source_open: false,
+            fragment_words: Vec::new(),
         }
     }
 
@@ -1955,6 +2360,7 @@ impl SharedBucketSink {
                             self.compress_buckets,
                             &mut stats,
                         )?;
+                        self.note_label_stats(&stats);
                         calls += stats.calls;
                     }
                     Ok::<_, BucketError>(calls)
@@ -1966,7 +2372,13 @@ impl SharedBucketSink {
             }
             Ok::<_, BucketError>(calls)
         })?;
-        self.record_flush_stats(SharedBucketFlushStats { calls }, started.elapsed());
+        self.record_flush_stats(
+            SharedBucketFlushStats {
+                calls,
+                ..Default::default()
+            },
+            started.elapsed(),
+        );
         Ok(())
     }
 
@@ -2013,11 +2425,11 @@ impl SharedBucketSink {
             file.total_records = file
                 .total_records
                 .checked_add(u64::from(records))
-                .ok_or(BucketError::TooManyRecords)?;
+                .ok_or_else(|| BucketError::TooManyRecords)?;
             file.buffer_records = file
                 .buffer_records
                 .checked_add(u64::from(records))
-                .ok_or(BucketError::TooManyRecords)?;
+                .ok_or_else(|| BucketError::TooManyRecords)?;
             file.buffer
                 .extend_from_slice(&scratch.sorted[consumed..consumed + run_bytes]);
             consumed += run_bytes;
@@ -2107,11 +2519,11 @@ impl SharedBucketSink {
             file.total_records = file
                 .total_records
                 .checked_add(u64::from(records))
-                .ok_or(BucketError::TooManyRecords)?;
+                .ok_or_else(|| BucketError::TooManyRecords)?;
             file.buffer_records = file
                 .buffer_records
                 .checked_add(u64::from(records))
-                .ok_or(BucketError::TooManyRecords)?;
+                .ok_or_else(|| BucketError::TooManyRecords)?;
             file.buffer
                 .extend_from_slice(&scratch.sorted[attrs_consumed..attrs_consumed + attr_bytes]);
             file.labels.extend_from_slice(
@@ -2238,7 +2650,10 @@ impl SharedBucketSink {
                     }
                     self.window_sort_nanos
                         .fetch_add(sort_nanos, Ordering::Relaxed);
-                    Ok::<_, BucketError>(stats.calls)
+                    {
+                        self.note_label_stats(&stats);
+                        Ok::<_, BucketError>(stats.calls)
+                    }
                 }));
             }
             let mut calls = 0u64;
@@ -2252,7 +2667,10 @@ impl SharedBucketSink {
         // mid-source: direct writing can resume.
         self.retain_colored.store(false, Ordering::Release);
         self.record_flush_stats(
-            SharedBucketFlushStats { calls: flush_calls },
+            SharedBucketFlushStats {
+                calls: flush_calls,
+                ..Default::default()
+            },
             started.elapsed(),
         );
         Ok(())
@@ -2339,7 +2757,10 @@ impl SharedBucketSink {
                             atlas.files[local_graph_id].labels = Vec::new();
                         }
                     }
-                    Ok::<_, BucketError>(stats.calls)
+                    {
+                        self.note_label_stats(&stats);
+                        Ok::<_, BucketError>(stats.calls)
+                    }
                 }));
             }
             let mut calls = 0u64;
@@ -2349,7 +2770,10 @@ impl SharedBucketSink {
             Ok::<_, BucketError>(calls)
         })?;
         self.record_flush_stats(
-            SharedBucketFlushStats { calls: flush_calls },
+            SharedBucketFlushStats {
+                calls: flush_calls,
+                ..Default::default()
+            },
             started.elapsed(),
         );
         Ok(())
@@ -2411,16 +2835,49 @@ impl SharedBucketSink {
             // The number of containers actually created, which is not the
             // atlas count when the descriptor budget narrowed it.
             container_count: self.containers.len(),
+            // Only colored buckets carry references; dropped uncolored
+            // duplicates need nothing from the reader.
+            label_ref_bits: if self.colored {
+                self.label_cache_bits
+            } else {
+                0
+            },
         };
+        if self.label_cache_bits != 0 {
+            let written: u64 = entries.iter().map(|entry| entry.records).sum();
+            let refs = self.label_refs.load(Ordering::Relaxed);
+            let dropped = self.label_dropped.load(Ordering::Relaxed);
+            eprintln!(
+                "cuttlefish: bucket label cache ({} slots per bucket): {} of {} record(s) referenced, {} dropped",
+                1u64 << self.label_cache_bits,
+                refs,
+                written + dropped,
+                dropped
+            );
+        }
         write_container_manifest(&self.bucket_dir, &header, &entries)?;
         Ok(BucketEmitStats {
             bucket_dir: self.bucket_dir.clone(),
             bucket_files: entries.len(),
             bytes_written,
+            dropped_records: self.label_dropped.load(Ordering::Relaxed),
         })
     }
 
+    /// Adds a flush's label-cache counts to the sink totals.
+    fn note_label_stats(&self, stats: &SharedBucketFlushStats) {
+        if stats.label_refs != 0 {
+            self.label_refs
+                .fetch_add(stats.label_refs, Ordering::Relaxed);
+        }
+        if stats.label_dropped != 0 {
+            self.label_dropped
+                .fetch_add(stats.label_dropped, Ordering::Relaxed);
+        }
+    }
+
     fn record_flush_stats(&self, stats: SharedBucketFlushStats, elapsed: Duration) {
+        self.note_label_stats(&stats);
         if stats.calls == 0 {
             return;
         }
@@ -2443,27 +2900,27 @@ fn append_colored_atlas_record(
     let graph_id = usize::from(graph_id);
     let local_graph_id = graph_id
         .checked_sub(atlas.first_graph_id)
-        .ok_or(BucketError::InvalidGraphId(graph_id))?;
+        .ok_or_else(|| BucketError::InvalidGraphId(graph_id))?;
     let file = atlas
         .files
         .get_mut(local_graph_id)
-        .ok_or(BucketError::InvalidGraphId(graph_id))?;
+        .ok_or_else(|| BucketError::InvalidGraphId(graph_id))?;
     file.total_records = file
         .total_records
         .checked_add(1)
-        .ok_or(BucketError::TooManyRecords)?;
+        .ok_or_else(|| BucketError::TooManyRecords)?;
     file.buffer_records = file
         .buffer_records
         .checked_add(1)
-        .ok_or(BucketError::TooManyRecords)?;
+        .ok_or_else(|| BucketError::TooManyRecords)?;
     file.buffer.extend_from_slice(&record[..attr_len]);
     file.labels.extend_from_slice(&record[attr_len..]);
     Ok(())
 }
 
-/// Colour exactness, and what the window flush has to do about it.
+/// Color exactness, and what the window flush has to do about it.
 ///
-/// A vertex's colour class is an XOR over the distinct sources that carry it,
+/// A vertex's color class is an XOR over the distinct sources that carry it,
 /// deduplicated against the last source seen for that vertex as a bucket is
 /// read. That is exact precisely when each source's records sit **consecutively**
 /// within a bucket -- not sorted, just uninterrupted -- because a source that
@@ -2484,7 +2941,7 @@ fn append_colored_atlas_record(
 ///
 /// Correctness rests on (2), never on (1). If a future change introduces a
 /// mid-source hand-over, the repair still runs; the cost is the sort, not the
-/// colours. `colored_payload_grouping` reports the split so a regression in (1)
+/// colors. `colored_payload_grouping` reports the split so a regression in (1)
 /// shows up as a number rather than only as lost time.
 ///
 /// Reusable buffers for [`sort_colored_payload_by_source`]; one per sorting
@@ -2633,7 +3090,7 @@ fn sort_colored_payload_by_source_with(
     let grouped = seen.len() == runs;
     scratch.offsets = seen;
     if grouped {
-        // Nothing to repair. Colour exactness needs each source's records
+        // Nothing to repair. Color exactness needs each source's records
         // *consecutive* within a bucket, not ascending, and the class hash is
         // an XOR over distinct sources, so it does not depend on their order
         // either. Skipping avoids the permutation and its scratch buffers.
@@ -2700,11 +3157,11 @@ impl SharedBucketAtlas {
         file.total_records = file
             .total_records
             .checked_add(pending.records)
-            .ok_or(BucketError::TooManyRecords)?;
+            .ok_or_else(|| BucketError::TooManyRecords)?;
         file.buffer_records = file
             .buffer_records
             .checked_add(pending.records)
-            .ok_or(BucketError::TooManyRecords)?;
+            .ok_or_else(|| BucketError::TooManyRecords)?;
         self.buffered_bytes += pending.bytes.len();
         file.buffer.extend_from_slice(&pending.bytes);
         Ok(())
@@ -2750,6 +3207,7 @@ impl SharedBucketAtlas {
         stats: &mut SharedBucketFlushStats,
     ) -> Result<(), BucketError> {
         let container = (self.first_graph_id / ATLAS_GRAPH_COUNT) % containers.len();
+        let label_cache_bits = self.label_cache_bits;
         let Self { files, scratch, .. } = self;
         let file = &mut files[local_graph_id];
         if file.buffer.is_empty() {
@@ -2765,8 +3223,50 @@ impl SharedBucketAtlas {
         let written = if compress_buckets {
             let interleaved =
                 interleave_colored_compression() || (!colored && !force_split_compression());
-            let len = if split_colored {
+            let len = if split_colored && label_cache_bits != 0 {
+                let cache = file
+                    .label_cache
+                    .get_or_insert_with(|| LabelCache::new(label_cache_bits, label_words));
+                let mut attrs = std::mem::take(&mut scratch.ref_attrs);
+                let mut labels = std::mem::take(&mut scratch.ref_labels);
+                stats.label_refs += encode_compact_colored_block(
+                    cache,
+                    &file.buffer,
+                    &file.labels,
+                    &mut attrs,
+                    &mut labels,
+                );
+                let len = encode_split_block(&attrs, &labels, file.buffer_records, scratch);
+                scratch.ref_attrs = attrs;
+                scratch.ref_labels = labels;
+                len?
+            } else if split_colored {
                 encode_split_block(&file.buffer, &file.labels, file.buffer_records, scratch)?
+            } else if !colored && label_cache_bits != 0 {
+                let cache = file
+                    .label_cache
+                    .get_or_insert_with(|| LabelCache::new(label_cache_bits, label_words));
+                let mut kept_records = std::mem::take(&mut scratch.ref_attrs);
+                let kept = drop_uncolored_duplicates(
+                    cache,
+                    &file.buffer,
+                    record_size as usize,
+                    &mut kept_records,
+                );
+                let dropped = file.buffer_records - kept;
+                stats.label_dropped += dropped;
+                file.total_records -= dropped;
+                file.buffer_records = kept;
+                let len = encode_compressed_block(
+                    &kept_records,
+                    kept,
+                    record_size,
+                    label_words,
+                    interleaved,
+                    scratch,
+                );
+                scratch.ref_attrs = kept_records;
+                len?
             } else {
                 encode_compressed_block(
                     &file.buffer,
@@ -2867,41 +3367,74 @@ impl SharedBucketEmitter {
     }
 
     pub fn add(&mut self, superkmer: &WeakSuperKmer, seq: &[u8]) -> Result<(), BucketError> {
-        self.add_impl(superkmer, seq, true)
+        self.add_impl(superkmer, LabelSource::Checked(seq))
     }
 
     pub fn add_valid(&mut self, superkmer: &WeakSuperKmer, seq: &[u8]) -> Result<(), BucketError> {
         debug_assert!(seq.iter().all(|&base| ascii_base_bits(base).is_some()));
-        self.add_impl(superkmer, seq, false)
+        self.add_impl(superkmer, LabelSource::Valid(seq))
     }
 
+    /// Packs a whole ACGT-only fragment once, for [`Self::add_packed`].
+    ///
+    /// Consecutive weak super-k-mers overlap by k - 1 bases, so packing each
+    /// label from ASCII packed every base about four times at k = 31.
+    pub fn pack_fragment(&mut self, seq: &[u8]) {
+        debug_assert!(seq.iter().all(|&base| ascii_base_bits(base).is_some()));
+        pack_valid_fragment(seq, &mut self.fragment_words);
+    }
+
+    /// Adds a super-k-mer of the fragment last given to
+    /// [`Self::pack_fragment`], slicing its label out of the packed words.
+    // Inlined into the partition's scan loop, as is `add_impl` into it: this
+    // runs once per weak super-k-mer, and left to the optimizer the inlining
+    // depends on how the crate falls into codegen units. An unrelated
+    // addition once outlined `add_impl` and cost 25% of the partition's
+    // worker time (scan+pack 171 -> 213 worker-s at 10k, t16).
+    #[inline]
+    pub fn add_packed(&mut self, superkmer: &WeakSuperKmer) -> Result<(), BucketError> {
+        if superkmer.len > self.sink.label_words * 32 {
+            return Err(BucketError::MalformedRecord);
+        }
+        let words = extract_label_words(
+            &self.fragment_words,
+            superkmer.offset,
+            superkmer.len,
+            self.sink.label_words,
+        );
+        self.add_impl(superkmer, LabelSource::Packed(&words, superkmer.len))
+    }
+
+    #[inline(always)]
     fn add_impl(
         &mut self,
         superkmer: &WeakSuperKmer,
-        seq: &[u8],
-        check_bases: bool,
+        label: LabelSource<'_>,
     ) -> Result<(), BucketError> {
         if superkmer.graph_id >= self.sink.graph_count {
             return Err(BucketError::InvalidGraphId(superkmer.graph_id));
         }
-        if seq.len() > u8::MAX as usize {
-            return Err(BucketError::LabelTooLong(seq.len()));
+        let label_len = label.len();
+        if label_len > u8::MAX as usize {
+            return Err(BucketError::LabelTooLong(label_len));
         }
 
         let attr = if self.sink.colored {
-            let source_id = superkmer.source_id.ok_or(BucketError::MissingSourceId)?;
+            let source_id = superkmer
+                .source_id
+                .ok_or_else(|| BucketError::MissingSourceId)?;
             if source_id > MAX_SOURCE_ID {
                 return Err(BucketError::SourceIdTooLarge(source_id));
             }
             pack_colored_attr(
-                seq.len(),
+                label_len,
                 source_id,
                 superkmer.left_discontinuous,
                 superkmer.right_discontinuous,
             )
         } else {
             pack_uncolored_attr(
-                seq.len(),
+                label_len,
                 superkmer.left_discontinuous,
                 superkmer.right_discontinuous,
             )
@@ -2913,71 +3446,40 @@ impl SharedBucketEmitter {
             let atlas_id = graph_id / ATLAS_GRAPH_COUNT;
             let pending = &mut self.colored_pending[atlas_id];
             pending.graph_ids.push(graph_id as u16);
-            if check_bases {
-                append_record(
-                    &mut pending.bytes,
-                    attr,
-                    graph_id,
-                    seq,
-                    self.sink.label_words,
-                    true,
-                )?;
-            } else {
-                append_record_valid(
-                    &mut pending.bytes,
-                    attr,
-                    graph_id,
-                    seq,
-                    self.sink.label_words,
-                    true,
-                )?;
-            }
+            append_labelled_record(
+                &mut pending.bytes,
+                attr,
+                graph_id,
+                label,
+                self.sink.label_words,
+                true,
+            )?;
         } else if self.deferred_uncolored {
             let atlas_id = graph_id / ATLAS_GRAPH_COUNT;
             let pending = &mut self.uncolored_pending[atlas_id];
             pending.graph_ids.push(graph_id as u16);
-            if !check_bases {
-                append_uncolored_record_valid(
-                    &mut pending.bytes,
-                    attr as u16,
-                    graph_id as u16,
-                    seq,
-                    self.sink.label_words,
-                )?;
-            } else {
-                append_record(
-                    &mut pending.bytes,
-                    attr,
-                    graph_id,
-                    seq,
-                    self.sink.label_words,
-                    false,
-                )?;
-            }
+            append_labelled_record(
+                &mut pending.bytes,
+                attr,
+                graph_id,
+                label,
+                self.sink.label_words,
+                false,
+            )?;
         } else {
             let pending = &mut self.pending[graph_id];
             pending.records = pending
                 .records
                 .checked_add(1)
-                .ok_or(BucketError::TooManyRecords)?;
-            if !check_bases {
-                append_uncolored_record_valid(
-                    &mut pending.bytes,
-                    attr as u16,
-                    graph_id as u16,
-                    seq,
-                    self.sink.label_words,
-                )?;
-            } else {
-                append_record(
-                    &mut pending.bytes,
-                    attr,
-                    graph_id,
-                    seq,
-                    self.sink.label_words,
-                    false,
-                )?;
-            }
+                .ok_or_else(|| BucketError::TooManyRecords)?;
+            append_labelled_record(
+                &mut pending.bytes,
+                attr,
+                graph_id,
+                label,
+                self.sink.label_words,
+                false,
+            )?;
         }
         self.pending_bytes += record_len;
 
@@ -3228,6 +3730,153 @@ fn encode_compressed_block(
     Ok(scratch.block.len())
 }
 
+/// Where a record's label comes from.
+#[derive(Clone, Copy)]
+enum LabelSource<'a> {
+    /// ASCII bases, validated while packing.
+    Checked(&'a [u8]),
+    /// ASCII bases already known to be ACGT.
+    Valid(&'a [u8]),
+    /// Label words already packed MSB-first and zero-padded, and the label length.
+    Packed(&'a [u64; 4], usize),
+}
+
+impl LabelSource<'_> {
+    #[inline]
+    fn len(&self) -> usize {
+        match self {
+            Self::Checked(seq) | Self::Valid(seq) => seq.len(),
+            Self::Packed(_, len) => *len,
+        }
+    }
+}
+
+#[inline]
+fn append_labelled_record(
+    out: &mut Vec<u8>,
+    packed_attr: u32,
+    graph_id: usize,
+    label: LabelSource<'_>,
+    label_words: usize,
+    colored: bool,
+) -> Result<(), BucketError> {
+    match label {
+        LabelSource::Checked(seq) => {
+            append_record(out, packed_attr, graph_id, seq, label_words, colored)
+        }
+        LabelSource::Valid(seq) if colored => {
+            append_record_valid(out, packed_attr, graph_id, seq, label_words, true)
+        }
+        LabelSource::Valid(seq) => append_uncolored_record_valid(
+            out,
+            packed_attr as u16,
+            graph_id as u16,
+            seq,
+            label_words,
+        ),
+        LabelSource::Packed(words, _) => {
+            append_record_words(out, packed_attr, words, label_words, colored);
+            Ok(())
+        }
+    }
+}
+
+/// Packs an ACGT-only fragment MSB-first into `out`, followed by two zero
+/// guard words so [`extract_label_words`] may read past the last base.
+fn pack_valid_fragment(seq: &[u8], out: &mut Vec<u64>) {
+    out.clear();
+    let full_words = seq.len() / 32;
+    out.reserve(full_words + 3);
+    for word_idx in 0..full_words {
+        out.push(pack_valid_word_32(&seq[word_idx * 32..]));
+    }
+    let tail = &seq[full_words * 32..];
+    if !tail.is_empty() {
+        let mut word = 0u64;
+        for &base in tail {
+            word = (word << 2) | u64::from(valid_ascii_base_bits(base));
+        }
+        out.push(word << (2 * (32 - tail.len())));
+    }
+    out.extend_from_slice(&[0, 0]);
+}
+
+/// The label of bases `offset..offset + len` of a fragment packed by
+/// [`pack_valid_fragment`], in the layout `pack_valid_label` produces:
+/// MSB-first, zero beyond `len`.
+#[inline]
+fn extract_label_words(
+    fragment: &[u64],
+    offset: usize,
+    len: usize,
+    label_words: usize,
+) -> [u64; 4] {
+    let mut words = [0u64; 4];
+    let start_bit = 2 * offset;
+    let end_bit = 2 * len;
+    for (idx, word) in words.iter_mut().enumerate().take(label_words) {
+        let label_bit = 64 * idx;
+        if label_bit >= end_bit {
+            break;
+        }
+        let bit = start_bit + label_bit;
+        let (at, shift) = (bit / 64, bit % 64);
+        let mut value = fragment[at] << shift;
+        if shift != 0 {
+            value |= fragment[at + 1] >> (64 - shift);
+        }
+        let keep = end_bit - label_bit;
+        if keep < 64 {
+            value &= !0u64 << (64 - keep);
+        }
+        *word = value;
+    }
+    words
+}
+
+#[inline]
+fn append_record_words(
+    out: &mut Vec<u8>,
+    packed_attr: u32,
+    words: &[u64; 4],
+    label_words: usize,
+    colored: bool,
+) {
+    let mut record = [0u8; MAX_RECORD_BYTES];
+    let attr_len = if colored {
+        record[..4].copy_from_slice(&packed_attr.to_le_bytes());
+        4
+    } else {
+        record[..2].copy_from_slice(&(packed_attr as u16).to_le_bytes());
+        2
+    };
+    for (idx, &word) in words[..label_words].iter().enumerate() {
+        let at = attr_len + idx * 8;
+        record[at..at + 8].copy_from_slice(&word.to_le_bytes());
+    }
+    push_record_bytes(out, &record, attr_len + label_words * 8);
+}
+
+/// Appends the first `len` bytes of a stack record.
+///
+/// `extend_from_slice` with a variable length becomes a libc `memcpy` call
+/// per record -- one per weak super-k-mer, 52 billion on 150k assemblies.
+/// Copying the whole fixed-size array into reserved capacity is a couple of
+/// vector stores, and only `len` bytes become part of the vector.
+#[inline(always)]
+fn push_record_bytes(out: &mut Vec<u8>, record: &[u8; MAX_RECORD_BYTES], len: usize) {
+    assert!(len <= MAX_RECORD_BYTES);
+    out.reserve(MAX_RECORD_BYTES);
+    let at = out.len();
+    // SAFETY: `reserve` guarantees MAX_RECORD_BYTES writable bytes past `at`,
+    // the source is a full MAX_RECORD_BYTES array, and the new length covers
+    // only the `len <= MAX_RECORD_BYTES` bytes just initialized.
+    unsafe {
+        std::ptr::copy_nonoverlapping(record.as_ptr(), out.as_mut_ptr().add(at), MAX_RECORD_BYTES);
+        out.set_len(at + len);
+    }
+}
+
 fn append_record(
     out: &mut Vec<u8>,
     packed_attr: u32,
@@ -3241,7 +3890,7 @@ fn append_record(
         return Err(BucketError::MalformedRecord);
     }
     for (idx, &ch) in seq.iter().enumerate() {
-        let base_bits = ascii_base_bits(ch).ok_or(BucketError::InvalidBase(ch))?;
+        let base_bits = ascii_base_bits(ch).ok_or_else(|| BucketError::InvalidBase(ch))?;
         let word_idx = idx / 32;
         let shift = 2 * (31 - (idx % 32));
         words[word_idx] |= (base_bits as u64) << shift;
@@ -3331,7 +3980,66 @@ fn pack_valid_word_32(seq: &[u8]) -> u64 {
         // SAFETY: the bmi2 feature was just detected on this CPU.
         return unsafe { pack_valid_word_32_bmi2(seq) };
     }
+    // NEON is part of the aarch64 baseline, so there is nothing to detect.
+    #[cfg(target_arch = "aarch64")]
+    // SAFETY: NEON is always present on aarch64.
+    return unsafe { pack_valid_word_32_neon(seq) };
+    #[cfg(not(target_arch = "aarch64"))]
     pack_valid_word_32_scalar(seq)
+}
+
+/// Packs 32 bases with NEON, all lanes at once.
+///
+/// Each byte becomes its 2-bit code; each code is shifted to its place
+/// within a group of four bases (6, 4, 2, 0 bits, first base highest); two
+/// pairwise adds then sum each group into one byte, leaving the eight packed
+/// bytes in base order. Read big-endian, they are the scalar word. The fields
+/// are disjoint, so the adds are ORs and cannot carry.
+/// [`pack_valid_word_32_lane_model`] runs the same steps in scalar code so
+/// the lane arithmetic is checked on every architecture.
+#[cfg(target_arch = "aarch64")]
+#[target_feature(enable = "neon")]
+unsafe fn pack_valid_word_32_neon(seq: &[u8]) -> u64 {
+    use std::arch::aarch64::*;
+
+    let seq = &seq[..32];
+    // SAFETY: `seq` holds 32 bytes, two 16-byte loads.
+    let (lo, hi) = unsafe { (vld1q_u8(seq.as_ptr()), vld1q_u8(seq.as_ptr().add(16))) };
+    let three = vdupq_n_u8(0b11);
+    let code = |bytes: uint8x16_t| {
+        vandq_u8(
+            veorq_u8(vshrq_n_u8::<2>(bytes), vshrq_n_u8::<1>(bytes)),
+            three,
+        )
+    };
+    const SHIFTS: [i8; 16] = [6, 4, 2, 0, 6, 4, 2, 0, 6, 4, 2, 0, 6, 4, 2, 0];
+    // SAFETY: `SHIFTS` holds 16 bytes.
+    let shifts = unsafe { vld1q_s8(SHIFTS.as_ptr()) };
+    let (lo, hi) = (vshlq_u8(code(lo), shifts), vshlq_u8(code(hi), shifts));
+    // Pairs of bases, then groups of four: 32 -> 16 -> 8 bytes.
+    let pairs = vpaddq_u8(lo, hi);
+    let groups = vpaddq_u8(pairs, pairs);
+    let mut packed = [0u8; 8];
+    // SAFETY: `packed` holds 8 bytes.
+    unsafe { vst1_u8(packed.as_mut_ptr(), vget_low_u8(groups)) };
+    u64::from_be_bytes(packed)
+}
+
+/// The NEON packer's steps in scalar code: per-byte codes, the 6/4/2/0
+/// shifts, and the two pairwise adds. Only the tests call it, on every
+/// architecture.
+#[cfg(test)]
+fn pack_valid_word_32_lane_model(seq: &[u8]) -> u64 {
+    let shifted: Vec<u8> = seq[..32]
+        .iter()
+        .enumerate()
+        .map(|(i, &b)| (((b >> 2) ^ (b >> 1)) & 0b11) << (6 - 2 * (i % 4)))
+        .collect();
+    // `vpaddq_u8(a, b)` is the pairwise sums of `a` followed by those of `b`.
+    let pairwise = |v: &[u8]| -> Vec<u8> { v.chunks(2).map(|p| p[0].wrapping_add(p[1])).collect() };
+    let pairs = pairwise(&shifted);
+    let groups = pairwise(&pairs);
+    u64::from_be_bytes(groups[..8].try_into().expect("eight groups"))
 }
 
 #[cfg(target_arch = "x86_64")]
@@ -3357,6 +4065,9 @@ unsafe fn pack_valid_word_32_bmi2(seq: &[u8]) -> u64 {
     word
 }
 
+/// The portable packer. On aarch64 NEON always takes its place, so there it
+/// is kept only as the tests' reference.
+#[cfg(any(not(target_arch = "aarch64"), test))]
 fn pack_valid_word_32_scalar(seq: &[u8]) -> u64 {
     let mut word = 0u64;
     for &base in &seq[..32] {
@@ -3425,6 +4136,11 @@ pub(crate) struct CompressionScratch {
     encoded_labels: Vec<u8>,
     /// Header and payload assembled for a single `write_all`.
     block: Vec<u8>,
+    /// Label-cache output: attributes with reference bits, or kept uncolored
+    /// records.
+    ref_attrs: Vec<u8>,
+    /// Label-cache output: inline labels and 2-byte slot references.
+    ref_labels: Vec<u8>,
 }
 
 impl CompressionScratch {
@@ -3570,7 +4286,7 @@ impl BucketFile {
         self.records = self
             .records
             .checked_add(records)
-            .ok_or(BucketError::TooManyRecords)?;
+            .ok_or_else(|| BucketError::TooManyRecords)?;
         self.bytes_written += written;
         Ok((self.records, self.bytes_written))
     }
@@ -3750,6 +4466,7 @@ fn read_header(file: &mut impl Read, path: &Path) -> Result<BucketHeader, Bucket
         interleaved_compression,
         label_words,
         records,
+        label_ref_bits: 0,
     })
 }
 
@@ -3866,6 +4583,46 @@ impl std::error::Error for BucketError {}
 mod tests {
     use super::*;
 
+    /// The dispatched packer (BMI2 or NEON where available) and the NEON
+    /// lane model must both match the scalar packer bit for bit.
+    #[test]
+    fn packed_words_match_the_scalar_packer() {
+        let mut state = 0x9E37_79B9_7F4A_7C15u64;
+        let mut cases: Vec<Vec<u8>> = vec![vec![b'A'; 32], vec![b'T'; 32], b"ACGT".repeat(8)];
+        for _ in 0..5000 {
+            cases.push(
+                (0..32)
+                    .map(|_| {
+                        state ^= state << 13;
+                        state ^= state >> 7;
+                        state ^= state << 17;
+                        b"ACGT"[(state >> 33) as usize & 3]
+                    })
+                    .collect(),
+            );
+        }
+        for seq in &cases {
+            let expected = pack_valid_word_32_scalar(seq);
+            assert_eq!(pack_valid_word_32(seq), expected);
+            assert_eq!(pack_valid_word_32_lane_model(seq), expected);
+        }
+        for len in 1..=96usize {
+            let seq: Vec<u8> = cases[len % cases.len()]
+                .iter()
+                .chain(&cases[(len + 1) % cases.len()])
+                .chain(&cases[(len + 2) % cases.len()])
+                .copied()
+                .take(len)
+                .collect();
+            let words = pack_valid_label(&seq, 3).unwrap();
+            let mut expected = [0u64; 4];
+            for (at, &base) in seq.iter().enumerate() {
+                expected[at / 32] |= u64::from(valid_ascii_base_bits(base)) << (62 - 2 * (at % 32));
+            }
+            assert_eq!(words, expected, "length {len}");
+        }
+    }
+
     /// Builds a payload whose sources are deliberately interleaved.
     fn interleaved_payload(record_len: usize, plan: &[(u32, usize)]) -> Vec<u8> {
         let mut payload = Vec::new();
@@ -3944,7 +4701,7 @@ mod tests {
         let payload = join_streams(&attrs, &labels, 4, record_len - 4);
         assert_eq!(labels.len(), before_labels.len());
 
-        // Every source now forms exactly one run, which is what colour
+        // Every source now forms exactly one run, which is what color
         // exactness needs.
         let runs = source_runs(&payload, record_len);
         let mut distinct = runs.clone();
@@ -4096,6 +4853,9 @@ mod tests {
         params.minimizer_len = 15;
         params.threads = 2;
         params.work_dir = dir.to_string_lossy().into_owned();
+        // Repeats are the point of this test; at cutoff 1 they would be
+        // dropped as duplicates.
+        params.cutoff = Some(2);
         let sink = SharedBucketSink::create(&params, ATLAS_GRAPH_COUNT + 1).unwrap();
         let expected = [(0, b'A'), (7, b'C'), (ATLAS_GRAPH_COUNT, b'G')];
         let mut emitters = Vec::new();
@@ -4487,5 +5247,184 @@ mod tests {
             }
         }
         fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn sliced_fragment_labels_match_per_label_packing() {
+        let mut state = 0x2545_f491_4f6c_dd1du64;
+        let mut next = move || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state
+        };
+        let mut packed = Vec::new();
+        for fragment_len in [1usize, 31, 32, 33, 63, 64, 65, 200, 1031] {
+            let seq: Vec<u8> = (0..fragment_len)
+                .map(|_| b"ACGT"[(next() % 4) as usize])
+                .collect();
+            pack_valid_fragment(&seq, &mut packed);
+            for label_words in 1..=4usize {
+                for _ in 0..200 {
+                    let offset = (next() as usize) % fragment_len;
+                    let max_len = (fragment_len - offset).min(label_words * 32);
+                    let len = 1 + (next() as usize) % max_len;
+                    let expected =
+                        pack_valid_label(&seq[offset..offset + len], label_words).unwrap();
+                    assert_eq!(
+                        extract_label_words(&packed, offset, len, label_words),
+                        expected,
+                        "fragment {fragment_len}, offset {offset}, len {len}, words {label_words}"
+                    );
+                }
+            }
+        }
+    }
+
+    fn read_all_records(stats: &BucketEmitStats) -> Vec<BucketRecord> {
+        let (store, mut entries) = BucketStore::open_dir(&stats.bucket_dir).unwrap();
+        entries.sort_by_key(|entry| entry.graph_id);
+        let mut out = Vec::new();
+        for entry in &entries {
+            let mut reader = store.reader(entry).unwrap();
+            let mut record = BucketRecord::default();
+            while reader.next_record_into(&mut record).unwrap() {
+                out.push(record.clone());
+            }
+        }
+        out
+    }
+
+    /// Colored labels the bucket's cache already holds are written as slot
+    /// references, and every record reads back exactly as it was added.
+    #[test]
+    fn colored_label_references_round_trip() {
+        let dir = std::env::temp_dir().join(format!(
+            "cf3-label-refs-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        let mut params = BuildParams::new(crate::GraphInput::References, "test".to_string());
+        params.color = true;
+        params.k = 31;
+        params.minimizer_len = 15;
+        params.threads = 1;
+        params.work_dir = dir.to_string_lossy().into_owned();
+        let sink = SharedBucketSink::create_with_colored_flush_bytes(&params, 2, 512).unwrap();
+        assert_ne!(sink.label_cache_bits, 0);
+
+        let mut state = 0x9e37_79b9_7f4a_7c15u64;
+        let mut next = move |bound: u64| {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state % bound
+        };
+        // A small pool of labels, some sharing a prefix and differing only in
+        // length, so equal padded words with different lengths are exercised.
+        let pool: Vec<Vec<u8>> = (0..24)
+            .map(|idx| {
+                let len = 31 + (idx % 20);
+                (0..len)
+                    .map(|pos| b"ACGT"[(pos * 7 + idx / 2) % 4])
+                    .collect()
+            })
+            .collect();
+        let mut expected = Vec::new();
+        let mut emitter = sink.emitter();
+        for source_id in 1..=300u32 {
+            for _ in 0..(1 + next(12)) {
+                let label = &pool[next(pool.len() as u64) as usize];
+                let graph_id = next(2) as usize;
+                let (left, right) = (next(2) == 0, next(3) == 0);
+                emitter
+                    .add_valid(
+                        &WeakSuperKmer {
+                            graph_id,
+                            offset: 0,
+                            len: label.len(),
+                            source_id: Some(source_id),
+                            left_discontinuous: left,
+                            right_discontinuous: right,
+                        },
+                        label,
+                    )
+                    .unwrap();
+                expected.push(BucketRecord {
+                    graph_id,
+                    len: label.len(),
+                    source_id: Some(source_id),
+                    left_discontinuous: left,
+                    right_discontinuous: right,
+                    label: label.clone(),
+                });
+            }
+            emitter.flush_colored_worker_all().unwrap();
+        }
+        sink.flush_colored_window(1, 300).unwrap();
+        sink.flush_colored_emitters(vec![emitter]).unwrap();
+        let refs = sink.label_refs.load(Ordering::Relaxed);
+        let stats = sink.finish().unwrap();
+        assert!(refs > expected.len() as u64 / 2, "only {refs} references");
+
+        expected.sort_by_key(|record| record.graph_id);
+        assert_eq!(read_all_records(&stats), expected);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// At cutoff 1 an uncolored record identical to one its bucket already
+    /// holds is dropped; the same label with different flags is kept.
+    #[test]
+    fn uncolored_duplicates_are_dropped_only_at_cutoff_one() {
+        for cutoff in [1u32, 2] {
+            let dir = std::env::temp_dir().join(format!(
+                "cf3-label-drop-{cutoff}-{}-{:?}",
+                std::process::id(),
+                std::thread::current().id()
+            ));
+            fs::create_dir_all(&dir).unwrap();
+            let mut params = BuildParams::new(crate::GraphInput::References, "test".to_string());
+            params.k = 31;
+            params.minimizer_len = 15;
+            params.threads = 1;
+            params.cutoff = Some(cutoff);
+            params.work_dir = dir.to_string_lossy().into_owned();
+            let sink = SharedBucketSink::create(&params, 1).unwrap();
+            let mut emitter = sink.deferred_uncolored_emitter();
+            let add = |emitter: &mut SharedBucketEmitter, base: u8, left: bool| {
+                emitter
+                    .add_valid(
+                        &WeakSuperKmer {
+                            graph_id: 0,
+                            offset: 0,
+                            len: 31,
+                            source_id: None,
+                            left_discontinuous: left,
+                            right_discontinuous: false,
+                        },
+                        &[base; 31],
+                    )
+                    .unwrap();
+            };
+            for _ in 0..5 {
+                add(&mut emitter, b'A', false);
+                add(&mut emitter, b'C', false);
+                add(&mut emitter, b'A', true);
+            }
+            sink.flush_uncolored_emitters(vec![emitter]).unwrap();
+            let stats = sink.finish().unwrap();
+            let records = read_all_records(&stats);
+            let keys: Vec<(u8, bool)> = records
+                .iter()
+                .map(|record| (record.label[0], record.left_discontinuous))
+                .collect();
+            if cutoff == 1 {
+                assert_eq!(keys, [(b'A', false), (b'C', false), (b'A', true)]);
+            } else {
+                assert_eq!(keys.len(), 15);
+            }
+            fs::remove_dir_all(dir).unwrap();
+        }
     }
 }

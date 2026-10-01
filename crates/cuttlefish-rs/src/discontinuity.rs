@@ -25,6 +25,7 @@ pub use resource::{raise_open_file_limit, report_process_memory, trim_process_al
 
 use crate::DEFAULT_VERTEX_PARTITIONS;
 use crate::Side;
+use crate::block_io::{Lz4BlockReader, Lz4BlockWriter};
 use crate::buckets::{BucketError, BucketLocation, BucketManifestEntry, BucketStore};
 use crate::color::{
     ColorError, ColorRepositoryManifest, ColorRunSidecar, ColorRunSidecarWriter,
@@ -35,7 +36,9 @@ use crate::color::{
 use crate::dna::{Base, complement_ascii, minimal_rotation, reverse_complement_label};
 use crate::hash::{FastBuildHasher, hash_bytes, wyhash_u64};
 use crate::kmer::Kmer;
-use crate::state::{ColorSlot, UnitigColor, VertexState};
+use crate::state::{
+    ColorSlot, ColoredCounted, ColoredPresence, Counted, Presence, UnitigColor, VertexState,
+};
 use crate::subgraph::{LocalSubgraph, LocalSubgraphError, LocalUnitigRef, LocalVertexMap};
 use rayon::prelude::*;
 use rayon::{ThreadPool, ThreadPoolBuilder};
@@ -151,10 +154,15 @@ struct LocalUnitigBucketWriter {
     bucket_id: u16,
     unitig_path: PathBuf,
     label_path: PathBuf,
-    unitigs: BufWriter<File>,
+    /// Unitig records and color runs, lz4-blocked: the fixed-width records
+    /// are mostly padding and small lengths, and compress about 3x.
+    unitigs: Lz4BlockWriter<File>,
+    /// Labels packed 2 bits per base (see `pack_2bit_extend`), each starting
+    /// on a byte boundary, in unitig order.
     labels: BufWriter<File>,
     colored: bool,
     unitig_count: usize,
+    packed: Vec<u8>,
 }
 
 impl LocalUnitigBucketWriter {
@@ -175,10 +183,11 @@ impl LocalUnitigBucketWriter {
             bucket_id,
             unitig_path,
             label_path,
-            unitigs: BufWriter::with_capacity(1024 * 1024, unitig_file),
+            unitigs: Lz4BlockWriter::new(unitig_file),
             labels: BufWriter::with_capacity(4 * 1024 * 1024, label_file),
             colored,
             unitig_count: 0,
+            packed: Vec::new(),
         })
     }
 
@@ -195,8 +204,19 @@ impl LocalUnitigBucketWriter {
             return Err(DiscontinuityInputError::MissingColorRuns);
         }
         let base = self.unitig_count;
+        // Labels are read back once, sequentially, by the map phase; packing
+        // them quarters this stream. Each unitig's label is packed on its own
+        // so the reader can take `packed_2bit_len(label_len)` bytes per unitig.
+        self.packed.clear();
+        for unitig in unitigs {
+            let start = unitig.label_start as usize;
+            crate::dna::pack_2bit_extend(
+                &mut self.packed,
+                &labels[start..start + unitig.label_len as usize],
+            );
+        }
         self.labels
-            .write_all(labels)
+            .write_all(&self.packed)
             .map_err(|source| DiscontinuityInputError::Io {
                 path: self.label_path.clone(),
                 source,
@@ -579,7 +599,7 @@ impl Drop for LockHold<'_> {
 }
 
 fn read_discontinuity_unitig_from_reader<const K: usize>(
-    input: &mut BufReader<File>,
+    input: &mut impl Read,
     path: &Path,
 ) -> Result<DiscontinuityUnitig<K>, SerialCollationError> {
     let mut bytes = [0u8; 8];
@@ -601,26 +621,6 @@ fn read_discontinuity_unitig_from_reader<const K: usize>(
 /// On-disk size of one compact discontinuity-unitig record: the label length,
 /// the flag byte, and three bytes of padding.
 const EXTERNAL_UNITIG_RECORD_LEN: usize = 8;
-
-fn read_discontinuity_unitig_from_reader_for_input<const K: usize>(
-    input: &mut BufReader<File>,
-    path: &Path,
-) -> Result<DiscontinuityUnitig<K>, DiscontinuityInputError> {
-    let mut out = MaybeUninit::<DiscontinuityUnitig<K>>::zeroed();
-    let bytes = unsafe {
-        std::slice::from_raw_parts_mut(
-            out.as_mut_ptr().cast::<u8>(),
-            std::mem::size_of::<DiscontinuityUnitig<K>>(),
-        )
-    };
-    input
-        .read_exact(bytes)
-        .map_err(|source| DiscontinuityInputError::Io {
-            path: path.to_path_buf(),
-            source,
-        })?;
-    Ok(unsafe { out.assume_init() })
-}
 
 #[inline]
 fn discontinuity_unitig_flags<const K: usize>(
@@ -1706,12 +1706,44 @@ fn flush_blocked_edge_block(
     Ok(())
 }
 
+// The k <= 31 edge record is 24 bytes: two endpoint words, the u16 weight,
+// the u32 local unitig index, and a u16 holding the local unitig bucket under
+// the exit-side, swapped and phantom flags. An endpoint word is the vertex's
+// 62 bits with its side in bit 62, or all ones for phi; a vertex never sets
+// bit 63, so no vertex collides with phi.
+const COMPACT_EDGE_SIDE_BIT: u32 = 62;
+const COMPACT_EDGE_VERTEX_MASK: u64 = (1 << COMPACT_EDGE_SIDE_BIT) - 1;
+const COMPACT_EDGE_EXIT_BIT: u32 = 13;
+const COMPACT_EDGE_SWAPPED_BIT: u32 = 14;
+const COMPACT_EDGE_PHANTOM_BIT: u32 = 15;
+const COMPACT_EDGE_BUCKET_MASK: u16 = (1 << COMPACT_EDGE_EXIT_BIT) - 1;
+const _: () = assert!(MAX_LOCAL_UNITIG_BUCKETS < COMPACT_EDGE_BUCKET_MASK as usize);
+
+#[inline(always)]
+fn decode_compact_endpoint<const K: usize>(bits: u64) -> MatrixEndpoint<K> {
+    if bits == u64::MAX {
+        MatrixEndpoint::Phi
+    } else {
+        MatrixEndpoint::Vertex(DiscontinuityEndpoint {
+            vertex: Kmer::from_bits(u128::from(bits & COMPACT_EDGE_VERTEX_MASK)),
+            side: if bits >> COMPACT_EDGE_SIDE_BIT == 0 {
+                Side::Front
+            } else {
+                Side::Back
+            },
+        })
+    }
+}
+
 fn encode_discontinuity_edge<const K: usize>(edge: &DiscontinuityEdge<K>) -> [u8; 74] {
     let mut bytes = [0u8; 74];
     if K <= 31 {
         let endpoint_bits = |endpoint: MatrixEndpoint<K>| match endpoint {
             MatrixEndpoint::Phi => u64::MAX,
-            MatrixEndpoint::Vertex(endpoint) => endpoint.vertex.as_u128() as u64,
+            MatrixEndpoint::Vertex(endpoint) => {
+                (endpoint.vertex.as_u128() as u64)
+                    | (u64::from(endpoint.side == Side::Back) << COMPACT_EDGE_SIDE_BIT)
+            }
         };
         bytes[..8].copy_from_slice(&endpoint_bits(edge.first).to_le_bytes());
         bytes[8..16].copy_from_slice(&endpoint_bits(edge.second).to_le_bytes());
@@ -1723,15 +1755,15 @@ fn encode_discontinuity_edge<const K: usize>(edge: &DiscontinuityEdge<K>) -> [u8
             u32::try_from(edge.unitig_index).expect("local unitig index fits compact edge")
         };
         bytes[18..22].copy_from_slice(&unitig_index.to_le_bytes());
-        bytes[22] = u8::from(
-            matches!(edge.first, MatrixEndpoint::Vertex(endpoint) if endpoint.side == Side::Back),
-        ) | (u8::from(
-            matches!(edge.second, MatrixEndpoint::Vertex(endpoint) if endpoint.side == Side::Back),
-        ) << 1)
-            | (u8::from(edge.unitig_exit_side == Side::Back) << 2)
-            | (u8::from(edge.swapped) << 3)
-            | (u8::from(edge.phantom_unitig.is_some()) << 4);
-        bytes[23..25].copy_from_slice(&edge.unitig_bucket.to_le_bytes());
+        assert!(
+            edge.unitig_bucket <= COMPACT_EDGE_BUCKET_MASK,
+            "local unitig bucket fits compact edge"
+        );
+        let tail = edge.unitig_bucket
+            | (u16::from(edge.unitig_exit_side == Side::Back) << COMPACT_EDGE_EXIT_BIT)
+            | (u16::from(edge.swapped) << COMPACT_EDGE_SWAPPED_BIT)
+            | (u16::from(edge.phantom_unitig.is_some()) << COMPACT_EDGE_PHANTOM_BIT);
+        bytes[22..24].copy_from_slice(&tail.to_le_bytes());
         return bytes;
     }
     let kmer_bytes = discontinuity_edge_kmer_bytes::<K>();
@@ -1779,25 +1811,11 @@ fn decode_discontinuity_edge<const K: usize>(bytes: &[u8]) -> DiscontinuityEdge<
         let read_u64 = |range: std::ops::Range<usize>| {
             u64::from_le_bytes(bytes[range].try_into().expect("eight-byte edge field"))
         };
-        let flags = bytes[22];
-        let endpoint = |bits: u64, side_bit: u8| {
-            if bits == u64::MAX {
-                MatrixEndpoint::Phi
-            } else {
-                MatrixEndpoint::Vertex(DiscontinuityEndpoint {
-                    vertex: Kmer::from_bits(bits as u128),
-                    side: if flags & side_bit == 0 {
-                        Side::Front
-                    } else {
-                        Side::Back
-                    },
-                })
-            }
-        };
-        let first = endpoint(read_u64(0..8), 1);
-        let second = endpoint(read_u64(8..16), 2);
+        let tail = u16::from_le_bytes(bytes[22..24].try_into().unwrap());
+        let first = decode_compact_endpoint::<K>(read_u64(0..8));
+        let second = decode_compact_endpoint::<K>(read_u64(8..16));
         let raw_unitig = u32::from_le_bytes(bytes[18..22].try_into().unwrap());
-        let phantom_unitig = if flags & (1 << 4) == 0 {
+        let phantom_unitig = if tail & (1 << COMPACT_EDGE_PHANTOM_BIT) == 0 {
             None
         } else {
             match (first, second) {
@@ -1810,19 +1828,19 @@ fn decode_discontinuity_edge<const K: usize>(bytes: &[u8]) -> DiscontinuityEdge<
             first,
             second,
             weight: u64::from(u16::from_le_bytes(bytes[16..18].try_into().unwrap())),
-            unitig_bucket: u16::from_le_bytes(bytes[23..25].try_into().unwrap()),
+            unitig_bucket: tail & COMPACT_EDGE_BUCKET_MASK,
             unitig_index: if raw_unitig == u32::MAX {
                 usize::MAX
             } else {
                 raw_unitig as usize
             },
-            unitig_exit_side: if flags & (1 << 2) == 0 {
+            unitig_exit_side: if tail & (1 << COMPACT_EDGE_EXIT_BIT) == 0 {
                 Side::Front
             } else {
                 Side::Back
             },
             phantom_unitig,
-            swapped: flags & (1 << 3) != 0,
+            swapped: tail & (1 << COMPACT_EDGE_SWAPPED_BIT) != 0,
         };
     }
     let kmer_bytes = discontinuity_edge_kmer_bytes::<K>();
@@ -1878,31 +1896,14 @@ fn decode_partition_incoming<const K: usize>(
     if K <= 31 {
         let first = u64::from_le_bytes(bytes[..8].try_into().unwrap());
         let second = u64::from_le_bytes(bytes[8..16].try_into().unwrap());
-        if second == u64::MAX {
+        let MatrixEndpoint::Vertex(current) = decode_compact_endpoint::<K>(second) else {
             return None;
-        }
-        let flags = bytes[22];
-        let endpoint = if first == u64::MAX {
-            MatrixEndpoint::Phi
-        } else {
-            MatrixEndpoint::Vertex(DiscontinuityEndpoint {
-                vertex: Kmer::from_bits(first as u128),
-                side: if flags & 1 == 0 {
-                    Side::Front
-                } else {
-                    Side::Back
-                },
-            })
         };
         return Some((
-            Kmer::from_bits(second as u128),
+            current.vertex,
             PartitionOtherEnd {
-                endpoint,
-                side_at_current: if flags & 2 == 0 {
-                    Side::Front
-                } else {
-                    Side::Back
-                },
+                endpoint: decode_compact_endpoint::<K>(first),
+                side_at_current: current.side,
                 weight: u64::from(u16::from_le_bytes(bytes[16..18].try_into().unwrap())),
                 in_same_part: false,
                 processed: false,
@@ -1951,7 +1952,7 @@ const fn discontinuity_edge_kmer_bytes<const K: usize>() -> usize {
 #[inline]
 const fn discontinuity_edge_record_len<const K: usize>() -> usize {
     if K <= 31 {
-        25
+        24
     } else {
         // Two (present, kmer, side) endpoints, the 8-byte weight, the 8-byte
         // unitig index, three flag bytes, the (kmer, side) phantom endpoint,
@@ -1996,7 +1997,18 @@ fn add_unitig_base_to_encoded_edge<const K: usize>(
 #[inline]
 fn set_encoded_edge_unitig_bucket<const K: usize>(bytes: &mut [u8; 74], bucket: u16) {
     let offset = discontinuity_edge_record_len::<K>() - 2;
-    bytes[offset..offset + 2].copy_from_slice(&bucket.to_le_bytes());
+    let value = if K <= 31 {
+        // The compact bucket field shares its u16 with the edge flags.
+        assert!(
+            bucket <= COMPACT_EDGE_BUCKET_MASK,
+            "local unitig bucket fits compact edge"
+        );
+        let tail = u16::from_le_bytes([bytes[offset], bytes[offset + 1]]);
+        (tail & !COMPACT_EDGE_BUCKET_MASK) | bucket
+    } else {
+        bucket
+    };
+    bytes[offset..offset + 2].copy_from_slice(&value.to_le_bytes());
 }
 
 #[inline]
@@ -6055,12 +6067,20 @@ struct MaterializedStitchedCoordBucketEntry {
     color_runs: u64,
 }
 
-const STITCH_COORD_MAGIC: &[u8; 8] = b"CF3SCB2\0";
+const STITCH_COORD_MAGIC: &[u8; 8] = b"CF3SCB3\0";
 // V3 stores the high label-offset bits in flags. Reject V2: release writers
 // could already have truncated offsets, even when record lengths look valid.
-const MATERIALIZED_STITCH_COORD_MAGIC: &[u8; 8] = b"CF3MCB3\0";
+const MATERIALIZED_STITCH_COORD_MAGIC: &[u8; 8] = b"CF3MCB4\0";
+/// Uncolored shards drop the color index and count, which uncolored records
+/// never set, and store only the other 18 bytes of each record.
+const MATERIALIZED_STITCH_COORD_NARROW_MAGIC: &[u8; 8] = b"CF3MCU1\0";
+const MATERIALIZED_STITCH_COORD_NARROW_RECORD_LEN: usize = 18;
 const STITCH_COORD_HEADER_LEN: u64 = 32;
-const STITCH_PATH_INFO_RECORD_LEN: u64 = 24;
+/// Edge path-info record: path id (u64), local unitig index (u32), rank
+/// (u16), flags (u8), and one zero byte. The rank is C++'s `weight_t`; the
+/// materialized record already narrows it to 16 bits, so a wider field only
+/// carried zeros.
+const STITCH_PATH_INFO_RECORD_LEN: u64 = 16;
 const STITCH_COORD_RECORD_LEN: u64 = 24;
 const MATERIALIZED_STITCH_COORD_SHARD_WRITE_BUFFER: usize = 16 * 1024;
 const FINAL_UNITIG_BUCKET_WRITE_BUFFER: usize = 128 * 1024;
@@ -6083,13 +6103,19 @@ fn materialized_shard_stream_buffer() -> usize {
             .unwrap_or(MATERIALIZED_SHARD_STREAM_BUFFER)
     })
 }
+
+/// [`materialized_shard_stream_buffer`] as a block size, which the block
+/// format caps; the tuning variable may ask for more, for the plain buffers.
+fn materialized_shard_block_bytes() -> usize {
+    materialized_shard_stream_buffer().min(crate::block_io::MAX_BLOCK_BYTES)
+}
 const EDGE_PATH_INFO_WORKER_BUFFER: usize = 128 * 1024;
 const STITCH_COORD_REVERSE_FLAG: u8 = 1;
 const STITCH_COORD_CYCLE_FLAG: u8 = 2;
 const MAX_OPEN_STITCH_PATH_INFO_WRITERS: usize = 768;
 /// Cuttlefish's maximal-unitig coordinate fanout before descriptor adaptation.
 const DEFAULT_MAX_UNITIG_COORD_BUCKETS: usize = 1024;
-/// Ceiling on the estimated distinct colour count used to size the colour table.
+/// Ceiling on the estimated distinct color count used to size the color table.
 const DEFAULT_EXPECTED_COLOR_CEILING: u64 = 48 * 1024 * 1024;
 /// Worker count at or above which the narrower coordinate fanout is used.
 const HIGH_THREAD_COORD_BUCKET_THRESHOLD: usize = 128;
@@ -6463,15 +6489,25 @@ const fn vertex_path_info_record_len<const K: usize>() -> usize {
     }
 }
 
-#[repr(C)]
+/// A `.pv` record at k <= 31: vertex, path id, and `rank << 2 | exit side |
+/// cycle << 1` in 32 bits. Packed to 20 bytes; fields are only ever copied
+/// out by value.
+#[repr(C, packed(4))]
 #[derive(Clone, Copy)]
 struct CompactVertexPathInfoRecord {
     vertex: u64,
     path_id: u64,
-    rank_and_flags: u64,
+    rank_and_flags: u32,
 }
 
-const _: () = assert!(std::mem::size_of::<CompactVertexPathInfoRecord>() == 24);
+const _: () = assert!(std::mem::size_of::<CompactVertexPathInfoRecord>() == 20);
+
+/// Packs a vertex path rank and its flags into the compact record's field.
+/// Ranks count unitigs along a path, far below the 2^30 this allows.
+#[inline]
+fn compact_rank_and_flags(rank: u64, flags: u64) -> u32 {
+    u32::try_from((rank << 2) | flags).expect("vertex path rank fits in 30 bits")
+}
 
 struct VertexPathInfoBucketWriters<const K: usize> {
     dir: PathBuf,
@@ -6561,7 +6597,8 @@ fn encoded_vertex_path_info_record<const K: usize>(record: &VertexPathInfo<K>) -
         bytes[8..16].copy_from_slice(&(record.info.path_id.as_u128() as u64).to_le_bytes());
         let flags =
             u64::from(record.info.exit_side == Side::Back) | (u64::from(record.info.is_cycle) << 1);
-        bytes[16..24].copy_from_slice(&((record.info.rank << 2) | flags).to_le_bytes());
+        bytes[16..20]
+            .copy_from_slice(&compact_rank_and_flags(record.info.rank, flags).to_le_bytes());
         return bytes;
     }
     let kmer_bytes = discontinuity_edge_kmer_bytes::<K>();
@@ -6676,14 +6713,18 @@ fn append_encoded_compact_vertex_path_info<const K: usize>(
     }
     output.extend_from_slice(&(vertex.as_u128() as u64).to_le_bytes());
     output.extend_from_slice(&info.path_id.to_le_bytes());
-    output.extend_from_slice(&info.rank_and_flags.to_le_bytes());
+    output.extend_from_slice(
+        &compact_rank_and_flags(info.rank_and_flags >> 2, info.rank_and_flags & 3).to_le_bytes(),
+    );
 }
 
 fn decoded_vertex_path_info_record<const K: usize>(bytes: &[u8]) -> VertexPathInfo<K> {
     if K <= 31 {
         let vertex = u64::from_le_bytes(bytes[..8].try_into().expect("u64 vertex field"));
         let path_id = u64::from_le_bytes(bytes[8..16].try_into().expect("u64 path field"));
-        let rank_and_flags = u64::from_le_bytes(bytes[16..24].try_into().expect("u64 rank field"));
+        let rank_and_flags = u64::from(u32::from_le_bytes(
+            bytes[16..20].try_into().expect("u32 rank field"),
+        ));
         return VertexPathInfo {
             vertex: Kmer::from_bits(vertex as u128),
             info: PathInfo {
@@ -6915,8 +6956,12 @@ fn map_external_cpp_path_info_buckets_to_max_unitig_buckets<const K: usize>(
         inputs.stats.unitig_bases
     );
     let max_unitig_bucket_mask = max_unitig_bucket_count - 1;
-    let shared_writers =
-        SharedMaterializedWriters::new(coord_dir, max_unitig_bucket_count, open_writer_limit);
+    let shared_writers = SharedMaterializedWriters::new(
+        coord_dir,
+        max_unitig_bucket_count,
+        open_writer_limit,
+        !colored,
+    );
     let mut phantom_writers =
         SharedMaterializedBatch::new(&shared_writers, max_unitig_bucket_count);
     for (record, phantom) in expansion.phantom_records {
@@ -6953,7 +6998,11 @@ fn map_external_cpp_path_info_buckets_to_max_unitig_buckets<const K: usize>(
             direct_local_unitigs_complete: true,
         });
     }
-    if !path_info_manifest.is_empty() {
+    // The external expansion hands its path-info over as files only. Map every
+    // range bucket from them even when there are none: a graph without
+    // discontinuity edges still has all of its local unitigs to emit, and
+    // this is where they are emitted.
+    if !path_info_manifest.is_empty() || expansion.records.is_empty() {
         let path_info_bucket_count = inputs.ranges.len().div_ceil(ranges_per_bucket).max(1);
         let mut groups = vec![Vec::<StitchedCoordBucketEntry>::new(); path_info_bucket_count];
         for entry in path_info_manifest {
@@ -7100,8 +7149,12 @@ fn map_external_cpp_path_info_buckets_to_max_unitig_buckets<const K: usize>(
     let workers = threads.max(1).min(path_info_records.len().max(1));
 
     if workers == 1 || path_info_records.len() < 2 {
-        let mut writers =
-            MaterializedStitchedCoordShardWriters::new(coord_dir, 0, max_unitig_bucket_count);
+        let mut writers = MaterializedStitchedCoordShardWriters::new(
+            coord_dir,
+            0,
+            max_unitig_bucket_count,
+            !colored,
+        );
         for (bucket_id, records) in path_info_records.iter().enumerate() {
             let mut emit_direct = |unitig: FinalUnitigRecord| -> Result<(), SerialCollationError> {
                 if unitig.colors.is_empty() {
@@ -7139,6 +7192,7 @@ fn map_external_cpp_path_info_buckets_to_max_unitig_buckets<const K: usize>(
                         coord_dir,
                         worker_id,
                         max_unitig_bucket_count,
+                        !colored,
                     );
                     let mut direct_batch = Vec::with_capacity(256);
                     let mut emit_direct =
@@ -7364,9 +7418,10 @@ where
         path: bucket.label_path.clone(),
         source,
     })?;
-    let mut unitig_input = BufReader::with_capacity(1024 * 1024, unitig_file);
+    let mut unitig_input = Lz4BlockReader::new(unitig_file);
     let mut label_input = BufReader::with_capacity(4 * 1024 * 1024, label_file);
     let mut label = Vec::new();
+    let mut packed = Vec::new();
     let mut colors = Vec::new();
     let mut discard = vec![0u8; 64 * 1024];
 
@@ -7383,13 +7438,13 @@ where
             })?;
         }
         if let Some(record) = dense_record.to_record(unitig_index) {
-            label.resize(unitig.label_len as usize, 0);
-            label_input
-                .read_exact(&mut label)
-                .map_err(|source| SerialCollationError::Io {
-                    path: bucket.label_path.clone(),
-                    source,
-                })?;
+            read_packed_label(
+                &mut label_input,
+                &bucket.label_path,
+                &mut packed,
+                &mut label,
+                unitig.label_len as usize,
+            )?;
             let max_bucket = stitched_coord_bucket(record.path_id, max_unitig_bucket_mask);
             write_external_materialized_record(
                 writers,
@@ -7399,13 +7454,13 @@ where
                 has_colors.then_some(colors.as_slice()),
             )?;
         } else if unitig.left_exit().is_none() && unitig.right_exit().is_none() {
-            label.resize(unitig.label_len as usize, 0);
-            label_input
-                .read_exact(&mut label)
-                .map_err(|source| SerialCollationError::Io {
-                    path: bucket.label_path.clone(),
-                    source,
-                })?;
+            read_packed_label(
+                &mut label_input,
+                &bucket.label_path,
+                &mut packed,
+                &mut label,
+                unitig.label_len as usize,
+            )?;
             let reverse = reverse_complement_is_less(&label);
             if reverse {
                 let reversed_label = reverse_complement_label(&label);
@@ -7424,11 +7479,50 @@ where
                 &mut label_input,
                 &bucket.label_path,
                 &mut discard,
-                unitig.label_len as u64,
+                crate::dna::packed_2bit_len(unitig.label_len as usize) as u64,
             )?;
         }
     }
+    // Every record and label has been consumed; anything left over means the
+    // bucket does not match the path-info that indexed it.
+    if !block_stream_ended(&mut unitig_input, &bucket.unitig_path)? {
+        return Err(SerialCollationError::MalformedCoordBucket(
+            bucket.unitig_path.clone(),
+        ));
+    }
+    let mut extra = [0u8; 1];
+    let label_tail = label_input
+        .read(&mut extra)
+        .map_err(|source| SerialCollationError::Io {
+            path: bucket.label_path.clone(),
+            source,
+        })?;
+    if label_tail != 0 {
+        return Err(SerialCollationError::MalformedCoordBucket(
+            bucket.label_path.clone(),
+        ));
+    }
     let _ = inputs;
+    Ok(())
+}
+
+/// Reads one packed local-unitig label and unpacks it into `label`.
+fn read_packed_label(
+    input: &mut impl Read,
+    path: &Path,
+    packed: &mut Vec<u8>,
+    label: &mut Vec<u8>,
+    len: usize,
+) -> Result<(), SerialCollationError> {
+    packed.resize(crate::dna::packed_2bit_len(len), 0);
+    input
+        .read_exact(packed)
+        .map_err(|source| SerialCollationError::Io {
+            path: path.to_path_buf(),
+            source,
+        })?;
+    label.clear();
+    crate::dna::unpack_2bit_extend(label, packed, len);
     Ok(())
 }
 
@@ -8299,6 +8393,7 @@ fn read_and_discard_exact(
 struct MaterializedStitchedCoordShardWriters<'a> {
     coord_dir: &'a Path,
     worker_id: usize,
+    narrow: bool,
     writers: Vec<Option<MaterializedStitchedCoordShardWriter>>,
     open_writers: usize,
 }
@@ -8349,6 +8444,8 @@ impl MaterializedRecordSink for MaterializedStitchedCoordShardWriters<'_> {
 
 struct SharedMaterializedWriters<'a> {
     coord_dir: &'a Path,
+    /// Write uncolored shards with the narrow record layout.
+    narrow: bool,
     writers: Vec<Mutex<Option<MaterializedStitchedCoordShardWriter>>>,
     retained: Vec<Mutex<Vec<PendingMaterializedBucket>>>,
     open_cache: Mutex<OpenMaterializedWriterCache>,
@@ -8483,9 +8580,10 @@ struct PendingMaterializedBucket {
 }
 
 impl<'a> SharedMaterializedWriters<'a> {
-    fn new(coord_dir: &'a Path, bucket_count: usize, open_limit: usize) -> Self {
+    fn new(coord_dir: &'a Path, bucket_count: usize, open_limit: usize, narrow: bool) -> Self {
         Self {
             coord_dir,
+            narrow,
             writers: (0..bucket_count).map(|_| Mutex::new(None)).collect(),
             retained: (0..bucket_count).map(|_| Mutex::new(Vec::new())).collect(),
             open_cache: Mutex::new(OpenMaterializedWriterCache {
@@ -8513,10 +8611,11 @@ impl<'a> SharedMaterializedWriters<'a> {
                 if let Some(writer) = writer.as_mut() {
                     writer.ensure_open()?;
                 } else {
-                    *writer = Some(MaterializedStitchedCoordShardWriter::create(
+                    *writer = Some(MaterializedStitchedCoordShardWriter::create_with_layout(
                         self.coord_dir,
                         0,
                         bucket_id,
+                        self.narrow,
                     )?);
                 }
                 cache.open += 1;
@@ -8645,8 +8744,10 @@ impl<'a, 'b> SharedMaterializedBatch<'a, 'b> {
 
     #[inline]
     fn uncolored_bucket_ready(bucket: &PendingMaterializedBucket) -> bool {
+        // Labels are packed 4 bases per byte; the threshold keeps counting
+        // bases so a flush carries as many records as it did in ASCII.
         bucket.records.len() >= Self::FLUSH_BYTES / STITCH_COORD_RECORD_LEN as usize
-            && bucket.labels.len() >= Self::FLUSH_BYTES
+            && bucket.labels.len() * 4 >= Self::FLUSH_BYTES
     }
 
     /// A colored batch is written once any of its three streams fills.
@@ -8657,7 +8758,7 @@ impl<'a, 'b> SharedMaterializedBatch<'a, 'b> {
     #[inline]
     fn colored_bucket_ready(bucket: &PendingMaterializedBucket) -> bool {
         bucket.records.len() >= Self::FLUSH_BYTES / STITCH_COORD_RECORD_LEN as usize
-            || bucket.labels.len() >= Self::FLUSH_BYTES
+            || bucket.labels.len() * 4 >= Self::FLUSH_BYTES
             || bucket.colors.len() * std::mem::size_of::<UnitigColor>() >= Self::FLUSH_BYTES
     }
 }
@@ -8673,7 +8774,7 @@ impl MaterializedRecordSink for SharedMaterializedBatch<'_, '_> {
         let label_offset = u32::try_from(bucket.labels.len()).map_err(|_| {
             SerialCollationError::MalformedCoordBucket(self.shared.coord_dir.to_path_buf())
         })?;
-        bucket.labels.extend_from_slice(label);
+        crate::dna::pack_2bit_extend(&mut bucket.labels, label);
         bucket
             .records
             .push(LoadedMaterializedStitchedCoordRecord::new(
@@ -8708,7 +8809,7 @@ impl MaterializedRecordSink for SharedMaterializedBatch<'_, '_> {
             SerialCollationError::MalformedCoordBucket(self.shared.coord_dir.to_path_buf())
         })?;
         let color_start = bucket.colors.len() as u32;
-        bucket.labels.extend_from_slice(label);
+        crate::dna::pack_2bit_extend(&mut bucket.labels, label);
         bucket.colors.extend_from_slice(colors);
         bucket
             .records
@@ -8730,12 +8831,13 @@ impl MaterializedRecordSink for SharedMaterializedBatch<'_, '_> {
 }
 
 impl<'a> MaterializedStitchedCoordShardWriters<'a> {
-    fn new(coord_dir: &'a Path, worker_id: usize, bucket_count: usize) -> Self {
+    fn new(coord_dir: &'a Path, worker_id: usize, bucket_count: usize, narrow: bool) -> Self {
         let mut writers = Vec::with_capacity(bucket_count);
         writers.resize_with(bucket_count, || None);
         Self {
             coord_dir,
             worker_id,
+            narrow,
             writers,
             open_writers: 0,
         }
@@ -8744,11 +8846,13 @@ impl<'a> MaterializedStitchedCoordShardWriters<'a> {
     fn ensure_writer(&mut self, bucket_id: usize) -> Result<(), SerialCollationError> {
         if self.writers[bucket_id].is_none() {
             self.evict_writer_if_needed(bucket_id)?;
-            self.writers[bucket_id] = Some(MaterializedStitchedCoordShardWriter::create(
-                self.coord_dir,
-                self.worker_id,
-                bucket_id,
-            )?);
+            self.writers[bucket_id] =
+                Some(MaterializedStitchedCoordShardWriter::create_with_layout(
+                    self.coord_dir,
+                    self.worker_id,
+                    bucket_id,
+                    self.narrow,
+                )?);
             self.open_writers += 1;
         } else if self
             .writers
@@ -8821,13 +8925,21 @@ struct MaterializedStitchedCoordShardWriter {
     coord_path: PathBuf,
     label_path: PathBuf,
     color_path: PathBuf,
-    coord_out: Option<BufWriter<File>>,
+    /// Records after the raw 32-byte header, lz4-blocked.
+    coord_out: Option<Lz4BlockWriter<File>>,
     label_out: Option<BufWriter<File>>,
-    color_out: Option<BufWriter<File>>,
+    /// Color runs, lz4-blocked.
+    color_out: Option<Lz4BlockWriter<File>>,
     record_buffer: Vec<u8>,
     records: u64,
+    /// Bytes of packed labels written so far (`pack_2bit_extend`); record
+    /// offsets are byte offsets into the `.mlabel` stream.
     label_bytes: u64,
     color_runs: u64,
+    packed: Vec<u8>,
+    /// Drop the unused color fields from each record on disk.
+    narrow: bool,
+    narrow_buffer: Vec<u8>,
 }
 
 #[inline]
@@ -8840,10 +8952,20 @@ fn unitig_colors_as_bytes(colors: &[UnitigColor]) -> &[u8] {
 }
 
 impl MaterializedStitchedCoordShardWriter {
+    #[cfg(test)]
     fn create(
         coord_dir: &Path,
         worker_id: usize,
         bucket_id: usize,
+    ) -> Result<Self, SerialCollationError> {
+        Self::create_with_layout(coord_dir, worker_id, bucket_id, false)
+    }
+
+    fn create_with_layout(
+        coord_dir: &Path,
+        worker_id: usize,
+        bucket_id: usize,
+        narrow: bool,
     ) -> Result<Self, SerialCollationError> {
         let coord_path = coord_dir.join(format!("{bucket_id:05}.{worker_id:03}.mcoord"));
         let label_path = coord_dir.join(format!("{bucket_id:05}.{worker_id:03}.mlabel"));
@@ -8856,17 +8978,24 @@ impl MaterializedStitchedCoordShardWriter {
             path: label_path.clone(),
             source,
         })?;
-        let mut coord_out =
-            BufWriter::with_capacity(MATERIALIZED_STITCH_COORD_SHARD_WRITE_BUFFER, coord_file);
-        coord_out
-            .write_all(MATERIALIZED_STITCH_COORD_MAGIC)
-            .and_then(|_| coord_out.write_all(&(bucket_id as u64).to_le_bytes()))
-            .and_then(|_| coord_out.write_all(&0u64.to_le_bytes()))
-            .and_then(|_| coord_out.write_all(&0u64.to_le_bytes()))
+        // The header stays raw, so `finish` can fill in its counts in place;
+        // the records after it are lz4-blocked.
+        let mut header = [0u8; STITCH_COORD_HEADER_LEN as usize];
+        header[..8].copy_from_slice(if narrow {
+            MATERIALIZED_STITCH_COORD_NARROW_MAGIC
+        } else {
+            MATERIALIZED_STITCH_COORD_MAGIC
+        });
+        header[8..16].copy_from_slice(&(bucket_id as u64).to_le_bytes());
+        let mut coord_file = coord_file;
+        coord_file
+            .write_all(&header)
             .map_err(|source| SerialCollationError::Io {
                 path: coord_path.clone(),
                 source,
             })?;
+        let coord_out =
+            Lz4BlockWriter::with_block_bytes(coord_file, materialized_shard_block_bytes());
         Ok(Self {
             bucket_id,
             coord_path,
@@ -8879,9 +9008,12 @@ impl MaterializedStitchedCoordShardWriter {
             )),
             color_out: None,
             record_buffer: Vec::with_capacity(materialized_shard_stream_buffer()),
+            packed: Vec::new(),
             records: 0,
             label_bytes: 0,
             color_runs: 0,
+            narrow,
+            narrow_buffer: Vec::new(),
         })
     }
 
@@ -8898,9 +9030,9 @@ impl MaterializedStitchedCoordShardWriter {
                     path: self.coord_path.clone(),
                     source,
                 })?;
-            self.coord_out = Some(BufWriter::with_capacity(
-                MATERIALIZED_STITCH_COORD_SHARD_WRITE_BUFFER,
+            self.coord_out = Some(Lz4BlockWriter::with_block_bytes(
                 coord_file,
+                materialized_shard_block_bytes(),
             ));
         }
         if self.label_out.is_none() {
@@ -8924,9 +9056,9 @@ impl MaterializedStitchedCoordShardWriter {
                     path: self.color_path.clone(),
                     source,
                 })?;
-            self.color_out = Some(BufWriter::with_capacity(
-                materialized_shard_stream_buffer(),
+            self.color_out = Some(Lz4BlockWriter::with_block_bytes(
                 color_file,
+                materialized_shard_block_bytes(),
             ));
         }
         Ok(())
@@ -8949,9 +9081,11 @@ impl MaterializedStitchedCoordShardWriter {
     ) -> Result<(), SerialCollationError> {
         let label_len = u32::try_from(label.len())
             .map_err(|_| SerialCollationError::MalformedCoordBucket(self.coord_path.clone()))?;
+        self.packed.clear();
+        crate::dna::pack_2bit_extend(&mut self.packed, label);
         let label_bytes = checked_materialized_label_bytes(
             self.label_bytes,
-            u64::from(label_len),
+            self.packed.len() as u64,
             &self.label_path,
         )?;
         self.record_buffer
@@ -8974,7 +9108,7 @@ impl MaterializedStitchedCoordShardWriter {
         self.label_out
             .as_mut()
             .expect("label writer is open")
-            .write_all(label)
+            .write_all(&self.packed)
             .map_err(|source| SerialCollationError::Io {
                 path: self.label_path.clone(),
                 source,
@@ -9001,9 +9135,9 @@ impl MaterializedStitchedCoordShardWriter {
                     path: self.color_path.clone(),
                     source,
                 })?;
-            self.color_out = Some(BufWriter::with_capacity(
-                materialized_shard_stream_buffer(),
+            self.color_out = Some(Lz4BlockWriter::with_block_bytes(
                 file,
+                materialized_shard_block_bytes(),
             ));
         }
         let color_out = self
@@ -9084,9 +9218,9 @@ impl MaterializedStitchedCoordShardWriter {
                         path: self.color_path.clone(),
                         source,
                     })?;
-                self.color_out = Some(BufWriter::with_capacity(
-                    materialized_shard_stream_buffer(),
+                self.color_out = Some(Lz4BlockWriter::with_block_bytes(
                     file,
+                    materialized_shard_block_bytes(),
                 ));
             }
             let color_out = self
@@ -9116,10 +9250,16 @@ impl MaterializedStitchedCoordShardWriter {
         if self.record_buffer.is_empty() {
             return Ok(());
         }
+        let bytes = if self.narrow {
+            narrow_materialized_coord_records(&self.record_buffer, &mut self.narrow_buffer);
+            &self.narrow_buffer
+        } else {
+            &self.record_buffer
+        };
         self.coord_out
             .as_mut()
             .expect("coord writer is open")
-            .write_all(&self.record_buffer)
+            .write_blocks(bytes)
             .map_err(|source| SerialCollationError::Io {
                 path: self.coord_path.clone(),
                 source,
@@ -9489,8 +9629,10 @@ impl StitchedCoordShardWriter {
     }
 
     fn write_record(&mut self, record: StitchedCoordRecord) -> Result<(), SerialCollationError> {
-        self.record_buffer
-            .extend_from_slice(&encoded_stitched_coord_record(record));
+        // A rank past 16 bits is a path longer than C++'s weight_t allows.
+        let encoded = encoded_stitched_coord_record(record)
+            .ok_or_else(|| SerialCollationError::MalformedCoordBucket(self.path.clone()))?;
+        self.record_buffer.extend_from_slice(&encoded);
         self.records += 1;
         if self.record_buffer.len() >= STITCH_COORD_RECORD_WRITE_BUFFER {
             self.flush_record_buffer()?;
@@ -9563,11 +9705,12 @@ fn stitched_coord_bucket(path_id: u64, bucket_mask: usize) -> usize {
 
 fn encoded_stitched_coord_record(
     record: StitchedCoordRecord,
-) -> [u8; STITCH_PATH_INFO_RECORD_LEN as usize] {
+) -> Option<[u8; STITCH_PATH_INFO_RECORD_LEN as usize]> {
+    let rank = u16::try_from(record.rank).ok()?;
     let mut bytes = [0u8; STITCH_PATH_INFO_RECORD_LEN as usize];
     bytes[..8].copy_from_slice(&record.path_id.to_le_bytes());
-    bytes[8..16].copy_from_slice(&record.rank.to_le_bytes());
-    bytes[16..20].copy_from_slice(&record.unitig_index.to_le_bytes());
+    bytes[8..12].copy_from_slice(&record.unitig_index.to_le_bytes());
+    bytes[12..14].copy_from_slice(&rank.to_le_bytes());
     let mut flags = 0u8;
     if record.reverse {
         flags |= STITCH_COORD_REVERSE_FLAG;
@@ -9575,8 +9718,8 @@ fn encoded_stitched_coord_record(
     if record.is_cycle {
         flags |= STITCH_COORD_CYCLE_FLAG;
     }
-    bytes[20] = flags;
-    bytes
+    bytes[14] = flags;
+    Some(bytes)
 }
 
 #[inline]
@@ -10108,7 +10251,10 @@ fn append_pending_materialized_bucket(
         .map_err(|_| SerialCollationError::MalformedCoordBucket(path.to_path_buf()))?;
     shard.records.reserve(tail.records.len());
     for pending in &tail.records {
-        if pending.label_offset() + u64::from(pending.label_len) > tail.labels.len() as u64 {
+        if pending.label_offset()
+            + crate::dna::packed_2bit_len(usize::from(pending.label_len)) as u64
+            > tail.labels.len() as u64
+        {
             return Err(SerialCollationError::MalformedCoordBucket(
                 path.to_path_buf(),
             ));
@@ -10149,6 +10295,54 @@ fn read_materialized_stitched_coord_bucket_file(
     Ok(bucket)
 }
 
+/// Whether a block stream has nothing left to read.
+fn block_stream_ended<R: Read>(
+    input: &mut Lz4BlockReader<R>,
+    path: &Path,
+) -> Result<bool, SerialCollationError> {
+    let mut extra = [0u8; 1];
+    let read = input
+        .read(&mut extra)
+        .map_err(|source| SerialCollationError::Io {
+            path: path.to_path_buf(),
+            source,
+        })?;
+    Ok(read == 0)
+}
+
+/// Copies 24-byte native records into the narrow uncolored disk layout,
+/// dropping the color index (bytes 12..16) and count (bytes 20..22).
+fn narrow_materialized_coord_records(wide: &[u8], out: &mut Vec<u8>) {
+    let (records, rest) = wide.as_chunks::<{ STITCH_COORD_RECORD_LEN as usize }>();
+    debug_assert!(rest.is_empty());
+    out.clear();
+    out.reserve(records.len() * MATERIALIZED_STITCH_COORD_NARROW_RECORD_LEN);
+    for record in records {
+        debug_assert!(record[12..16] == [0xff; 4] && record[20..22] == [0; 2]);
+        let mut narrow = [0u8; MATERIALIZED_STITCH_COORD_NARROW_RECORD_LEN];
+        narrow[..12].copy_from_slice(&record[..12]);
+        narrow[12..16].copy_from_slice(&record[16..20]);
+        narrow[16..18].copy_from_slice(&record[22..24]);
+        out.extend_from_slice(&narrow);
+    }
+}
+
+#[inline]
+fn widened_materialized_coord_record(
+    narrow: &[u8; MATERIALIZED_STITCH_COORD_NARROW_RECORD_LEN],
+) -> LoadedMaterializedStitchedCoordRecord {
+    let u16_at = |at: usize| u16::from_le_bytes([narrow[at], narrow[at + 1]]);
+    LoadedMaterializedStitchedCoordRecord {
+        path_id: u64::from_le_bytes(narrow[..8].try_into().expect("u64 path field")),
+        label_offset_low: u32::from_le_bytes(narrow[8..12].try_into().expect("u32 offset field")),
+        color_start: u32::MAX,
+        rank: u16_at(12),
+        label_len: u16_at(14),
+        color_count: 0,
+        flags: u16_at(16),
+    }
+}
+
 fn append_materialized_stitched_coord_bucket_file(
     entry: &MaterializedStitchedCoordBucketEntry,
     bucket: &mut MaterializedStitchedCoordBucket,
@@ -10157,24 +10351,26 @@ fn append_materialized_stitched_coord_bucket_file(
         path: entry.coord_path.clone(),
         source,
     })?;
-    let actual_len = file
-        .metadata()
-        .map_err(|source| SerialCollationError::Io {
-            path: entry.coord_path.clone(),
-            source,
-        })?
-        .len();
     let mut header = [0u8; STITCH_COORD_HEADER_LEN as usize];
     file.read_exact(&mut header)
         .map_err(|source| SerialCollationError::Io {
             path: entry.coord_path.clone(),
             source,
         })?;
-    if &header[..8] != MATERIALIZED_STITCH_COORD_MAGIC {
+    let narrow = if &header[..8] == MATERIALIZED_STITCH_COORD_NARROW_MAGIC {
+        true
+    } else if &header[..8] == MATERIALIZED_STITCH_COORD_MAGIC {
+        false
+    } else {
         return Err(SerialCollationError::MalformedCoordBucket(
             entry.coord_path.clone(),
         ));
-    }
+    };
+    let disk_record_len = if narrow {
+        MATERIALIZED_STITCH_COORD_NARROW_RECORD_LEN as u64
+    } else {
+        STITCH_COORD_RECORD_LEN
+    };
     let bucket_id = u64::from_le_bytes(header[8..16].try_into().expect("bucket ID")) as usize;
     let records = u64::from_le_bytes(header[16..24].try_into().expect("record count"));
     let label_bytes = u64::from_le_bytes(header[24..32].try_into().expect("label bytes"));
@@ -10184,42 +10380,62 @@ fn append_materialized_stitched_coord_bucket_file(
             entry.coord_path.clone(),
         ));
     }
-    let expected_len = STITCH_COORD_HEADER_LEN
-        .checked_add(
-            records
-                .checked_mul(STITCH_COORD_RECORD_LEN)
-                .ok_or_else(|| {
-                    SerialCollationError::MalformedCoordBucket(entry.coord_path.clone())
-                })?,
-        )
+    // The records are lz4-blocked, so the file size says nothing about their
+    // count: the header's claim must not overflow, and the stream must end
+    // exactly after the last record.
+    records
+        .checked_mul(disk_record_len)
+        .filter(|&bytes| bytes <= usize::MAX as u64)
         .ok_or_else(|| SerialCollationError::MalformedCoordBucket(entry.coord_path.clone()))?;
-    if actual_len != expected_len {
-        return Err(SerialCollationError::MalformedCoordBucket(
-            entry.coord_path.clone(),
-        ));
-    }
+    let mut records_input = Lz4BlockReader::new(&mut file);
     let record_base = bucket.records.len();
     let label_base = bucket.labels.len() as u64;
     checked_materialized_label_bytes(label_base, entry.label_bytes, &entry.label_path)?;
     bucket.records.reserve(records as usize);
-    // The private bucket format is the native little-endian in-memory layout.
-    let coord_bytes = unsafe {
-        std::slice::from_raw_parts_mut(
+    if narrow {
+        let mut chunk = vec![0u8; MATERIALIZED_STITCH_COORD_NARROW_RECORD_LEN * 64 * 1024];
+        let mut remaining = records as usize * MATERIALIZED_STITCH_COORD_NARROW_RECORD_LEN;
+        while remaining > 0 {
+            let len = remaining.min(chunk.len());
+            records_input
+                .read_exact(&mut chunk[..len])
+                .map_err(|source| SerialCollationError::Io {
+                    path: entry.coord_path.clone(),
+                    source,
+                })?;
+            let (narrow_records, _) =
+                chunk[..len].as_chunks::<MATERIALIZED_STITCH_COORD_NARROW_RECORD_LEN>();
             bucket
                 .records
-                .spare_capacity_mut()
-                .as_mut_ptr()
-                .cast::<u8>(),
-            records as usize * std::mem::size_of::<LoadedMaterializedStitchedCoordRecord>(),
-        )
-    };
-    file.read_exact(coord_bytes)
-        .map_err(|source| SerialCollationError::Io {
-            path: entry.coord_path.clone(),
-            source,
-        })?;
-    // SAFETY: read_exact initialized every byte of each native POD record.
-    unsafe { bucket.records.set_len(record_base + records as usize) };
+                .extend(narrow_records.iter().map(widened_materialized_coord_record));
+            remaining -= len;
+        }
+    } else {
+        // The wide private format is the native little-endian in-memory layout.
+        let coord_bytes = unsafe {
+            std::slice::from_raw_parts_mut(
+                bucket
+                    .records
+                    .spare_capacity_mut()
+                    .as_mut_ptr()
+                    .cast::<u8>(),
+                records as usize * std::mem::size_of::<LoadedMaterializedStitchedCoordRecord>(),
+            )
+        };
+        records_input
+            .read_exact(coord_bytes)
+            .map_err(|source| SerialCollationError::Io {
+                path: entry.coord_path.clone(),
+                source,
+            })?;
+        // SAFETY: read_exact initialized every byte of each native POD record.
+        unsafe { bucket.records.set_len(record_base + records as usize) };
+    }
+    if !block_stream_ended(&mut records_input, &entry.coord_path)? {
+        return Err(SerialCollationError::MalformedCoordBucket(
+            entry.coord_path.clone(),
+        ));
+    }
 
     let mut label_file =
         File::open(&entry.label_path).map_err(|source| SerialCollationError::Io {
@@ -10263,24 +10479,12 @@ fn append_materialized_stitched_coord_bucket_file(
         .map_err(|_| SerialCollationError::MalformedCoordBucket(entry.coord_path.clone()))?;
     bucket.colors.reserve(entry.color_runs as usize);
     if let Some(color_path) = &entry.color_path {
-        let mut color_file = File::open(color_path).map_err(|source| SerialCollationError::Io {
+        let color_file = File::open(color_path).map_err(|source| SerialCollationError::Io {
             path: color_path.clone(),
             source,
         })?;
+        let mut color_file = Lz4BlockReader::new(color_file);
         let expected_color_bytes = entry.color_runs * std::mem::size_of::<UnitigColor>() as u64;
-        if color_file
-            .metadata()
-            .map_err(|source| SerialCollationError::Io {
-                path: color_path.clone(),
-                source,
-            })?
-            .len()
-            != expected_color_bytes
-        {
-            return Err(SerialCollationError::MalformedCoordBucket(
-                color_path.clone(),
-            ));
-        }
         let color_record_base = bucket.colors.len();
         let uninitialized_colors = unsafe {
             std::slice::from_raw_parts_mut(
@@ -10301,10 +10505,17 @@ fn append_materialized_stitched_coord_bucket_file(
                 .colors
                 .set_len(color_record_base + entry.color_runs as usize)
         };
+        if !block_stream_ended(&mut color_file, color_path)? {
+            return Err(SerialCollationError::MalformedCoordBucket(
+                color_path.clone(),
+            ));
+        }
     }
 
     for record in &mut bucket.records[record_base..] {
-        if record.label_offset() + u64::from(record.label_len) > entry.label_bytes {
+        if record.label_offset() + crate::dna::packed_2bit_len(usize::from(record.label_len)) as u64
+            > entry.label_bytes
+        {
             return Err(SerialCollationError::MalformedCoordBucket(
                 entry.label_path.clone(),
             ));
@@ -10381,6 +10592,8 @@ fn reduce_sorted_materialized_stitched_coord_bucket_with<const K: usize, F>(
         return;
     }
     let mut label = Vec::new();
+    // One unpacked path member at a time; members are stored packed.
+    let mut member = Vec::new();
     let mut colors = Vec::new();
     let mut start = 0;
     while start < records.len() {
@@ -10397,8 +10610,15 @@ fn reduce_sorted_materialized_stitched_coord_bucket_with<const K: usize, F>(
         {
             for (idx, record) in records[start..end].iter().enumerate() {
                 let label_start = record.label_offset() as usize;
-                let label_end = label_start + record.label_len as usize;
-                let unitig_label = &labels[label_start..label_end];
+                let label_end =
+                    label_start + crate::dna::packed_2bit_len(record.label_len as usize);
+                member.clear();
+                crate::dna::unpack_2bit_extend(
+                    &mut member,
+                    &labels[label_start..label_end],
+                    record.label_len as usize,
+                );
+                let unitig_label = member.as_slice();
                 let reverse = if idx == 0 {
                     record.reverse()
                 } else {
@@ -10416,8 +10636,15 @@ fn reduce_sorted_materialized_stitched_coord_bucket_with<const K: usize, F>(
         } else {
             for record in &records[start..end] {
                 let label_start = record.label_offset() as usize;
-                let label_end = label_start + record.label_len as usize;
-                let unitig_label = &labels[label_start..label_end];
+                let label_end =
+                    label_start + crate::dna::packed_2bit_len(record.label_len as usize);
+                member.clear();
+                crate::dna::unpack_2bit_extend(
+                    &mut member,
+                    &labels[label_start..label_end],
+                    record.label_len as usize,
+                );
+                let unitig_label = member.as_slice();
                 append_materialized_colors::<K>(
                     &mut colors,
                     label.len(),
@@ -10725,16 +10952,18 @@ fn read_stitched_coord_bucket_group_dense(
             .0
         {
             let path_id = u64::from_le_bytes(record[..8].try_into().expect("path ID"));
-            let rank = u64::from_le_bytes(record[8..16].try_into().expect("path rank"));
             let unitig_index =
-                u32::from_le_bytes(record[16..20].try_into().expect("local unitig index")) as usize;
-            let flags = record[20];
+                u32::from_le_bytes(record[8..12].try_into().expect("local unitig index")) as usize;
+            let rank = u64::from(u16::from_le_bytes(
+                record[12..14].try_into().expect("path rank"),
+            ));
+            let flags = record[14];
             let Some(slot) = dense.get_mut(unitig_index) else {
                 return Err(SerialCollationError::MalformedCoordBucket(
                     unitig_path.to_path_buf(),
                 ));
             };
-            if slot.rank_and_flags != u64::MAX || record[21..].iter().any(|&byte| byte != 0) {
+            if slot.rank_and_flags != u64::MAX || record[15] != 0 {
                 return Err(SerialCollationError::MalformedCoordBucket(
                     entry.path.clone(),
                 ));
@@ -10760,10 +10989,12 @@ fn decoded_stitched_coord_record(
         ));
     }
     let path_id = u64::from_le_bytes(bytes[..8].try_into().expect("u64 path_id field"));
-    let rank = u64::from_le_bytes(bytes[8..16].try_into().expect("u64 rank field"));
-    let unitig_index = u32::from_le_bytes(bytes[16..20].try_into().expect("u32 unitig field"));
-    let flags = bytes[20];
-    if bytes[21..].iter().any(|&byte| byte != 0) {
+    let unitig_index = u32::from_le_bytes(bytes[8..12].try_into().expect("u32 unitig field"));
+    let rank = u64::from(u16::from_le_bytes(
+        bytes[12..14].try_into().expect("u16 rank field"),
+    ));
+    let flags = bytes[14];
+    if bytes[15] != 0 {
         return Err(SerialCollationError::MalformedCoordBucket(
             path.to_path_buf(),
         ));
@@ -11500,9 +11731,11 @@ impl<const K: usize> ExpansionPathInfoTable<K> {
     #[inline(always)]
     fn insert_compact_record(&self, record: CompactVertexPathInfoRecord) -> bool {
         match self {
-            Self::Compact(table) => {
-                table.insert_packed(record.vertex, record.path_id, record.rank_and_flags)
-            }
+            Self::Compact(table) => table.insert_packed(
+                record.vertex,
+                record.path_id,
+                u64::from(record.rank_and_flags),
+            ),
             Self::Wide(_) => unreachable!("compact path info is only used for k <= 31"),
         }
     }
@@ -11533,12 +11766,12 @@ impl<const K: usize> ExpansionPathInfoTable<K> {
                 key.copy_from_slice(&bytes[..8]);
                 let mut path_id = [0u8; 8];
                 path_id.copy_from_slice(&bytes[8..16]);
-                let mut rank = [0u8; 8];
-                rank.copy_from_slice(&bytes[16..24]);
+                let mut rank = [0u8; 4];
+                rank.copy_from_slice(&bytes[16..20]);
                 table.insert_packed(
                     u64::from_le_bytes(key),
                     u64::from_le_bytes(path_id),
-                    u64::from_le_bytes(rank),
+                    u64::from(u32::from_le_bytes(rank)),
                 )
             }
             Self::Wide(table) => {
@@ -12356,83 +12589,6 @@ pub fn emit_uncolored_discontinuity_inputs_with_threads<const K: usize>(
     cutoff: u32,
     threads: usize,
 ) -> Result<DiscontinuityInputs<K>, DiscontinuityInputError> {
-    emit_uncolored_discontinuity_inputs_with_threads_impl::<K>(bucket_dir, cutoff, threads, None)
-}
-
-/// Contracts uncolored local bucket graphs directly into external streams.
-///
-/// This is the production local-contraction entry point. `threads` must be
-/// nonzero, and `label_path` identifies the external label stream.
-///
-/// When `direct_output_path` names the final FASTA, trivial (exit-free) local
-/// unitigs are written into it directly, since they need no further processing.
-pub fn emit_uncolored_external_discontinuity_inputs_with_threads_in_dir<const K: usize>(
-    bucket_dir: impl AsRef<Path>,
-    cutoff: u32,
-    threads: usize,
-    label_path: impl AsRef<Path>,
-    direct_output_path: Option<&Path>,
-) -> Result<ExternalDiscontinuityInputs<K>, DiscontinuityInputError> {
-    if cutoff == 0 {
-        return Err(DiscontinuityInputError::InvalidCutoff);
-    }
-    if threads == 0 {
-        return Err(DiscontinuityInputError::InvalidThreadCount);
-    }
-    let (store, entries) = BucketStore::open_dir(bucket_dir.as_ref())?;
-    contract_local_subgraphs_into_external_inputs::<K, ()>(
-        &store,
-        &entries,
-        cutoff,
-        threads,
-        label_path.as_ref(),
-        None,
-        direct_output_path,
-        None,
-        0,
-    )
-}
-
-/// Contracts colored local bucket graphs directly into external streams.
-///
-/// Color runs are coalesced with local-unitig metadata and source sets are
-/// deduplicated into the concurrent color repository.
-pub fn emit_colored_external_discontinuity_inputs_with_threads_in_dir<const K: usize>(
-    bucket_dir: impl AsRef<Path>,
-    cutoff: u32,
-    threads: usize,
-    label_path: impl AsRef<Path>,
-    color_path: impl AsRef<Path>,
-    color_repository_dir: impl AsRef<Path>,
-    num_colors: u32,
-) -> Result<ExternalDiscontinuityInputs<K>, DiscontinuityInputError> {
-    if cutoff == 0 {
-        return Err(DiscontinuityInputError::InvalidCutoff);
-    }
-    if threads == 0 {
-        return Err(DiscontinuityInputError::InvalidThreadCount);
-    }
-    let (store, entries) = BucketStore::open_dir(bucket_dir.as_ref())?;
-    contract_local_subgraphs_into_external_inputs::<K, u64>(
-        &store,
-        &entries,
-        cutoff,
-        threads,
-        label_path.as_ref(),
-        Some(color_path.as_ref()),
-        // Colored builds emit no trivial FASTA; every unitig carries colors.
-        None,
-        Some(color_repository_dir.as_ref()),
-        num_colors,
-    )
-}
-
-fn emit_uncolored_discontinuity_inputs_with_threads_impl<const K: usize>(
-    bucket_dir: impl AsRef<Path>,
-    cutoff: u32,
-    threads: usize,
-    label_path: Option<&Path>,
-) -> Result<DiscontinuityInputs<K>, DiscontinuityInputError> {
     if cutoff == 0 {
         return Err(DiscontinuityInputError::InvalidCutoff);
     }
@@ -12441,13 +12597,6 @@ fn emit_uncolored_discontinuity_inputs_with_threads_impl<const K: usize>(
     }
 
     let (store, entries) = BucketStore::open_dir(bucket_dir.as_ref())?;
-    if let Some(label_path) = label_path {
-        let external = contract_local_subgraphs_into_external_inputs::<K, ()>(
-            &store, &entries, cutoff, threads, label_path, None, None, None, 0,
-        )?;
-        return external_inputs_to_memory_inputs(external);
-    }
-
     let outputs = contract_local_subgraphs::<K>(&store, &entries, cutoff, threads)?;
     let mut inputs = DiscontinuityInputs::empty(DiscontinuityInputStats {
         input_buckets: entries.len(),
@@ -12471,48 +12620,103 @@ fn emit_uncolored_discontinuity_inputs_with_threads_impl<const K: usize>(
     Ok(inputs)
 }
 
-fn external_inputs_to_memory_inputs<const K: usize>(
-    external: ExternalDiscontinuityInputs<K>,
-) -> Result<DiscontinuityInputs<K>, DiscontinuityInputError> {
-    let unitig_file =
-        File::open(&external.unitig_path).map_err(|source| DiscontinuityInputError::Io {
-            path: external.unitig_path.clone(),
-            source,
-        })?;
-    let mut unitig_input = BufReader::with_capacity(1024 * 1024, unitig_file);
-    let mut unitigs = Vec::with_capacity(external.unitigs);
-    for _ in 0..external.unitigs {
-        unitigs.push(read_discontinuity_unitig_from_reader_for_input(
-            &mut unitig_input,
-            &external.unitig_path,
-        )?);
+/// Contracts uncolored local bucket graphs directly into external streams.
+///
+/// This is the production local-contraction entry point. `threads` must be
+/// nonzero, and `label_path` identifies the external label stream.
+///
+/// When `direct_output_path` names the final FASTA, trivial (exit-free) local
+/// unitigs are written into it directly, since they need no further processing.
+pub fn emit_uncolored_external_discontinuity_inputs_with_threads_in_dir<const K: usize>(
+    bucket_dir: impl AsRef<Path>,
+    cutoff: u32,
+    threads: usize,
+    label_path: impl AsRef<Path>,
+    direct_output_path: Option<&Path>,
+) -> Result<ExternalDiscontinuityInputs<K>, DiscontinuityInputError> {
+    if cutoff == 0 {
+        return Err(DiscontinuityInputError::InvalidCutoff);
     }
+    if threads == 0 {
+        return Err(DiscontinuityInputError::InvalidThreadCount);
+    }
+    let (store, entries) = BucketStore::open_dir(bucket_dir.as_ref())?;
+    // At cutoff 1 an edge only needs to be present, which frees the edge
+    // counts from the vertex state.
+    if cutoff == 1 {
+        contract_local_subgraphs_into_external_inputs::<K, Presence>(
+            &store,
+            &entries,
+            cutoff,
+            threads,
+            label_path.as_ref(),
+            None,
+            direct_output_path,
+            None,
+            0,
+        )
+    } else {
+        contract_local_subgraphs_into_external_inputs::<K, Counted>(
+            &store,
+            &entries,
+            cutoff,
+            threads,
+            label_path.as_ref(),
+            None,
+            direct_output_path,
+            None,
+            0,
+        )
+    }
+}
 
-    let mut label_file =
-        File::open(&external.label_path).map_err(|source| DiscontinuityInputError::Io {
-            path: external.label_path.clone(),
-            source,
-        })?;
-    let label_len = label_file
-        .metadata()
-        .map_err(|source| DiscontinuityInputError::Io {
-            path: external.label_path.clone(),
-            source,
-        })?
-        .len() as usize;
-    let mut labels = vec![0u8; label_len];
-    label_file
-        .read_exact(&mut labels)
-        .map_err(|source| DiscontinuityInputError::Io {
-            path: external.label_path.clone(),
-            source,
-        })?;
-
-    Ok(DiscontinuityInputs {
-        unitigs,
-        labels,
-        stats: external.stats,
-    })
+/// Contracts colored local bucket graphs directly into external streams.
+///
+/// Color runs are coalesced with local-unitig metadata and source sets are
+/// deduplicated into the concurrent color repository.
+pub fn emit_colored_external_discontinuity_inputs_with_threads_in_dir<const K: usize>(
+    bucket_dir: impl AsRef<Path>,
+    cutoff: u32,
+    threads: usize,
+    label_path: impl AsRef<Path>,
+    color_path: impl AsRef<Path>,
+    color_repository_dir: impl AsRef<Path>,
+    num_colors: u32,
+) -> Result<ExternalDiscontinuityInputs<K>, DiscontinuityInputError> {
+    if cutoff == 0 {
+        return Err(DiscontinuityInputError::InvalidCutoff);
+    }
+    if threads == 0 {
+        return Err(DiscontinuityInputError::InvalidThreadCount);
+    }
+    let (store, entries) = BucketStore::open_dir(bucket_dir.as_ref())?;
+    // Colored builds emit no trivial FASTA; every unitig carries colors. At
+    // cutoff 1 edges are presence bits, freeing the counts from the state.
+    if cutoff == 1 {
+        contract_local_subgraphs_into_external_inputs::<K, ColoredPresence>(
+            &store,
+            &entries,
+            cutoff,
+            threads,
+            label_path.as_ref(),
+            Some(color_path.as_ref()),
+            None,
+            Some(color_repository_dir.as_ref()),
+            num_colors,
+        )
+    } else {
+        contract_local_subgraphs_into_external_inputs::<K, ColoredCounted>(
+            &store,
+            &entries,
+            cutoff,
+            threads,
+            label_path.as_ref(),
+            Some(color_path.as_ref()),
+            None,
+            Some(color_repository_dir.as_ref()),
+            num_colors,
+        )
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -12578,10 +12782,10 @@ fn contract_local_subgraphs_into_external_inputs<const K: usize, C: ColorSlot>(
         .map_err(serial_collation_to_input_error)?;
     let mut label_offset = 0u64;
     let mut ranges = Vec::new();
-    // Distinct colour sets are estimated from the weak-super-k-mer volume. The
+    // Distinct color sets are estimated from the weak-super-k-mer volume. The
     // ceiling bounds the primary table, and anything above it is diverted to the
     // overflow map: on 149,998 Salmonella assemblies the previous 48Mi ceiling
-    // left 36,810,127 colours in overflow. `CF3_RS_EXPECTED_COLORS` overrides
+    // left 36,810,127 colors in overflow. `CF3_RS_EXPECTED_COLORS` overrides
     // the ceiling for measurement.
     let expected_color_ceiling = std::env::var("CF3_RS_EXPECTED_COLORS")
         .ok()
@@ -12867,6 +13071,15 @@ fn contract_local_subgraphs_into_external_inputs<const K: usize, C: ColorSlot>(
         build_elapsed.as_secs_f64(),
         contract_elapsed.as_secs_f64()
     );
+    let (replayed, reread) = (
+        crate::subgraph::COLOR_PASS_REPLAYED.load(Ordering::Relaxed),
+        crate::subgraph::COLOR_PASS_REREAD.load(Ordering::Relaxed),
+    );
+    if replayed + reread != 0 {
+        eprintln!(
+            "cuttlefish: color pass: {replayed} subgraph(s) replayed from the build pass, {reread} read their bucket again"
+        );
+    }
     if workers > 1 {
         eprintln!(
             "cuttlefish: local sink worker time: label/unitig I/O {:.3}s, color resolve/write {:.3}s, edge/range emission {:.3}s",
@@ -13083,7 +13296,7 @@ impl<const K: usize> SerialLocalOutput<'_, K> {
 }
 
 fn write_discontinuity_unitig_record<const K: usize>(
-    out: &mut BufWriter<File>,
+    out: &mut impl Write,
     path: &Path,
     unitig: &DiscontinuityUnitig<K>,
 ) -> Result<(), DiscontinuityInputError> {
@@ -13395,6 +13608,12 @@ fn vertex_map_reuse_slack() -> usize {
     })
 }
 
+/// The in-memory contraction behind the reference and compatibility paths.
+///
+/// It keeps counting vertex states at every cutoff on purpose: it serves
+/// small inputs where the state's size does not matter, and staying on the
+/// general layout makes it an independent check on the presence-bit states
+/// the production path uses at cutoff 1.
 fn contract_local_subgraphs<const K: usize>(
     store: &BucketStore,
     entries: &[BucketManifestEntry],
@@ -13417,7 +13636,7 @@ fn contract_local_subgraphs<const K: usize>(
         let mut outputs = Vec::with_capacity(groups.len());
         let mut reusable_vertices = None;
         for (offset, group) in groups.iter().enumerate() {
-            outputs.push(contract_local_subgraph::<K, ()>(
+            outputs.push(contract_local_subgraph::<K, Counted>(
                 store,
                 group,
                 cutoff,
@@ -13448,7 +13667,7 @@ fn contract_local_subgraphs<const K: usize>(
                     let Some(group) = groups.get(group_idx) else {
                         break;
                     };
-                    chunk_outputs.push(contract_local_subgraph::<K, ()>(
+                    chunk_outputs.push(contract_local_subgraph::<K, Counted>(
                         store,
                         group,
                         cutoff,
@@ -13794,7 +14013,31 @@ mod materialized_record_tests {
     use super::*;
 
     #[test]
-    fn compact_discontinuity_edge_uses_cpp_widths() {
+    fn compact_vertex_path_info_writers_agree() {
+        let vertex = Kmer::<31>::from_bits(0x1234_5678_9abc);
+        let info = CompactExpansionPathInfo::new(0xfeed_beef, 12_345, Side::Back, true);
+        let mut appended = Vec::new();
+        append_encoded_compact_vertex_path_info::<31>(&mut appended, vertex, info);
+        let record = VertexPathInfo {
+            vertex,
+            info: PathInfo {
+                path_id: Kmer::from_bits(0xfeed_beef),
+                rank: 12_345,
+                exit_side: Side::Back,
+                is_cycle: true,
+            },
+        };
+        let encoded = encoded_vertex_path_info_record(&record);
+        assert_eq!(appended.len(), vertex_path_info_record_len::<31>());
+        assert_eq!(appended, encoded[..appended.len()]);
+        let decoded = decoded_vertex_path_info_record::<31>(&appended);
+        assert_eq!(decoded.vertex, vertex);
+        assert_eq!(decoded.info.rank, 12_345);
+        assert!(decoded.info.exit_side == Side::Back && decoded.info.is_cycle);
+    }
+
+    #[test]
+    fn compact_discontinuity_edge_round_trips_in_24_bytes() {
         let edge = DiscontinuityEdge::<31> {
             first: MatrixEndpoint::Vertex(DiscontinuityEndpoint {
                 vertex: Kmer::from_bits(0x1234),
@@ -13812,16 +14055,51 @@ mod materialized_record_tests {
             swapped: true,
         };
 
-        assert_eq!(discontinuity_edge_record_len::<31>(), 25);
+        assert_eq!(discontinuity_edge_record_len::<31>(), 24);
         assert_eq!(blocked_edge_unitig_offset::<31>(), 18);
         let mut encoded = encode_discontinuity_edge(&edge);
-        assert_eq!(decode_discontinuity_edge::<31>(&encoded[..25]), edge);
+        assert_eq!(decode_discontinuity_edge::<31>(&encoded[..24]), edge);
 
         set_encoded_edge_unitig_bucket::<31>(&mut encoded, 511);
+        let rebucketed = decode_discontinuity_edge::<31>(&encoded[..24]);
+        assert_eq!(rebucketed.unitig_bucket, 511);
         assert_eq!(
-            decode_discontinuity_edge::<31>(&encoded[..25]).unitig_bucket,
-            511
+            rebucketed,
+            DiscontinuityEdge {
+                unitig_bucket: 511,
+                ..edge
+            }
         );
+
+        // The all-ones 31-mer on its back side must not read back as phi, and
+        // a phantom edge keeps its phi partner and every flag.
+        let all_ones = DiscontinuityEndpoint::<31> {
+            vertex: Kmer::from_bits((1u128 << 62) - 1),
+            side: Side::Back,
+        };
+        let phantom = DiscontinuityEdge::<31> {
+            first: MatrixEndpoint::Vertex(all_ones),
+            second: MatrixEndpoint::Phi,
+            weight: 1,
+            unitig_bucket: 0,
+            unitig_index: usize::MAX,
+            unitig_exit_side: Side::Front,
+            phantom_unitig: Some(all_ones),
+            swapped: false,
+        };
+        let encoded = encode_discontinuity_edge(&phantom);
+        assert_eq!(decode_discontinuity_edge::<31>(&encoded[..24]), phantom);
+        let incoming = DiscontinuityEdge::<31> {
+            first: MatrixEndpoint::Phi,
+            second: MatrixEndpoint::Vertex(all_ones),
+            phantom_unitig: None,
+            ..phantom
+        };
+        let (vertex, other) =
+            decode_partition_incoming::<31>(&encode_discontinuity_edge(&incoming)[..24]).unwrap();
+        assert_eq!(vertex, all_ones.vertex);
+        assert!(other.side_at_current == Side::Back);
+        assert!(matches!(other.endpoint, MatrixEndpoint::Phi));
     }
 
     /// The wide (K > 31) edge record must round-trip a phantom endpoint.
@@ -14122,8 +14400,15 @@ mod materialized_record_tests {
             reverse: true,
             is_cycle: true,
         };
-        let encoded = encoded_stitched_coord_record(record);
-        assert_eq!(encoded.len(), 24);
+        let encoded = encoded_stitched_coord_record(record).unwrap();
+        assert_eq!(encoded.len(), 16);
+        assert!(
+            encoded_stitched_coord_record(StitchedCoordRecord {
+                rank: u64::from(u16::MAX) + 1,
+                ..record
+            })
+            .is_none()
+        );
         assert_eq!(
             decoded_stitched_coord_record(&encoded, Path::new("test.scb")).unwrap(),
             record
@@ -14248,26 +14533,27 @@ mod materialized_record_tests {
 
         let first = make_entry(0, 11, b"ACGT", 3);
         let second = make_entry(1, 29, b"TTAA", 5);
-        assert_eq!(
-            std::fs::metadata(first.color_path.as_ref().unwrap())
-                .unwrap()
-                .len(),
-            std::mem::size_of::<UnitigColor>() as u64
-        );
-        assert_eq!(
-            std::fs::metadata(second.color_path.as_ref().unwrap())
-                .unwrap()
-                .len(),
-            std::mem::size_of::<UnitigColor>() as u64
-        );
+        for entry in [&first, &second] {
+            let mut colors = Vec::new();
+            crate::block_io::Lz4BlockReader::new(
+                std::fs::File::open(entry.color_path.as_ref().unwrap()).unwrap(),
+            )
+            .read_to_end(&mut colors)
+            .unwrap();
+            assert_eq!(colors.len(), std::mem::size_of::<UnitigColor>());
+        }
         let mut bucket = MaterializedStitchedCoordBucket::default();
         append_materialized_stitched_coord_bucket_file(&first, &mut bucket).unwrap();
         append_materialized_stitched_coord_bucket_file(&second, &mut bucket).unwrap();
 
         assert_eq!(bucket.records.len(), 2);
-        assert_eq!(bucket.labels, b"ACGTTTAA");
+        // Labels are stored packed, 4 bases per byte.
+        let mut expected_labels = Vec::new();
+        crate::dna::pack_2bit_extend(&mut expected_labels, b"ACGT");
+        crate::dna::pack_2bit_extend(&mut expected_labels, b"TTAA");
+        assert_eq!(bucket.labels, expected_labels);
         assert_eq!(bucket.records[0].label_offset(), 0);
-        assert_eq!(bucket.records[1].label_offset(), 4);
+        assert_eq!(bucket.records[1].label_offset(), 1);
         assert_eq!(bucket.records[0].color_start, 0);
         assert_eq!(bucket.records[1].color_start, 1);
         assert_eq!(bucket.records[0].color_count(), 1);
@@ -14315,3 +14601,169 @@ mod materialized_record_tests {
 #[cfg(test)]
 #[path = "discontinuity/materialized_offset_tests.rs"]
 mod materialized_offset_tests;
+
+#[cfg(test)]
+mod presence_slot_tests {
+    use super::*;
+    use crate::GraphInput;
+    use crate::params::BuildParams;
+    use crate::partition::emit_weak_superkmer_buckets;
+
+    /// A local unitig as contraction hands it on: label, end vertices,
+    /// exits, and its color runs.
+    type Unitig<const K: usize> = (Vec<u8>, Kmer<K>, Kmer<K>, u8, Vec<u64>);
+
+    /// Contracts every bucket group in turn on one vertex map, as a worker
+    /// does, and returns the local unitigs and the trivial FASTA.
+    fn contract_all<const K: usize, C: ColorSlot>(
+        store: &BucketStore,
+        entries: &[BucketManifestEntry],
+        repository: Option<&ConcurrentColorRepository>,
+    ) -> (Vec<Unitig<K>>, Vec<u8>) {
+        let mut reusable = None;
+        let mut buffers = LocalBuffers::<K>::default();
+        let (mut unitigs, mut trivial) = (Vec::new(), Vec::new());
+        for group in local_bucket_groups(entries).unwrap() {
+            let output = contract_local_subgraph::<K, C>(
+                store,
+                &group,
+                1,
+                repository,
+                &mut reusable,
+                repository.is_none(),
+                &mut buffers,
+            )
+            .unwrap();
+            let inputs = DiscontinuityInputs {
+                unitigs: output.unitigs.clone(),
+                labels: output.labels.clone(),
+                stats: DiscontinuityInputStats::default(),
+            };
+            for (index, unitig) in inputs.unitigs.iter().enumerate() {
+                let runs = output.color_runs.as_ref().map_or(Vec::new(), |runs| {
+                    runs.unitig(index).iter().map(|run| run.raw()).collect()
+                });
+                unitigs.push((
+                    unitig.label(&inputs).to_vec(),
+                    unitig.left_vertex,
+                    unitig.right_vertex,
+                    unitig.flags,
+                    runs,
+                ));
+            }
+            trivial.extend_from_slice(&output.trivial_fasta);
+            buffers.recycle(output);
+        }
+        (unitigs, trivial)
+    }
+
+    /// At cutoff 1 the production pipeline keeps edges as presence bits in
+    /// the vertex flags. Contraction must hand on exactly what the counting
+    /// states would, colored and uncolored, in the narrow (K <= 31) and wide
+    /// vertex maps.
+    #[test]
+    fn presence_and_counting_states_contract_alike_at_cutoff_one() {
+        contract_alike::<11>(5);
+        contract_alike::<35>(9);
+    }
+
+    fn contract_alike<const K: usize>(minimizer_len: u16) {
+        let root = std::env::temp_dir().join(format!(
+            "cf3-presence-slots-k{K}-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+
+        // A random genome and mutated copies of pieces of it, spread over a
+        // few sources, so the graph has branches, tips, repeats, N-split
+        // fragments, isolated k-mers and vertices with several colors.
+        let mut state = 0x9e37_79b9_7f4a_7c15u64;
+        let mut next = |n: u64| {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state % n
+        };
+        let genome: Vec<u8> = (0..20_000).map(|_| b"ACGT"[next(4) as usize]).collect();
+        let mut sources = vec![b">genome\n".to_vec()];
+        sources[0].extend_from_slice(&genome);
+        sources[0].push(b'\n');
+        for record in 0..40 {
+            let start = next(19_000) as usize;
+            let mut copy = genome[start..start + 1 + next(1000) as usize].to_vec();
+            for _ in 0..next(4) {
+                let at = next(copy.len() as u64) as usize;
+                copy[at] = b"ACGTN"[next(5) as usize];
+            }
+            if record % 4 == 0 {
+                sources.push(Vec::new());
+            }
+            let fasta = sources.last_mut().unwrap();
+            fasta.extend_from_slice(format!(">copy{record}\n").as_bytes());
+            fasta.extend_from_slice(&copy);
+            fasta.push(b'\n');
+        }
+
+        for colored in [false, true] {
+            let dir = root.join(if colored { "colored" } else { "uncolored" });
+            fs::create_dir_all(&dir).unwrap();
+            let mut params = BuildParams::new(
+                GraphInput::References,
+                dir.join("out").display().to_string(),
+            );
+            params.k = K as u16;
+            params.minimizer_len = minimizer_len;
+            params.color = colored;
+            params.work_dir = dir.display().to_string();
+            for (index, fasta) in sources.iter().enumerate() {
+                let path = dir.join(format!("source{index}.fa"));
+                fs::write(&path, fasta).unwrap();
+                params.seqs.push(path.display().to_string());
+            }
+            assert_eq!(params.cutoff(), 1);
+            let emitted = emit_weak_superkmer_buckets::<K>(&params, 64).unwrap();
+            // Contraction punches out the buckets it consumes, so each pass
+            // reads its own copy.
+            let copy = dir.join("buckets-copy");
+            fs::create_dir_all(&copy).unwrap();
+            for file in fs::read_dir(&emitted.buckets.bucket_dir).unwrap() {
+                let file = file.unwrap().path();
+                fs::copy(&file, copy.join(file.file_name().unwrap())).unwrap();
+            }
+            let (store, entries) = BucketStore::open_dir(&emitted.buckets.bucket_dir).unwrap();
+            let (copy_store, copy_entries) = BucketStore::open_dir(&copy).unwrap();
+
+            let (presence, counted) = if colored {
+                let colors = |tag: &str| {
+                    ConcurrentColorRepository::create(dir.join(tag), 1, 0, 1 + sources.len() as u32)
+                        .unwrap()
+                };
+                let (a, b) = (colors("colors-presence"), colors("colors-counted"));
+                (
+                    contract_all::<K, ColoredPresence>(&store, &entries, Some(&a)),
+                    contract_all::<K, ColoredCounted>(&copy_store, &copy_entries, Some(&b)),
+                )
+            } else {
+                (
+                    contract_all::<K, Presence>(&store, &entries, None),
+                    contract_all::<K, Counted>(&copy_store, &copy_entries, None),
+                )
+            };
+            assert!(presence.0.len() > 40, "{} local unitigs", presence.0.len());
+            assert_eq!(
+                colored,
+                presence.0.iter().any(|unitig| !unitig.4.is_empty())
+            );
+            assert_eq!(presence, counted, "colored: {colored}");
+
+            // A presence state cannot count to 2, and says so.
+            assert!(matches!(
+                LocalSubgraph::<K, Presence>::from_manifest_entries(&store, &entries[..1], 2),
+                Err(LocalSubgraphError::PresenceSlotCutoff(2))
+            ));
+        }
+        fs::remove_dir_all(&root).unwrap();
+    }
+}

@@ -139,7 +139,11 @@ fn tail(rank: u64, label: &[u8], colors: &[UnitigColor]) -> PendingMaterializedB
             if colors.is_empty() { u32::MAX } else { 0 },
             colors.len() as u32,
         )],
-        labels: label.to_vec(),
+        labels: {
+            let mut packed = Vec::new();
+            crate::dna::pack_2bit_extend(&mut packed, label);
+            packed
+        },
         colors: colors.to_vec(),
     }
 }
@@ -160,9 +164,43 @@ fn materialized_loader_rejects_old_formats_and_out_of_bounds_labels() {
         .unwrap();
     assert!(read_materialized_stitched_coord_bucket_file(&entry).is_ok());
     // A well-formed offset whose label would extend beyond the file.
-    file.write_all_at(&1u32.to_le_bytes(), STITCH_COORD_HEADER_LEN + 8)
-        .unwrap();
+    rewrite_coord_records(&entry.coord_path, |records| {
+        records[8..12].copy_from_slice(&1u32.to_le_bytes());
+    });
     assert!(read_materialized_stitched_coord_bucket_file(&entry).is_err());
+    // Trailing records beyond the header's count are rejected too.
+    rewrite_coord_records(&entry.coord_path, |records| {
+        records[8..12].copy_from_slice(&0u32.to_le_bytes());
+        let first = records[..STITCH_COORD_RECORD_LEN as usize].to_vec();
+        records.extend_from_slice(&first);
+    });
+    assert!(read_materialized_stitched_coord_bucket_file(&entry).is_err());
+}
+
+/// Decodes a coordinate shard's blocked records, edits them, and writes them
+/// back after the unchanged header.
+fn rewrite_coord_records(path: &Path, edit: impl FnOnce(&mut Vec<u8>)) {
+    let bytes = fs::read(path).unwrap();
+    let header = STITCH_COORD_HEADER_LEN as usize;
+    let mut records = Vec::new();
+    crate::block_io::Lz4BlockReader::new(&bytes[header..])
+        .read_to_end(&mut records)
+        .unwrap();
+    edit(&mut records);
+    let mut writer = crate::block_io::Lz4BlockWriter::new(bytes[..header].to_vec());
+    writer.write_all(&records).unwrap();
+    writer.flush().unwrap();
+    fs::write(path, writer.into_inner()).unwrap();
+}
+
+/// A shard's decoded record bytes.
+fn coord_record_bytes(path: &Path) -> Vec<u8> {
+    let bytes = fs::read(path).unwrap();
+    let mut records = Vec::new();
+    crate::block_io::Lz4BlockReader::new(&bytes[STITCH_COORD_HEADER_LEN as usize..])
+        .read_to_end(&mut records)
+        .unwrap();
+    records
 }
 
 #[test]
@@ -191,7 +229,8 @@ fn materialized_failed_tail_keeps_input_files() {
 fn materialized_writer_checks_limit_before_appending_labels() {
     let directory = TestDirectory::new();
     let mut writer = MaterializedStitchedCoordShardWriter::create(&directory.0, 0, 7).unwrap();
-    writer.label_bytes = (1 << 46) - 2;
+    // A 6-base label packs to 2 bytes, one more than fits.
+    writer.label_bytes = (1 << 46) - 1;
     assert!(writer.write_record(&coord(1), b"AACCGG").is_err());
     assert!(
         writer
@@ -251,14 +290,15 @@ fn materialized_large_bucket_round_trip() {
             &[tail(4, b"ACCGAT", &colors(45))],
         )
         .unwrap();
-        assert_eq!(loaded.labels.len() as u64, base + 24);
+        // Four 6-base labels, 2 packed bytes each.
+        assert_eq!(loaded.labels.len() as u64, base + 8);
         assert_eq!(
             loaded
                 .records
                 .iter()
                 .map(|r| r.label_offset())
                 .collect::<Vec<_>>(),
-            vec![base, base + 6, base + 12, base + 18]
+            vec![base, base + 2, base + 4, base + 6]
         );
         let unitigs = reduce_materialized_stitched_coord_bucket::<3>(
             &mut loaded.records,
@@ -297,7 +337,7 @@ fn benchmark_materialized_coordinate_round_trip() {
             0,
             crate::state::ColorCoordinate::from_u40(42),
         )];
-        let shared = SharedMaterializedWriters::new(&directory, 1, 1);
+        let shared = SharedMaterializedWriters::new(&directory, 1, 1, false);
         let mut batch = SharedMaterializedBatch::new(&shared, 1);
         let started = Instant::now();
         for index in 0..RECORDS {
@@ -354,4 +394,33 @@ fn benchmark_materialized_coordinate_round_trip() {
         );
     }
     fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn narrow_uncolored_shards_load_like_wide_shards() {
+    let directory = TestDirectory::new();
+    let write = |worker_id, narrow| {
+        let mut writer = MaterializedStitchedCoordShardWriter::create_with_layout(
+            &directory.0,
+            worker_id,
+            7,
+            narrow,
+        )
+        .unwrap();
+        writer.write_record(&coord(1), b"AACCGG").unwrap();
+        let mut pending = tail(2, b"GGTTAACCA", &[]);
+        writer.write_pending_batch(&mut pending).unwrap();
+        writer.write_record(&coord(3), b"T").unwrap();
+        writer.finish().unwrap()
+    };
+    let wide = write(0, false);
+    let narrow = write(1, true);
+    assert_eq!(
+        coord_record_bytes(&narrow.coord_path).len(),
+        3 * MATERIALIZED_STITCH_COORD_NARROW_RECORD_LEN
+    );
+    let wide = read_materialized_stitched_coord_bucket_file(&wide).unwrap();
+    let narrow = read_materialized_stitched_coord_bucket_file(&narrow).unwrap();
+    assert_eq!(wide.records, narrow.records);
+    assert_eq!(wide.labels, narrow.labels);
 }

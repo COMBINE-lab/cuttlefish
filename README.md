@@ -14,7 +14,7 @@ it has built the colored graph of 150,000 bacterial genomes on a single
 machine. This repository holds the Rust implementation, which is the canonical
 and forward-looking implementation of Cuttlefish 3.
 
-> **Version 3.0.2.** Feature-complete and validated on reference and read
+> **Version 3.1.0.** Feature-complete and validated on reference and read
 > inputs, uncolored and colored, for odd k from 3 to 63. The major version
 > tracks the product generation, so a backward-incompatible change to the
 > outputs or the command line bumps the *minor* version and is called out in
@@ -64,8 +64,8 @@ cuttlefish build --ref --seq genome.fa -k 31 -t 16 -w work/ -o graph
 cuttlefish build --ref --list genomes.list -k 31 -t 32 -w work/ -o graph --color
 ```
 
-The binary carries six commands: `build`, `compare`, `colors`
-(`dump`/`sets`/`grep`), `cleanup`, `help`, and `version`.
+The binary carries seven commands: `build`, `compare`, `colors`
+(`dump`/`sets`/`grep`), `cleanup`, `probe`, `help`, and `version`.
 
 **Full documentation — commands, output formats, color queries, resource
 control, and architecture — is at

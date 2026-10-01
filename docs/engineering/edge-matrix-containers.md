@@ -149,7 +149,7 @@ The remaining justification for the change is therefore the 65x file-count
 reduction and 5.9 GB less peak disk, at a cost of 0.49 s in contraction, with
 wall time flat (296.3 s against 292.4 s, inside a ~5 s spread) and I/O volume
 unchanged at 438-439 GB. Colored is likewise flat: 6:39.70 against 6:42.00 with
-an unchanged 41 GiB colour index.
+an unchanged 41 GiB color index.
 
 Two implementation notes worth keeping:
 

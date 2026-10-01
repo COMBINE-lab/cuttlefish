@@ -1,5 +1,6 @@
 use cuttlefish_rs::Side;
 use cuttlefish_rs::buckets::{BucketLocation, BucketStore, read_container_manifest};
+use cuttlefish_rs::colored::build_colored_from_buckets;
 use cuttlefish_rs::discontinuity::{
     DISCONTINUITY_PARALLELIZATION_OPPORTUNITIES, DiscontinuityEdge, DiscontinuityEndpoint,
     DiscontinuityInputStats, DiscontinuityInputs, EdgePathInfo, FullSerialContractionStats,
@@ -13,7 +14,7 @@ use cuttlefish_rs::dna::Base;
 use cuttlefish_rs::input::{expand_input_paths, parse_fragments};
 use cuttlefish_rs::kmer::Kmer;
 use cuttlefish_rs::minimizer::canonical_minimizer;
-use cuttlefish_rs::params::BuildParams;
+use cuttlefish_rs::params::{BuildParams, IntermediateCompression};
 use cuttlefish_rs::partition::{emit_weak_superkmer_buckets, partition_fragment, partition_inputs};
 use cuttlefish_rs::state::VertexState;
 use cuttlefish_rs::subgraph::LocalSubgraph;
@@ -131,6 +132,8 @@ fn normalized_uncolored_fixture_tuned(
         params.threads = threads;
     }
 
+    params.compress_intermediates = IntermediateCompression::On;
+    let _build = build_lock();
     let emitted = emit_weak_superkmer_buckets::<7>(&params, subgraph_count).unwrap();
     let built = build_uncolored_from_buckets::<7>(&params, &emitted.buckets.bucket_dir).unwrap();
     let actual = normalized_fasta_labels(&built.output_path);
@@ -143,7 +146,10 @@ fn normalized_uncolored_fixture_tuned(
     assert_eq!(actual, expected);
     assert_eq!(built.unitigs, expected_unitigs.len() as u64);
     assert_eq!(built.unitig_bases, expected_bases);
-    assert_eq!(built.bucket_records, emitted.partition.weak_superkmers);
+    assert_eq!(
+        built.bucket_records + emitted.buckets.dropped_records,
+        emitted.partition.weak_superkmers
+    );
     assert_eq!(built.observed_edges > 0, expect_discontinuity_edges);
     assert_eq!(built.retained_edges > 0, expect_discontinuity_edges);
 
@@ -195,6 +201,8 @@ fn normalized_read_fixture_k<const K: usize>(
     // check that a depth-one read is discarded, which only happens above 1.
     assert_eq!(params.cutoff(), 2);
 
+    params.compress_intermediates = IntermediateCompression::On;
+    let _build = build_lock();
     let emitted = emit_weak_superkmer_buckets::<K>(&params, DEFAULT_SUBGRAPH_COUNT).unwrap();
     let built = build_uncolored_from_buckets::<K>(&params, &emitted.buckets.bucket_dir).unwrap();
     let actual = normalized_fasta_labels(&built.output_path);
@@ -239,6 +247,8 @@ fn normalized_uncolored_fixture_k<const K: usize>(
         .push(fixture(fixture_path).display().to_string());
     params.work_dir = output_prefix.parent().unwrap().display().to_string();
 
+    params.compress_intermediates = IntermediateCompression::On;
+    let _build = build_lock();
     let emitted = emit_weak_superkmer_buckets::<K>(&params, DEFAULT_SUBGRAPH_COUNT).unwrap();
     let built = build_uncolored_from_buckets::<K>(&params, &emitted.buckets.bucket_dir).unwrap();
     let actual = normalized_fasta_labels(&built.output_path);
@@ -251,7 +261,10 @@ fn normalized_uncolored_fixture_k<const K: usize>(
     assert_eq!(actual, expected);
     assert_eq!(built.unitigs, expected_unitigs.len() as u64);
     assert_eq!(built.unitig_bases, expected_bases);
-    assert_eq!(built.bucket_records, emitted.partition.weak_superkmers);
+    assert_eq!(
+        built.bucket_records + emitted.buckets.dropped_records,
+        emitted.partition.weak_superkmers
+    );
 
     let _ = fs::remove_dir_all(emitted.buckets.bucket_dir);
     let _ = fs::remove_file(built.output_path);
@@ -373,9 +386,31 @@ const COLORED_WIDE_SOURCES: [&[u8]; 3] = [
     b"AACCGGTTAACCGGTTAACCGGGCTTAAGGCACCTTGAACGTGCATCGGTAACCTTGGCAAGTCCATGAACGGTTACCAGGTCATGCTAAGGCCATTGAACCGGTTAAGCCTTGGAACCTTAGGCCAATTGGCCTTAAGGTTCCAAGGTTCCAAGGTTCCAATTAAGGCCTTAA",
 ];
 
-/// Builds a colored graph from `sequences` and checks every vertex's colours
+/// Builds a colored graph from `sequences` and checks every vertex's colors
 /// against the sources that actually contain that k-mer.
 fn colored_run_sources_at<const K: usize>(name: &str, threads: usize, sequences: &[&[u8]]) {
+    colored_run_sources_in::<K>(name, threads, sequences, DEFAULT_SUBGRAPH_COUNT);
+}
+
+/// With every super-k-mer in one subgraph there are no discontinuity edges,
+/// and colored collation used to emit nothing at all: every local unitig is
+/// then a direct one, and none were written.
+#[test]
+fn colored_single_subgraph_emits_every_unitig() {
+    colored_run_sources_in::<33>(
+        "colored-run-sources-single-subgraph",
+        3,
+        &COLORED_WIDE_SOURCES,
+        1,
+    );
+}
+
+fn colored_run_sources_in<const K: usize>(
+    name: &str,
+    threads: usize,
+    sequences: &[&[u8]],
+    graph_count: usize,
+) {
     let root = scratch_prefix(name);
     let _ = fs::remove_dir_all(&root);
     fs::create_dir_all(&root).unwrap();
@@ -401,7 +436,7 @@ fn colored_run_sources_at<const K: usize>(name: &str, threads: usize, sequences:
     params.threads = threads;
     params.work_dir = root.display().to_string();
     params.seqs = seqs;
-    let emitted = emit_weak_superkmer_buckets::<K>(&params, DEFAULT_SUBGRAPH_COUNT).unwrap();
+    let emitted = emit_weak_superkmer_buckets::<K>(&params, graph_count).unwrap();
     let mut inputs = emit_colored_external_discontinuity_inputs_with_threads_in_dir::<K>(
         &emitted.buckets.bucket_dir,
         1,
@@ -409,7 +444,7 @@ fn colored_run_sources_at<const K: usize>(name: &str, threads: usize, sequences:
         root.join("local.labels"),
         root.join("local.colors"),
         root.join("local.color-repository"),
-        // Source IDs are one-based, so the colour alphabet is one wider than
+        // Source IDs are one-based, so the color alphabet is one wider than
         // the source count -- what `colored::build` passes. Getting this wrong
         // silently mis-encodes sets containing the highest source id.
         u32::try_from(sequences.len() + 1).unwrap(),
@@ -782,7 +817,8 @@ fn canonical_minimizer_is_strand_invariant_for_fixture_sequence() {
 
 #[test]
 fn vertex_state_matches_cutoff_model() {
-    let mut state = VertexState::<()>::default();
+    // The counting slot: presence bits cannot model cutoffs above 1.
+    let mut state = VertexState::<cuttlefish_rs::state::Counted>::default();
     state.update_edges(Base::E, Base::A);
     state.update_edges(Base::E, Base::A);
     state.update_edges(Base::E, Base::C);
@@ -1642,6 +1678,8 @@ fn serial_discontinuity_pipeline_builds_fasta_from_emitted_buckets() {
         .push(fixture("data/refs2.fa").display().to_string());
     params.work_dir = output_prefix.parent().unwrap().display().to_string();
 
+    params.compress_intermediates = IntermediateCompression::On;
+    let _build = build_lock();
     let emitted = emit_weak_superkmer_buckets::<7>(&params, DEFAULT_SUBGRAPH_COUNT).unwrap();
     let built = build_uncolored_with_serial_discontinuity_pipeline::<7>(
         &params,
@@ -1650,7 +1688,10 @@ fn serial_discontinuity_pipeline_builds_fasta_from_emitted_buckets() {
     .unwrap();
 
     assert_eq!(built.input_buckets, emitted.buckets.bucket_files);
-    assert_eq!(built.bucket_records, emitted.partition.weak_superkmers);
+    assert_eq!(
+        built.bucket_records + emitted.buckets.dropped_records,
+        emitted.partition.weak_superkmers
+    );
     assert_eq!(built.output_path, fasta_path);
 
     let fasta = fs::read_to_string(&built.output_path).unwrap();
@@ -1685,11 +1726,16 @@ fn builds_uncolored_fasta_from_emitted_buckets() {
         .push(fixture("data/refs2.fa").display().to_string());
     params.work_dir = output_prefix.parent().unwrap().display().to_string();
 
+    params.compress_intermediates = IntermediateCompression::On;
+    let _build = build_lock();
     let emitted = emit_weak_superkmer_buckets::<7>(&params, DEFAULT_SUBGRAPH_COUNT).unwrap();
     let built = build_uncolored_from_buckets::<7>(&params, &emitted.buckets.bucket_dir).unwrap();
 
     assert_eq!(built.input_buckets, emitted.buckets.bucket_files);
-    assert_eq!(built.bucket_records, emitted.partition.weak_superkmers);
+    assert_eq!(
+        built.bucket_records + emitted.buckets.dropped_records,
+        emitted.partition.weak_superkmers
+    );
     assert!(built.observed_edges > 0);
     assert!(built.retained_edges > 0);
     assert!(built.unitigs > 0);
@@ -1713,4 +1759,111 @@ fn builds_uncolored_fasta_from_emitted_buckets() {
 
     let _ = fs::remove_dir_all(emitted.buckets.bucket_dir);
     let _ = fs::remove_file(built.output_path);
+}
+
+/// Builds set the process-wide compression switch from their own parameters.
+/// Every build in this file states its setting, so none probes the temp
+/// directory, and holds this lock, so none runs under another test's setting.
+static BUILD_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn build_lock() -> std::sync::MutexGuard<'static, ()> {
+    BUILD_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// The library applies each build's own `compress_intermediates`, and the
+/// production loaders read the streams back either way: compression off and
+/// on must give the same unitigs, colored and uncolored.
+#[test]
+fn intermediate_compression_setting_changes_nothing_but_storage() {
+    let root = scratch_prefix("compression-setting");
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).unwrap();
+    let mut state = 0x2545_f491_4f6c_dd1du64;
+    let mut next = |n: u64| {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        state % n
+    };
+    let genome: Vec<u8> = (0..30_000).map(|_| b"ACGT"[next(4) as usize]).collect();
+    let mut sources = Vec::new();
+    for source in 0..3 {
+        let path = root.join(format!("source{source}.fa"));
+        let mut fasta = Vec::new();
+        for record in 0..20 {
+            let start = next(25_000) as usize;
+            let mut piece = genome[start..start + 200 + next(4000) as usize].to_vec();
+            let at = next(piece.len() as u64) as usize;
+            piece[at] = b"ACGT"[next(4) as usize];
+            fasta.extend_from_slice(format!(">s{source}r{record}\n").as_bytes());
+            fasta.extend_from_slice(&piece);
+            fasta.push(b'\n');
+        }
+        fs::write(&path, fasta).unwrap();
+        sources.push(path.display().to_string());
+    }
+
+    let build = |colored: bool, compression: IntermediateCompression, tag: &str| {
+        let dir = root.join(tag);
+        fs::create_dir_all(&dir).unwrap();
+        let mut params = BuildParams::new(
+            GraphInput::References,
+            dir.join("out").display().to_string(),
+        );
+        params.k = 21;
+        params.minimizer_len = 9;
+        params.color = colored;
+        params.threads = 4;
+        params.compress_intermediates = compression;
+        params.work_dir = dir.display().to_string();
+        params.seqs = sources.clone();
+        let _build = build_lock();
+        let emitted = emit_weak_superkmer_buckets::<21>(&params, 64).unwrap();
+        let output = if colored {
+            build_colored_from_buckets::<21>(&params, &emitted.buckets.bucket_dir)
+                .unwrap()
+                .output_path
+        } else {
+            build_uncolored_from_buckets::<21>(&params, &emitted.buckets.bucket_dir)
+                .unwrap()
+                .output_path
+        };
+        let mut labels: Vec<String> = fs::read_to_string(output)
+            .unwrap()
+            .lines()
+            .filter(|line| !line.starts_with('>'))
+            .map(|label| {
+                let reverse: String = label
+                    .bytes()
+                    .rev()
+                    .map(|b| match b {
+                        b'A' => 'T',
+                        b'C' => 'G',
+                        b'G' => 'C',
+                        _ => 'A',
+                    })
+                    .collect();
+                reverse.min(label.to_string())
+            })
+            .collect();
+        labels.sort();
+        labels
+    };
+    for colored in [false, true] {
+        let off = build(
+            colored,
+            IntermediateCompression::Off,
+            &format!("off-{colored}"),
+        );
+        let on = build(
+            colored,
+            IntermediateCompression::On,
+            &format!("on-{colored}"),
+        );
+        assert!(off.len() > 20, "{} unitigs", off.len());
+        assert_eq!(off, on, "colored: {colored}");
+    }
+    let _ = fs::remove_dir_all(&root);
 }

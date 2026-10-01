@@ -39,6 +39,7 @@ pub fn build_colored_from_buckets<const K: usize>(
     if !params.color {
         return Err(ColoredBuildError::ColorRequired);
     }
+    crate::intermediates::apply_params(params);
     let bucket_dir = bucket_dir.as_ref().to_path_buf();
     let output_name = Path::new(&params.output_prefix)
         .file_name()
@@ -48,12 +49,12 @@ pub fn build_colored_from_buckets<const K: usize>(
     let work_dir = PathBuf::from(&params.work_dir);
     let label_path = work_dir.join(format!("{output_name}.cf3rs.lmtig-labels"));
     let color_path = work_dir.join(format!("{output_name}.cf3rs.colors"));
-    // The colour repository accompanies the FASTA as part of the build's
+    // The color repository accompanies the FASTA as part of the build's
     // output; only the run-sidecar above is scratch.
     let color_repository_dir =
         PathBuf::from(format!("{}.cf3rs.color-repository", params.output_prefix));
-    // The hybrid colour encoding selects its regime from the total source
-    // count, so it has to be known before any colour is written.
+    // The hybrid color encoding selects its regime from the total source
+    // count, so it has to be known before any color is written.
     let sources = expand_input_paths(params)?;
     // Source IDs are one-based, so the regime thresholds and the bitmap width
     // are sized by the largest ID plus one, as C++ does with max_source_id + 1.

@@ -35,7 +35,7 @@ to which one you want.
 | | Cuttlefish 1 | Cuttlefish 2 | Cuttlefish 3 (Rust) |
 | --- | --- | --- | --- |
 | Language | C++ | C++ | Rust |
-| Released | yes | yes | yes (3.0.0) |
+| Released | yes | yes | yes (3.1.0) |
 | Bioconda | yes | yes | yes |
 | References (FASTA) | yes | yes | yes |
 | Reads (FASTQ) | no | yes | yes |

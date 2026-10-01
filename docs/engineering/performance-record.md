@@ -623,7 +623,7 @@ raising both the estimate ceiling and the slot cap, which produced a
 134,217,728-slot table with zero overflow — changed nothing measurable: the
 colored full-corpus build took 4:42.34 and 75.0 GB against 4:41.22 and 75.7 GB
 for the saturated configuration. Overflow is a slope, not a cliff, and the
-`scc` map absorbs tens of millions of colours at the cost of the flat table.
+`scc` map absorbs tens of millions of colors at the cost of the flat table.
 The default ceiling is therefore unchanged; `CF3_RS_EXPECTED_COLORS` and
 `CF3_RS_COLOR_TABLE_SLOTS` expose both bounds for further measurement.
 
@@ -1154,7 +1154,7 @@ and 16,417,233,428 bases with identical internal counts -- 162,177,995
 meta-vertices and 703,792,519 reinserted edges -- and `cuttlefish compare`
 matched all 252,487,658 strand-normalized unitigs against the 64-thread C++
 reference. Colored is flat as well: 6:39.70 against 6:42.00, with an unchanged
-41 GiB colour index and exact counts.
+41 GiB color index and exact counts.
 
 One container-arm contraction sample was a 14.681 s outlier against 12.9, 12.9
 and 12.6; the +4.0% above excludes it. Including it the figure is +7.8%.
@@ -1332,7 +1332,7 @@ Uncolored, three pairs; colored, two:
 That is -1.7% wall and -29.5% peak disk uncolored, and -2.8% and -32.3%
 colored. Colored gains more on both because it writes more -- 619 GB against
 439 GB -- so the flush count and the preallocation slack both scale with it.
-The colour index is unchanged at 41 GiB and every run emitted the exact
+The color index is unchanged at 41 GiB and every run emitted the exact
 252,487,658 unitigs and 16,417,233,428 bases.
 
 Partitioning carries the whole time win: -7.9 s uncolored and -10.8 s colored.
@@ -1650,19 +1650,19 @@ durable hiding place for dead code than forgetting to delete it, and no lint
 will say so. Probing what the process actually reads is cheap and is the only
 way to tell.
 
-## Colour-set encoding
+## Color-set encoding
 
-The colour repository is the largest artifact a colored build produces, and it
+The color repository is the largest artifact a colored build produces, and it
 was four times the size of C++'s: 176.0 GB against 43.6 GB on 149,998
 Salmonella assemblies.
 
 Two things about it were initially misread and are worth recording, because
 both look like defects and neither is. It is not residue -- it carries a
 `metadata.tsv` declaring format, k, encoding and source count, the CLI prints
-its path, and it is the colour index that accompanies the FASTA. And the
-primary colour table's overflow, 36,810,130 entries past a 2^26 ceiling, has
+its path, and it is the color index that accompanies the FASTA. And the
+primary color table's overflow, 36,810,130 entries past a 2^26 ceiling, has
 nothing to do with it: that table is 1 GiB of memory, and admitting every
-overflowed colour was already measured to leave wall time and peak RSS
+overflowed color was already measured to leave wall time and peak RSS
 unchanged.
 
 The size came from the encoding. Each set was a varint count followed by varint
@@ -1672,7 +1672,7 @@ costs over a hundred kilobytes.
 
 C++ avoids this with `fulgor::color_set_builder`, vendored at
 `include/color_sets/hybrid.hpp`, which picks one of three regimes by how much of
-the source set a colour covers:
+the source set a color covers:
 
 | coverage | encoding |
 | --- | --- |
@@ -1716,7 +1716,7 @@ Peak RSS moves by about 1%.
 
 The repository also now defaults to `<output_prefix>.cf3rs.color-repository`,
 beside the FASTA. It was written into `--work-dir`, which callers treat as
-scratch; C++ likewise writes its own colour files next to the FASTA as
+scratch; C++ likewise writes its own color files next to the FASTA as
 `<output>.fa.col.N`.
 
 ## The dead-code removal campaign, and an order-bias lesson
@@ -2342,21 +2342,21 @@ buys ~8% of colored wall at the cost of re-opening the one invariant that took
 the most work to establish. It is specified and costed here so it can be the
 first change after RC1 rather than the last one inside it.
 
-### Acting on it: the colour slot leaves uncolored vertices
+### Acting on it: the color slot leaves uncolored vertices
 
 The profile above pointed at bytes per vertex, and the C++ implementation had
 already drawn the same conclusion: `State_Config<bool Colored_>` specializes,
-and its uncolored specialization has no colour field. Rust carried one in both
+and its uncolored specialization has no color field. Rust carried one in both
 modes -- `{ edges, flags, color_hash: u64 }`, 16 bytes -- so an uncolored build
 spent 8 bytes per vertex on a hash it never reads.
 
-`VertexState<C: ColorSlot>` now takes its colour half as a type parameter,
+`VertexState<C: ColorSlot>` now takes its color half as a type parameter,
 zero-sized for uncolored builds and `u64` for colored, with the shared
 contraction code staying generic through two slot methods (`hash`, `combine`)
 that the uncolored slot implements as constants. Compile-time assertions pin
 both sizes. The flat map, wide flat map, local vertex map, subgraph, reusable
 map and contraction driver thread the parameter; the three drivers pick `()` or
-`u64`, which is the only place colouredness has to be decided.
+`u64`, which is the only place coloredness has to be decided.
 
 Uncolored slots go from 24 bytes to 16 -- four to a cache line instead of
 2.67 -- on 10000 genomes at k = 31, t64, interleaved order-alternated pairs:
@@ -2369,7 +2369,7 @@ Uncolored slots go from 24 bytes to 16 -- four to a cache line instead of
 
 Colored is unchanged, as it must be: its slot is still 16 bytes, and its pairs
 are neutral inside a wide spread (35.9-43.3 s for the same binary). Counts are
-exact in every run, colour sets validate against source-derived truth at k = 31
+exact in every run, color sets validate against source-derived truth at k = 31
 through 63, and the k > 31 sweep against C++ still matches on all 32
 graph/k combinations.
 
@@ -2447,7 +2447,7 @@ staged payload under its atlas lock (pointer swaps, microseconds),
 `flush_colored_job` sorts and compresses outside every lock and re-locks only
 for the segment-chain append, and a crew thread runs one window while the
 workers parse the next, joined before the next take so a bucket's chain still
-grows in ascending source order. It is correct: colour sets validate against
+grows in ascending source order. It is correct: color sets validate against
 source-derived truth at k = 31, 33 and 55 with a 4 KiB window, which forces a
 flush every few records and so exercises the overlap far harder than production.
 
@@ -2566,7 +2566,7 @@ genomes and 27.7% (34.9 s of 125.9 s) at 150000.
 `CF3_RS_INTERLEAVE_COLORED` compresses colored blocks interleaved, which skips
 the deinterleave pass entirely. The block header already records the layout, so
 buckets written this way read back correctly -- verified against source-derived
-colour truth at k = 31 and 55 before trusting the timings. On 10000 genomes,
+color truth at k = 31 and 55 before trusting the timings. On 10000 genomes,
 colored, t64, interleaved pairs:
 
 | | split (shipped) | interleaved | change |
@@ -2662,7 +2662,7 @@ to build the histogram, whether every source occupies a single run, and skips
 the permutation when it does. On 150000 genomes, colored, t64: **1,277,952
 payloads arrived grouped and 0 needed repair.** On 10000 genomes, 98,304 and 0.
 
-Skipping is sound because grouping, not ordering, is what colour exactness
+Skipping is sound because grouping, not ordering, is what color exactness
 requires: the class hash is an XOR over distinct sources, so it does not depend
 on the order they appear in, only on each source's records being uninterrupted.
 
@@ -2673,7 +2673,7 @@ on the order they appear in, only on each source's records being uninterrupted.
 
 **-2.1% on the phase**, and more than the sort's own cost, because the skipped
 path also stops allocating and zero-filling a payload-sized scratch buffer per
-bucket per window. Unitig and base counts are exact, and colour sets validate
+bucket per window. Unitig and base counts are exact, and color sets validate
 against source-derived truth.
 
 ### The fallback, and why correctness does not depend on the fast path
@@ -2687,7 +2687,7 @@ The point of detecting grouping from the payload rather than tracking it with a
 flag is that this case then repairs itself. The flush sees the interleaving and
 counting-sorts, exactly as before. Correctness rests on the repair, never on the
 drain discipline -- so a future change that introduces a mid-source hand-over
-costs the sort, not the colours.
+costs the sort, not the colors.
 
 Detection itself avoids touching a per-source array. A payload's runs are few,
 so recording where the source changes and checking those sources for duplicates
@@ -2704,7 +2704,7 @@ forcing a 64 KiB cap on 1000 real genomes turns the counters right over -- 0
 grouped, 16,384 permuted -- and still produces the exact 18,910,541 unitigs and
 1,783,360,006 bases.
 
-Colours themselves were checked on real data for *both* paths rather than only
+Colors themselves were checked on real data for *both* paths rather than only
 the fast one: 150 Salmonella assemblies at k = 31, once with the flush skipping
 its permutation and once with a 64 KiB cap forcing every payload through the
 repair, each yielding 2,797,788 colored unitigs whose source sets match truth
@@ -2786,7 +2786,7 @@ canonical k-mers rolled, hashed, and asked about, to learn 139 million answers.
 The only changes that can pay are ones that ask fewer questions -- which means
 not making the traversal, i.e. accumulating source sets during the first pass,
 before contraction has decided which vertices are representatives. That is an
-algorithmic change to how colour classes are discovered, not a mechanical one,
+algorithmic change to how color classes are discovered, not a mechanical one,
 and it is the only remaining candidate here.
 
 **A note on the instrumentation, because it distorted the thing it measured.**
@@ -3121,7 +3121,7 @@ RAM). The work is aimed at hosts where intermediate traffic is not free, so
 bytes written and read are reported alongside wall time. Unless stated
 otherwise, measurements are 150k Salmonella at k = 31, t16, order-alternated.
 Output was checked with `cuttlefish compare` and, when colored, with the
-colour digest of 10,000 genomes.
+color digest of 10,000 genomes.
 
 ### What was changed
 
@@ -3129,12 +3129,12 @@ colour digest of 10,000 genomes.
 | --- | --- | --- |
 | pack each fragment once, extract every label from the packed words | partition staging | label packing no longer repeats per weak super-k-mer |
 | 4096-slot per-bucket label cache: colored records reference a cached label; uncolored exact duplicates are dropped at cutoff 1 | `.wskc` | 10k colored buckets 19.74 -> 11.39 GB (with the compact block encoding) |
-| local contraction reuses cached-label slots in the build pass and replays the colour pass from a 64 MiB per-thread occurrence log instead of reading the bucket again | bucket reads | 150k colored reads 879 -> 631 GB, local 512.7 -> 486.0 s |
+| local contraction reuses cached-label slots in the build pass and replays the color pass from a 64 MiB per-thread occurrence log instead of reading the bucket again | bucket reads | 150k colored reads 879 -> 631 GB, local 512.7 -> 486.0 s |
 | intermediate unitig labels stored 2 bits per base | `.labels`, `.mlabel`, retained tails | |
 | compact colored block encoding: source runs plus a u16 code per record (cache reference or literal) | `.wskc` | 150k colored 15:13 -> 13:54, writes 489 -> 361 GB, reads 631 -> 503 GB |
 | edge path-info records 24 -> 16 bytes | P_e `.scb` | 10k 7.04 -> 4.69 GB |
 | vertex path-info records 24 -> 20 bytes at k <= 31 | `.pv` | 10k 9.87 -> 8.25 GB |
-| uncolored coordinate shards drop the unused colour fields, 24 -> 18 bytes | `.mcoord` | with the two rows above: 150k uncolored writes 224 -> 204 GB, reads 414 -> 394 GB |
+| uncolored coordinate shards drop the unused color fields, 24 -> 18 bytes | `.mcoord` | with the two rows above: 150k uncolored writes 224 -> 204 GB, reads 414 -> 394 GB |
 | discontinuity edges 25 -> 24 bytes at k <= 31 (flags folded into spare bits) | edge matrix | 10k 12.75 -> 12.24 GB |
 
 Against 3.0.3, the first six rows took 150k colored from 19:00 to 15:10 and
@@ -3376,8 +3376,8 @@ A colored 10k profile at t16 puts local contraction at 52% of samples:
 | --- | ---: |
 | vertex-table build | 24.7% |
 | - of which repeated-label references (`add_slotted_record`) | 12.3% |
-| unitig walk and colour runs | ~18% |
-| colour-pass replay | 6.9% |
+| unitig walk and color runs | ~18% |
+| color-pass replay | 6.9% |
 | repository inserts | 1.9% |
 
 Two ideas for the reference path were measured and dropped:
@@ -3408,7 +3408,7 @@ stores its key as two `u32`s so it carries no padding.
 | colored | 24 B | 20 B |
 | uncolored | 16 B | 12 B |
 
-The colour-slot type now also chooses the edge storage. `Presence` and
+The color-slot type now also chooses the edge storage. `Presence` and
 `ColoredPresence` use presence bits; `Counted` and `ColoredCounted` keep
 4-bit counts for any cutoff. The dispatch uses the presence slots only at
 cutoff 1, and `LocalSubgraph` refuses a presence slot at any other cutoff, so
@@ -3428,11 +3428,11 @@ counting states.
 
 Outputs are unchanged:
 - `cuttlefish compare` matches every uncolored and read-mode unitig, and the
-  colour digest is unchanged.
+  color digest is unchanged.
 - A randomized test checks that the presence slots answer every edge, flag
-  and colour question as the counting slots do at cutoff 1.
+  and color question as the counting slots do at cutoff 1.
 - A second test contracts real buckets once per slot type, colored and
-  uncolored. Local unitigs, exits, colour runs and trivial FASTA must match.
+  uncolored. Local unitigs, exits, color runs and trivial FASTA must match.
 - Read-mode output order varies from run to run (two baseline runs differ
   byte-wise), so compare, not checksums, is the check there.
 
@@ -3489,13 +3489,13 @@ Read mode's gain is memory, not time: its peak falls during local
 contraction, from 7.07 / 7.14 to 5.98 / 6.13 GB.
 
 For reference inputs, peak RSS was flat or slightly lower. Uncolored and
-read-mode outputs compare equal, and the colour digest is unchanged. The
+read-mode outputs compare equal, and the color digest is unchanged. The
 slot-equivalence test now also runs at K = 35, which exercises the wide map.
 
 ## Compressed intermediates, chosen from the work directory's storage
 
 Three intermediate streams compress well: the local-unitig `.unitigs`
-records (about 3x), `.mcoord` coordinates (about 1.25x) and `.mcolor` colour
+records (about 3x), `.mcoord` coordinates (about 1.25x) and `.mcolor` color
 runs (about 2.2x). They are now written as lz4 blocks, each with an 8-byte
 header of raw and stored length; a block that does not shrink is stored raw.
 The edge matrix, path-info, P_e and labels were measured as incompressible
@@ -3539,6 +3539,34 @@ At 150k and high thread counts the cost stays within noise (order-alternated):
 
 The t256 colored pair is noisy: expansion swung between 34 and 42 s
 independently of the setting.
+
+### On a spinning disk
+
+The measurements above keep intermediates in page cache, so they show only
+compression's CPU cost. To see what it buys when storage cannot keep up, 10k
+ran on newton's HDD scratch (ext4; the probe measures 0.06 GB/s direct write
+and 0.10 GB/s read), t16. The build ran inside a 16 GiB memory cgroup, so page
+cache could not absorb the 50-64 GB of intermediates. In the four runs where
+the cgroup's peak was recorded, it sat at its limit. Written GB is the mean of
+each pair.
+
+| 10k, t16, HDD, 16 GiB cgroup | off | on | written, off to on |
+| --- | ---: | ---: | ---: |
+| colored | 1,722 / 1,781 s | 1,341 / 1,304 s | 63.8 to 57.6 GB |
+| uncolored | 677 / 816 s | 770 / 695 s | 49.6 to 47.2 GB |
+
+Colored builds are 24% faster compressed, and each run's color digest
+matched. Uncolored builds compress only 5% of their writes, and the pairs'
+spread (677 to 816 s) swamps any difference. `auto` classifies this disk as
+rotational and compresses without timing it.
+
+On an Apple Silicon laptop (APFS, 8 threads, 1k colored), `auto` chose off,
+and forcing compression on or off made no difference (37.45 / 36.53 s on
+against 37.74 / 35.40 s off). The probe reported about 15 GB/s write there. That
+is the drive's write cache absorbing a 256 MiB burst: on macOS the probe
+syncs with `fsync`, which does not flush the drive's cache, as a build's writes
+never do either. A long build's sustained rate would be lower, but here it
+still cleared the 1.2 GB/s bar with room to spare.
 
 ### The build's intermediate rate, and where it stops growing
 

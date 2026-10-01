@@ -154,7 +154,7 @@ struct LocalUnitigBucketWriter {
     bucket_id: u16,
     unitig_path: PathBuf,
     label_path: PathBuf,
-    /// Unitig records and colour runs, lz4-blocked: the fixed-width records
+    /// Unitig records and color runs, lz4-blocked: the fixed-width records
     /// are mostly padding and small lengths, and compress about 3x.
     unitigs: Lz4BlockWriter<File>,
     /// Labels packed 2 bits per base (see `pack_2bit_extend`), each starting
@@ -6071,7 +6071,7 @@ const STITCH_COORD_MAGIC: &[u8; 8] = b"CF3SCB3\0";
 // V3 stores the high label-offset bits in flags. Reject V2: release writers
 // could already have truncated offsets, even when record lengths look valid.
 const MATERIALIZED_STITCH_COORD_MAGIC: &[u8; 8] = b"CF3MCB4\0";
-/// Uncolored shards drop the colour index and count, which uncolored records
+/// Uncolored shards drop the color index and count, which uncolored records
 /// never set, and store only the other 18 bytes of each record.
 const MATERIALIZED_STITCH_COORD_NARROW_MAGIC: &[u8; 8] = b"CF3MCU1\0";
 const MATERIALIZED_STITCH_COORD_NARROW_RECORD_LEN: usize = 18;
@@ -6115,7 +6115,7 @@ const STITCH_COORD_CYCLE_FLAG: u8 = 2;
 const MAX_OPEN_STITCH_PATH_INFO_WRITERS: usize = 768;
 /// Cuttlefish's maximal-unitig coordinate fanout before descriptor adaptation.
 const DEFAULT_MAX_UNITIG_COORD_BUCKETS: usize = 1024;
-/// Ceiling on the estimated distinct colour count used to size the colour table.
+/// Ceiling on the estimated distinct color count used to size the color table.
 const DEFAULT_EXPECTED_COLOR_CEILING: u64 = 48 * 1024 * 1024;
 /// Worker count at or above which the narrower coordinate fanout is used.
 const HIGH_THREAD_COORD_BUCKET_THRESHOLD: usize = 128;
@@ -8928,7 +8928,7 @@ struct MaterializedStitchedCoordShardWriter {
     /// Records after the raw 32-byte header, lz4-blocked.
     coord_out: Option<Lz4BlockWriter<File>>,
     label_out: Option<BufWriter<File>>,
-    /// Colour runs, lz4-blocked.
+    /// Color runs, lz4-blocked.
     color_out: Option<Lz4BlockWriter<File>>,
     record_buffer: Vec<u8>,
     records: u64,
@@ -8937,7 +8937,7 @@ struct MaterializedStitchedCoordShardWriter {
     label_bytes: u64,
     color_runs: u64,
     packed: Vec<u8>,
-    /// Drop the unused colour fields from each record on disk.
+    /// Drop the unused color fields from each record on disk.
     narrow: bool,
     narrow_buffer: Vec<u8>,
 }
@@ -10311,7 +10311,7 @@ fn block_stream_ended<R: Read>(
 }
 
 /// Copies 24-byte native records into the narrow uncolored disk layout,
-/// dropping the colour index (bytes 12..16) and count (bytes 20..22).
+/// dropping the color index (bytes 12..16) and count (bytes 20..22).
 fn narrow_materialized_coord_records(wide: &[u8], out: &mut Vec<u8>) {
     let (records, rest) = wide.as_chunks::<{ STITCH_COORD_RECORD_LEN as usize }>();
     debug_assert!(rest.is_empty());
@@ -12782,10 +12782,10 @@ fn contract_local_subgraphs_into_external_inputs<const K: usize, C: ColorSlot>(
         .map_err(serial_collation_to_input_error)?;
     let mut label_offset = 0u64;
     let mut ranges = Vec::new();
-    // Distinct colour sets are estimated from the weak-super-k-mer volume. The
+    // Distinct color sets are estimated from the weak-super-k-mer volume. The
     // ceiling bounds the primary table, and anything above it is diverted to the
     // overflow map: on 149,998 Salmonella assemblies the previous 48Mi ceiling
-    // left 36,810,127 colours in overflow. `CF3_RS_EXPECTED_COLORS` overrides
+    // left 36,810,127 colors in overflow. `CF3_RS_EXPECTED_COLORS` overrides
     // the ceiling for measurement.
     let expected_color_ceiling = std::env::var("CF3_RS_EXPECTED_COLORS")
         .ok()
@@ -14610,7 +14610,7 @@ mod presence_slot_tests {
     use crate::partition::emit_weak_superkmer_buckets;
 
     /// A local unitig as contraction hands it on: label, end vertices,
-    /// exits, and its colour runs.
+    /// exits, and its color runs.
     type Unitig<const K: usize> = (Vec<u8>, Kmer<K>, Kmer<K>, u8, Vec<u64>);
 
     /// Contracts every bucket group in turn on one vertex map, as a worker
@@ -14678,7 +14678,7 @@ mod presence_slot_tests {
 
         // A random genome and mutated copies of pieces of it, spread over a
         // few sources, so the graph has branches, tips, repeats, N-split
-        // fragments, isolated k-mers and vertices with several colours.
+        // fragments, isolated k-mers and vertices with several colors.
         let mut state = 0x9e37_79b9_7f4a_7c15u64;
         let mut next = |n: u64| {
             state ^= state << 13;

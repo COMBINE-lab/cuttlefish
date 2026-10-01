@@ -402,7 +402,7 @@ impl ColorRunStreamReader {
 pub struct ConcurrentColorRepository {
     dir: PathBuf,
     /// Total sources in the build. The hybrid encoding picks its regime from
-    /// how much of this a colour covers, so it must be exact.
+    /// how much of this a color covers, so it must be exact.
     num_colors: u32,
     table: AtomicColorTable,
     overflow: SccHashMap<u64, ColorCoordinate, FastBuildHasher>,
@@ -431,15 +431,15 @@ enum AtomicColorEntry<'a> {
     Full,
 }
 
-/// Returns the slot ceiling for the primary colour table.
+/// Returns the slot ceiling for the primary color table.
 ///
-/// Once the table saturates at three-quarter load, every further colour is
+/// Once the table saturates at three-quarter load, every further color is
 /// diverted to the overflow map, so the ceiling decides how much of a workload
 /// stays on the fast open-addressed path. A slot is 16 bytes, so this bound is
 /// also a memory bound: 2^26 slots is 1 GiB.
 ///
 /// Overflow was measured to be inexpensive: on 149,998 Salmonella assemblies,
-/// admitting all 36,810,127 overflowed colours into the primary table left wall
+/// admitting all 36,810,127 overflowed colors into the primary table left wall
 /// time and peak RSS unchanged. The ceiling is therefore left where it is, and
 /// `CF3_RS_COLOR_TABLE_SLOTS` overrides it for further measurement.
 fn max_color_table_slots() -> usize {
@@ -483,11 +483,11 @@ impl AtomicColorTable {
         if key == Self::EMPTY_KEY {
             return AtomicColorEntry::Full;
         }
-        // Repeated colour sets dominate at scale, so resolve an already-published
+        // Repeated color sets dominate at scale, so resolve an already-published
         // key with a plain probe. The guarded path below performs a `fetch_add`
         // and `fetch_sub` on one shared cache line for every call, including hits
         // that publish nothing; at high worker counts that contention is the
-        // dominant cost of colour resolution. A lookup publishes nothing, so it
+        // dominant cost of color resolution. A lookup publishes nothing, so it
         // needs no insertion guard, and a miss simply falls through.
         if let Some(coordinate) = self.get(key) {
             return AtomicColorEntry::Occupied(coordinate);
@@ -619,7 +619,7 @@ impl AtomicColorTable {
 struct ColorWorkerWriter {
     records: u32,
     output: BufWriter<File>,
-    /// Reused across records so encoding a colour allocates nothing.
+    /// Reused across records so encoding a color allocates nothing.
     bits: BitWriter,
 }
 
@@ -1180,7 +1180,7 @@ fn read_varint_len(input: &mut impl Read) -> std::io::Result<(u32, usize)> {
     }
 }
 
-/// Writes one length-prefixed colour record.
+/// Writes one length-prefixed color record.
 ///
 /// The bit stream is byte-padded and preceded by its length so a record can be
 /// skipped without decoding it, which is what sequential lookup does.
@@ -1211,7 +1211,7 @@ struct BitWriter {
     accumulator: u64,
     pending: u32,
     /// Scratch for the bitmap regime, which would otherwise allocate a buffer
-    /// as wide as the source set for every middling colour.
+    /// as wide as the source set for every middling color.
     bitmap: Vec<u64>,
 }
 
@@ -1336,7 +1336,7 @@ fn read_delta(input: &mut BitReader<'_>) -> std::io::Result<u64> {
 /// Encodes `sources` with Fulgor's hybrid scheme, given `num_colors` sources
 /// in total.
 ///
-/// Three regimes, chosen by how much of the source set a colour covers. Sparse
+/// Three regimes, chosen by how much of the source set a color covers. Sparse
 /// sets are gap-coded; middling ones become a plain bitmap; very dense ones are
 /// gap-coded over their complement. The last is what matters for a pangenome of
 /// near-identical assemblies, where a core k-mer occurs in almost every source:
@@ -1347,11 +1347,11 @@ fn encode_source_set(out: &mut BitWriter, sources: &[u32], num_colors: u32) {
     // them. A caller that passes the source *count* instead silently encodes
     // sets containing the highest id as empty -- the bitmap regime has no bit
     // for it and the complement regime inverts against the wrong width -- and
-    // the only symptom is missing colours much later. Caught here rather than
+    // the only symptom is missing colors much later. Caught here rather than
     // at the point the sets are read back.
     debug_assert!(
         sources.last().is_none_or(|&max| max < num_colors),
-        "colour alphabet {num_colors} cannot represent source {:?}",
+        "color alphabet {num_colors} cannot represent source {:?}",
         sources.last()
     );
     let len = sources.len() as u64;
@@ -1678,7 +1678,7 @@ mod tests {
     }
 
     /// A dense set must cost far less than one code per member; this is the
-    /// whole point of the complement regime for pangenome-scale colours.
+    /// whole point of the complement regime for pangenome-scale colors.
     #[test]
     fn dense_sets_encode_smaller_than_their_membership() {
         let num_colors = 4096u32;

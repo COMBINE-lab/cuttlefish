@@ -31,12 +31,20 @@ cuttlefish cleanup -w /path/to/work-dir             # remove them
 ## What it will and will not touch
 
 A working directory is usually shared scratch, so "delete everything" is not
-an option. Cleanup removes **only** names matching the exact
-`<name>.cf3rs.<suffix>` shape that cuttlefish itself produces, against a fixed
-suffix table; anything else in the directory is reported and left alone.
+an option. Cleanup removes **only** what cuttlefish itself produces: names
+matching the exact `<name>.cf3rs.<suffix>` shape, against a fixed suffix table,
+and storage-probe files (below). Anything else in the directory is reported and
+left alone.
 Removals are listed largest-first with human-readable sizes. Use
 `-p`/`--prefix` to restrict it to one build's artifacts when several builds
 share a directory.
+
+It also removes `.scratch-probe-*` files, left by a storage measurement
+(`--compress-intermediates auto` or `cuttlefish probe`) that was interrupted.
+One modified in the last minute is skipped and reported: it may belong to a
+build starting in the same directory, whose measurement it would break. Probe
+files carry no output name, so `-p`/`--prefix` does not narrow them: every
+stale probe file in the directory is removed.
 
 Two things are never removed by default:
 

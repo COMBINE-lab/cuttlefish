@@ -386,7 +386,7 @@ const COLORED_WIDE_SOURCES: [&[u8]; 3] = [
     b"AACCGGTTAACCGGTTAACCGGGCTTAAGGCACCTTGAACGTGCATCGGTAACCTTGGCAAGTCCATGAACGGTTACCAGGTCATGCTAAGGCCATTGAACCGGTTAAGCCTTGGAACCTTAGGCCAATTGGCCTTAAGGTTCCAAGGTTCCAAGGTTCCAATTAAGGCCTTAA",
 ];
 
-/// Builds a colored graph from `sequences` and checks every vertex's colours
+/// Builds a colored graph from `sequences` and checks every vertex's colors
 /// against the sources that actually contain that k-mer.
 fn colored_run_sources_at<const K: usize>(name: &str, threads: usize, sequences: &[&[u8]]) {
     colored_run_sources_in::<K>(name, threads, sequences, DEFAULT_SUBGRAPH_COUNT);
@@ -444,7 +444,7 @@ fn colored_run_sources_in<const K: usize>(
         root.join("local.labels"),
         root.join("local.colors"),
         root.join("local.color-repository"),
-        // Source IDs are one-based, so the colour alphabet is one wider than
+        // Source IDs are one-based, so the color alphabet is one wider than
         // the source count -- what `colored::build` passes. Getting this wrong
         // silently mis-encodes sets containing the highest source id.
         u32::try_from(sequences.len() + 1).unwrap(),

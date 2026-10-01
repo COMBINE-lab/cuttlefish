@@ -344,10 +344,12 @@ Usage:
   -h, --help             print this help
 
 A finished build removes its own intermediates, so a working directory is empty
-when it succeeds. Only names cuttlefish can produce are touched, matched exactly
-as <name>.cf3rs.<suffix>; anything else in the directory is reported and left
-alone. The output FASTA is never touched -- after a bailed run it is partial,
-and it is yours to inspect or delete."
+when it succeeds. Only names cuttlefish can produce are touched: those matching
+<name>.cf3rs.<suffix> exactly, and .scratch-probe-* files left by an interrupted
+storage probe (skipped if modified in the last minute; --prefix does not narrow
+them). Anything else in the directory is reported and left alone. The output
+FASTA is never touched -- after a bailed run it is partial, and it is yours to
+inspect or delete."
     );
 }
 

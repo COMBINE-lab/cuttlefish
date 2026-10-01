@@ -1,7 +1,7 @@
 //! Whether to compress intermediate record streams, chosen from the storage
 //! under the work directory.
 //!
-//! lz4-blocking the local-unitig, coordinate and colour streams costs CPU
+//! lz4-blocking the local-unitig, coordinate and color streams costs CPU
 //! and saves I/O. On a host whose storage outruns the build it is a small
 //! loss; on slower storage it wins. Measured on 10k Salmonella at 16 threads,
 //! over two striped NVMe drives with the intermediates held in page cache,

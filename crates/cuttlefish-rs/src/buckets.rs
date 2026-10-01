@@ -2918,9 +2918,9 @@ fn append_colored_atlas_record(
     Ok(())
 }
 
-/// Colour exactness, and what the window flush has to do about it.
+/// Color exactness, and what the window flush has to do about it.
 ///
-/// A vertex's colour class is an XOR over the distinct sources that carry it,
+/// A vertex's color class is an XOR over the distinct sources that carry it,
 /// deduplicated against the last source seen for that vertex as a bucket is
 /// read. That is exact precisely when each source's records sit **consecutively**
 /// within a bucket -- not sorted, just uninterrupted -- because a source that
@@ -2941,7 +2941,7 @@ fn append_colored_atlas_record(
 ///
 /// Correctness rests on (2), never on (1). If a future change introduces a
 /// mid-source hand-over, the repair still runs; the cost is the sort, not the
-/// colours. `colored_payload_grouping` reports the split so a regression in (1)
+/// colors. `colored_payload_grouping` reports the split so a regression in (1)
 /// shows up as a number rather than only as lost time.
 ///
 /// Reusable buffers for [`sort_colored_payload_by_source`]; one per sorting
@@ -3090,7 +3090,7 @@ fn sort_colored_payload_by_source_with(
     let grouped = seen.len() == runs;
     scratch.offsets = seen;
     if grouped {
-        // Nothing to repair. Colour exactness needs each source's records
+        // Nothing to repair. Color exactness needs each source's records
         // *consecutive* within a bucket, not ascending, and the class hash is
         // an XOR over distinct sources, so it does not depend on their order
         // either. Skipping avoids the permutation and its scratch buffers.
@@ -4701,7 +4701,7 @@ mod tests {
         let payload = join_streams(&attrs, &labels, 4, record_len - 4);
         assert_eq!(labels.len(), before_labels.len());
 
-        // Every source now forms exactly one run, which is what colour
+        // Every source now forms exactly one run, which is what color
         // exactness needs.
         let runs = source_runs(&payload, record_len);
         let mut distinct = runs.clone();
